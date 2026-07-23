@@ -1,0 +1,16 @@
+[Unit]
+Description=Agents — view & drive coding-agent sessions
+After=network.target tailscaled.service
+
+[Service]
+# Example unit — set User, WorkingDirectory, and the ExecStart path for your install.
+Type=simple
+User=youruser
+WorkingDirectory=/opt/agents
+ExecStart=/usr/bin/python3 /opt/agents/server.py 8091
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

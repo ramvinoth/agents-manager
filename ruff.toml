@@ -1,0 +1,12 @@
+# Lint config for Agents.
+#
+# This codebase deliberately uses a compact style — one-line guards
+# (`if x: return`), semicolon-joined statements, and short lambdas. Those are
+# intentional, so we do NOT lint E7xx (statement style) or E501 (line length).
+# We DO lint for real defects: pyflakes (F — unused imports/vars, undefined
+# names, f-string mistakes, redefinitions), syntax errors (E9), and invalid
+# escape sequences (W605, which catches broken regexes).
+target-version = "py310"
+
+[lint]
+select = ["F", "E9", "W605"]

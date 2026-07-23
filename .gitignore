@@ -1,0 +1,43 @@
+# Local test-auth secret — a random per-machine password for the `_ci` test
+# account. MUST NOT be committed (a shared value would be a login on every clone).
+tests/.ci-secret
+
+# Secrets / environment
+.env
+.env.*
+
+# Session transcripts are private user data — never commit real ones
+*.jsonl
+
+# Backups / scratch
+*.bak
+*.orig
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ruff_cache/
+
+# Local Claude Code files
+CLAUDE.md
+.claude/
+
+# Node / React build
+node_modules/
+web/dist/
+
+# Server logs
+*.log
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Test artifacts (screenshots, throwaway scripts) — see CLAUDE.md. Scoped to the
+# repo root so real app assets (e.g. web/src/assets/*.png) still ship.
+/*.png
+.playwright-mcp/
