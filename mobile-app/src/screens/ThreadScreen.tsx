@@ -1268,11 +1268,11 @@ function ExchangeView({
       {!finalText && !steps.length && !plan ? (
         <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
       ) : null}
-      {/* Footer row: timestamp + read-aloud speaker, inline. */}
+      {/* Footer row: read-aloud speaker first, timestamp pushed to the end. */}
       {ts || finalText ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-          {ts ? <Text style={[styles.msgTime, { color: t.textMuted, marginTop: 0 }]}>{fmtClock(ts)}</Text> : null}
           {finalText ? <ReadAloudButton text={finalText} /> : null}
+          {ts ? <Text style={[styles.msgTime, { color: t.textMuted, marginTop: 0, marginLeft: "auto" }]}>{fmtClock(ts)}</Text> : null}
         </View>
       ) : null}
     </View>
