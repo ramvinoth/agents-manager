@@ -196,8 +196,9 @@ async def synthesize(request: Request):
     if not text:
         return JSONResponse({"error": "empty text"}, status_code=400)
     sid = int(body.get("voice", 0))
-    # Slightly slower than 1.0 reads more naturally / less rushed.
-    speed = float(body.get("speed", 0.92))
+    # Normal speaking rate (1.0). Pauses between sentences do the "breathing",
+    # so we don't also slow the rate.
+    speed = float(body.get("speed", 1.0))
     # Silence (seconds) inserted BETWEEN sentences and (shorter) at commas so the
     # speech breathes. Kokoro renders a whole blob with very short internal gaps,
     # so we synthesize sentence-by-sentence and pad the joins ourselves.
