@@ -82,25 +82,66 @@ export async function stopAndTranscribe(recording: Audio.Recording): Promise<str
   }
 }
 
+/** Split a reply into speakable sentences, keeping terminal punctuation so each
+ *  chunk reads naturally. Newlines (list items/headers from the markdown
+ *  cleaner) are hard breaks. Short trailing fragments merge into the prior
+ *  sentence so we never synthesize a lone "OK." with big overhead. */
+function splitSentences(text: string): string[] {
+  const parts = text
+    .replace(/\s*\n+\s*/g, " . ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const out: string[] = []
+  for (const p of parts) {
+    // Glue very short fragments onto the previous chunk to cut per-call overhead.
+    if (out.length && p.length < 12) out[out.length - 1] += " " + p
+    else out.push(p)
+  }
+  return out
+}
+
+/** Fetch one sentence's TTS audio and write it to a temp WAV; returns the path
+ *  (or null on failure so the pipeline can skip it). */
+async function fetchTts(sentence: string): Promise<string | null> {
+  try {
+    const blob = await api.voiceTts(sentence)
+    const base64 = await blobToBase64(blob)
+    const path = `${FileSystem.cacheDirectory}harman-tts-${Date.now()}-${Math.floor(Math.random() * 1e6)}.wav`
+    await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 })
+    return path
+  } catch {
+    return null
+  }
+}
+
 /**
- * Speak `text`: fetch WAV bytes from the server, write to a temp file, play it,
- * and resolve when playback finishes (so the caller can re-enable the mic).
+ * Speak `text`, STREAMING sentence by sentence: play each sentence as soon as
+ * its audio is ready while the NEXT sentence is already being synthesized in the
+ * background. Time-to-first-audio is one sentence (~1.5s) instead of the whole
+ * reply, so long answers start speaking almost immediately. Resolves when the
+ * last sentence finishes playing (so the caller can re-enable the mic).
  */
 export async function speak(text: string): Promise<void> {
-  if (!text.trim()) return
-  const blob = await api.voiceTts(text)
-  const base64 = await blobToBase64(blob)
-  const path = `${FileSystem.cacheDirectory}harman-tts-${Date.now()}.wav`
-  await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 })
-  const { sound } = await Audio.Sound.createAsync({ uri: path }, { shouldPlay: true })
-  await new Promise<void>((resolve) => {
-    sound.setOnPlaybackStatusUpdate((s) => {
-      if (s.isLoaded && s.didJustFinish) resolve()
-      if (!s.isLoaded && s.error) resolve()
+  const sentences = splitSentences(text)
+  if (!sentences.length) return
+  // Lookahead of 1: kick off the first fetch, then always prefetch the next
+  // while the current one plays.
+  let nextAudio = fetchTts(sentences[0])
+  for (let i = 0; i < sentences.length; i++) {
+    const path = await nextAudio
+    nextAudio = i + 1 < sentences.length ? fetchTts(sentences[i + 1]) : Promise.resolve(null)
+    if (!path) continue
+    const { sound } = await Audio.Sound.createAsync({ uri: path }, { shouldPlay: true })
+    await new Promise<void>((resolve) => {
+      sound.setOnPlaybackStatusUpdate((s) => {
+        if (s.isLoaded && s.didJustFinish) resolve()
+        if (!s.isLoaded && s.error) resolve()
+      })
     })
-  })
-  await sound.unloadAsync().catch(() => {})
-  FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {})
+    await sound.unloadAsync().catch(() => {})
+    FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {})
+  }
 }
 
 /** RN Blob → base64 string (FileReader is available in the RN runtime). */
