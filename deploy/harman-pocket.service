@@ -1,0 +1,16 @@
+[Unit]
+Description=Harman Pocket-TTS service (kyutai/pocket-tts, fast conversational voice)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/harman-pocket
+Environment=HARMAN_POCKET_PORT=8097
+Environment=HARMAN_POCKET_VOICE=george
+Environment=HARMAN_STT_URL=http://127.0.0.1:8095/transcribe
+ExecStart=%h/pocket-tts-env/bin/python %h/harman-pocket/pocket_service.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
