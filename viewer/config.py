@@ -65,7 +65,9 @@ QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answe
 # Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
 # The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
 SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:8095")
-SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "30"))  # per STT/TTS call
+SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
+                                     # (Qwen synthesizes a whole reply in one
+                                     # pass — a long paragraph can take 30s+)
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
