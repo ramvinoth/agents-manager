@@ -1186,7 +1186,7 @@ function ReadAloudButton({ text }: { text: string }) {
       accessibilityLabel="read-aloud"
       onPress={toggle}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6, alignSelf: "flex-start" }}
+      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
     >
       {playing ? (
         <ActivityIndicator size="small" color={t.accent} />
@@ -1263,13 +1263,18 @@ function ExchangeView({
       {finalText ? (
         <View style={steps.length ? { marginTop: 8 } : undefined}>
           <Markdown text={finalText} color={t.text} selectable onLongPress={onLongPress} />
-          <ReadAloudButton text={finalText} />
         </View>
       ) : null}
       {!finalText && !steps.length && !plan ? (
         <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
       ) : null}
-      {ts ? <Text style={[styles.msgTime, { color: t.textMuted }]}>{fmtClock(ts)}</Text> : null}
+      {/* Footer row: timestamp + read-aloud speaker, inline. */}
+      {ts || finalText ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+          {ts ? <Text style={[styles.msgTime, { color: t.textMuted, marginTop: 0 }]}>{fmtClock(ts)}</Text> : null}
+          {finalText ? <ReadAloudButton text={finalText} /> : null}
+        </View>
+      ) : null}
     </View>
   )
 }
