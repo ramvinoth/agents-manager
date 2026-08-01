@@ -5,7 +5,7 @@ import type { Audio } from "expo-av"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
 import { groupThread, parseTranscript } from "../lib/thread"
-import { prepareAudio, speak, startRecording, stopAndTranscribe } from "../lib/voice"
+import { prepareAudio, resetRecorder, speak, startRecording, stopAndTranscribe } from "../lib/voice"
 import { composerPrefs } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -50,8 +50,10 @@ export default function VoiceScreen({ route }: Props) {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
       if (maxRecRef.current) clearTimeout(maxRecRef.current)
-      // Unmounting mid-record: stop the recorder so the mic is released.
-      recordingRef.current?.stopAndUnloadAsync().catch(() => {})
+      // Unmounting mid-record: release the recorder so the mic is freed and the
+      // next screen visit can start a fresh recording (single-recorder rule).
+      recordingRef.current = null
+      resetRecorder()
     }
   }, [])
 

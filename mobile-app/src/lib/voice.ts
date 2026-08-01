@@ -25,12 +25,42 @@ export async function prepareAudio(): Promise<boolean> {
   return true
 }
 
-/** Start a new recording and return the live handle (caller stops it). */
+// expo-av permits only ONE prepared Audio.Recording globally. If a prior one
+// wasn't unloaded (an error, or an unmount mid-record), createAsync throws
+// "Only one Recording object can be prepared at a given time." Track the live
+// recorder here and force-release any leftover before starting a new one.
+let _active: Audio.Recording | null = null
+
+async function _release(rec: Audio.Recording | null) {
+  if (!rec) return
+  try {
+    await rec.stopAndUnloadAsync()
+  } catch {
+    /* already stopped/unloaded — fine */
+  }
+}
+
+/** Start a new recording and return the live handle (caller stops it via
+ *  stopAndTranscribe). Any stranded prior recorder is cleaned up first so the
+ *  expo-av single-recorder constraint can't wedge push-to-talk. */
 export async function startRecording(): Promise<Audio.Recording> {
+  await _release(_active)
+  _active = null
+  // Re-assert record mode in case a prior playback left the session in play-only.
+  await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
   const { recording } = await Audio.Recording.createAsync(
     Audio.RecordingOptionsPresets.HIGH_QUALITY
   )
+  _active = recording
   return recording
+}
+
+/** Force-release any live recorder (call on screen unmount / error recovery so
+ *  the next startRecording() can't hit the single-recorder constraint). */
+export async function resetRecorder(): Promise<void> {
+  const rec = _active
+  _active = null
+  await _release(rec)
 }
 
 /**
@@ -39,6 +69,7 @@ export async function startRecording(): Promise<Audio.Recording> {
  */
 export async function stopAndTranscribe(recording: Audio.Recording): Promise<string> {
   await recording.stopAndUnloadAsync()
+  if (_active === recording) _active = null // this recorder is done; clear the tracker
   const uri = recording.getURI()
   if (!uri) return ""
   try {
