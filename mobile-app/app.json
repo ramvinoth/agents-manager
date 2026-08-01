@@ -18,8 +18,7 @@
       "bundleIdentifier": "com.suhai.agents",
       "buildNumber": "1",
       "infoPlist": {
-        "CFBundleDisplayName": "Harman",
-        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode."
+        "CFBundleDisplayName": "Harman"
       },
       "config": {
         "usesNonExemptEncryption": false
@@ -40,12 +39,6 @@
     },
     "plugins": [
       "expo-secure-store",
-      [
-        "expo-av",
-        {
-          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode."
-        }
-      ],
       [
         "expo-build-properties",
         {

@@ -60,13 +60,6 @@ PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decisi
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a
                                   # human may take a while; the CLI holds the turn)
 
-# ===== Voice (speech-to-text + text-to-speech) =====
-# STT + TTS run on the GPU box (suha-ai) as a persistent sherpa-onnx service —
-# Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
-# The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
-SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:8095")
-SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "30"))  # per STT/TTS call
-
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
 

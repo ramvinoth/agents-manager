@@ -328,37 +328,6 @@ export const api = {
     return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
   },
 
-  // ---- voice (speech-to-text + text-to-speech) ----
-  // STT: POST the recorded audio as the raw request body (the server reads the
-  // body directly by Content-Length — see _p_voice_stt). `body` is a Blob (RN
-  // gives one from fetch(fileUri).blob()) so the platform sets Content-Length.
-  voiceStt: async (audio: Blob, mime = "audio/m4a"): Promise<{ text: string }> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const res = await fetch(`${serverUrl()}/api/voice/stt`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": mime },
-      body: audio,
-    })
-    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null
-    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
-    return { text: data?.text || "" }
-  },
-  // TTS: POST text, get back WAV audio bytes as a Blob. The voice lib writes it
-  // to a temp file for Audio playback (expo-av can't POST a remote source).
-  voiceTts: async (text: string): Promise<Blob> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const res = await fetch(`${serverUrl()}/api/voice/tts`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    })
-    if (!res.ok) {
-      const err = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(err?.error || `HTTP ${res.status}`)
-    }
-    return await res.blob()
-  },
-
   // ---- host management ----
   hostsSave: (cfg: {
     id?: string

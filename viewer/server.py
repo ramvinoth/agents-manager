@@ -57,12 +57,11 @@ from viewer.routes.panels import PanelsMixin
 from viewer.routes.auth import AuthMixin
 from viewer.routes.git import GitMixin
 from viewer.routes.push import PushMixin
-from viewer.routes.voice import VoiceMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
-    PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, http.server.SimpleHTTPRequestHandler,
+    PanelsMixin, AuthMixin, GitMixin, PushMixin, http.server.SimpleHTTPRequestHandler,
 ):
 
 
@@ -303,8 +302,6 @@ class SessionViewerHandler(
         "/api/chat/permission/decide": "_p_chat_permission_decide",
         "/api/chat/question/answer": "_p_chat_question_answer",
         "/api/chat/plan/decide": "_p_chat_plan_decide",
-        "/api/voice/stt": "_p_voice_stt",
-        "/api/voice/tts": "_p_voice_tts",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",

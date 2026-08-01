@@ -313,26 +313,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       ),
       headerRight: () => (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <TouchableOpacity
-            testID="thread-voice"
-            accessibilityLabel="voice-mode"
-            onPress={() => navigation.navigate("Voice", { host, label, path })}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
-          >
-            <Icon name="mic" size={20} color={t.accent} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="thread-search"
-            accessibilityLabel="thread-search"
-            onPress={() => setSearchOpen((o) => !o)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
-          >
-            <Icon name="search" size={20} color={t.accent} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          testID="thread-search"
+          accessibilityLabel="thread-search"
+          onPress={() => setSearchOpen((o) => !o)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
+        >
+          <Icon name="search" size={20} color={t.accent} />
+        </TouchableOpacity>
       ),
     })
   }, [navigation, label, busy, activity, host, path, sessionId, t])

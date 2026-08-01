@@ -53,8 +53,6 @@ export type IconName =
   | "starOutline"
   | "chevronLeft"
   | "pin"
-  | "mic"
-  | "micOff"
 
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
@@ -101,8 +99,6 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   starOutline: "star-outline",
   chevronLeft: "chevron-back",
   pin: "pin",
-  mic: "mic",
-  micOff: "mic-off",
 }
 
 export default function Icon({
