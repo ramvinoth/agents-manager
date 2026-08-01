@@ -35,12 +35,23 @@ export default function VoiceScreen({ route }: Props) {
   const [error, setError] = useState("")
   const recordingRef = useRef<Audio.Recording | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // True between onPressIn and onPressOut. Guards the async gap while the
+  // recorder is still starting up: if the finger lifts before startRecording()
+  // resolves, we must stop immediately rather than strand a live recording (the
+  // "stuck in listening" bug).
+  const pressedRef = useRef(false)
+  // Safety: a max recording length so a lost onPressOut (app backgrounded
+  // mid-press, gesture cancelled) can't leave the recorder running forever.
+  const maxRecRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sid = (path?.split("/").pop() || "").replace(/\.jsonl$/, "")
 
   useEffect(() => {
     prepareAudio().then((ok) => !ok && setPhase("denied"))
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
+      if (maxRecRef.current) clearTimeout(maxRecRef.current)
+      // Unmounting mid-record: stop the recorder so the mic is released.
+      recordingRef.current?.stopAndUnloadAsync().catch(() => {})
     }
   }, [])
 
@@ -71,20 +82,57 @@ export default function VoiceScreen({ route }: Props) {
   }, [sid, host, path])
 
   async function onPressIn() {
-    if (phase !== "idle") return
+    // Only start from a settled idle state; ignore presses while busy.
+    if (phase !== "idle" && phase !== "listening") return
+    if (recordingRef.current) return // already recording
     setError("")
+    pressedRef.current = true
+    setPhase("listening")
     try {
-      recordingRef.current = await startRecording()
-      setPhase("listening")
+      const rec = await startRecording()
+      // If the finger was already lifted during startup, don't strand a live
+      // recording — stop it now and run the turn from whatever was captured.
+      recordingRef.current = rec
+      // Auto-stop after 60s so a lost onPressOut can't record forever.
+      if (maxRecRef.current) clearTimeout(maxRecRef.current)
+      maxRecRef.current = setTimeout(() => {
+        pressedRef.current = false
+        if (recordingRef.current) finishTurn()
+      }, 60000)
+      if (!pressedRef.current) {
+        await finishTurn()
+      }
     } catch (e) {
+      recordingRef.current = null
+      pressedRef.current = false
       setError((e as Error).message)
+      setPhase("idle")
     }
   }
 
-  async function onPressOut() {
-    if (phase !== "listening" || !recordingRef.current) return
+  function onPressOut() {
+    if (!pressedRef.current) return
+    pressedRef.current = false
+    // If the recorder is still starting up, onPressIn's own post-await check will
+    // finish the turn once it resolves. Otherwise finish now.
+    if (recordingRef.current && phase === "listening") {
+      finishTurn()
+    }
+  }
+
+  /** Stop recording → STT → chat turn → await reply → speak it. Always returns
+   *  to idle (even on error) so the mic can never get stuck. */
+  async function finishTurn() {
+    if (maxRecRef.current) {
+      clearTimeout(maxRecRef.current)
+      maxRecRef.current = null
+    }
     const rec = recordingRef.current
     recordingRef.current = null
+    if (!rec) {
+      setPhase("idle")
+      return
+    }
     setPhase("thinking")
     try {
       const text = await stopAndTranscribe(rec)
