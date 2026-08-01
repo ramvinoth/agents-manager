@@ -5,8 +5,15 @@ Both are normal /api routes, so the standard session gate authenticates them.
 
   POST /api/voice/stt   body = raw audio bytes (Content-Type: audio/*)  -> {"text": ...}
   POST /api/voice/tts   body = {"text": ...}                            -> audio/wav bytes
+  GET  /api/voice/tts/stream?text=...  -> live audio/aac stream (proxied from the
+                        speech service's /synthesize_stream_aac). track-player does
+                        a GET with an Authorization header, so this is a GET.
 """
+import urllib.parse
+import urllib.request
+
 from viewer import voice
+from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT
 
 
 class VoiceMixin:
@@ -46,3 +53,45 @@ class VoiceMixin:
             self.wfile.write(wav)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def _g_voice_tts_stream(self, req):
+        """Proxy a LIVE AAC stream from the speech service to the client, chunk
+        by chunk, so a streaming player starts almost immediately. text comes in
+        the query string (a GET, so react-native-track-player can play the URL
+        with an Authorization header)."""
+        text = (req.query.get("text") or [""])[0].strip()
+        if not text:
+            self.send_json({"error": "empty text"}, status=400)
+            return
+        if not SPEECH_SERVICE_URL:
+            self.send_json({"error": "voice disabled"}, status=502)
+            return
+        import json as _json
+        url = SPEECH_SERVICE_URL.rstrip("/") + "/synthesize_stream_aac"
+        body = _json.dumps({"text": text}).encode("utf-8")
+        upstream = urllib.request.Request(url, data=body, method="POST",
+                                          headers={"Content-Type": "application/json"})
+        try:
+            resp = urllib.request.urlopen(upstream, timeout=SPEECH_TIMEOUT)
+        except Exception as e:
+            self.send_json({"error": f"speech service unreachable: {e}"}, status=502)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/aac")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        # No Content-Length: it's a live stream. HTTP/1.0 closes the connection
+        # at the end, which the player treats as end-of-stream.
+        self.end_headers()
+        try:
+            while True:
+                data = resp.read(4096)
+                if not data:
+                    break
+                self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass

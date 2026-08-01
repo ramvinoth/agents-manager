@@ -11,7 +11,20 @@
  */
 import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"
+import TrackPlayer, { Event, State } from "react-native-track-player"
 import { api } from "../api/client"
+
+// TrackPlayer must be set up once per app run before use.
+let _tpReady = false
+async function ensureTrackPlayer(): Promise<void> {
+  if (_tpReady) return
+  try {
+    await TrackPlayer.setupPlayer()
+  } catch {
+    /* already set up (setupPlayer throws if called twice) — fine */
+  }
+  _tpReady = true
+}
 
 /** Ask for mic permission and put the audio session into record+play mode
  *  (playsInSilentModeIOS so TTS is audible even with the ring switch off). */
@@ -97,26 +110,45 @@ async function fetchTts(sentence: string): Promise<string | null> {
 }
 
 /**
- * Speak `text` as ONE synthesis call — the full reply is sent to the TTS engine
- * in a single request and played back whole. This gives the engine the entire
- * context so prosody/intonation flow naturally across the whole answer (better
- * than sentence-by-sentence, which resets intonation each chunk). Trade-off:
- * time-to-first-audio is the full generation time, so it suits engines where
- * that's acceptable (e.g. Qwen). Resolves when playback finishes.
+ * Speak `text` by STREAMING it: react-native-track-player plays the viewer's
+ * live AAC stream (Pocket generate_audio_stream -> ffmpeg), so the first audio
+ * arrives in ~0.5s and long replies start speaking almost immediately instead
+ * of waiting for the whole thing to generate. Resolves when playback finishes.
+ *
+ * NOTE: track-player owns the audio session while playing; we re-assert the
+ * expo-av record mode afterward so the next mic press still records.
  */
 export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
-  const path = await fetchTts(text)
-  if (!path) return
-  const { sound } = await Audio.Sound.createAsync({ uri: path }, { shouldPlay: true })
-  await new Promise<void>((resolve) => {
-    sound.setOnPlaybackStatusUpdate((s) => {
-      if (s.isLoaded && s.didJustFinish) resolve()
-      if (!s.isLoaded && s.error) resolve()
+  await ensureTrackPlayer()
+  const { url, headers } = api.voiceTtsStreamUrl(text)
+  try {
+    await TrackPlayer.reset()
+    await TrackPlayer.add({ id: "tts", url, headers, title: "Reply", artist: "Harman" })
+    await TrackPlayer.play()
+    // Resolve when playback reaches the end (or errors), polling player state.
+    await new Promise<void>((resolve) => {
+      let started = false
+      const sub = TrackPlayer.addEventListener(Event.PlaybackState, async (e) => {
+        if (e.state === State.Playing) started = true
+        // Ended / stopped after it actually started -> done.
+        if (started && (e.state === State.Ended || e.state === State.Stopped || e.state === State.None)) {
+          sub.remove()
+          resolve()
+        }
+      })
+      // Safety: also resolve if a queue-ended event fires.
+      const sub2 = TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
+        sub.remove(); sub2.remove(); resolve()
+      })
     })
-  })
-  await sound.unloadAsync().catch(() => {})
-  FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {})
+  } catch {
+    /* streaming failed — swallow so the mic re-enables */
+  } finally {
+    await TrackPlayer.reset().catch(() => {})
+    // Hand the audio session back to the recorder for the next turn.
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true }).catch(() => {})
+  }
 }
 
 /** RN Blob → base64 string (FileReader is available in the RN runtime). */

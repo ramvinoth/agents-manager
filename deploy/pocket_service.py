@@ -12,12 +12,15 @@ default conversational voice. The viewer just points HARMAN_SPEECH_URL here.
 """
 import io
 import os
+import struct
+import subprocess
+import threading
 import urllib.request
 import wave
 
 import numpy as np
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 VOICE = os.environ.get("HARMAN_POCKET_VOICE", "george")  # US English male
 STT_FORWARD_URL = os.environ.get("HARMAN_STT_URL", "http://127.0.0.1:8095/transcribe")
@@ -83,6 +86,89 @@ async def synthesize(request: Request):
         return JSONResponse({"error": "empty text"}, status_code=400)
     audio = _model.generate_audio(_voice_state, text)
     return Response(content=_wav_bytes(_to_np(audio), _sr), media_type="audio/wav")
+
+
+def _streaming_wav_header(sample_rate: int) -> bytes:
+    """A WAV header for an OPEN-ENDED PCM stream: sizes are set to a large
+    placeholder so a progressive player starts immediately without knowing the
+    final length. 16-bit mono."""
+    data_size = 0x7FFFFFFF - 44  # unknown length placeholder
+    riff_size = data_size + 36
+    return (b"RIFF" + struct.pack("<I", riff_size) + b"WAVE"
+            + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate,
+                                    sample_rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", data_size))
+
+
+@app.post("/synthesize_stream")
+async def synthesize_stream(request: Request):
+    """Stream audio as it's generated (Pocket generate_audio_stream). Emits a
+    WAV header, then int16 PCM chunks (~80ms each) as they become available —
+    first chunk in ~0.5s, so a progressive client starts speaking almost at
+    once even for a long reply."""
+    if _model is None:
+        return JSONResponse({"error": "Pocket TTS model not loaded"}, status_code=503)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty text"}, status_code=400)
+
+    def gen():
+        yield _streaming_wav_header(_sr)
+        for chunk in _model.generate_audio_stream(_voice_state, text):
+            a = _to_np(chunk)
+            pcm = (np.clip(a, -1.0, 1.0) * 32767.0).astype("<i2")
+            yield pcm.tobytes()
+
+    return StreamingResponse(gen(), media_type="audio/wav")
+
+
+@app.post("/synthesize_stream_aac")
+async def synthesize_stream_aac(request: Request):
+    """Stream as ADTS-AAC — a format mobile players (react-native-track-player)
+    can play LIVE as it arrives. Pocket's float32 PCM chunks are piped into
+    ffmpeg's stdin on a thread; ffmpeg's stdout (AAC) is yielded to the client
+    as it's produced. First audio in ~0.5s even for a long reply."""
+    if _model is None:
+        return JSONResponse({"error": "Pocket TTS model not loaded"}, status_code=503)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty text"}, status_code=400)
+
+    proc = subprocess.Popen(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error",
+         "-f", "f32le", "-ar", str(_sr), "-ac", "1", "-i", "pipe:0",
+         "-c:a", "aac", "-b:a", "96k", "-f", "adts", "pipe:1"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+
+    def feed():
+        try:
+            for chunk in _model.generate_audio_stream(_voice_state, text):
+                a = _to_np(chunk).astype("<f4")
+                proc.stdin.write(a.tobytes())
+            proc.stdin.close()  # signals ffmpeg EOF -> it flushes + exits
+        except Exception:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+
+    threading.Thread(target=feed, daemon=True).start()
+
+    def out():
+        try:
+            while True:
+                data = proc.stdout.read(4096)
+                if not data:
+                    break
+                yield data
+        finally:
+            proc.stdout.close()
+            proc.wait()
+
+    return StreamingResponse(out(), media_type="audio/aac")
 
 
 @app.post("/transcribe")

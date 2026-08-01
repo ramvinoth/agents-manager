@@ -358,6 +358,14 @@ export const api = {
     }
     return await res.blob()
   },
+  // Streaming TTS URL for react-native-track-player: a GET that returns a live
+  // AAC stream (Pocket generate_audio_stream -> ffmpeg). track-player plays the
+  // URL and can send the Authorization header, so first audio arrives in ~0.5s
+  // even for a long reply. Returns { url, headers } for TrackPlayer.add().
+  voiceTtsStreamUrl: (text: string): { url: string; headers: Record<string, string> } => ({
+    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}`,
+    headers: authHeaders(),
+  }),
 
   // ---- host management ----
   hostsSave: (cfg: {

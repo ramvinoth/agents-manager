@@ -264,6 +264,7 @@ class SessionViewerHandler(
         "/api/git/repos": "_g_git_repos",
         "/api/git/status": "_g_git_status",
         "/api/git/clone/status": "_g_git_clone_status",
+        "/api/voice/tts/stream": "_g_voice_tts_stream",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
