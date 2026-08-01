@@ -48,6 +48,10 @@ except Exception as e:
 
 
 def _to_np(audio) -> np.ndarray:
+    # A CUDA tensor must be copied to host (.cpu()) before numpy() — otherwise
+    # "can't convert cuda:0 device type tensor to numpy".
+    if hasattr(audio, "detach"):
+        audio = audio.detach().cpu()
     a = audio.numpy() if hasattr(audio, "numpy") else np.asarray(audio)
     return np.asarray(a, dtype=np.float32).squeeze()
 
