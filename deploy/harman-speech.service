@@ -1,13 +1,19 @@
 [Unit]
-Description=Harman speech service (sherpa-onnx Parakeet STT + Kokoro TTS)
+Description=Harman speech service (sherpa-onnx Parakeet STT + Kokoro TTS, GPU)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=%h/harman-speech
-ExecStart=%h/voiceagent-env/bin/python %h/harman-speech/speech_service.py
+# GPU env (voiceagent-gpu-env) has the sherpa-onnx CUDA build. LD_LIBRARY_PATH
+# pulls in the pip-provided CUDA 11 runtime libs (cuBLAS, cuDNN 8, cuFFT,
+# cuRAND, nvrtc) the ORT-CUDA provider links, plus sherpa's bundled onnxruntime
+# provider libs. Order: nvidia dirs first, then sherpa's lib.
 Environment=HARMAN_SPEECH_PORT=8095
-Environment=HARMAN_SPEECH_PROVIDER=cpu
+Environment=HARMAN_SPEECH_PROVIDER=cuda
+Environment=HARMAN_SPEECH_THREADS=2
+Environment=LD_LIBRARY_PATH=%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/cublas/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/cudnn/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/cufft/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/curand/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:%h/voiceagent-gpu-env/lib/python3.12/site-packages/sherpa_onnx/lib
+ExecStart=%h/voiceagent-gpu-env/bin/python %h/harman-speech/speech_service.py
 Restart=on-failure
 RestartSec=3
 
