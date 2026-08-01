@@ -34,6 +34,7 @@ import type { VisibleTypes } from "../components/SessionSettings"
 import QuestionCard from "../components/QuestionCard"
 import Markdown from "../components/Markdown"
 import Icon from "../components/Icon"
+import { speak, stopSpeaking } from "../lib/voice"
 import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
@@ -1160,6 +1161,42 @@ function ItemView({
   )
 }
 
+// A small "read aloud" speaker button under an agent message: tap to stream the
+// message text via TTS (the same Pocket streaming used in voice mode), tap again
+// to stop. Self-contained so each message tracks its own play state.
+function ReadAloudButton({ text }: { text: string }) {
+  const t = useTheme()
+  const [playing, setPlaying] = useState(false)
+  async function toggle() {
+    if (playing) {
+      await stopSpeaking()
+      setPlaying(false)
+      return
+    }
+    setPlaying(true)
+    try {
+      await speak(text) // resolves when playback finishes
+    } finally {
+      setPlaying(false)
+    }
+  }
+  return (
+    <TouchableOpacity
+      testID="read-aloud"
+      accessibilityLabel="read-aloud"
+      onPress={toggle}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6, alignSelf: "flex-start" }}
+    >
+      {playing ? (
+        <ActivityIndicator size="small" color={t.accent} />
+      ) : (
+        <Icon name="volume" size={16} color={t.textMuted} />
+      )}
+    </TouchableOpacity>
+  )
+}
+
 // An agent exchange: the final response, with the tool-call steps collapsed
 // underneath (tap "N steps" to reveal them; each step expands to its result).
 function ExchangeView({
@@ -1226,6 +1263,7 @@ function ExchangeView({
       {finalText ? (
         <View style={steps.length ? { marginTop: 8 } : undefined}>
           <Markdown text={finalText} color={t.text} selectable onLongPress={onLongPress} />
+          <ReadAloudButton text={finalText} />
         </View>
       ) : null}
       {!finalText && !steps.length && !plan ? (

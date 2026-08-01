@@ -151,6 +151,12 @@ export async function speak(text: string): Promise<void> {
   }
 }
 
+/** Stop any in-progress TTS playback (the "read aloud" toggle / new turn). The
+ *  active speak() promise resolves via its PlaybackState listener. */
+export async function stopSpeaking(): Promise<void> {
+  await TrackPlayer.reset().catch(() => {})
+}
+
 /** RN Blob → base64 string (FileReader is available in the RN runtime). */
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

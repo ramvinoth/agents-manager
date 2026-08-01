@@ -63,6 +63,9 @@ class VoiceMixin:
         if not text:
             self.send_json({"error": "empty text"}, status=400)
             return
+        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
+        from viewer.speakable import speakable
+        text = speakable(text) or text
         if not SPEECH_SERVICE_URL:
             self.send_json({"error": "voice disabled"}, status=502)
             return
