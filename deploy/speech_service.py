@@ -19,6 +19,7 @@ soundfile, numpy).
 """
 import io
 import os
+import re
 import subprocess
 import wave
 
@@ -123,6 +124,31 @@ def _resample(x: np.ndarray, src: int, dst: int) -> np.ndarray:
     return np.interp(fp, xp, x).astype(np.float32)
 
 
+def _split_for_prosody(text: str):
+    """Split text into (chunk, trailing_punct) pairs for sentence-paced TTS.
+
+    Break on sentence enders (. ! ? :) and, more gently, on commas — so the
+    caller pads a longer silence after sentences and a short one after commas.
+    Newlines become hard sentence breaks (the markdown cleaner already ends
+    headers/list items on their own lines). Returns each chunk (without its
+    trailing punctuation) plus the punctuation char that ended it."""
+    text = re.sub(r"\s*\n+\s*", " . ", text)
+    pieces = []
+    buf = []
+    for ch in text:
+        if ch in ".!?:,":
+            chunk = "".join(buf).strip()
+            if chunk:
+                pieces.append((chunk, ch))
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        pieces.append((tail, ""))
+    return pieces
+
+
 def _wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
     """Encode float32 [-1,1] mono to 16-bit PCM WAV bytes."""
     pcm = np.clip(samples, -1.0, 1.0)
@@ -170,9 +196,25 @@ async def synthesize(request: Request):
     if not text:
         return JSONResponse({"error": "empty text"}, status_code=400)
     sid = int(body.get("voice", 0))
-    speed = float(body.get("speed", 1.0))
-    audio = _tts.generate(text, sid=sid, speed=speed)
-    wav = _wav_bytes(np.asarray(audio.samples, dtype=np.float32), audio.sample_rate)
+    # Slightly slower than 1.0 reads more naturally / less rushed.
+    speed = float(body.get("speed", 0.92))
+    # Silence (seconds) inserted BETWEEN sentences and (shorter) at commas so the
+    # speech breathes. Kokoro renders a whole blob with very short internal gaps,
+    # so we synthesize sentence-by-sentence and pad the joins ourselves.
+    gap = float(body.get("gap", 0.32))
+    comma_gap = float(body.get("comma_gap", 0.14))
+    chunks = _split_for_prosody(text)
+    sample_rate = 24000
+    pieces = []
+    for chunk, trailing in chunks:
+        audio = _tts.generate(chunk, sid=sid, speed=speed)
+        sample_rate = audio.sample_rate
+        pieces.append(np.asarray(audio.samples, dtype=np.float32))
+        pad = gap if trailing in ".!?:" else comma_gap if trailing == "," else 0.0
+        if pad > 0:
+            pieces.append(np.zeros(int(sample_rate * pad), dtype=np.float32))
+    samples = np.concatenate(pieces) if pieces else np.zeros(1, dtype=np.float32)
+    wav = _wav_bytes(samples, sample_rate)
     return Response(content=wav, media_type="audio/wav")
 
 
