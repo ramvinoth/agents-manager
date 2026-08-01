@@ -1,0 +1,15 @@
+[Unit]
+Description=Harman speech service (sherpa-onnx Parakeet STT + Kokoro TTS)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/harman-speech
+ExecStart=%h/voiceagent-env/bin/python %h/harman-speech/speech_service.py
+Environment=HARMAN_SPEECH_PORT=8095
+Environment=HARMAN_SPEECH_PROVIDER=cpu
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

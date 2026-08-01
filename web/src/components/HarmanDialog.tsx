@@ -12,9 +12,9 @@ import {
 } from "@/components/ui/dialog"
 import { useStore } from "@/store"
 
-// SUHAI = Super Human Augmented Intelligence: an orchestrator session created in
-// the home directory so it can see and coordinate every project on the machine.
-const DEFAULT_CHARACTER = `You are SUHAI (Super Human Augmented Intelligence), the orchestrator agent for this machine, running from the home directory with access to every project.
+// Harman (Harness Manager): an orchestrator session created in the home
+// directory so it can see and coordinate every project on the machine.
+const DEFAULT_CHARACTER = `You are Harman (Harness Manager), the orchestrator agent for this machine, running from the home directory with access to every project.
 
 Your duties:
 1. Coordinate the sub-projects under the home directory (e.g. ~/projects, ~/Documents/projects).
@@ -24,9 +24,9 @@ Your duties:
 Keep reports concise and structured: one section per project, with status, last activity, and blockers.`
 
 const BOOTSTRAP =
-  "You are online as SUHAI. Confirm briefly, then list the project directories you can see under your home directory with a one-line note for each."
+  "You are online as Harman. Confirm briefly, then list the project directories you can see under your home directory with a one-line note for each."
 
-export function SuhaiDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+export function HarmanDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const startNewSession = useStore((s) => s.startNewSession)
   const [character, setCharacter] = useState(DEFAULT_CHARACTER)
   const [goal, setGoal] = useState("")
@@ -34,8 +34,8 @@ export function SuhaiDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   async function create() {
     onOpenChange(false)
     await startNewSession({
-      cwd: "~", // expanded to the home dir server-side, so SUHAI can reach every project
-      title: "SUHAI",
+      cwd: "~", // expanded to the home dir server-side, so Harman can reach every project
+      title: "Harman",
       message: BOOTSTRAP,
       systemPrompt: character.trim(),
       goal: goal.trim(),
@@ -46,9 +46,9 @@ export function SuhaiDialog({ open, onOpenChange }: { open: boolean; onOpenChang
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Set up SUHAI</DialogTitle>
+          <DialogTitle>Set up Harman</DialogTitle>
           <DialogDescription>
-            Super Human Augmented Intelligence — an orchestrator session created in your home directory so
+            Harness Manager — an orchestrator session created in your home directory so
             it can reach every project. The system prompt is editable now and later in Settings.
           </DialogDescription>
         </DialogHeader>
@@ -74,7 +74,7 @@ export function SuhaiDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={create}>Create SUHAI</Button>
+          <Button onClick={create}>Create Harman</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

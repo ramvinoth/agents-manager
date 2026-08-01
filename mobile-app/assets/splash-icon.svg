@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="hub" x1="466" y1="466" x2="558" y2="558" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd9a0"/>
+      <stop offset="1" stop-color="#ff9d3c"/>
+    </linearGradient>
+  </defs>
+  <!-- Splash glyph on transparent ground; Expo fills the orange background. -->
+  <g fill="#ffffff">
+    <rect x="396" y="396" width="58" height="232" rx="29"/>
+    <rect x="570" y="396" width="58" height="232" rx="29"/>
+    <rect x="425" y="483" width="174" height="58" rx="29"/>
+  </g>
+  <circle cx="512" cy="512" r="50" fill="#ff6a1a"/>
+  <circle cx="512" cy="512" r="38" fill="url(#hub)"/>
+  <circle cx="512" cy="512" r="13" fill="#ffffff"/>
+</svg>

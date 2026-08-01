@@ -41,3 +41,5 @@ web/dist/
 # repo root so real app assets (e.g. web/src/assets/*.png) still ship.
 /*.png
 .playwright-mcp/
+.apns.env
+private_keys/

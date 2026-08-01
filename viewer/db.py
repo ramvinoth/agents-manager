@@ -74,6 +74,29 @@ def init_db():
               user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
               data    JSONB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS push_tokens (
+              token      TEXT PRIMARY KEY,
+              user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              platform   TEXT NOT NULL DEFAULT 'ios',
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS pending_questions (
+              session_id  TEXT PRIMARY KEY,
+              tool_use_id TEXT NOT NULL,
+              questions   JSONB NOT NULL,
+              status      TEXT NOT NULL DEFAULT 'open',
+              host        TEXT NOT NULL DEFAULT 'local',
+              created_at  DOUBLE PRECISION NOT NULL
+            );
+            ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
+            CREATE TABLE IF NOT EXISTS pending_plans (
+              session_id  TEXT PRIMARY KEY,
+              tool_use_id TEXT NOT NULL,
+              plan        TEXT NOT NULL,
+              status      TEXT NOT NULL DEFAULT 'open',
+              host        TEXT NOT NULL DEFAULT 'local',
+              created_at  DOUBLE PRECISION NOT NULL
+            );
             """
         )
 
@@ -194,3 +217,126 @@ def set_prefs(user_id, data):
             "ON CONFLICT(user_id) DO UPDATE SET data = excluded.data",
             (user_id, Json(data or {})),
         )
+
+
+def add_push_token(user_id, token, platform="ios"):
+    """Register a device push token for a user. Idempotent: re-registering the
+    same token re-points it at this user (a device can only serve one account)."""
+    if not token:
+        return
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO push_tokens(token, user_id, platform, created_at) VALUES(%s,%s,%s,%s) "
+            "ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, "
+            "platform = excluded.platform, created_at = excluded.created_at",
+            (token, user_id, platform or "ios", time.time()),
+        )
+
+
+def remove_push_token(token):
+    """Drop a device token (logout, or Expo reported it unregistered)."""
+    if not token:
+        return
+    with _db() as cur:
+        cur.execute("DELETE FROM push_tokens WHERE token = %s", (token,))
+
+
+def push_tokens_for_user(user_id):
+    """All device tokens registered for a user (may be several devices)."""
+    with _db() as cur:
+        cur.execute("SELECT token FROM push_tokens WHERE user_id = %s", (user_id,))
+        return [r["token"] for r in cur.fetchall()]
+
+
+def all_push_tokens():
+    """Every registered device token. The base is single-owner, so a run's
+    completion pushes to all of them (there's effectively one account)."""
+    with _db() as cur:
+        cur.execute("SELECT token FROM push_tokens")
+        return [r["token"] for r in cur.fetchall()]
+
+
+# ---- pending questions (async AskUserQuestion) ---------------------------------
+# When a driven run ends on an unanswered AskUserQuestion, the question is parked
+# here as a durable row instead of blocking a live subprocess. The app renders it
+# and, when the user answers, the session is resumed via `claude --resume`. One
+# open question per session at a time (PRIMARY KEY on session_id).
+
+
+def pending_question_set(session_id, tool_use_id, questions, host="local"):
+    """Record (or replace) the open question for a session, remembering which host
+    the run was on so the answer can resume there."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO pending_questions(session_id, tool_use_id, questions, status, host, created_at) "
+            "VALUES(%s,%s,%s,'open',%s,%s) "
+            "ON CONFLICT(session_id) DO UPDATE SET tool_use_id = excluded.tool_use_id, "
+            "questions = excluded.questions, status = 'open', host = excluded.host, "
+            "created_at = excluded.created_at",
+            (session_id, tool_use_id, Json(questions or []), host or "local", time.time()),
+        )
+
+
+def pending_question_get_open(session_id):
+    """The open question for a session, else None. Shape:
+    {tool_use_id, questions, host}."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT tool_use_id, questions, host FROM pending_questions "
+            "WHERE session_id = %s AND status = 'open'",
+            (session_id,),
+        )
+        row = cur.fetchone()
+    return {"tool_use_id": row["tool_use_id"], "questions": row["questions"],
+            "host": row["host"]} if row else None
+
+
+def pending_question_resolve(session_id, tool_use_id):
+    """Mark the session's open question answered. Returns True if one was open and
+    matched (guards a double-submit / stale card). Deletes the row (answered
+    questions carry no further state — the resumed run is the record)."""
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM pending_questions WHERE session_id = %s AND tool_use_id = %s AND status = 'open'",
+            (session_id, tool_use_id),
+        )
+        return cur.rowcount > 0
+
+
+def pending_question_delete(session_id):
+    """Drop any pending question for a session (e.g. session deleted)."""
+    with _db() as cur:
+        cur.execute("DELETE FROM pending_questions WHERE session_id = %s", (session_id,))
+
+
+# ---- pending plans (ExitPlanMode approval) -------------------------------------
+
+def pending_plan_set(session_id, tool_use_id, plan, host="local"):
+    """Record (or replace) the open plan awaiting approval for a session."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO pending_plans(session_id, tool_use_id, plan, status, host, created_at) "
+            "VALUES(%s,%s,%s,'open',%s,%s) "
+            "ON CONFLICT(session_id) DO UPDATE SET tool_use_id = excluded.tool_use_id, "
+            "plan = excluded.plan, status = 'open', host = excluded.host, "
+            "created_at = excluded.created_at",
+            (session_id, tool_use_id, plan or "", host or "local", time.time()),
+        )
+
+
+def pending_plan_get_open(session_id):
+    """The open plan for a session, else None. Shape: {tool_use_id, plan, host}."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT tool_use_id, plan, host FROM pending_plans "
+            "WHERE session_id = %s AND status = 'open'",
+            (session_id,),
+        )
+        row = cur.fetchone()
+    return {"tool_use_id": row["tool_use_id"], "plan": row["plan"],
+            "host": row["host"]} if row else None
+
+
+def pending_plan_delete(session_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM pending_plans WHERE session_id = %s", (session_id,))

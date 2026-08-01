@@ -1249,3 +1249,57 @@ os.rename(src,dst)
 print(json.dumps({"deleted":True,"trash":dst}))
 """,
 }
+
+
+# ---- remote permission MCP (for AskUserQuestion on SSH hosts) -------------------
+# A driven `claude` on a remote host must reach the viewer's /api/chat/permission to
+# ask the user a question. Rather than an SSH reverse tunnel (many sshd configs deny
+# remote port-forwarding), the remote MCP dials the viewer DIRECTLY at its
+# tailnet IP:PORT (the viewer binds 0.0.0.0, reachable across the tailnet). We SFTP
+# the tiny stdio permission_mcp.py + its --mcp-config onto the host and pass
+# VIEWER_PERM_BASE=<tailnet base> in the remote env.
+
+_REMOTE_PERM_DIR = ".claude/.viewer-perm"
+_viewer_tailnet_ip = None
+
+
+def viewer_tailnet_base(port):
+    """The viewer's own tailnet URL a remote host can call back to
+    (http://<tailscale-ip>:<port>), or None if tailscale isn't available."""
+    global _viewer_tailnet_ip
+    if _viewer_tailnet_ip is None:
+        import subprocess
+        try:
+            r = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
+            _viewer_tailnet_ip = (r.stdout or "").strip().splitlines()[0].strip() if r.stdout else ""
+        except Exception:
+            _viewer_tailnet_ip = ""
+    return f"http://{_viewer_tailnet_ip}:{port}" if _viewer_tailnet_ip else None
+
+
+def remote_setup_perm_mcp(hid, port):
+    """Ship permission_mcp.py + an --mcp-config onto the host so a remote claude can
+    drive the viewer permission tool (reaching the viewer at its tailnet IP).
+    Returns the REMOTE --mcp-config path, or raises if the viewer isn't reachable."""
+    if not viewer_tailnet_base(port):
+        raise RuntimeError("no tailnet address for the viewer (remote AUQ needs it)")
+    helper_src = (Path(__file__).parent / "permission_mcp.py").read_text()
+    with SSH.sftp(hid) as sftp:
+        home = SSH.get(hid)["home"].rstrip("/")
+        d = f"{home}/{_REMOTE_PERM_DIR}"
+        # mkdir -p the perm dir, segment by segment (SFTP has no recursive mkdir)
+        cur = home
+        for seg in _REMOTE_PERM_DIR.split("/"):
+            cur = f"{cur}/{seg}"
+            try:
+                sftp.mkdir(cur)
+            except IOError:
+                pass
+        helper_path = f"{d}/permission_mcp.py"
+        cfg_path = f"{d}/mcp.json"
+        with sftp.open(helper_path, "w") as f:
+            f.write(helper_src)
+        cfg = {"mcpServers": {"viewerperm": {"command": "python3", "args": [helper_path]}}}
+        with sftp.open(cfg_path, "w") as f:
+            f.write(json.dumps(cfg))
+    return cfg_path

@@ -9,6 +9,26 @@ import sys
 import threading
 from pathlib import Path
 
+# Load optional local secrets (APNs push config etc.) from a gitignored env file
+# next to this module, BEFORE anything reads os.environ. Format: KEY=value lines,
+# `#` comments allowed. Existing environment always wins (explicit > file).
+def _load_env_file():
+    for cand in (Path(__file__).parent / ".apns.env", Path.home() / ".agents-apns.env"):
+        try:
+            if not cand.exists():
+                continue
+            for line in cand.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+        except Exception:
+            pass
+
+
+_load_env_file()
+
 # Port from `server.py [PORT]`; fall back to $PORT/8091. Guard on isdigit so the
 # package stays importable under pytest/other tools (whose argv[1] isn't a port).
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8091"))
@@ -36,6 +56,16 @@ DEFAULT_SESSION = os.environ.get("VIEWER_DEFAULT_SESSION", "")
 
 MAX_POLL_BYTES = 8 * 1024 * 1024  # cap a single ?from= read
 CHAT_TIMEOUT = 3600               # seconds for one claude -p run
+PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decision
+QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a
+                                  # human may take a while; the CLI holds the turn)
+
+# ===== Voice (speech-to-text + text-to-speech) =====
+# STT + TTS run on the GPU box (suha-ai) as a persistent sherpa-onnx service —
+# Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
+# The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
+SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:8095")
+SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "30"))  # per STT/TTS call
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()

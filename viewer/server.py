@@ -56,18 +56,23 @@ from viewer.routes.fs import FsMixin
 from viewer.routes.panels import PanelsMixin
 from viewer.routes.auth import AuthMixin
 from viewer.routes.git import GitMixin
+from viewer.routes.push import PushMixin
+from viewer.routes.voice import VoiceMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
-    PanelsMixin, AuthMixin, GitMixin, http.server.SimpleHTTPRequestHandler,
+    PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, http.server.SimpleHTTPRequestHandler,
 ):
 
 
     # ---- access control: a logged-in session (viewer.db) gates every /api call
     # and WebSocket. These few auth endpoints are reachable logged-out so you can
     # sign up / sign in; the drag-drop viewer is fully client-side (no /api). ----
-    PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state"}
+    # /api/chat/permission is called by the local permission MCP subprocess (no
+    # viewer session); it authenticates with a per-run token in the body instead.
+    PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
+                  "/api/chat/permission", "/api/push/unregister"}
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -79,11 +84,23 @@ class SessionViewerHandler(
         except Exception:
             return ""
 
+    def _auth_token(self):
+        """Session token for this request: the `viewer_session` cookie (web UI)
+        or an `Authorization: Bearer <token>` header (non-browser clients like the
+        mobile app, which have no cookie jar). Cookie wins when both are present."""
+        tok = self._cookie(db.SESSION_COOKIE)
+        if tok:
+            return tok
+        auth = self.headers.get("Authorization", "")
+        if auth[:7].lower() == "bearer ":
+            return auth[7:].strip()
+        return ""
+
     def current_user(self):
         """The logged-in user for this request ({id, username}) or None."""
         if VIEWER_NO_AUTH:
             return {"id": 0, "username": "local"}
-        return db.user_for_session(self._cookie(db.SESSION_COOKIE))
+        return db.user_for_session(self._auth_token())
 
     def _gated(self, req):
         """True if this request must be blocked (an /api call, not public, no session)."""
@@ -94,6 +111,27 @@ class SessionViewerHandler(
     def set_session_cookie(self, token):
         """Emit a Set-Cookie on the response (token=None clears it, for logout)."""
         self._session_cookie = "" if token is None else token
+
+    def do_OPTIONS(self):
+        """CORS preflight.
+
+        JSON responses already carry `Access-Control-Allow-Origin: *`, but a
+        cross-origin POST that sets Authorization/Content-Type triggers a
+        preflight first — and without this the base handler answered 501, so the
+        browser blocked the real request. This is what lets the React Native Web
+        build of mobile-app/ (served by the Expo dev server on another port) talk
+        to the API during development.
+
+        Deliberately no Access-Control-Allow-Credentials: cookies stay
+        same-origin, so this does not widen the cookie-authenticated surface.
+        """
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         req = _Req(urlparse(self.path))
@@ -232,6 +270,8 @@ class SessionViewerHandler(
     ]
     POST_ROUTES = {
         "/api/chat": "_p_chat",
+        "/api/push/register": "_p_push_register",
+        "/api/push/unregister": "_p_push_unregister",
         "/api/agents/install": "_p_agents_install",
         "/api/agents/login/start": "_p_agent_login_start",
         "/api/agents/login/submit": "_p_agent_login_submit",
@@ -259,6 +299,12 @@ class SessionViewerHandler(
         "/api/chat/steer": "_p_chat_steer",
         "/api/chat/interrupt": "_p_chat_interrupt",
         "/api/chat/queue/remove": "_p_chat_queue_remove",
+        "/api/chat/permission": "_p_chat_permission",
+        "/api/chat/permission/decide": "_p_chat_permission_decide",
+        "/api/chat/question/answer": "_p_chat_question_answer",
+        "/api/chat/plan/decide": "_p_chat_plan_decide",
+        "/api/voice/stt": "_p_voice_stt",
+        "/api/voice/tts": "_p_voice_tts",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",

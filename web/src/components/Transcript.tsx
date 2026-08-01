@@ -1,16 +1,33 @@
 import { useMemo } from "react"
-import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown } from "lucide-react"
+import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
 import { renderMarkdown } from "@/lib/markdown"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
 import { AuqBlock } from "./AuqBlock"
 import { MessageActions } from "./MessageActions"
-import type { AssistantTurn, Block, Turn } from "@/lib/types"
+import { extractImages } from "@/lib/parser"
+import type { AssistantTurn, Block, ImagePart, Turn } from "@/lib/types"
 
 function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text])
   return <div className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function Images({ images }: { images: ImagePart[] }) {
+  if (!images.length) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {images.map((img, i) => (
+        <img
+          key={i}
+          src={`data:${img.mime};base64,${img.data}`}
+          loading="lazy"
+          className="max-h-80 max-w-full rounded-md border border-border object-contain"
+        />
+      ))}
+    </div>
+  )
 }
 
 function toText(v: unknown): string {
@@ -18,39 +35,79 @@ function toText(v: unknown): string {
   if (typeof v === "string") return v
   if (Array.isArray(v))
     return v
-      .map((b: any) => (typeof b === "string" ? b : b?.text ?? JSON.stringify(b)))
+      .map((b: any) => {
+        if (typeof b === "string") return b
+        if (b?.type === "image") return "" // rendered separately as an <img>
+        return b?.text ?? JSON.stringify(b)
+      })
+      .filter(Boolean)
       .join("\n")
   return JSON.stringify(v, null, 2)
 }
 
 function ToolCall({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
   const result = toText(block.result)
+  const images = extractImages(block.result)
+  const isError = !!block.isError
   return (
-    <details className="group rounded-md border border-border bg-muted/40 text-sm">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
-        <Wrench className="size-3.5 text-muted-foreground" />
-        <span className="font-medium">{block.name}</span>
-        <ChevronDown className="ml-auto size-3.5 text-muted-foreground transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="space-y-2 border-t border-border px-3 py-2">
-        {block.input != null && (
-          <pre className="overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-muted-foreground">
-            {typeof block.input === "string" ? block.input : JSON.stringify(block.input, null, 2)}
-          </pre>
+    <div className="space-y-1.5">
+      <details
+        className={cn(
+          "group rounded-md border text-sm",
+          isError ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/40"
         )}
-        {result && (
-          <pre className="max-h-80 overflow-auto rounded bg-background/60 p-2 font-mono text-xs">
-            {result.length > 4000 ? result.slice(0, 4000) + "\n… (truncated)" : result}
-          </pre>
-        )}
-      </div>
-    </details>
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
+          {isError ? (
+            <AlertTriangle className="size-3.5 text-destructive" />
+          ) : (
+            <Wrench className="size-3.5 text-muted-foreground" />
+          )}
+          <span className={cn("font-medium", isError && "text-destructive")}>{block.name}</span>
+          {isError && (
+            <Badge variant="destructive" className="h-4 px-1.5 text-[10px] font-normal">
+              error
+            </Badge>
+          )}
+          <ChevronDown className="ml-auto size-3.5 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className={cn("space-y-2 border-t px-3 py-2", isError ? "border-destructive/30" : "border-border")}>
+          {block.input != null && (
+            <pre className="overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-muted-foreground">
+              {typeof block.input === "string" ? block.input : JSON.stringify(block.input, null, 2)}
+            </pre>
+          )}
+          {result && (
+            <pre
+              className={cn(
+                "max-h-80 overflow-auto rounded p-2 font-mono text-xs",
+                isError ? "bg-destructive/10 text-destructive" : "bg-background/60"
+              )}
+            >
+              {result.length > 4000 ? result.slice(0, 4000) + "\n… (truncated)" : result}
+            </pre>
+          )}
+        </div>
+      </details>
+      {/* Images render OUTSIDE the collapsible details so screenshots are always
+          visible without expanding the tool-call. */}
+      <Images images={images} />
+    </div>
   )
+}
+
+function blockHasImages(b: Block): boolean {
+  return b.type === "tool_use" && extractImages(b.result).length > 0
 }
 
 function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
   const showTools = useStore((s) => s.visible.tools)
-  const blocks = showTools ? turn.blocks : turn.blocks.filter((b) => b.type === "text")
+  // Even with the Tools filter off, keep tool-calls that carry images (e.g.
+  // screenshots) so they don't vanish — the image renders, the details stay
+  // collapsed.
+  const blocks = showTools
+    ? turn.blocks
+    : turn.blocks.filter((b) => b.type === "text" || blockHasImages(b))
   return (
     <div className="space-y-2">
       {blocks.map((b, i) =>
@@ -81,7 +138,8 @@ function TurnRow({ turn }: { turn: Turn }) {
             <User className="size-3" /> You
             {canEdit && turn.uuid && <MessageActions uuid={turn.uuid} />}
           </div>
-          <Markdown text={turn.content} />
+          {turn.content && <Markdown text={turn.content} />}
+          {turn.images?.length ? <Images images={turn.images} /> : null}
         </div>
       </div>
     )

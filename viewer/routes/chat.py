@@ -7,10 +7,10 @@ from viewer.config import (
 )
 from viewer.adapters import resolve_agent_session
 from viewer.engine import (
-    _pi_session_uuid, codex_session_meta, copilot_session_meta, enqueue_chat, extract_cwd, interrupt_chat, pi_session_cwd, pi_session_provider_model, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
+    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
 )
 from viewer.remote import (
-    remote_codex_meta, remote_extract_cwd,
+    remote_codex_meta, remote_extract_cwd, remote_resolve,
 )
 
 
@@ -187,9 +187,15 @@ class ChatMixin:
 
     def _g_chat_status(self, req):
         sid = (req.query.get("id") or [""])[0]
+        from viewer import questions
+        pending_q = questions.get_open(sid) if sid else None
+        pending_plan = questions.get_open_plan(sid) if sid else None
         job = CHAT_JOBS.get(sid)
         if not job:
-            self.send_json({"running": False, "idle": True})
+            # No live run, but a durable pending question/plan may still await input
+            # (the run ended; they outlive it).
+            self.send_json({"running": False, "idle": True,
+                            "pending_question": pending_q, "pending_plan": pending_plan})
         else:
             self.send_json({
                 "running": job["running"],
@@ -200,5 +206,86 @@ class ChatMixin:
                 "turns": job.get("turns", 0),
                 "steered": job.get("steered", 0),
                 "interrupted": job.get("interrupted", False),
+                "pending_approvals": pending_approvals_public(sid),
+                "pending_question": pending_q,
+                "pending_plan": pending_plan,
             })
+
+    def _p_chat_permission(self, req):
+        """Internal (called by permission_mcp.py, authed by a per-run token):
+        a driven claude is asking whether a tool may run. Blocks until the user
+        decides in the UI, then returns the {behavior} decision."""
+        body = self.read_body() or {}
+        self.send_json(register_permission(
+            body.get("session", ""), body.get("token", ""),
+            body.get("tool_name", ""), body.get("input", {}),
+            body.get("tool_use_id", "")))
+
+    def _p_chat_permission_decide(self, req):
+        """UI submits the user's Allow/Deny for a pending tool approval."""
+        body = self.read_body() or {}
+        ok = decide_permission(body.get("session", ""), body.get("id", ""),
+                               body.get("decision", ""))
+        self.send_json({"ok": ok})
+
+    def _p_chat_question_answer(self, req):
+        """UI answers an AskUserQuestion. Body: {session, picks:[label,...]}.
+        Fast path: a live permission call is BLOCKED waiting on this answer — set it
+        and the SAME turn continues (works mid-conversation, all modes, remote).
+        Fallback: no live block (run ended / server restarted) — RESUME the session
+        on its original host with the composed answer as a fresh turn."""
+        from viewer import questions
+        from viewer.engine import answer_live_question
+        body = self.read_body() or {}
+        rel = body.get("session", "")
+        picks = body.get("picks") or []
+        sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
+        pending = questions.get_open(sid) if sid else None
+        if not pending:
+            self.send_json({"error": "No question is awaiting an answer"}, status=409)
+            return
+        host = pending.get("host") or "local"
+        message = questions.answer_message(pending["questions"], picks)
+        # Fast path: unblock the waiting permission call — the turn resumes in place.
+        if answer_live_question(sid, message):
+            self.send_json({"answered": True, "session": sid})
+            return
+        # Fallback: the block is gone; resume the session as a fresh turn.
+        questions.resolve(sid, pending["tool_use_id"])
+        if host != "local":
+            try:
+                r = remote_resolve(host, sid)
+                cwd = remote_extract_cwd(host, r["path"]) if r.get("path") else "~"
+            except Exception:
+                cwd = "~"
+        else:
+            full = self.resolve_session_quiet(rel) or None
+            cwd = extract_cwd(full) if full else str(Path.home())
+            if not cwd or not os.path.isdir(cwd):
+                cwd = str(Path.home())
+        mode = body.get("mode", "acceptEdits")
+        model = body.get("model", "")
+        if not start_claude_run(sid, ["--resume", sid], message, mode, cwd, model, host):
+            self.send_json({"error": "A run is already in progress for this session"}, status=409)
+            return
+        self.send_json({"resumed": True, "session": sid})
+
+    def _p_chat_plan_decide(self, req):
+        """UI approves or denies a live (blocked) ExitPlanMode.
+        Body: {session, decision:"approve"|"deny", feedback?}. Approve -> the agent
+        starts executing; deny -> it revises using `feedback`. Same-turn (the run is
+        blocked waiting), like the question answer fast-path."""
+        from viewer import questions
+        from viewer.engine import decide_plan
+        body = self.read_body() or {}
+        rel = body.get("session", "")
+        sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
+        if not (sid and questions.get_open_plan(sid)):
+            self.send_json({"error": "No plan is awaiting a decision"}, status=409)
+            return
+        decision = "approve" if body.get("decision") == "approve" else "deny"
+        if decide_plan(sid, decision, body.get("feedback", "")):
+            self.send_json({"decided": True, "session": sid})
+        else:
+            self.send_json({"error": "No live plan decision is waiting"}, status=409)
 

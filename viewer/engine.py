@@ -4,15 +4,18 @@ import json
 import os
 import posixpath
 import re
+import secrets
 import shlex
 import shutil
 import signal
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, CLAUDE_DIR, VIEWER_TOKEN_FILE, claude_bin,
+    CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -67,6 +70,58 @@ def save_json_file(path, data):
 
 LOOPS = load_json_file(LOOPS_FILE, {})     # id -> {session, path, prompt, interval, nextRun, runs, lastRc, enabled}
 SESSION_META = load_json_file(META_FILE, {})  # session_id -> {goal, systemPrompt}
+
+
+def _session_title(session_id):
+    """The session's display name, matching the chat list: a custom title if set,
+    else the agent name, else the first user message, else ''. Best-effort."""
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        title = first_user = ""
+        with open(matches[0], errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 200 or title:
+                    break
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                t = obj.get("type")
+                if t == "custom-title" and obj.get("customTitle"):
+                    title = obj["customTitle"]
+                elif t == "agent-name" and obj.get("agentName"):
+                    title = obj["agentName"]
+                elif not first_user and t == "user":
+                    msg = (obj.get("message") or {}).get("content")
+                    if isinstance(msg, str):
+                        first_user = msg
+                    elif isinstance(msg, list):
+                        first_user = " ".join(
+                            b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
+                        )
+        return " ".join((title or first_user).split())[:60]
+    except Exception:
+        return ""
+
+
+def _push_label(session_id, cwd=""):
+    """A short human title for a push notification: the session's display name
+    (matching the chat list), else its goal, else the working-directory basename,
+    else a short session id."""
+    name = _session_title(session_id)
+    if name:
+        return name
+    meta = SESSION_META.get(session_id) or {}
+    goal = (meta.get("goal") or "").strip()
+    if goal:
+        return goal[:60]
+    if cwd:
+        base = os.path.basename(cwd.rstrip("/"))
+        if base:
+            return base
+    return f"Chat {str(session_id)[:8]}"
 
 
 def parse_interval(text):
@@ -181,11 +236,13 @@ class RemoteProc:
             try: self.chan.shutdown_write()
             except OSError: pass
 
-    def __init__(self, hid, argv, cwd, shell_prefix="bash -lc"):
+    def __init__(self, hid, argv, cwd, shell_prefix="bash -lc", env=None):
         # Hold the per-host lock only for setup; the stream then runs on its own
         # dedicated channel, which paramiko multiplexes safely alongside other ops.
         # shell_prefix: Copilot passes "${SHELL:-bash} -ilc" so a version-managed
         # node (set up in the INTERACTIVE rc, e.g. macOS ~/.zshrc) is on PATH.
+        # env: extra vars exported into the remote shell (paramiko exec does NOT
+        # inherit the caller's environment), e.g. VIEWER_PERM_* for the perm tool.
         with SSH.lock_for(hid):
             c = SSH.get(hid)
             # Expand ~ against the remote home BEFORE quoting: a shlex-quoted
@@ -197,7 +254,12 @@ class RemoteProc:
             # Bound the run: a silent/wedged remote agent must raise (socket.timeout)
             # rather than block the run thread forever with the session stuck "busy".
             self.chan.settimeout(CHAT_TIMEOUT)
-            shell = "cd " + shlex.quote(rcwd) + " && exec " + " ".join(shlex.quote(a) for a in argv)
+            exports = ""
+            if env:
+                exports = "".join(
+                    "export " + k + "=" + shlex.quote(str(v)) + " && "
+                    for k, v in env.items())
+            shell = exports + "cd " + shlex.quote(rcwd) + " && exec " + " ".join(shlex.quote(a) for a in argv)
             if "/" in argv[0]:
                 # An nvm-installed claude has a `#!/usr/bin/env node` shebang and
                 # node lives beside it, outside the non-interactive PATH — put
@@ -664,6 +726,247 @@ def start_copilot_new(message, cwd, host="local"):
     return session_id, session_id + "/events.jsonl"
 
 
+def _write_perm_mcp_config():
+    """Write (idempotently) the --mcp-config that registers permission_mcp.py as
+    an MCP server 'viewerperm'. Additive — the driven claude still loads the
+    user's ambient MCP servers (Playwright etc.) since we omit --strict-mcp-config."""
+    path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
+    server = str(Path(__file__).parent / "permission_mcp.py")
+    cfg = {"mcpServers": {"viewerperm": {"command": sys.executable or "python3",
+                                         "args": [server]}}}
+    with open(path, "w") as f:
+        json.dump(cfg, f)
+    return path
+
+
+def _perm_mcp_config_path(host):
+    """--mcp-config path for the viewer permission tool: a local temp file for a
+    local run, or a remote path (config + helper shipped over SFTP) for a remote
+    host, whose permission_mcp reaches the viewer through an SSH reverse tunnel."""
+    if host and host != "local":
+        from viewer.remote import remote_setup_perm_mcp
+        return remote_setup_perm_mcp(host, PORT)
+    return _write_perm_mcp_config()
+
+
+def _await_question_answer(session_id, tinput, tool_use_id):
+    """Block a driven claude's AskUserQuestion until the user answers (or timeout),
+    returning the CLI-consumable permission decision. Also persists a durable
+    pending_questions row so the app can render the card and it survives restart.
+    """
+    from viewer import questions
+    q_list = questions.questions_from_input(tinput)
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return {"behavior": "deny", "message": "Session ended"}
+        pid = secrets.token_hex(8)
+        ev = threading.Event()
+        job.setdefault("pending_approvals", []).append(
+            {"id": pid, "tool_name": "AskUserQuestion", "input": tinput,
+             "tool_use_id": tool_use_id, "event": ev, "decision": None,
+             "answer": None, "question": True, "created": time.time()})
+        cwd = job.get("cwd", "")
+        host = job.get("host", "local")
+    # Durable row: the app renders the card from this; survives app-close/restart.
+    try:
+        questions.record(session_id, {"tool_use_id": tool_use_id, "questions": q_list}, host)
+    except Exception:
+        pass
+    # Background push so the user knows a question is waiting (works app-closed).
+    try:
+        from viewer.push import notify_all
+        notify_all(_push_label(session_id, cwd),
+                   "Your agent has a question for you.",
+                   data={"session": session_id, "question": True})
+    except Exception:
+        pass
+    decided = ev.wait(timeout=QUESTION_TIMEOUT)
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        pend = job.get("pending_approvals", []) if job else []
+        entry = next((e for e in pend if e["id"] == pid), None)
+        if entry:
+            pend.remove(entry)
+    answer = (entry.get("answer") if entry else None) or ""
+    try:
+        questions.clear(session_id)  # row consumed; the resumed turn is the record
+    except Exception:
+        pass
+    if not decided or not answer:
+        # No answer in time: hand back the CLI's own "unanswered" so it can proceed.
+        return {"behavior": "deny", "message": "The user did not answer the questions."}
+    return {"behavior": "deny", "message": answer}
+
+
+def _await_plan_decision(session_id, tinput, tool_use_id):
+    """Block a driven claude's ExitPlanMode until the user approves or denies with
+    feedback. Persists a durable pending_plans row so the app renders the plan card
+    and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
+    from viewer import questions
+    plan_md = ""
+    if isinstance(tinput, dict):
+        plan_md = tinput.get("plan") or ""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return {"behavior": "deny", "message": "Session ended"}
+        pid = secrets.token_hex(8)
+        ev = threading.Event()
+        job.setdefault("pending_approvals", []).append(
+            {"id": pid, "tool_name": "ExitPlanMode", "input": tinput,
+             "tool_use_id": tool_use_id, "event": ev, "decision": None,
+             "feedback": None, "plan": True, "created": time.time()})
+        cwd = job.get("cwd", "")
+        host = job.get("host", "local")
+    try:
+        questions.record_plan(session_id, {"tool_use_id": tool_use_id, "plan": plan_md}, host)
+    except Exception:
+        pass
+    try:
+        from viewer.push import notify_all
+        notify_all(_push_label(session_id, cwd),
+                   "Your agent has a plan to review.",
+                   data={"session": session_id, "plan": True})
+    except Exception:
+        pass
+    decided = ev.wait(timeout=QUESTION_TIMEOUT)
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        pend = job.get("pending_approvals", []) if job else []
+        entry = next((e for e in pend if e["id"] == pid), None)
+        if entry:
+            pend.remove(entry)
+    decision = entry.get("decision") if entry else None
+    feedback = (entry.get("feedback") if entry else None) or ""
+    try:
+        questions.clear_plan(session_id)
+    except Exception:
+        pass
+    if not decided:
+        return {"behavior": "deny", "message": "No response (timed out) — plan not approved."}
+    if decision == "approve":
+        return {"behavior": "allow"}
+    return {"behavior": "deny",
+            "message": feedback or "The user did not approve the plan. Revise and re-present it."}
+
+
+def register_permission(session_id, token, tool_name, tinput, tool_use_id):
+    """Called by permission_mcp.py when a driven claude asks whether a tool may
+    run. Registers a pending approval and BLOCKS until the user decides in the UI
+    (or PERM_TIMEOUT -> deny). Returns {'behavior': 'allow'|'deny', ...}."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job or not job.get("perm_token") or job.get("perm_token") != token:
+            return {"behavior": "deny", "message": "Unknown or unauthorized session"}
+    # AskUserQuestion routes through the permission tool (the CLI's own design:
+    # checkPermissions returns behavior:"ask"). We BLOCK here until the user picks
+    # an answer, then return {behavior:"deny", message:<answer>} — the shape the CLI
+    # consumes as the tool result (verified against the installed CLI, all modes).
+    # A durable pending_questions row is also written so the app renders the card
+    # and it survives app-close / server restart.
+    if tool_name == "AskUserQuestion":
+        return _await_question_answer(session_id, tinput, tool_use_id)
+    # ExitPlanMode is the CLI's plan-approval gate (also routed through the perm
+    # tool, all modes). Block until the user approves or denies-with-feedback:
+    #   approve -> {behavior:"allow"}  (clean: the agent starts executing)
+    #   deny    -> {behavior:"deny", message:<feedback>}  (agent revises + re-plans)
+    if tool_name == "ExitPlanMode":
+        return _await_plan_decision(session_id, tinput, tool_use_id)
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return {"behavior": "deny", "message": "Session ended"}
+        pid = secrets.token_hex(8)
+        ev = threading.Event()
+        job.setdefault("pending_approvals", []).append(
+            {"id": pid, "tool_name": tool_name, "input": tinput,
+             "tool_use_id": tool_use_id, "event": ev, "decision": None,
+             "created": time.time()})
+        cwd = job.get("cwd", "")
+    # Background push: the run is now blocked waiting on the user (best-effort).
+    try:
+        from viewer.push import notify_all
+        notify_all(_push_label(session_id, cwd),
+                   f"Approve {tool_name}? The agent needs your permission to continue.",
+                   data={"session": session_id, "approval": pid})
+    except Exception:
+        pass
+    decided = ev.wait(timeout=PERM_TIMEOUT)
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        pend = job.get("pending_approvals", []) if job else []
+        entry = next((e for e in pend if e["id"] == pid), None)
+        if entry:
+            pend.remove(entry)
+    decision = entry["decision"] if entry else None
+    if not decided or decision != "allow":
+        return {"behavior": "deny",
+                "message": "Denied" if decision == "deny" else "No response (timed out)"}
+    return {"behavior": "allow"}
+
+
+def decide_permission(session_id, pid, decision):
+    """UI sets the user's Allow/Deny for a pending tool approval."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        entry = next((e for e in job.get("pending_approvals", [])
+                      if e["id"] == pid), None) if job else None
+        if not entry:
+            return False
+        entry["decision"] = "allow" if decision == "allow" else "deny"
+        entry["event"].set()
+        return True
+
+
+def answer_live_question(session_id, answer):
+    """UI answers a live (blocked) AskUserQuestion for a session: set the answer on
+    the waiting entry and release its Event so the blocked permission call returns
+    the pick to the CLI, continuing the SAME turn. Returns True if a live question
+    was waiting, False otherwise (caller falls back to resume)."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return False
+        entry = next((e for e in job.get("pending_approvals", []) if e.get("question")), None)
+        if not entry:
+            return False
+        entry["answer"] = answer
+        entry["event"].set()
+        return True
+
+
+def decide_plan(session_id, decision, feedback=""):
+    """UI approves or denies a live (blocked) ExitPlanMode. approve -> the agent
+    starts executing; deny -> the agent revises using `feedback`. Returns True if a
+    live plan decision was waiting, else False."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return False
+        entry = next((e for e in job.get("pending_approvals", []) if e.get("plan")), None)
+        if not entry:
+            return False
+        entry["decision"] = "approve" if decision == "approve" else "deny"
+        entry["feedback"] = feedback or ""
+        entry["event"].set()
+        return True
+
+
+def pending_approvals_public(session_id):
+    """Pending Allow/Deny approvals for the UI: id + tool + input (drops the
+    internal Event). AskUserQuestion and ExitPlanMode entries are EXCLUDED — they
+    surface as their own cards (pending_question / pending_plan), not raw
+    Allow/Deny approvals."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job:
+            return []
+        return [{"id": e["id"], "tool_name": e["tool_name"], "input": e["input"]}
+                for e in job.get("pending_approvals", [])
+                if not e.get("question") and not e.get("plan")]
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local"):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -679,17 +982,32 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "started": time.time(), "message": message,
                "queue": [], "proc": None, "turns": 0, "steered": 0,
                "stdin_open": False, "mode": mode, "model": model, "cwd": cwd,
-               "interrupted": False, "host": host}
+               "interrupted": False, "host": host,
+               "pending_approvals": [], "perm_token": ""}
         CHAT_JOBS[session_id] = job
 
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
-    if mode == "bypass":
+    if mode in ("bypass", "bypassPermissions"):
         cmd.append("--dangerously-skip-permissions")
     elif mode in ("acceptEdits", "plan"):
         cmd += ["--permission-mode", mode]
-    if model and re.fullmatch(r"[A-Za-z0-9._-]+", model):
+    elif mode == "default":
+        cmd += ["--permission-mode", "default"]
+    # Always attach the viewer permission tool. In "default" mode it gates each
+    # tool call (Allow/Deny); in every mode it is ALSO how AskUserQuestion reaches
+    # the user (the CLI routes AUQ's checkPermissions "ask" to this tool, even under
+    # --dangerously-skip-permissions — verified). Remote hosts reach the viewer via
+    # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
+    perm_token = secrets.token_hex(16)
+    job["perm_token"] = perm_token
+    cmd += ["--mcp-config", _perm_mcp_config_path(host),
+            "--permission-prompt-tool", "mcp__viewerperm__approve"]
+    # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
+    # clients persist it as a literal, which would run `claude --model default`
+    # (an invalid model id). Treat it — and blank — as "omit --model".
+    if model and model != "default" and re.fullmatch(r"[A-Za-z0-9._-]+", model):
         cmd += ["--model", model]
 
     # Per-session system prompt and goal, managed from the viewer's panel.
@@ -708,6 +1026,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         try:
             env = dict(os.environ)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            if perm_token:  # let permission_mcp.py reach the viewer + this session
+                env["VIEWER_PERM_SESSION"] = session_id
+                env["VIEWER_PERM_PORT"] = str(PORT)
+                env["VIEWER_PERM_TOKEN"] = perm_token
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -731,7 +1053,17 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     cmd[0] = remote_claude_bin(host)
                 except Exception:
                     pass
-                proc = RemoteProc(host, cmd, cwd)
+                # Ship the perm-tool env into the remote shell so its permission_mcp
+                # can reach the viewer directly at its tailnet address.
+                rperm_env = None
+                if perm_token:
+                    from viewer.remote import viewer_tailnet_base
+                    base = viewer_tailnet_base(PORT)
+                    rperm_env = {"VIEWER_PERM_SESSION": session_id,
+                                 "VIEWER_PERM_TOKEN": perm_token}
+                    if base:
+                        rperm_env["VIEWER_PERM_BASE"] = base
+                proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -757,6 +1089,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
+                # Capture the final assistant text so the push notification can
+                # show the actual reply, not a generic "finished" message.
+                res_text = ev.get("result") or ev.get("subtype") or ""
+                if isinstance(res_text, str) and res_text.strip():
+                    job["last_result"] = res_text.strip()
                 # Turn finished: feed the next queued message, or shut down.
                 with CHAT_LOCK:
                     nxt = job["queue"].pop(0) if job["queue"] else None
@@ -797,6 +1134,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 job["stdin_open"] = False
                 job["running"] = False
                 job["finished"] = time.time()
+                rc = job.get("returncode")
+                interrupted = job.get("interrupted")
+                last_result = job.get("last_result", "")
             # Messages queued in the closing race get a fresh resumed run.
             if leftovers and job["returncode"] == 0:
                 first, rest = leftovers[0], leftovers[1:]
@@ -804,6 +1144,25 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                     job["mode"], job["cwd"], job["model"], job.get("host", "local")):
                     with CHAT_LOCK:
                         CHAT_JOBS[session_id]["queue"].extend(rest)
+                    leftovers = []  # a follow-up run is now carrying them; don't also notify
+            # (AskUserQuestion is handled synchronously by the permission tool while
+            # the turn is live — see _await_question_answer — so there is nothing to
+            # detect here at run-finish.)
+            # Background push: tell the app the turn finished (best-effort, async).
+            # Skip when a follow-up resumed run is still carrying queued work, and
+            # when the user interrupted (they're already looking).
+            if not leftovers and not interrupted:
+                try:
+                    from viewer.push import notify_all, push_preview
+                    label = _push_label(session_id, cwd)
+                    if rc == 0 and last_result:
+                        body = push_preview(last_result)
+                        notify_all(label, body, data={"session": session_id})
+                    else:
+                        body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
+                        notify_all(label, body, data={"session": session_id})
+                except Exception:
+                    pass
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -1331,15 +1690,39 @@ class LocalHost(Host):
             return {"found": True, "path": str(matches[0].relative_to(CLAUDE_DIR.parent))}
         return {"found": False}
 
+    @staticmethod
+    def _preview_from(obj):
+        """Chat-list preview from one transcript record: 'You: …' for user text,
+        plain text for assistant. Returns None for records that aren't visible
+        messages (tool results, meta records, <command…> wrappers)."""
+        t = obj.get("type")
+        if t not in ("user", "assistant") or obj.get("isMeta"):
+            return None
+        content = (obj.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(b.get("text", "") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            return None
+        text = text.strip()
+        if not text or text.startswith("<"):   # command/task-notification wrappers
+            return None
+        text = " ".join(text.split())[:140]
+        return ("You: " + text) if t == "user" else text
+
     def list_sessions(self):
         sessions = []
         for jsonl_file in CLAUDE_DIR.rglob("*.jsonl"):
             if "subagents" in str(jsonl_file):
                 continue
             stat = jsonl_file.stat()
-            title, session_id = "", jsonl_file.stem
+            title, session_id, preview = "", jsonl_file.stem, ""
             try:
                 if stat.st_size > 50000:
+                    # The tail scan already runs for titles — the last-message
+                    # preview rides along in the same pass at no extra I/O.
                     with open(jsonl_file, "r") as f:
                         f.seek(max(0, stat.st_size - 50000)); f.readline()
                         for line in f:
@@ -1351,7 +1734,10 @@ class LocalHost(Host):
                                 title = obj.get("customTitle", "")
                             if obj.get("type") == "agent-name" and not title:
                                 title = obj.get("agentName", "")
-                if not title:
+                            p = self._preview_from(obj)
+                            if p:
+                                preview = p
+                if not title or not preview:
                     with open(jsonl_file, "r") as f:
                         for i, line in enumerate(f):
                             if i > 200:
@@ -1360,10 +1746,13 @@ class LocalHost(Host):
                                 obj = json.loads(line)
                             except json.JSONDecodeError:
                                 continue
-                            if obj.get("type") == "custom-title":
-                                title = obj.get("customTitle", ""); break
-                            if obj.get("type") == "agent-name":
-                                title = obj.get("agentName", ""); break
+                            if obj.get("type") == "custom-title" and not title:
+                                title = obj.get("customTitle", "")
+                            if obj.get("type") == "agent-name" and not title:
+                                title = obj.get("agentName", "")
+                            p = self._preview_from(obj)
+                            if p:
+                                preview = p
             except Exception:
                 pass
             pdir = str(jsonl_file.parent.name)
@@ -1372,7 +1761,8 @@ class LocalHost(Host):
             project = pdir.replace("--", "/").replace("-", "/")
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
-                             "size": stat.st_size, "modified": stat.st_mtime})
+                             "size": stat.st_size, "modified": stat.st_mtime,
+                             "preview": preview})
         sessions.sort(key=lambda s: s["modified"], reverse=True)
         return sessions
 

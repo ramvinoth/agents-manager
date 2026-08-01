@@ -1,0 +1,396 @@
+/**
+ * Typed client for the Agents server HTTP + WebSocket API.
+ *
+ * Mirrors web/src/lib/api.ts, but authenticates with a Bearer token (mobile has
+ * no cookie jar) instead of the HttpOnly `viewer_session` cookie. The backend
+ * accepts either — see viewer/server.py `_auth_token`.
+ */
+import { serverUrl, token } from "../state/config"
+import { normModel } from "../lib/model"
+
+export type User = { id: number; username: string }
+export type Host = {
+  id: string
+  label: string
+  host: string
+  user: string
+  port: number
+  auth: "key" | "password"
+  keyFile: string
+}
+export type ChatResult = { session: string }
+export type Project = { cwd: string; modified?: number }
+export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
+export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
+export type FileList = { path: string; parent?: string; entries: FileEntry[]; home?: string; truncated?: boolean }
+export type SessionSummary = {
+  lines: number
+  userMessages: number
+  assistantMessages: number
+  totalInput: number
+  totalOutput: number
+  tools: Record<string, number>
+  models: string[]
+  title?: string
+  summaries?: string[]
+  startTime?: string
+  endTime?: string
+  cwd?: string
+}
+export type AgentInfo = {
+  id: string
+  label: string
+  vendor?: string
+  installed: boolean
+  loggedIn?: boolean
+  docs?: string
+}
+export type PermApproval = { id: string; tool_name: string; input: unknown }
+export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string }
+// Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
+export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
+export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
+export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
+export type Loop = { id: string; session: string; prompt: string; interval: number; nextRun?: number; runs?: number; enabled?: boolean }
+export type PendingQuestion = { tool_use_id: string; questions: unknown }
+export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
+export type ChatStatus = {
+  running?: boolean
+  idle?: boolean
+  queue?: string[]
+  turns?: number
+  steered?: number
+  interrupted?: boolean
+  pending_approvals?: PermApproval[]
+  /** A parked AskUserQuestion awaiting the user's answer (async — the run ended). */
+  pending_question?: PendingQuestion | null
+  /** A proposed plan (ExitPlanMode) awaiting Approve/Deny. */
+  pending_plan?: PendingPlan | null
+}
+export type Session = {
+  id: string
+  title?: string
+  path: string
+  project?: string
+  modified?: number
+  size?: number
+  /** Emoji avatar chosen on the Session profile page (overlaid server-side). */
+  avatar?: string
+  /** Server-side flags (session meta): archived hides from the main list; favorite pins. */
+  archived?: boolean
+  favorite?: boolean
+  /** Last visible message, "You: …"-prefixed for user turns (chat-list preview). */
+  preview?: string
+}
+
+function authHeaders(): Record<string, string> {
+  const t = token()
+  return t ? { Authorization: `Bearer ${t}` } : {}
+}
+
+async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  if (!serverUrl()) throw new Error("No server configured")
+  const res = await fetch(serverUrl() + path, {
+    method,
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await res.text()
+  let data: unknown = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = { raw: text }
+  }
+  if (!res.ok) {
+    const msg = (data as { error?: string })?.error || `HTTP ${res.status}`
+    const err = new Error(msg) as Error & { status?: number }
+    err.status = res.status
+    throw err
+  }
+  return data as T
+}
+
+export const api = {
+  // ---- auth ----
+  authState: () => req<{ signupOpen: boolean; user: User | null }>("GET", "/api/auth/state"),
+  me: () => req<{ user: User | null }>("GET", "/api/auth/me"),
+  signin: (username: string, password: string) =>
+    req<{ user: User; token?: string }>("POST", "/api/auth/signin", { username, password, wantToken: true }),
+  signup: (username: string, password: string) =>
+    req<{ user: User; token?: string }>("POST", "/api/auth/signup", { username, password, wantToken: true }),
+  signout: () => req("POST", "/api/auth/signout", {}),
+
+  // ---- push notifications ----
+  // Register this device's Expo push token so the server can notify us in the
+  // background (turn finished / approval needed). Unregister on logout.
+  pushRegister: (token: string, platform = "ios") =>
+    req<{ registered?: boolean; error?: string }>("POST", "/api/push/register", { token, platform }),
+  pushUnregister: (token: string) =>
+    req<{ unregistered?: boolean }>("POST", "/api/push/unregister", { token }),
+
+  // ---- hosts ----
+  hosts: () => req<Host[]>("GET", "/api/hosts"),
+
+  // ---- sessions ----
+  sessions: (host: string) =>
+    req<Session[]>("GET", `/api/sessions?host=${encodeURIComponent(host)}`),
+  // Transcript records (last `tail` lines). Mirrors web api.sessionReadTail —
+  // `path` is inserted unencoded so the server's /api/session/<path> wildcard
+  // route matches, exactly as the web client does. The server responds with a
+  // JSON envelope {start,end,size,lines:[...]}; we return the `lines` array
+  // (each entry is one JSONL transcript record).
+  sessionRead: async (host: string, path: string, tail = 400): Promise<string[]> => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const q = new URLSearchParams({ tail: String(tail) })
+    if (host && host !== "local") q.set("host", host)
+    const res = await fetch(`${serverUrl()}/api/session/${path}?${q.toString()}`, { headers: authHeaders() })
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`) as Error & { status?: number }
+      err.status = res.status
+      throw err
+    }
+    const env = (await res.json()) as { lines?: string[] }
+    return Array.isArray(env.lines) ? env.lines : []
+  },
+  // Start a brand-new agent session in `cwd`. Returns the new session id plus the
+  // transcript path, which the thread screen opens directly.
+  newSession: (body: {
+    message: string
+    cwd?: string
+    mode?: string
+    model?: string
+    host?: string
+    agent?: string
+    title?: string
+  }) => req<{ started: boolean; session: string; path: string }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
+  // Distinct working directories seen across sessions — the cwd suggestions.
+  // Server returns [{cwd, modified}], newest first.
+  projects: (host: string) =>
+    req<Project[]>(
+      "GET",
+      `/api/projects${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
+    ),
+
+  // ---- drive a session ----
+  // Body shape mirrors web/ store.ts: { path, message, mode, model, agent, host }.
+  chat: (body: {
+    message: string
+    path?: string
+    mode?: string
+    model?: string
+    agent?: string
+    host?: string
+    queue?: boolean
+  }) => req<ChatResult>("POST", "/api/chat", { ...body, model: normModel(body.model) }),
+  chatStatus: (id: string) => req<ChatStatus>("GET", `/api/chat/status?id=${encodeURIComponent(id)}`),
+  // The server derives the session id from `path` (via sid_from_path, which also
+  // accepts a bare id). Send `path` to match — sending `session` is ignored and
+  // yields "Session and message required".
+  chatInterrupt: (path: string) => req("POST", "/api/chat/interrupt", { path }),
+  // Inject a message into a turn that's already running (mid-flight steer).
+  chatSteer: (body: { path: string; message: string; host?: string }) =>
+    req("POST", "/api/chat/steer", body),
+  // Answer a per-call MCP tool approval (the B-true bridge): allow/deny.
+  chatPermissionDecide: (body: { session: string; id: string; decision: "allow" | "deny" }) =>
+    req("POST", "/api/chat/permission/decide", body),
+  // Answer a parked AskUserQuestion (async): the server resolves the pending row
+  // and RESUMES the session with the picks. `picks` are option labels aligned to
+  // the questions. Returns {resumed:true} once the resumed run starts.
+  chatQuestionAnswer: (body: { session: string; picks: string[]; mode?: string; model?: string }) =>
+    req<{ resumed?: boolean; answered?: boolean; session?: string; error?: string }>("POST", "/api/chat/question/answer", body),
+  // Approve or deny a proposed plan (ExitPlanMode). Deny may carry revision
+  // feedback the agent uses to re-plan. Same-turn (the run is blocked waiting).
+  chatPlanDecide: (body: { session: string; decision: "approve" | "deny"; feedback?: string }) =>
+    req<{ decided?: boolean; session?: string; error?: string }>("POST", "/api/chat/plan/decide", body),
+  // Drop a message from the pending queue by its index.
+  chatQueueRemove: (body: { path: string; index: number }) =>
+    req<{ removed: string | null }>("POST", "/api/chat/queue/remove", body),
+
+  // ---- session management ----
+  renameSession: (body: { session: string; title: string; host?: string; agent?: string }) =>
+    req<{ renamed: boolean; title: string }>("POST", "/api/session/rename", body),
+  deleteSession: (body: { session: string; host?: string; agent?: string }) =>
+    req("POST", "/api/session/delete", body),
+  forkSession: (body: { session: string; uuid: string; host?: string; agent?: string }) =>
+    req("POST", "/api/session/fork", body),
+  // Revert: rewind the session to just before `uuid`. mode "conversation" drops
+  // the messages only; "code" also restores files; "code+conversation" does both.
+  restoreSession: (body: {
+    session: string
+    uuid: string
+    mode?: "conversation" | "code" | "code+conversation"
+    host?: string
+    agent?: string
+  }) => req("POST", "/api/session/restore", body),
+
+  // ---- session stats ----
+  sessionSummary: (host: string, session: string) =>
+    req<SessionSummary>(
+      "GET",
+      `/api/session-summary?session=${encodeURIComponent(session)}` +
+        (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+    ),
+
+  // ---- per-session metadata (system prompt + goal), mirrors web api.sessionMeta ----
+  sessionMeta: (host: string, session: string) =>
+    req<SessionMeta>(
+      "GET",
+      `/api/session-meta?session=${encodeURIComponent(session)}` +
+        (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+    ),
+  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; host?: string }) =>
+    req<{ ok?: boolean }>("POST", "/api/session-meta", body),
+
+  // ---- capabilities: skills + MCP tools (host-aware), mirrors web api ----
+  capabilities: (host: string, cwd?: string) =>
+    req<Capabilities>(
+      "GET",
+      `/api/capabilities?${new URLSearchParams({
+        ...(host && host !== "local" ? { host } : {}),
+        ...(cwd ? { cwd } : {}),
+      }).toString()}`
+    ),
+  skill: (host: string, path: string) =>
+    req<{ content?: string; error?: string }>(
+      "GET",
+      `/api/skill?path=${encodeURIComponent(path)}` + (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+    ),
+  skillSave: (body: { name: string; content: string; scope?: string; cwd?: string; host?: string }) =>
+    req<{ saved?: boolean; path?: string; error?: string }>("POST", "/api/skill/save", body),
+  skillDelete: (body: { path: string; host?: string }) =>
+    req<{ deleted?: boolean; error?: string }>("POST", "/api/skill/delete", body),
+  mcpSave: (body: { name: string; scope?: string; config: Record<string, unknown>; cwd?: string; host?: string }) =>
+    req<{ saved?: boolean; error?: string }>("POST", "/api/mcp/save", body),
+  mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string }) =>
+    req<{ deleted?: boolean; error?: string }>("POST", "/api/mcp/delete", body),
+
+  // ---- scheduled loops (re-run a prompt on an interval), mirrors web api.loops ----
+  loops: (sessionId: string) => req<Loop[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
+  loopsCreate: (body: { session: string; prompt: string; interval: number; model?: string }) =>
+    req<{ id?: string }>("POST", "/api/loops", body),
+  loopsDelete: (id: string) => req("POST", "/api/loops/delete", { id }),
+
+  // ---- agents available on a host ----
+  agents: (host: string) =>
+    req<{ agents: AgentInfo[] }>(
+      "GET",
+      `/api/agents${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
+    ),
+
+  // ---- filesystem browser (host-aware) ----
+  fs: (host: string, path: string, hidden = false) =>
+    req<FileList>(
+      "GET",
+      `/api/fs?path=${encodeURIComponent(path)}&hidden=${hidden ? 1 : 0}` +
+        (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+    ),
+
+  // Create a folder. `name` must be a single segment (server rejects slashes).
+  fsMkdir: (body: { path: string; name: string; host?: string }) =>
+    req<{ error?: string }>("POST", "/api/fs/mkdir", body),
+
+  // Delete a file/folder (server moves it to a reversible trash dir).
+  fsDelete: (body: { path: string; host?: string }) =>
+    req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", body),
+
+  // Rename a single entry in place. `name` is one path segment.
+  fsRename: (body: { path: string; name: string; host?: string }) =>
+    req<{ renamed?: string; error?: string }>("POST", "/api/fs/rename", body),
+
+  // Upload a file to `dir` on `host` via multipart/form-data. RN's FormData
+  // takes a { uri, name, type } object for a file part; the server parses the
+  // multipart body into (filename, bytes) — see _p_fs_upload.
+  fsUpload: async (host: string, dir: string, uri: string, name: string, mime?: string) => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const form = new FormData()
+    // @ts-expect-error RN FormData accepts the {uri,name,type} file shape.
+    form.append("file", { uri, name, type: mime || "application/octet-stream" })
+    const q = new URLSearchParams({ path: dir })
+    if (host && host !== "local") q.set("host", host)
+    const res = await fetch(`${serverUrl()}/api/fs/upload?${q.toString()}`, {
+      method: "POST",
+      // NOTE: do NOT set Content-Type — fetch adds the multipart boundary itself.
+      headers: authHeaders(),
+      body: form,
+    })
+    const data = (await res.json().catch(() => null)) as { uploaded?: unknown[]; error?: string } | null
+    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
+    return data
+  },
+
+  // The authed URL for downloading a file. RN's fetch/FileSystem can pass the
+  // Bearer header (a browser <a> can't), so we return the URL + headers for
+  // FileSystem.downloadAsync to save it to disk, then share it.
+  fsDownloadUrl: (host: string, path: string): { url: string; headers: Record<string, string> } => {
+    const q = new URLSearchParams({ path })
+    if (host && host !== "local") q.set("host", host)
+    return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
+  },
+
+  // ---- voice (speech-to-text + text-to-speech) ----
+  // STT: POST the recorded audio as the raw request body (the server reads the
+  // body directly by Content-Length — see _p_voice_stt). `body` is a Blob (RN
+  // gives one from fetch(fileUri).blob()) so the platform sets Content-Length.
+  voiceStt: async (audio: Blob, mime = "audio/m4a"): Promise<{ text: string }> => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const res = await fetch(`${serverUrl()}/api/voice/stt`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": mime },
+      body: audio,
+    })
+    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null
+    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
+    return { text: data?.text || "" }
+  },
+  // TTS: POST text, get back WAV audio bytes as a Blob. The voice lib writes it
+  // to a temp file for Audio playback (expo-av can't POST a remote source).
+  voiceTts: async (text: string): Promise<Blob> => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const res = await fetch(`${serverUrl()}/api/voice/tts`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    })
+    if (!res.ok) {
+      const err = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(err?.error || `HTTP ${res.status}`)
+    }
+    return await res.blob()
+  },
+
+  // ---- host management ----
+  hostsSave: (cfg: {
+    id?: string
+    label: string
+    host: string
+    user: string
+    port?: number
+    auth?: "key" | "password"
+    keyFile?: string
+    password?: string
+  }) => req<{ ok?: boolean; error?: string }>("POST", "/api/hosts/save", cfg),
+  hostsTest: (cfg: Record<string, unknown>) => req<{ ok: boolean; message?: string }>("POST", "/api/hosts/test", cfg),
+  hostsDelete: (id: string) => req("POST", "/api/hosts/delete", { id }),
+
+  // ---- slash commands (composer autocomplete) ----
+  commands: (host: string) =>
+    req<SlashCommand[]>(
+      "GET",
+      `/api/commands${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
+    ),
+
+  // ---- terminal WS ----
+  // Mirrors web/ TerminalPanel: binary output, JSON `{t:"i",d}` input,
+  // `{t:"r",cols,rows}` resize. Auth: RN's WebSocket can send an Authorization
+  // header (unlike a browser), so the token rides the handshake — see
+  // TerminalScreen. `local` host is implied by omitting the param.
+  terminalWsUrl: (opts: { cols: number; rows: number; host?: string; key?: string; init?: string }) => {
+    const base = serverUrl().replace(/^http/, "ws")
+    const p = new URLSearchParams({ cols: String(opts.cols), rows: String(opts.rows) })
+    if (opts.host && opts.host !== "local") p.set("host", opts.host)
+    if (opts.key) p.set("key", opts.key)
+    if (opts.init) p.set("init", opts.init)
+    return `${base}/api/terminal/ws?${p.toString()}`
+  },
+}

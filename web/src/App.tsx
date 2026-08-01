@@ -5,6 +5,7 @@ import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
 import { Transcript } from "@/components/Transcript"
 import { Composer } from "@/components/Composer"
+import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
 import { SearchBar } from "@/components/SearchBar"
@@ -295,7 +296,14 @@ function App() {
               </div>
             )}
           </div>
-          {needsAuth ? null : auth?.loggedIn === false ? <LoginPanel /> : <Composer />}
+          {needsAuth ? null : auth?.loggedIn === false ? (
+            <LoginPanel />
+          ) : (
+            <>
+              <PermissionPrompt />
+              <Composer />
+            </>
+          )}
         </main>
         {!needsAuth && (
           <aside className="hidden w-72 shrink-0 border-l border-border lg:block">

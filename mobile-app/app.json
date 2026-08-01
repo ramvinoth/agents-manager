@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "Agents",
+    "slug": "agents-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "agents",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ff6a1a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.suhai.agents",
+      "buildNumber": "1",
+      "infoPlist": {
+        "CFBundleDisplayName": "Harman",
+        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "aps-environment": "production"
+      }
+    },
+    "android": {
+      "package": "com.suhai.agents",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ff6a1a"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ff6a1a"
+        }
+      ]
+    ]
+  }
+}

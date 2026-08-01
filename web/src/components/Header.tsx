@@ -19,7 +19,7 @@ import {
   KeyRound,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
-import { SuhaiDialog } from "./SuhaiDialog"
+import { HarmanDialog } from "./HarmanDialog"
 import { HostDialog } from "./HostDialog"
 import { EnvDialog } from "./EnvDialog"
 import { SessionActions } from "./SessionActions"
@@ -50,7 +50,7 @@ function useTheme() {
 export function Header() {
   const { dark, toggle } = useTheme()
   const [nsOpen, setNsOpen] = useState(false)
-  const [suhaiOpen, setSuhaiOpen] = useState(false)
+  const [harmanOpen, setHarmanOpen] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
@@ -70,7 +70,7 @@ export function Header() {
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
-  // so showing New/SUHAI/host/panels here would only open dialogs that then 401.
+  // so showing New/Harman/host/panels here would only open dialogs that then 401.
   if (needsAuth) {
     return (
       <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3">
@@ -98,11 +98,11 @@ export function Header() {
   const current = sessions.find((x) => x.path === currentSessionPath)
   const hostLabel = describeHost(currentHost, hosts)
 
-  // SUHAI: open the existing orchestrator session if one exists, else set one up.
-  const openSuhai = () => {
-    const existing = sessions.find((s) => s.title === "SUHAI")
+  // Harman: open the existing orchestrator session if one exists, else set one up.
+  const openHarman = () => {
+    const existing = sessions.find((s) => s.title === "Harman")
     if (existing) loadSession(existing.path)
-    else setSuhaiOpen(true)
+    else setHarmanOpen(true)
   }
 
   return (
@@ -190,10 +190,10 @@ export function Header() {
         variant="outline"
         size="sm"
         className="h-7 gap-1 px-2 text-xs"
-        onClick={openSuhai}
-        title="SUHAI — Super Human Augmented Intelligence orchestrator"
+        onClick={openHarman}
+        title="Harman — Harness Manager orchestrator"
       >
-        <Sparkles className="size-3.5" /> <span className="hidden sm:inline">SUHAI</span>
+        <Sparkles className="size-3.5" /> <span className="hidden sm:inline">Harman</span>
       </Button>
 
       <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -264,7 +264,7 @@ export function Header() {
       </Button>
 
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
-      <SuhaiDialog open={suhaiOpen} onOpenChange={setSuhaiOpen} />
+      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>

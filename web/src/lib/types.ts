@@ -29,13 +29,19 @@ export interface ToolUseBlock {
   input: unknown
   id: string
   result: unknown | null
+  isError?: boolean
 }
 export type Block = TextBlock | ToolUseBlock
 
+export interface ImagePart {
+  mime: string
+  data: string
+}
 export interface UserTurn {
   type: "user"
   domId: string
   content: string
+  images?: ImagePart[]
   timestamp?: string
   uuid?: string
 }

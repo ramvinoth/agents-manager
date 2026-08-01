@@ -191,6 +191,9 @@ class ApiClient {
   chatStatus(sessionId: string) {
     return this.getJSON(`/api/chat/status?id=${sessionId}`)
   }
+  chatPermissionDecide(body: Body) {
+    return this.postRes("/api/chat/permission/decide", body)
+  }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
   }

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="hub" x1="466" y1="466" x2="558" y2="558" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd9a0"/>
+      <stop offset="1" stop-color="#ff9d3c"/>
+    </linearGradient>
+  </defs>
+  <!-- Transparent background: Android draws the tile colour behind this via the
+       adaptiveIcon.backgroundColor. The glyph is kept within the safe zone
+       (center ~66%) so the system mask never clips it. -->
+  <g fill="#ffffff">
+    <rect x="378" y="378" width="74" height="288" rx="37"/>
+    <rect x="572" y="378" width="74" height="288" rx="37"/>
+    <rect x="415" y="485" width="194" height="74" rx="37"/>
+  </g>
+  <circle cx="512" cy="512" r="60" fill="#ff6a1a"/>
+  <circle cx="512" cy="512" r="44" fill="url(#hub)"/>
+  <circle cx="512" cy="512" r="16" fill="#ffffff"/>
+</svg>

@@ -33,6 +33,11 @@ export interface ChatStatus {
   kind: "running" | "done" | "error"
   text: string
 }
+export interface PermApproval {
+  id: string
+  tool_name: string
+  input: unknown
+}
 
 // Non-reactive timers (module-level so they never trigger re-renders).
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -81,6 +86,7 @@ interface AppState {
   chatRunning: boolean
   chatStatus: ChatStatus | null
   queue: string[]
+  pendingApprovals: PermApproval[]
   stash: string[]
   permMode: string
   model: string
@@ -170,6 +176,7 @@ interface AppState {
   clearPendingDraft: () => void
   steerMessage: (msg: string) => Promise<string | undefined>
   interruptRun: () => Promise<void>
+  decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
@@ -320,11 +327,11 @@ export const useStore = create<AppState>((set, get) => {
       try {
         const d: any = await api.chatStatus(sessionId)
         if (d.running) {
-          set({ queue: d.queue || [] })
+          set({ queue: d.queue || [], pendingApprovals: d.pending_approvals || [] })
           return
         }
         if (chatTimer) { clearInterval(chatTimer); chatTimer = null }
-        set({ chatRunning: false, queue: [] })
+        set({ chatRunning: false, queue: [], pendingApprovals: [] })
         await pollTick()
         get().loadGitStatus() // the run may have committed / switched branches
         // Refresh the full-session summary (fresh user-message count) without a
@@ -427,6 +434,15 @@ export const useStore = create<AppState>((set, get) => {
     return true
   }
 
+  // Browsers throttle timers in backgrounded tabs (~1/min), so a transcript
+  // update — e.g. a run continuing after you approve a tool — can lag until the
+  // tab is focused. Refresh immediately when the tab becomes visible again.
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && get().currentSessionPath) pollTick()
+    })
+  }
+
   return {
     agents: [],
     currentAgent: localStorage.getItem("currentAgent") || "claude",
@@ -451,6 +467,7 @@ export const useStore = create<AppState>((set, get) => {
     chatRunning: false,
     chatStatus: null,
     queue: [],
+    pendingApprovals: [],
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
     permMode: localStorage.getItem("permMode") || "acceptEdits",
     model: localStorage.getItem("model") || "",
@@ -1074,6 +1091,18 @@ export const useStore = create<AppState>((set, get) => {
         await api.chatInterrupt({ path: currentSessionPath })
       } catch {
         /* ignore */
+      }
+    },
+
+    // Answer a pending tool-permission request (Ask mode). Optimistically drop
+    // the card; the poll reconciles from the backend's pending_approvals.
+    decidePermission: async (id, decision) => {
+      const sid = sessionIdOf(get().currentSessionPath)
+      set({ pendingApprovals: get().pendingApprovals.filter((p) => p.id !== id) })
+      try {
+        await api.chatPermissionDecide({ session: sid, id, decision })
+      } catch {
+        /* the run will time out and deny if this never lands */
       }
     },
 

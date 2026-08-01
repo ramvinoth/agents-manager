@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="80" x2="900" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffa23c"/>
+      <stop offset="0.5" stop-color="#ff6a1a"/>
+      <stop offset="1" stop-color="#e64a05"/>
+    </linearGradient>
+    <linearGradient id="hub" x1="430" y1="430" x2="594" y2="594" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd9a0"/>
+      <stop offset="1" stop-color="#ff9d3c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded-square app tile -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <!-- Gentle top sheen for depth -->
+  <path d="M0 230 A230 230 0 0 1 230 0 H794 A230 230 0 0 1 1024 230 V430 H0 Z" fill="#ffffff" opacity="0.05"/>
+
+  <!-- H monogram: two bold rails (the "harness") joined by a crossbar that
+       carries a central orchestration node (the "manager" hub). -->
+  <g fill="#ffffff">
+    <rect x="286" y="286" width="116" height="452" rx="58"/>
+    <rect x="622" y="286" width="116" height="452" rx="58"/>
+    <rect x="344" y="454" width="336" height="116" rx="58"/>
+  </g>
+  <!-- Hub: cut the tile colour back in, then drop the cyan node so it reads as a
+       coordinating core sitting on the crossbar. -->
+  <circle cx="512" cy="512" r="96" fill="url(#bg)"/>
+  <circle cx="512" cy="512" r="70" fill="url(#hub)"/>
+  <circle cx="512" cy="512" r="26" fill="#ffffff"/>
+</svg>

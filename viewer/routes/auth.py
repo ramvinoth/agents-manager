@@ -126,8 +126,11 @@ class AuthMixin:
         except ValueError as e:
             self.send_json({"error": str(e)}, status=400)
             return
-        self.set_session_cookie(db.create_session(user["id"]))
-        self.send_json({"user": user})
+        token = db.create_session(user["id"])
+        self.set_session_cookie(token)
+        # `wantToken` lets non-browser clients (mobile) receive the token in the
+        # body for header auth; the web UI omits it and keeps the HttpOnly cookie.
+        self.send_json({"user": user, **({"token": token} if body.get("wantToken") else {})})
 
     def _p_auth_signin(self, req):
         ip = self.client_address[0] if self.client_address else "?"
@@ -140,11 +143,13 @@ class AuthMixin:
         if not user:
             self.send_json({"error": "Wrong username or password"}, status=401)
             return
-        self.set_session_cookie(db.create_session(user["id"]))
-        self.send_json({"user": user})
+        token = db.create_session(user["id"])
+        self.set_session_cookie(token)
+        self.send_json({"user": user, **({"token": token} if body.get("wantToken") else {})})
 
     def _p_auth_signout(self, req):
-        db.delete_session(self._cookie(db.SESSION_COOKIE))
+        # Revoke via cookie (web) or Bearer header (mobile), whichever carried it.
+        db.delete_session(self._auth_token())
         self.set_session_cookie(None)  # clear the cookie
         self.send_json({"ok": True})
 

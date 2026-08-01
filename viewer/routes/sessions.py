@@ -163,9 +163,25 @@ class SessionsMixin:
             meta["goal"] = str(body["goal"]).strip()
         if "systemPrompt" in body:
             meta["systemPrompt"] = str(body["systemPrompt"]).strip()
+        if "avatar" in body:
+            # A short emoji/token chosen on the Session profile page. Cap length
+            # so a stray payload can't bloat the persisted meta file.
+            meta["avatar"] = str(body["avatar"]).strip()[:16]
+        if "archived" in body:
+            meta["archived"] = bool(body["archived"])
+        if "favorite" in body:
+            meta["favorite"] = bool(body["favorite"])
+        if "pinned" in body:
+            # A list of pinned message uuids. Cap count + id length so a stray
+            # payload can't bloat the persisted meta file.
+            meta["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
         save_json_file(META_FILE, SESSION_META)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
-                        "systemPrompt": meta.get("systemPrompt", "")})
+                        "systemPrompt": meta.get("systemPrompt", ""),
+                        "avatar": meta.get("avatar", ""),
+                        "archived": bool(meta.get("archived", False)),
+                        "favorite": bool(meta.get("favorite", False)),
+                        "pinned": meta.get("pinned", [])})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -178,7 +194,8 @@ class SessionsMixin:
             except Exception:
                 cwd = ""
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
-                            "systemPrompt": meta.get("systemPrompt", ""), "cwd": cwd})
+                            "systemPrompt": meta.get("systemPrompt", ""),
+                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []), "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -188,6 +205,7 @@ class SessionsMixin:
         meta = SESSION_META.get(sid) or {}
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
+                        "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
@@ -335,6 +353,9 @@ class SessionsMixin:
                 return
             if SESSION_META.pop(full.stem, None) is not None:
                 save_json_file(META_FILE, SESSION_META)
+            from viewer import questions
+            questions.clear(full.stem)
+            questions.clear_plan(full.stem)
             self.send_json({"deleted": True, "trash": str(trash / full.name)})
             return
         if sid and self.session_busy(sid):
@@ -552,9 +573,14 @@ class SessionsMixin:
                 sessions = (remote_list_sessions_agent(req.host, agent) if req.host != "local"
                             else list_sessions_local(agent))
                 for s in sessions:  # overlay viewer-set titles (rename / new-session name)
-                    t = SESSION_META.get(s["id"], {}).get("title")
+                    meta = SESSION_META.get(s["id"], {})
+                    t = meta.get("title")
                     if t:
                         s["title"] = t
+                    if meta.get("avatar"):
+                        s["avatar"] = meta["avatar"]
+                    s["archived"] = bool(meta.get("archived", False))
+                    s["favorite"] = bool(meta.get("favorite", False))
                 self.send_json(sessions)
             except Exception as e:
                 self.send_json({"error": f"SSH: {e}"} if req.host != "local" else {"error": str(e)},
@@ -712,7 +738,17 @@ class SessionsMixin:
     def serve_session_list(self, host="local"):
         """List all session JSONL files with metadata, on the selected host."""
         try:
-            self.send_json(get_host(host).list_sessions())
+            sessions = get_host(host).list_sessions()
+            # Overlay the viewer-set avatar (chosen on the Session profile page).
+            # Kept in SESSION_META keyed by session id, exactly like `title`.
+            if isinstance(sessions, list):
+                for s in sessions:
+                    meta = SESSION_META.get(s.get("id"), {})
+                    if meta.get("avatar"):
+                        s["avatar"] = meta["avatar"]
+                    s["archived"] = bool(meta.get("archived", False))
+                    s["favorite"] = bool(meta.get("favorite", False))
+            self.send_json(sessions)
         except Exception as e:
             self.send_json({"error": f"SSH: {e}"}, status=502)
 
