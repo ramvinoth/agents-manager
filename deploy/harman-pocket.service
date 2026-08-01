@@ -5,6 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/harman-pocket
+Environment=CUDA_VISIBLE_DEVICES=3
+Environment=HARMAN_POCKET_DEVICE=cuda
 Environment=HARMAN_POCKET_PORT=8097
 Environment=HARMAN_POCKET_VOICE=george
 Environment=HARMAN_STT_URL=http://127.0.0.1:8095/transcribe

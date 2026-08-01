@@ -21,16 +21,25 @@ from fastapi.responses import JSONResponse
 
 VOICE = os.environ.get("HARMAN_POCKET_VOICE", "george")  # US English male
 STT_FORWARD_URL = os.environ.get("HARMAN_STT_URL", "http://127.0.0.1:8095/transcribe")
+DEVICE = os.environ.get("HARMAN_POCKET_DEVICE", "cuda")  # "cuda" (GPU) or "cpu"
 
 app = FastAPI()
 
 try:
+    import torch
     from pocket_tts import TTSModel
     _model = TTSModel.load_model()
+    # Move to GPU when available (CLI's `serve` does model.to(device)). Long
+    # replies are much faster on the 3090s than CPU.
+    if DEVICE.startswith("cuda") and torch.cuda.is_available():
+        _model = _model.to(DEVICE)
+        _dev = DEVICE
+    else:
+        _dev = "cpu"
     _sr = int(_model.sample_rate)
     # Cache the voice state so every request skips prompt setup.
     _voice_state = _model.get_state_for_audio_prompt(VOICE)
-    print(f"[pocket] loaded, sr={_sr}, voice={VOICE}", flush=True)
+    print(f"[pocket] loaded on {_dev}, sr={_sr}, voice={VOICE}", flush=True)
 except Exception as e:
     print(f"[pocket] load failed: {e}", flush=True)
     _model = None
