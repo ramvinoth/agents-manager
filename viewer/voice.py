@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT
+from viewer.speakable import speakable
 
 
 class VoiceError(Exception):
@@ -53,9 +54,13 @@ def transcribe(audio: bytes, content_type: str = "audio/wav") -> str:
 
 
 def synthesize(text: str) -> bytes:
-    """Text → WAV bytes (16-bit PCM, mono, 24 kHz) spoken by Kokoro."""
-    text = (text or "").strip()
-    if not text:
+    """Text → WAV bytes (16-bit PCM, mono, 24 kHz) spoken by Kokoro.
+
+    The agent's replies are markdown, which a TTS model would voice literally
+    ("asterisk asterisk"). Strip it to clean, paced prose first (see
+    viewer.speakable) so the speech sounds natural."""
+    spoken = speakable(text or "")
+    if not spoken:
         raise VoiceError("empty text")
-    payload = json.dumps({"text": text}).encode("utf-8")
+    payload = json.dumps({"text": spoken}).encode("utf-8")
     return _post("/synthesize", payload, "application/json")
