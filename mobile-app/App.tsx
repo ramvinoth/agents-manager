@@ -47,14 +47,21 @@ const Stack = createNativeStackNavigator<RootStackParamList>()
 // from the native module) can navigate without a screen in scope.
 export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 
+// A tap can fire BEFORE the navigation tree mounts — this is the norm on a cold
+// start, where getLastNotificationResponseAsync resolves while <NavigationContainer>
+// is still initializing. So we buffer the most-recent target and flush it once the
+// tree is ready (see flushPendingNav, called from NavigationContainer.onReady and
+// after a warm tap). Bailing on !isReady() was why the tap only foregrounded the app.
+let pendingNav: Record<string, unknown> | null = null
+
 // Resolve a push payload {session, host} to its session PATH and open the Thread.
 // The payload carries the session id, but Thread navigates by `path` (unique;
 // id is not), so we look the session up on its host. Best-effort — a stale id or
 // offline host just no-ops rather than throwing.
-async function openFromNotification(data: Record<string, unknown>): Promise<void> {
+async function navToSession(data: Record<string, unknown>): Promise<void> {
   const session = typeof data.session === "string" ? data.session : ""
   const host = typeof data.host === "string" ? data.host : "local"
-  if (!session || !navigationRef.isReady()) return
+  if (!session) return
   try {
     const sessions = await api.sessions(host)
     const match = sessions.find((s) => s.id === session)
@@ -64,6 +71,22 @@ async function openFromNotification(data: Record<string, unknown>): Promise<void
   } catch {
     /* tap routing is best-effort */
   }
+}
+
+// Handle a tap: if the tree is ready, navigate now; otherwise stash it so
+// flushPendingNav can complete the jump once the container mounts.
+function openFromNotification(data: Record<string, unknown>): void {
+  const session = typeof data.session === "string" ? data.session : ""
+  if (!session) return
+  if (navigationRef.isReady()) void navToSession(data)
+  else pendingNav = data
+}
+
+// Drain any tap that arrived before navigation was ready (cold start).
+function flushPendingNav(): void {
+  const data = pendingNav
+  pendingNav = null
+  if (data && navigationRef.isReady()) void navToSession(data)
 }
 
 export default function App() {
@@ -117,7 +140,7 @@ export default function App() {
 
   // Route notification taps to the chat they belong to (foreground/background AND
   // cold start). Set up once; teardown on unmount.
-  useEffect(() => onNotificationTap((data) => void openFromNotification(data)), [])
+  useEffect(() => onNotificationTap((data) => openFromNotification(data)), [])
 
   if (!ready) {
     return (
@@ -130,7 +153,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer theme={navTheme} ref={navigationRef}>
+        <NavigationContainer theme={navTheme} ref={navigationRef} onReady={flushPendingNav}>
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
             initialRouteName={initial}
