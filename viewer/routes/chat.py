@@ -157,6 +157,20 @@ class ChatMixin:
             if not os.path.isdir(cwd):
                 cwd = str(Path.home())
 
+        # A session can opt into a custom OpenAI-compatible provider (its meta
+        # carries a preset id). Proxy its turns to that endpoint instead of the
+        # claude CLI — local only, and never for a remote host session.
+        if host == "local":
+            from viewer.engine import SESSION_META
+            preset_id = (SESSION_META.get(session_id) or {}).get("provider", "")
+            if preset_id:
+                from viewer.customrun import start_custom_run
+                if not start_custom_run(session_id, preset_id, message, cwd, host, mode):
+                    self.send_json({"error": "A message is already being processed, or the provider is unavailable"}, status=409)
+                    return
+                self.send_json({"started": True, "session": session_id})
+                return
+
         # While a run is active: queue (next turn) instead of rejecting.
         if body.get("queue"):
             pos = enqueue_chat(session_id, message)

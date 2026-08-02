@@ -46,7 +46,10 @@ export type AgentInfo = {
   docs?: string
 }
 export type PermApproval = { id: string; tool_name: string; input: unknown }
-export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string }
+export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string }
+// A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
+// returned by the server — it stays on the box and is revealed only to the runner.
+export type Provider = { id: string; name: string; baseUrl: string; model: string }
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
@@ -239,8 +242,26 @@ export const api = {
       `/api/session-meta?session=${encodeURIComponent(session)}` +
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
-  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; host?: string }) =>
+  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; provider?: string; host?: string }) =>
     req<{ ok?: boolean }>("POST", "/api/session-meta", body),
+
+  // ---- custom LLM providers (OpenAI-compatible endpoints). The apiKey is sent
+  //      on save but never returned; /models is fetched server-side so the key
+  //      never touches the device. ----
+  providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
+  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string }) =>
+    req<Provider & { error?: string }>("POST", "/api/providers", body),
+  providerDelete: (id: string) => req<{ deleted?: boolean }>("POST", "/api/providers/delete", { id }),
+  // Populate the model dropdown: either from a saved preset (id), or by probing a
+  // baseUrl+key before the preset is saved.
+  providerModels: (q: { id: string } | { baseUrl: string; key?: string }) =>
+    req<{ models: string[]; error?: string }>(
+      "GET",
+      "/api/providers/models?" +
+        new URLSearchParams(
+          "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
+        ).toString()
+    ),
 
   // ---- capabilities: skills + MCP tools (host-aware), mirrors web api ----
   capabilities: (host: string, cwd?: string) =>

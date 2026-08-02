@@ -175,13 +175,18 @@ class SessionsMixin:
             # A list of pinned message uuids. Cap count + id length so a stray
             # payload can't bloat the persisted meta file.
             meta["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
+        if "provider" in body:
+            # Custom LLM provider preset id ("" = Default/Claude). Runs for this
+            # session are proxied to that endpoint instead of the claude CLI.
+            meta["provider"] = str(body["provider"]).strip()[:64]
         save_json_file(META_FILE, SESSION_META)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
-                        "pinned": meta.get("pinned", [])})
+                        "pinned": meta.get("pinned", []),
+                        "provider": meta.get("provider", "")})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -195,7 +200,8 @@ class SessionsMixin:
                 cwd = ""
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
                             "systemPrompt": meta.get("systemPrompt", ""),
-                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []), "cwd": cwd})
+                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                            "provider": meta.get("provider", ""), "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -206,6 +212,7 @@ class SessionsMixin:
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                        "provider": meta.get("provider", ""),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
@@ -727,9 +734,21 @@ class SessionsMixin:
         # Pre-store system prompt / goal so the very first run already gets them.
         sp = (body.get("systemPrompt") or "").strip()
         goal = (body.get("goal") or "").strip()
-        if sp or goal:
+        provider = (body.get("provider") or "").strip()
+        if sp or goal or provider:
             SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
+            if provider:
+                SESSION_META[session_id]["provider"] = provider[:64]
             save_json_file(META_FILE, SESSION_META)
+        # A new custom-provider session is driven by the viewer (local only); the
+        # runner creates the transcript file the app then resolves via /api/resolve.
+        if provider and host == "local":
+            from viewer.customrun import start_custom_run
+            if not start_custom_run(session_id, provider, message, cwd, host, mode):
+                self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)
+                return
+            self.send_json({"started": True, "session": session_id})
+            return
         if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host):
             self.send_json({"error": "Busy"}, status=409)
             return

@@ -58,11 +58,13 @@ from viewer.routes.auth import AuthMixin
 from viewer.routes.git import GitMixin
 from viewer.routes.push import PushMixin
 from viewer.routes.voice import VoiceMixin
+from viewer.routes.providers import ProvidersMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
-    PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, http.server.SimpleHTTPRequestHandler,
+    PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
+    http.server.SimpleHTTPRequestHandler,
 ):
 
 
@@ -266,6 +268,8 @@ class SessionViewerHandler(
         "/api/git/status": "_g_git_status",
         "/api/git/clone/status": "_g_git_clone_status",
         "/api/voice/tts/stream": "_g_voice_tts_stream",
+        "/api/providers": "_g_providers",
+        "/api/providers/models": "_g_providers_models",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -319,6 +323,8 @@ class SessionViewerHandler(
         "/api/loops": "_p_loops",
         "/api/loops/delete": "_p_loops_delete",
         "/api/session-meta": "_p_session_meta",
+        "/api/providers": "_p_providers",
+        "/api/providers/delete": "_p_providers_delete",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),
