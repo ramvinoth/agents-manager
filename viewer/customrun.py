@@ -115,6 +115,23 @@ def _history_messages(path):
     return msgs[-_HISTORY_LIMIT:]
 
 
+def _enforce_alternating(messages):
+    """Collapse consecutive same-role turns into one. Templates like Gemma's
+    require strictly alternating user/assistant messages; merging keeps the
+    request valid regardless of transcript shape (e.g. two user turns in a row
+    after an error line, or a leading assistant turn)."""
+    out = []
+    for m in messages:
+        if out and out[-1]["role"] == m["role"]:
+            out[-1]["content"] += "\n\n" + m["content"]
+        else:
+            out.append(dict(m))
+    # Templates that disallow a leading assistant turn: drop it.
+    if out and out[0]["role"] == "assistant":
+        out = out[1:]
+    return out
+
+
 def _chat_completion(base_url, api_key, model, messages):
     """POST /v1/chat/completions (non-streaming) and return the reply text.
     Raises on transport / HTTP error so the caller can surface it in-thread."""
@@ -159,7 +176,10 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="")
             path = _resolve_transcript(session_id, cwd)
             _append(path, _user_record(session_id, cwd, message))
 
-            # Per-session system prompt / goal, injected as a system message.
+            # Per-session system prompt / goal. Some chat templates (e.g. Gemma)
+            # reject a separate "system" role and require strictly alternating
+            # user/assistant turns, so we FOLD the system text into the first user
+            # message instead of adding a system message.
             from viewer.engine import SESSION_META
             meta = SESSION_META.get(session_id) or {}
             system = []
@@ -170,10 +190,15 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="")
 
             messages = _history_messages(path)  # includes the user line just appended
             if system:
-                messages = [{"role": "system", "content": "\n\n".join(system)}] + messages
+                preamble = "\n\n".join(system)
+                first_user = next((m for m in messages if m["role"] == "user"), None)
+                if first_user is not None:
+                    first_user["content"] = preamble + "\n\n" + first_user["content"]
+                else:
+                    messages = [{"role": "user", "content": preamble}] + messages
 
             reply = _chat_completion(preset["baseUrl"], preset.get("apiKey", ""),
-                                     preset.get("model", ""), messages)
+                                     preset.get("model", ""), _enforce_alternating(messages))
             _append(path, _assistant_record(session_id, cwd, reply, preset.get("model", "")))
             with CHAT_LOCK:
                 job["turns"] += 1

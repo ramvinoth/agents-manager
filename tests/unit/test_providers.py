@@ -94,3 +94,30 @@ class TestTranscriptBuilders:
             {"role": "assistant", "content": "a1"},
             {"role": "user", "content": "q2"},
         ]
+
+
+class TestAlternating:
+    def test_merges_consecutive_same_role(self):
+        # Two user turns in a row (e.g. after an error assistant line was dropped)
+        # collapse into one so a strict template (Gemma) accepts the request.
+        out = customrun._enforce_alternating([
+            {"role": "user", "content": "a"},
+            {"role": "user", "content": "b"},
+            {"role": "assistant", "content": "c"},
+        ])
+        assert out == [
+            {"role": "user", "content": "a\n\nb"},
+            {"role": "assistant", "content": "c"},
+        ]
+
+    def test_drops_leading_assistant(self):
+        out = customrun._enforce_alternating([
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "q"},
+        ])
+        assert out == [{"role": "user", "content": "q"}]
+
+    def test_does_not_mutate_input(self):
+        src = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
+        customrun._enforce_alternating(src)
+        assert src[0]["content"] == "a"  # original untouched
