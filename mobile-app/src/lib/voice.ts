@@ -11,6 +11,7 @@
  */
 import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"
+import * as SecureStore from "expo-secure-store"
 import TrackPlayer, { Event, State } from "react-native-track-player"
 import { api } from "../api/client"
 
@@ -62,19 +63,54 @@ async function _release(rec: Audio.Recording | null) {
   }
 }
 
-/** Start a new recording and return the live handle (caller stops it via
- *  stopAndTranscribe). Any stranded prior recorder is cleaned up first so the
- *  expo-av single-recorder constraint can't wedge push-to-talk. */
-export async function startRecording(): Promise<Audio.Recording> {
+/** Fully reset the audio session so a fresh recorder can prepare. On re-entering
+ *  the voice screen the session may still be held by a prior recorder or by
+ *  TrackPlayer (TTS) — especially with staysActiveInBackground — which makes the
+ *  next prepare throw "recorder not prepared". Tearing the session down (mode off)
+ *  and re-asserting record mode clears that. */
+async function _resetAudioSession() {
   await _release(_active)
   _active = null
-  // Re-assert record mode in case a prior playback left the session in play-only.
+  try {
+    // Briefly drop recording/background hold, then re-assert — forces the native
+    // audio session to be reconfigured cleanly for a new recorder.
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+    })
+  } catch {
+    /* best effort */
+  }
+  await Audio.setAudioModeAsync(AUDIO_MODE).catch(() => {})
+}
+
+/** Create + prepare a recording with one automatic recovery: if the first
+ *  prepare fails (stale session after navigating away and back), reset the audio
+ *  session and try once more. Returns the started recorder or throws. */
+async function _freshRecording(options: Audio.RecordingOptions): Promise<Audio.Recording> {
+  await _release(_active)
+  _active = null
   await Audio.setAudioModeAsync(AUDIO_MODE)
-  const { recording } = await Audio.Recording.createAsync(
-    Audio.RecordingOptionsPresets.HIGH_QUALITY
-  )
-  _active = recording
-  return recording
+  try {
+    const { recording } = await Audio.Recording.createAsync(options)
+    _active = recording
+    return recording
+  } catch {
+    // Stale/held session — reset and retry once.
+    await _resetAudioSession()
+    const { recording } = await Audio.Recording.createAsync(options)
+    _active = recording
+    return recording
+  }
+}
+
+/** Start a new recording and return the live handle (caller stops it via
+ *  stopAndTranscribe). Any stranded prior recorder is cleaned up first so the
+ *  expo-av single-recorder constraint can't wedge push-to-talk. Resilient to a
+ *  stale session left by a prior screen visit / TTS playback. */
+export async function startRecording(): Promise<Audio.Recording> {
+  return _freshRecording(Audio.RecordingOptionsPresets.HIGH_QUALITY)
 }
 
 // Silence floor (dBFS) for the on-device VAD. expo-av meters loudness in dBFS —
@@ -129,7 +165,7 @@ export async function stopAndTranscribe(recording: Audio.Recording): Promise<str
 /** Record ~`seconds` of speech and return it as a Blob (m4a), or null if the
  *  recorder couldn't produce a file. Used by enrollment (one clean clip). */
 async function _recordClipBlob(seconds: number): Promise<Blob | null> {
-  const rec = await startRecording()
+  const rec = await _freshRecording(METERED_OPTIONS)
   await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
   await rec.stopAndUnloadAsync()
   if (_active === rec) _active = null
@@ -156,12 +192,10 @@ async function _recordClipBlob(seconds: number): Promise<Blob | null> {
 async function _recordListenWindow(
   seconds: number
 ): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
-  await _release(_active)
-  _active = null
-  await Audio.setAudioModeAsync(AUDIO_MODE)
   let peak = -160
-  const rec = new Audio.Recording()
-  try {
+  // Prepare a metered recorder, recovering once from a stale/held session.
+  const prepare = async (): Promise<Audio.Recording> => {
+    const rec = new Audio.Recording()
     await rec.prepareToRecordAsync(METERED_OPTIONS)
     rec.setProgressUpdateInterval(120)
     rec.setOnRecordingStatusUpdate((s) => {
@@ -169,18 +203,27 @@ async function _recordListenWindow(
         peak = s.metering
       }
     })
+    return rec
+  }
+  await _release(_active)
+  _active = null
+  await Audio.setAudioModeAsync(AUDIO_MODE)
+  let rec: Audio.Recording
+  try {
+    try {
+      rec = await prepare()
+    } catch {
+      // Stale session after navigating away/back or a prior TTS — reset + retry.
+      await _resetAudioSession()
+      rec = await prepare()
+    }
     _active = rec
     await rec.startAsync()
     await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
     await rec.stopAndUnloadAsync()
     if (_active === rec) _active = null
   } catch {
-    if (_active === rec) _active = null
-    try {
-      await rec.stopAndUnloadAsync()
-    } catch {
-      /* already unloaded */
-    }
+    if (_active) _active = null
     return { buf: null, silent: false }
   }
   const uri = rec.getURI()
@@ -225,14 +268,29 @@ function _atobPolyfill(input: string): string {
   return out
 }
 
+/** Whether the user has enrolled a voiceprint before (persisted across app
+ *  launches + sessions so re-opening the voice screen doesn't force re-enroll).
+ *  The voiceprint itself lives on the server, keyed by speaker_id; this is just a
+ *  local "we've done it" flag. */
+const ENROLLED_KEY = "harman.voice.enrolled"
+
+export async function isEnrolled(): Promise<boolean> {
+  try {
+    return (await SecureStore.getItemAsync(ENROLLED_KEY)) === "1"
+  } catch {
+    return false
+  }
+}
+
 /** Enroll the user's voiceprint from a fresh ~`seconds`-second recording. The
  *  server stores a speaker embedding so hands-free listening can verify it's
- *  really them saying "Harman". Returns true on success. */
+ *  really them saying "Harman". Returns true on success and remembers it. */
 export async function enrollVoice(seconds = 5, speakerId = "default"): Promise<boolean> {
   const blob = await _recordClipBlob(seconds)
   if (!blob) return false
   try {
     const { ok } = await api.voiceEnroll(blob, speakerId, "audio/m4a")
+    if (ok) await SecureStore.setItemAsync(ENROLLED_KEY, "1").catch(() => {})
     return ok
   } catch {
     return false

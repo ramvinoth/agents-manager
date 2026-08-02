@@ -7,6 +7,7 @@ import { api } from "../api/client"
 import { groupThread, parseTranscript } from "../lib/thread"
 import {
   enrollVoice,
+  isEnrolled,
   prepareAudio,
   resetRecorder,
   speak,
@@ -70,6 +71,9 @@ export default function VoiceScreen({ route }: Props) {
 
   useEffect(() => {
     prepareAudio().then((ok) => !ok && setPhase("denied"))
+    // Remember a prior enrollment so re-opening this (or another) session doesn't
+    // force the user to enroll again — the voiceprint already lives on the server.
+    isEnrolled().then(setEnrolled)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
       if (maxRecRef.current) clearTimeout(maxRecRef.current)
