@@ -10,9 +10,12 @@ route can surface a clear message; the caller never gets a silent empty result.
 """
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT
+from viewer.config import (
+    SPEECH_SERVICE_URL, SPEECH_TIMEOUT, VERIFY_SERVICE_URL, VERIFY_TIMEOUT,
+)
 from viewer.speakable import speakable
 
 
@@ -28,11 +31,16 @@ def enabled() -> bool:
 def _post(path: str, data: bytes, content_type: str) -> bytes:
     if not SPEECH_SERVICE_URL:
         raise VoiceError("voice is disabled (no speech service configured)")
-    url = SPEECH_SERVICE_URL.rstrip("/") + path
+    return _post_url(SPEECH_SERVICE_URL, path, data, content_type, SPEECH_TIMEOUT)
+
+
+def _post_url(base: str, path: str, data: bytes, content_type: str,
+              timeout: int) -> bytes:
+    url = base.rstrip("/") + path
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": content_type})
     try:
-        with urllib.request.urlopen(req, timeout=SPEECH_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:500]
@@ -64,3 +72,42 @@ def synthesize(text: str) -> bytes:
         raise VoiceError("empty text")
     payload = json.dumps({"text": spoken}).encode("utf-8")
     return _post("/synthesize", payload, "application/json")
+
+
+def _post_q(path: str, query: str, data: bytes, content_type: str) -> bytes:
+    """POST to the VERIFY service (enroll/segment live there, which may be a
+    different port than TTS), appending a query string (for ?speaker_id=…)."""
+    if not VERIFY_SERVICE_URL:
+        raise VoiceError("speaker verification is disabled (no verify service)")
+    full = path + ("?" + query if query else "")
+    return _post_url(VERIFY_SERVICE_URL, full, data, content_type, VERIFY_TIMEOUT)
+
+
+def enroll(audio: bytes, speaker_id: str = "default",
+           content_type: str = "audio/wav") -> dict:
+    """Enroll (or re-enroll) the user's voiceprint from a few seconds of speech.
+    Returns the service's {ok, speaker_id, dim}. The audio is a raw recording;
+    the box decodes it (ffmpeg) and stores a normalized speaker embedding."""
+    if not audio:
+        raise VoiceError("empty audio")
+    q = urllib.parse.urlencode({"speaker_id": speaker_id or "default"})
+    raw = _post_q("/enroll", q, audio, content_type or "application/octet-stream")
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise VoiceError("speech service returned a malformed enroll response")
+
+
+def segment(audio: bytes, speaker_id: str = "default",
+            content_type: str = "audio/wav") -> dict:
+    """Wake + speaker-verify one audio window. Returns the service's
+    {speech, wake, match, score, text}. The caller fires a chat turn only when
+    wake AND match are both true (strict: only the enrolled user's "Harman…")."""
+    if not audio:
+        return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
+    q = urllib.parse.urlencode({"speaker_id": speaker_id or "default"})
+    raw = _post_q("/segment", q, audio, content_type or "application/octet-stream")
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise VoiceError("speech service returned a malformed segment response")

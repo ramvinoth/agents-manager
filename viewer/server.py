@@ -250,6 +250,7 @@ class SessionViewerHandler(
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
+        "/api/voice/ws": "_g_voice_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/browser/frame": "_g_browser_frame",
@@ -306,6 +307,7 @@ class SessionViewerHandler(
         "/api/chat/plan/decide": "_p_chat_plan_decide",
         "/api/voice/stt": "_p_voice_stt",
         "/api/voice/tts": "_p_voice_tts",
+        "/api/voice/enroll": "_p_voice_enroll",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
@@ -336,7 +338,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 

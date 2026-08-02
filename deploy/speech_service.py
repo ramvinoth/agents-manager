@@ -18,6 +18,7 @@ inside ~/voiceagent-env (which already has sherpa_onnx, fastapi, uvicorn,
 soundfile, numpy).
 """
 import io
+import json
 import os
 import re
 import subprocess
@@ -32,10 +33,24 @@ from fastapi.responses import JSONResponse
 BASE = os.path.expanduser("~/.paseo/models/local-speech")
 PARAKEET = os.path.join(BASE, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 KOKORO = os.path.join(BASE, "kokoro-en-v0_19")
+SPK_MODEL = os.environ.get(
+    "HARMAN_SPK_MODEL",
+    os.path.join(BASE, "speaker-embedding", "nemo_en_titanet_small.onnx"),
+)
+SILERO_VAD = os.path.join(BASE, "silero-vad", "silero_vad.onnx")
+# Where enrolled voiceprints live (one JSON per speaker_id: {"dim":..,"vec":[...]}).
+VOICEPRINT_DIR = os.environ.get(
+    "HARMAN_VOICEPRINT_DIR", os.path.join(BASE, "voiceprints")
+)
 # NeMo Parakeet is a transducer trained at 16 kHz; Kokoro renders at 24 kHz.
 STT_SAMPLE_RATE = 16000
 PROVIDER = os.environ.get("HARMAN_SPEECH_PROVIDER", "cpu")  # "cuda" once ORT-GPU is wired
 THREADS = int(os.environ.get("HARMAN_SPEECH_THREADS", "4"))
+
+# Wake word + speaker-verification tunables (all env-overridable so they can be
+# tuned on the box without a redeploy).
+WAKE_WORD = os.environ.get("HARMAN_WAKE_WORD", "harman").lower().strip()
+SPK_THRESHOLD = float(os.environ.get("HARMAN_SPK_THRESHOLD", "0.45"))
 
 app = FastAPI()
 
@@ -85,6 +100,29 @@ try:
 except Exception as e:
     print(f"[speech] TTS load failed: {e}", flush=True)
     _tts = None
+
+
+def _load_spk():
+    """Speaker-embedding extractor (NeMo TitaNet) — 192-dim voiceprints used to
+    verify that a wake utterance came from the enrolled user, not a bystander.
+
+    Pinned to CPU: TitaNet's fused-conv layers trip a cuDNN BAD_PARAM on this
+    ORT-CUDA build, and the model is tiny (~40MB, sub-10ms/clip on CPU), so GPU
+    buys nothing here. STT/TTS stay on CUDA."""
+    provider = os.environ.get("HARMAN_SPK_PROVIDER", "cpu")
+    cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model=SPK_MODEL, num_threads=THREADS, provider=provider
+    )
+    return sherpa_onnx.SpeakerEmbeddingExtractor(cfg)
+
+
+try:
+    _spk = _load_spk()
+except Exception as e:
+    print(f"[speech] speaker-embedding load failed: {e}", flush=True)
+    _spk = None
+
+os.makedirs(VOICEPRINT_DIR, exist_ok=True)
 
 
 # ---- Audio helpers -----------------------------------------------------------
@@ -162,12 +200,173 @@ def _wav_bytes(samples: np.ndarray, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+# ---- Speaker verification + wake-word helpers --------------------------------
+
+def _embed(audio: np.ndarray) -> np.ndarray:
+    """Compute an L2-normalized speaker embedding for a mono-16k float32 clip."""
+    stream = _spk.create_stream()
+    stream.accept_waveform(STT_SAMPLE_RATE, audio)
+    stream.input_finished()
+    vec = np.asarray(_spk.compute(stream), dtype=np.float32)
+    norm = float(np.linalg.norm(vec))
+    return vec / norm if norm > 0 else vec
+
+
+def _voiceprint_path(speaker_id: str) -> str:
+    # Keep speaker_id filesystem-safe (it comes from the client).
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", speaker_id or "default")
+    return os.path.join(VOICEPRINT_DIR, f"{safe}.json")
+
+
+def _save_voiceprint(speaker_id: str, vec: np.ndarray) -> None:
+    with open(_voiceprint_path(speaker_id), "w") as f:
+        json.dump({"dim": int(vec.size), "vec": vec.tolist()}, f)
+
+
+def _load_voiceprint(speaker_id: str):
+    path = _voiceprint_path(speaker_id)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        data = json.load(f)
+    return np.asarray(data.get("vec", []), dtype=np.float32)
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    if a is None or b is None or a.size == 0 or b.size != a.size:
+        return 0.0
+    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(np.dot(a, b) / (na * nb))
+
+
+def _transcribe_np(audio: np.ndarray) -> str:
+    stream = _stt.create_stream()
+    stream.accept_waveform(STT_SAMPLE_RATE, audio)
+    _stt.decode_stream(stream)
+    return (stream.result.text or "").strip()
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance — small strings, so the simple DP is plenty fast."""
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+# ASR (Parakeet) rarely spells the wake word exactly — "Harman" comes back as
+# "Harmon", "Herman", etc. Accept a token as the wake word if it's an explicit
+# known variant or within a small edit distance of the configured wake word.
+_WAKE_VARIANTS = {WAKE_WORD, "harman", "harmon", "herman", "harmony", "harmen",
+                  "hartman", "harding"}
+
+
+def _is_wake_token(tok: str) -> bool:
+    if not tok:
+        return False
+    if tok in _WAKE_VARIANTS:
+        return True
+    # Allow edit distance up to ~1/4 of the word length (>=1) for ASR noise.
+    return _edit_distance(tok, WAKE_WORD) <= max(1, len(WAKE_WORD) // 4)
+
+
+def _strip_wake(text: str):
+    """If `text` begins with the wake word (allowing ASR spelling drift), return
+    (True, remainder-without-wake). Else (False, text). Parakeet lowercases and
+    drops most punctuation, so a normalized fuzzy prefix check is robust."""
+    norm = re.sub(r"[^a-z0-9 ]", " ", (text or "").lower())
+    norm = re.sub(r"\s+", " ", norm).strip()
+    if not WAKE_WORD:
+        return False, text
+    words = norm.split(" ")
+    if not words or not words[0]:
+        return False, text
+    # Wake word as the first token (or first two if ASR split it, e.g. "har man").
+    if _is_wake_token(words[0]):
+        return True, " ".join(words[1:]).strip()
+    if len(words) >= 2 and _is_wake_token("".join(words[:2])):
+        return True, " ".join(words[2:]).strip()
+    return False, text
+
+
 # ---- Routes ------------------------------------------------------------------
 
 @app.get("/health")
 def health():
     return {"ok": True, "stt": _stt is not None, "tts": _tts is not None,
-            "provider": PROVIDER}
+            "spk": _spk is not None, "provider": PROVIDER,
+            "wake_word": WAKE_WORD, "spk_threshold": SPK_THRESHOLD}
+
+
+@app.post("/enroll")
+async def enroll(request: Request):
+    """Enroll (or re-enroll) a user's voiceprint. Body = raw audio (a few seconds
+    of the user speaking). Query/JSON `speaker_id` names the voiceprint (default
+    "default"). Averaging happens client-side by sending one clean clip; we store
+    a single normalized embedding."""
+    if _spk is None:
+        return JSONResponse({"error": "speaker model not loaded"}, status_code=503)
+    raw = await request.body()
+    if not raw:
+        return JSONResponse({"error": "empty audio body"}, status_code=400)
+    speaker_id = (request.query_params.get("speaker_id") or "default").strip()
+    try:
+        audio = _decode_to_mono16k(raw)
+    except Exception as e:
+        return JSONResponse({"error": f"decode failed: {e}"}, status_code=400)
+    if audio.size < STT_SAMPLE_RATE // 2:  # < 0.5s is too short to be reliable
+        return JSONResponse({"error": "audio too short to enroll"}, status_code=400)
+    vec = _embed(audio)
+    _save_voiceprint(speaker_id, vec)
+    return {"ok": True, "speaker_id": speaker_id, "dim": int(vec.size)}
+
+
+@app.post("/segment")
+async def segment(request: Request):
+    """Wake + speaker-verify one audio window. Body = raw audio bytes; JSON/query
+    `speaker_id` selects the enrolled voiceprint. Returns:
+        {speech, wake, match, score, text}
+    - speech: did VAD find any speech at all
+    - wake:   did the transcript start with the wake word ("Harman")
+    - match:  is the speaker the enrolled user (cosine >= threshold)
+    - score:  cosine similarity to the enrolled voiceprint
+    - text:   the transcript with the wake word stripped (only meaningful on wake)
+    The caller fires a chat turn only when wake AND match are both true."""
+    if _stt is None or _spk is None:
+        return JSONResponse({"error": "models not loaded"}, status_code=503)
+    raw = await request.body()
+    if not raw:
+        return JSONResponse({"error": "empty audio body"}, status_code=400)
+    speaker_id = (request.query_params.get("speaker_id") or "default").strip()
+    try:
+        audio = _decode_to_mono16k(raw)
+    except Exception as e:
+        return JSONResponse({"error": f"decode failed: {e}"}, status_code=400)
+    # Too little energy -> treat as silence (cheap gate before running the ASR).
+    if audio.size == 0 or float(np.sqrt(np.mean(audio * audio))) < 0.004:
+        return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
+    text = _transcribe_np(audio)
+    if not text:
+        return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
+    is_wake, rest = _strip_wake(text)
+    if not is_wake:
+        return {"speech": True, "wake": False, "match": False, "score": 0.0, "text": ""}
+    enrolled = _load_voiceprint(speaker_id)
+    if enrolled is None:
+        # No enrollment yet: report wake but cannot verify. match stays False so
+        # strict mode won't fire; the app should prompt the user to enroll.
+        return {"speech": True, "wake": True, "match": False, "score": 0.0,
+                "text": rest, "unenrolled": True}
+    score = _cosine(_embed(audio), enrolled)
+    return {"speech": True, "wake": True, "match": score >= SPK_THRESHOLD,
+            "score": round(score, 4), "text": rest}
 
 
 @app.post("/transcribe")

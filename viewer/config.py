@@ -68,6 +68,12 @@ SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:
 SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
                                      # (Qwen synthesizes a whole reply in one
                                      # pass — a long paragraph can take 30s+)
+# Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
+# service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
+# streaming is pointed at a separate engine (e.g. Pocket on :8097).
+VERIFY_SERVICE_URL = os.environ.get(
+    "HARMAN_VERIFY_URL", "http://100.115.120.89:8095")
+VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
