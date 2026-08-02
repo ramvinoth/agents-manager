@@ -84,6 +84,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [loadingModels, setLoadingModels] = useState(false)
   const [savingProvider, setSavingProvider] = useState(false)
   const [customModel, setCustomModel] = useState(false)
+  // Which collapsible cards are open. Behaviour + Model open by default (the
+  // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
+  // occasional). Stable order + icons = muscle memory.
+  const [open, setOpen] = useState<Record<string, boolean>>({ behaviour: true, model: true })
+  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
 
   // Load meta + loops + stats once. A missing session (fresh chat with no path
   // yet) simply shows empty fields — everything still saves once it exists.
@@ -303,6 +308,34 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const maxTool = tools.length ? tools[0].count : 1
   const dur = summary ? durationBetween(summary.startTime, summary.endTime) : ""
 
+  // A collapsible settings card: a stable icon + title + one-line summary of the
+  // current value (so you can read state WITHOUT opening it — the muscle-memory
+  // shortcut), tapping reveals the controls. `k` keys its open/closed state.
+  const Card = ({ k, icon, title, summary: sub, children }: { k: string; icon: string; title: string; summary?: string; children: React.ReactNode }) => {
+    const isOpen = !!open[k]
+    return (
+      <View style={styles.spCard}>
+        <TouchableOpacity testID={`sp-card-${k}`} activeOpacity={0.7} style={styles.spCardHead} onPress={() => toggle(k)}>
+          <View style={styles.spCardIcon}>
+            <Icon name={icon as never} size={17} color={t.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.spCardTitle}>{title}</Text>
+            {sub ? <Text style={styles.spCardSummary} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+          <Icon name={isOpen ? "chevronDown" : "chevronRight"} size={18} color={t.textMuted} />
+        </TouchableOpacity>
+        {isOpen ? <View style={styles.spCardBody}>{children}</View> : null}
+      </View>
+    )
+  }
+
+  // One-line value summaries shown on each card header (read state without opening).
+  const modeLabel = MODES.find((m) => m.v === mode)?.label || mode
+  const providerName = provider === "" ? "Default (Claude)" : providers.find((p) => p.id === provider)?.name || "Custom"
+  const behaviourSummary = provider === "" ? `${modeLabel} · Default` : `${modeLabel} · ${providerName} · ${convMode === "agent" ? "Agent" : "Chat"}`
+  const modelSummary = provider === "" ? (MODELS.find((m) => m.v === model)?.label || "Default model") : providerName
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: t.bg }}
@@ -326,311 +359,306 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {saved === "title" ? <Text style={styles.ssSaved}>Saved</Text> : null}
       </View>
 
-      {/* Avatar picker: 20 emoji in a wrapping grid. */}
-      <Text style={styles.sheetSection}>AVATAR</Text>
-      <View style={styles.spAvatarGrid}>
-        {AVATARS.map((a) => {
-          const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
-          return (
-            <TouchableOpacity
-              key={a}
-              testID={`sp-avatar-${a}`}
-              onPress={() => pickAvatar(a)}
-              style={[styles.spAvatarCell, on ? { borderColor: t.accent, backgroundColor: t.accent + "1A" } : { borderColor: t.border }]}
-            >
-              <Text style={{ fontSize: 24 }}>{a}</Text>
-            </TouchableOpacity>
-          )
-        })}
-      </View>
+      {/* ── BEHAVIOUR: the knobs you actually turn (open by default). ── */}
+      <Card k="behaviour" icon="settings" title="Behaviour" summary={behaviourSummary}>
+        <Text style={styles.sheetSection}>PERMISSION MODE</Text>
+        <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
+        <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
 
-      {/* Pinned messages: tap to jump back into the thread at that message. */}
+        <Text style={styles.sheetSection}>PROVIDER</Text>
+        <Text style={styles.sheetHint}>Default uses Claude. A custom provider routes this session to your own endpoint.</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
+          <TouchableOpacity
+            testID="sp-provider-default"
+            style={[styles.sheetPill, provider === "" ? styles.sheetPillActive : null]}
+            onPress={() => pickProvider("")}
+          >
+            {provider === "" ? <Icon name="check" size={14} color="#fff" /> : null}
+            <Text style={[styles.sheetPillText, provider === "" ? styles.sheetPillTextActive : null]}>Default</Text>
+          </TouchableOpacity>
+          {providers.map((p) => {
+            const active = provider === p.id
+            return (
+              <TouchableOpacity
+                key={p.id}
+                testID={`sp-provider-${p.id}`}
+                style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+                onPress={() => pickProvider(p.id)}
+                onLongPress={() => openEditor(p)}
+                delayLongPress={300}
+              >
+                {active ? <Icon name="check" size={14} color="#fff" /> : null}
+                <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{p.name}</Text>
+              </TouchableOpacity>
+            )
+          })}
+          <TouchableOpacity testID="sp-provider-add" style={styles.sheetPill} onPress={() => openEditor()}>
+            <Icon name="add" size={14} color={t.accent} />
+            <Text style={[styles.sheetPillText, { color: t.accent }]}>Custom</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Conversation mode — only meaningful for a custom provider. */}
+        {provider !== "" ? (
+          <>
+            <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
+            <Text style={styles.sheetHint}>Chat is a plain conversation. Agent runs the full harness (tools, skills, MCP) on your model.</Text>
+            <View style={styles.sheetPills}>
+              {(["chat", "agent"] as const).map((m) => {
+                const active = convMode === m
+                return (
+                  <TouchableOpacity
+                    key={m}
+                    testID={`sp-convmode-${m}`}
+                    style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+                    onPress={() => pickConvMode(m)}
+                  >
+                    {active ? <Icon name="check" size={14} color="#fff" /> : null}
+                    <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
+                      {m === "chat" ? "Chat" : "Agent"}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+          </>
+        ) : null}
+
+        {/* Inline editor for a custom provider. */}
+        {editing ? (
+          <View style={{ paddingHorizontal: 2, gap: 8, marginTop: 4 }}>
+            <TextInput
+              testID="sp-provider-name"
+              style={styles.ssInput}
+              value={editing.name}
+              onChangeText={(v) => setEditing((e) => (e ? { ...e, name: v } : e))}
+              placeholder="Name (e.g. BrainTwin llama)"
+              placeholderTextColor={t.textMuted}
+            />
+            <TextInput
+              testID="sp-provider-baseurl"
+              style={styles.ssInput}
+              value={editing.baseUrl}
+              onChangeText={(v) => setEditing((e) => (e ? { ...e, baseUrl: v } : e))}
+              placeholder="Base URL (https://inference.braintwin.ai)"
+              placeholderTextColor={t.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            <TextInput
+              testID="sp-provider-key"
+              style={styles.ssInput}
+              value={editing.apiKey}
+              onChangeText={(v) => setEditing((e) => (e ? { ...e, apiKey: v } : e))}
+              placeholder={editing.id ? "API key (leave blank to keep current)" : "API key (sk-…)"}
+              placeholderTextColor={t.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", paddingHorizontal: 16 }}>
+              <TouchableOpacity
+                testID="sp-provider-load-models"
+                style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() ? 1 : 0.5 }]}
+                disabled={!editing.baseUrl.trim() || loadingModels}
+                onPress={loadModels}
+              >
+                <Text style={styles.ssAddBtnText}>{loadingModels ? "Loading…" : "Load models"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="sp-provider-model-custom" onPress={() => setCustomModel((c) => !c)}>
+                <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
+                  {customModel ? "Pick from list" : "Enter manually"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {customModel || (!modelOptions.length && !!editing.model) ? (
+              <TextInput
+                testID="sp-provider-model-input"
+                style={styles.ssInput}
+                value={editing.model}
+                onChangeText={(v) => setEditing((e) => (e ? { ...e, model: v } : e))}
+                placeholder="Model name (e.g. gemma-2b)"
+                placeholderTextColor={t.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            ) : modelOptions.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4, paddingHorizontal: 16 }}>
+                {modelOptions.map((m) => {
+                  const active = editing.model === m
+                  return (
+                    <TouchableOpacity
+                      key={m}
+                      testID={`sp-provider-model-${m}`}
+                      style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+                      onPress={() => setEditing((e) => (e ? { ...e, model: m } : e))}
+                    >
+                      <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m}</Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </ScrollView>
+            ) : (
+              <Text style={styles.sheetHint}>Load models from the endpoint, or tap “Enter manually”.</Text>
+            )}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2, paddingHorizontal: 16 }}>
+              <TouchableOpacity
+                testID="sp-provider-save"
+                style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() && editing.model.trim() ? 1 : 0.5 }]}
+                disabled={!editing.baseUrl.trim() || !editing.model.trim() || savingProvider}
+                onPress={saveProvider}
+              >
+                <Text style={styles.ssAddBtnText}>{savingProvider ? "Saving…" : "Save & use"}</Text>
+              </TouchableOpacity>
+              {editing.id ? (
+                <TouchableOpacity testID="sp-provider-delete" onPress={() => deleteProvider(editing.id)}>
+                  <Text style={{ color: t.danger, fontSize: 13, fontWeight: "600" }}>Delete</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity testID="sp-provider-cancel" onPress={() => setEditing(null)}>
+                <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+      </Card>
+
+      {/* ── MODEL & alerts (open by default). ── */}
+      <Card k="model" icon="sparkle" title="Model & alerts" summary={modelSummary}>
+        {provider === "" ? (
+          <>
+            <Text style={styles.sheetSection}>MODEL</Text>
+            <PillRow opts={MODELS} value={model} onPick={setModel} testPrefix="sp-model" />
+          </>
+        ) : (
+          <Text style={[styles.sheetHint, { marginTop: 12 }]}>This session uses {providerName} ({convMode === "agent" ? "Agent" : "Chat"} mode). Its model is set on the provider.</Text>
+        )}
+        <View style={styles.ssRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.ssRowLabel}>Notify every reply</Text>
+            <Text style={styles.ssRowHint}>Get a notification each time the agent finishes a turn.</Text>
+          </View>
+          <Switch
+            testID="sp-notify"
+            value={notify}
+            onValueChange={toggleNotify}
+            trackColor={{ true: t.accent, false: t.border }}
+          />
+        </View>
+      </Card>
+
+      {/* ── PERSONA: system prompt + goal (collapsed — set once, revisited rarely). ── */}
+      <Card k="persona" icon="user" title="Persona & goal" summary={systemPrompt || goal ? "Custom instructions set" : "Default behaviour"}>
+        <Text style={styles.sheetSection}>
+          SYSTEM PROMPT {saved === "systemPrompt" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
+        </Text>
+        <TextInput
+          testID="sp-system-prompt"
+          style={[styles.ssInput, styles.ssMultiline]}
+          value={systemPrompt}
+          onChangeText={setSystemPrompt}
+          onBlur={() => saveMeta("systemPrompt", systemPrompt)}
+          placeholder="Add instructions for this session…"
+          placeholderTextColor={t.textMuted}
+          multiline
+        />
+        <Text style={styles.sheetSection}>
+          GOAL {saved === "goal" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
+        </Text>
+        <TextInput
+          testID="sp-goal"
+          style={styles.ssInput}
+          value={goal}
+          onChangeText={setGoal}
+          onBlur={() => saveMeta("goal", goal)}
+          placeholder="What is this session for?"
+          placeholderTextColor={t.textMuted}
+        />
+      </Card>
+
+      {/* ── AUTOMATION: scheduled loops (collapsed). ── */}
+      <Card k="automation" icon="repeat" title="Scheduled loops" summary={loops.length ? `${loops.length} active` : "None"}>
+        {loops.map((l) => (
+          <View key={l.id} style={styles.ssLoopRow}>
+            <Icon name="repeat" size={14} color={t.textMuted} />
+            <Text style={styles.ssLoopPrompt} numberOfLines={1}>{l.prompt}</Text>
+            <Text style={styles.ssLoopInterval}>{fmtInterval(l.interval)}</Text>
+            <TouchableOpacity testID={`sp-loop-del-${l.id}`} onPress={() => removeLoop(l.id)}>
+              <Icon name="trash" size={15} color={t.danger} />
+            </TouchableOpacity>
+          </View>
+        ))}
+        <TextInput
+          testID="sp-loop-prompt"
+          style={[styles.ssInput, styles.ssMultiline]}
+          value={loopPrompt}
+          onChangeText={setLoopPrompt}
+          placeholder="Prompt to run on a schedule…"
+          placeholderTextColor={t.textMuted}
+          multiline
+        />
+        <View style={styles.ssLoopAddRow}>
+          <Text style={{ color: t.textMuted, fontSize: 12 }}>Every</Text>
+          <TextInput
+            testID="sp-loop-interval"
+            style={styles.ssLoopIntervalInput}
+            value={loopInterval}
+            onChangeText={setLoopInterval}
+            placeholder="1h"
+            placeholderTextColor={t.textMuted}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity
+            testID="sp-loop-add"
+            style={[styles.ssAddBtn, { opacity: loopPrompt.trim() ? 1 : 0.5 }]}
+            disabled={!loopPrompt.trim()}
+            onPress={addLoop}
+          >
+            <Text style={styles.ssAddBtnText}>Add loop</Text>
+          </TouchableOpacity>
+        </View>
+      </Card>
+
+      {/* ── PINNED messages (collapsed; only shown when present). ── */}
       {pinnedItems.length ? (
-        <>
-          <Text style={styles.sheetSection}>PINNED MESSAGES</Text>
+        <Card k="pinned" icon="pin" title="Pinned messages" summary={`${pinnedItems.length} pinned`}>
           {pinnedItems.map((p) => (
             <View key={p.uuid} style={styles.ssLoopRow}>
               <Icon name="pin" size={14} color={t.accent} />
               <TouchableOpacity style={{ flex: 1 }} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
-                <Text style={[styles.ssLoopPrompt, { color: t.text }]} numberOfLines={2}>
-                  {p.text || "(no text)"}
-                </Text>
+                <Text style={[styles.ssLoopPrompt, { color: t.text }]} numberOfLines={2}>{p.text || "(no text)"}</Text>
               </TouchableOpacity>
               <TouchableOpacity testID={`sp-pinned-del-${p.uuid}`} onPress={() => unpin(p.uuid)}>
                 <Icon name="close" size={15} color={t.textMuted} />
               </TouchableOpacity>
             </View>
           ))}
-        </>
+        </Card>
       ) : null}
 
-      {/* Per-message controls (moved out of the composer gear). */}
-      <Text style={styles.sheetSection}>PERMISSION MODE</Text>
-      <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-      <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
-
-      {/* Conversation mode applies only to a custom provider. Default (Claude) is
-          always the full agentic harness, so the control is shown disabled there. */}
-      <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
-      <Text style={styles.sheetHint}>
-        {provider === ""
-          ? "Default (Claude) is always agentic — tools, skills and MCP are on."
-          : "Chat is a plain conversation. Agent runs the full harness (tools, skills, MCP) on your model."}
-      </Text>
-      <View style={[styles.sheetPills, { opacity: provider === "" ? 0.5 : 1 }]}>
-        {(["chat", "agent"] as const).map((m) => {
-          const active = provider !== "" && convMode === m
-          return (
-            <TouchableOpacity
-              key={m}
-              testID={`sp-convmode-${m}`}
-              disabled={provider === ""}
-              style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-              onPress={() => pickConvMode(m)}
-            >
-              {active ? <Icon name="check" size={14} color="#fff" /> : null}
-              <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
-                {m === "chat" ? "Chat" : "Agent"}
-              </Text>
-            </TouchableOpacity>
-          )
-        })}
-      </View>
-
-      <Text style={styles.sheetSection}>PROVIDER</Text>
-      <Text style={styles.sheetHint}>
-        Default uses Claude. A custom provider routes this session to your own OpenAI-compatible endpoint.
-      </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
-        {/* Default (Claude) */}
-        <TouchableOpacity
-          testID="sp-provider-default"
-          style={[styles.sheetPill, provider === "" ? styles.sheetPillActive : null]}
-          onPress={() => pickProvider("")}
-        >
-          {provider === "" ? <Icon name="check" size={14} color="#fff" /> : null}
-          <Text style={[styles.sheetPillText, provider === "" ? styles.sheetPillTextActive : null]}>Default</Text>
-        </TouchableOpacity>
-        {/* One pill per saved preset; long-press to edit. */}
-        {providers.map((p) => {
-          const active = provider === p.id
-          return (
-            <TouchableOpacity
-              key={p.id}
-              testID={`sp-provider-${p.id}`}
-              style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-              onPress={() => pickProvider(p.id)}
-              onLongPress={() => openEditor(p)}
-              delayLongPress={300}
-            >
-              {active ? <Icon name="check" size={14} color="#fff" /> : null}
-              <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{p.name}</Text>
-            </TouchableOpacity>
-          )
-        })}
-        {/* Add a new custom provider. */}
-        <TouchableOpacity testID="sp-provider-add" style={styles.sheetPill} onPress={() => openEditor()}>
-          <Icon name="add" size={14} color={t.accent} />
-          <Text style={[styles.sheetPillText, { color: t.accent }]}>Custom</Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* Inline editor for a custom provider (no separate route). */}
-      {editing ? (
-        <View style={{ paddingHorizontal: 16, gap: 8, marginTop: 4 }}>
-          <TextInput
-            testID="sp-provider-name"
-            style={styles.ssInput}
-            value={editing.name}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, name: v } : e))}
-            placeholder="Name (e.g. BrainTwin llama)"
-            placeholderTextColor={t.textMuted}
-          />
-          <TextInput
-            testID="sp-provider-baseurl"
-            style={styles.ssInput}
-            value={editing.baseUrl}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, baseUrl: v } : e))}
-            placeholder="Base URL (https://inference.braintwin.ai)"
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <TextInput
-            testID="sp-provider-key"
-            style={styles.ssInput}
-            value={editing.apiKey}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, apiKey: v } : e))}
-            placeholder={editing.id ? "API key (leave blank to keep current)" : "API key (sk-…)"}
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry
-          />
-          {/* Model: load from the endpoint, or type it. */}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <TouchableOpacity
-              testID="sp-provider-load-models"
-              style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() ? 1 : 0.5 }]}
-              disabled={!editing.baseUrl.trim() || loadingModels}
-              onPress={loadModels}
-            >
-              <Text style={styles.ssAddBtnText}>{loadingModels ? "Loading…" : "Load models"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity testID="sp-provider-model-custom" onPress={() => setCustomModel((c) => !c)}>
-              <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
-                {customModel ? "Pick from list" : "Enter manually"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {customModel || (!modelOptions.length && !!editing.model) ? (
-            <TextInput
-              testID="sp-provider-model-input"
-              style={styles.ssInput}
-              value={editing.model}
-              onChangeText={(v) => setEditing((e) => (e ? { ...e, model: v } : e))}
-              placeholder="Model name (e.g. gemma-2b)"
-              placeholderTextColor={t.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          ) : modelOptions.length ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
-              {modelOptions.map((m) => {
-                const active = editing.model === m
-                return (
-                  <TouchableOpacity
-                    key={m}
-                    testID={`sp-provider-model-${m}`}
-                    style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                    onPress={() => setEditing((e) => (e ? { ...e, model: m } : e))}
-                  >
-                    <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m}</Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </ScrollView>
-          ) : (
-            <Text style={styles.sheetHint}>Load models from the endpoint, or tap “Enter manually”.</Text>
-          )}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2 }}>
-            <TouchableOpacity
-              testID="sp-provider-save"
-              style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() && editing.model.trim() ? 1 : 0.5 }]}
-              disabled={!editing.baseUrl.trim() || !editing.model.trim() || savingProvider}
-              onPress={saveProvider}
-            >
-              <Text style={styles.ssAddBtnText}>{savingProvider ? "Saving…" : "Save & use"}</Text>
-            </TouchableOpacity>
-            {editing.id ? (
-              <TouchableOpacity testID="sp-provider-delete" onPress={() => deleteProvider(editing.id)}>
-                <Text style={{ color: t.danger, fontSize: 13, fontWeight: "600" }}>Delete</Text>
+      {/* ── APPEARANCE: avatar picker (collapsed — cosmetic). ── */}
+      <Card k="appearance" icon="star" title="Appearance" summary={avatar ? "Custom avatar" : "Auto avatar"}>
+        <View style={styles.spAvatarGrid}>
+          {AVATARS.map((a) => {
+            const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
+            return (
+              <TouchableOpacity
+                key={a}
+                testID={`sp-avatar-${a}`}
+                onPress={() => pickAvatar(a)}
+                style={[styles.spAvatarCell, on ? { borderColor: t.accent, backgroundColor: t.accent + "1A" } : { borderColor: t.border }]}
+              >
+                <Text style={{ fontSize: 24 }}>{a}</Text>
               </TouchableOpacity>
-            ) : null}
-            <TouchableOpacity testID="sp-provider-cancel" onPress={() => setEditing(null)}>
-              <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+            )
+          })}
         </View>
-      ) : null}
+      </Card>
 
-      {/* Model only applies to the Default (Claude) provider — a custom session's
-          model comes from its preset. */}
-      {provider === "" ? (
-        <>
-          <Text style={styles.sheetSection}>MODEL</Text>
-          <PillRow opts={MODELS} value={model} onPick={setModel} testPrefix="sp-model" />
-        </>
-      ) : null}
-
-      <View style={styles.ssRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.ssRowLabel}>Notify every reply</Text>
-          <Text style={styles.ssRowHint}>Get a notification each time the agent finishes a turn.</Text>
-        </View>
-        <Switch
-          testID="sp-notify"
-          value={notify}
-          onValueChange={toggleNotify}
-          trackColor={{ true: t.accent, false: t.border }}
-        />
-      </View>
-
-      <Text style={styles.sheetSection}>
-        SYSTEM PROMPT {saved === "systemPrompt" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
-      </Text>
-      <TextInput
-        testID="sp-system-prompt"
-        style={[styles.ssInput, styles.ssMultiline]}
-        value={systemPrompt}
-        onChangeText={setSystemPrompt}
-        onBlur={() => saveMeta("systemPrompt", systemPrompt)}
-        placeholder="Add instructions for this session…"
-        placeholderTextColor={t.textMuted}
-        multiline
-      />
-
-      <Text style={styles.sheetSection}>
-        GOAL {saved === "goal" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
-      </Text>
-      <TextInput
-        testID="sp-goal"
-        style={styles.ssInput}
-        value={goal}
-        onChangeText={setGoal}
-        onBlur={() => saveMeta("goal", goal)}
-        placeholder="What is this session for?"
-        placeholderTextColor={t.textMuted}
-      />
-
-      <Text style={styles.sheetSection}>LOOPS</Text>
-      {loops.map((l) => (
-        <View key={l.id} style={styles.ssLoopRow}>
-          <Icon name="repeat" size={14} color={t.textMuted} />
-          <Text style={styles.ssLoopPrompt} numberOfLines={1}>
-            {l.prompt}
-          </Text>
-          <Text style={styles.ssLoopInterval}>{fmtInterval(l.interval)}</Text>
-          <TouchableOpacity testID={`sp-loop-del-${l.id}`} onPress={() => removeLoop(l.id)}>
-            <Icon name="trash" size={15} color={t.danger} />
-          </TouchableOpacity>
-        </View>
-      ))}
-      <TextInput
-        testID="sp-loop-prompt"
-        style={[styles.ssInput, styles.ssMultiline]}
-        value={loopPrompt}
-        onChangeText={setLoopPrompt}
-        placeholder="Prompt to run on a schedule…"
-        placeholderTextColor={t.textMuted}
-        multiline
-      />
-      <View style={styles.ssLoopAddRow}>
-        <Text style={{ color: t.textMuted, fontSize: 12 }}>Every</Text>
-        <TextInput
-          testID="sp-loop-interval"
-          style={styles.ssLoopIntervalInput}
-          value={loopInterval}
-          onChangeText={setLoopInterval}
-          placeholder="1h"
-          placeholderTextColor={t.textMuted}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity
-          testID="sp-loop-add"
-          style={[styles.ssAddBtn, { opacity: loopPrompt.trim() ? 1 : 0.5 }]}
-          disabled={!loopPrompt.trim()}
-          onPress={addLoop}
-        >
-          <Text style={styles.ssAddBtnText}>Add loop</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Read-only stats (formerly the separate Session info screen). */}
+      {/* ── STATS: read-only (collapsed). ── */}
       {summary ? (
-        <>
-          <Text style={styles.sheetSection}>STATS</Text>
+        <Card k="stats" icon="info" title="Stats" summary={`${compactNumber(summary.userMessages + summary.assistantMessages)} messages`}>
           <View style={styles.statGrid}>
             <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} t={t} />
             <Stat label="You" value={compactNumber(summary.userMessages)} t={t} />
@@ -652,9 +680,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
               {tools.map((tool) => (
                 <View key={tool.name} style={styles.toolBarRow}>
-                  <Text style={[styles.toolBarName, { color: t.text }]} numberOfLines={1}>
-                    {tool.name}
-                  </Text>
+                  <Text style={[styles.toolBarName, { color: t.text }]} numberOfLines={1}>{tool.name}</Text>
                   <View style={[styles.toolBarTrack, { backgroundColor: t.chipBg }]}>
                     <View style={[styles.toolBarFill, { width: `${Math.max(4, (tool.count / maxTool) * 100)}%` }]} />
                   </View>
@@ -663,7 +689,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               ))}
             </View>
           ) : null}
-        </>
+        </Card>
       ) : path ? (
         <View style={{ padding: 16 }}>
           <ActivityIndicator size="small" color={t.textMuted} />

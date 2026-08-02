@@ -527,6 +527,38 @@ function buildStyles(t: Theme) {
       marginTop: 16,
     },
     sheetHint: { fontSize: 12, color: t.textMuted, paddingHorizontal: 18, marginTop: 4, lineHeight: 17 },
+    // Session settings: collapsible grouped cards. Each group is a rounded card
+    // with a tappable header (icon + title + summary + chevron); the body reveals
+    // on tap. Stable positions + icons build muscle memory; collapsing the long
+    // tail (prompt/goal/loops/stats) kills the "one giant scroll" crowding.
+    spCard: {
+      marginHorizontal: 14,
+      marginTop: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: t.border,
+      backgroundColor: t.surface,
+      overflow: "hidden",
+    },
+    spCardHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+    },
+    spCardIcon: {
+      width: 30, height: 30, borderRadius: 8,
+      alignItems: "center", justifyContent: "center",
+      backgroundColor: t.chipBg,
+    },
+    spCardTitle: { fontSize: 15, fontWeight: "700", color: t.text },
+    spCardSummary: { fontSize: 12, color: t.textMuted, marginTop: 1 },
+    spCardBody: {
+      paddingBottom: 12,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.border,
+    },
     // Capabilities screen (skills + MCP CRUD).
     capAddRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 18, paddingVertical: 12 },
     capAddText: { fontSize: 14, fontWeight: "600" },
