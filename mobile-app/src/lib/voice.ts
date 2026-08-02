@@ -95,6 +95,184 @@ export async function stopAndTranscribe(recording: Audio.Recording): Promise<str
   }
 }
 
+/** Record ~`seconds` of speech and return it as a Blob (m4a), or null if the
+ *  recorder couldn't produce a file. Used by enrollment (one clean clip). */
+async function _recordClipBlob(seconds: number): Promise<Blob | null> {
+  const rec = await startRecording()
+  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
+  await rec.stopAndUnloadAsync()
+  if (_active === rec) _active = null
+  const uri = rec.getURI()
+  if (!uri) return null
+  try {
+    const res = await fetch(uri)
+    return await res.blob()
+  } finally {
+    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
+  }
+}
+
+/** Record ~`seconds` and return the raw m4a bytes as an ArrayBuffer, or null.
+ *  Used by the hands-free listen loop: RN frames an ArrayBuffer as a binary
+ *  WebSocket message reliably across versions (more so than a Blob), which the
+ *  server reads as opcode 0x2 and decodes standalone. */
+async function _recordClipBuffer(seconds: number): Promise<ArrayBuffer | null> {
+  const rec = await startRecording()
+  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
+  await rec.stopAndUnloadAsync()
+  if (_active === rec) _active = null
+  const uri = rec.getURI()
+  if (!uri) return null
+  try {
+    const b64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    })
+    return _base64ToArrayBuffer(b64)
+  } catch {
+    return null
+  } finally {
+    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
+  }
+}
+
+/** Decode a base64 string to an ArrayBuffer (atob is available in the RN/Hermes
+ *  runtime; falls back to a manual decode if not). */
+function _base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const bin = typeof atob === "function" ? atob(b64) : _atobPolyfill(b64)
+  const len = bin.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes.buffer
+}
+
+const _B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+function _atobPolyfill(input: string): string {
+  const str = input.replace(/=+$/, "")
+  let out = ""
+  for (let bc = 0, bs = 0, buffer, i = 0; (buffer = str.charAt(i++)); ) {
+    const idx = _B64.indexOf(buffer)
+    if (idx === -1) continue
+    bs = bc % 4 ? bs * 64 + idx : idx
+    if (bc++ % 4) out += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)))
+  }
+  return out
+}
+
+/** Enroll the user's voiceprint from a fresh ~`seconds`-second recording. The
+ *  server stores a speaker embedding so hands-free listening can verify it's
+ *  really them saying "Harman". Returns true on success. */
+export async function enrollVoice(seconds = 5, speakerId = "default"): Promise<boolean> {
+  const blob = await _recordClipBlob(seconds)
+  if (!blob) return false
+  try {
+    const { ok } = await api.voiceEnroll(blob, speakerId, "audio/m4a")
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** A parsed message from the hands-free WS. */
+export type ListenEvent =
+  | { type: "utterance"; text: string; score?: number }
+  | { type: "idle" }
+  | { type: "unenrolled" }
+  | { type: "error"; error?: string }
+
+// One live hands-free session at a time. `_listenStop` cancels the record loop;
+// `_listenWs` is the open socket.
+let _listenStop: (() => void) | null = null
+
+/**
+ * Start HANDS-FREE listening: continuously record short audio windows and stream
+ * each one to the server's /api/voice/ws, which runs wake-word + strict speaker
+ * verification on the GPU box. `onEvent` fires for every window's verdict; the
+ * caller acts only on {type:"utterance"} (the enrolled user said "Harman …").
+ *
+ * Reuses expo-av (already linked) — no new native audio dependency. Each window
+ * is a self-contained m4a the box decodes standalone, so there's no stream
+ * reassembly. Returns a stop() function.
+ *
+ * NOTE: recording and TTS playback share the one audio session, so the caller
+ * pauses listening (stop()) while speaking a reply, then restarts it.
+ */
+export async function startListening(
+  onEvent: (e: ListenEvent) => void,
+  opts: { windowSeconds?: number; speakerId?: string } = {}
+): Promise<() => void> {
+  await stopListening() // never run two loops at once
+  const windowSeconds = opts.windowSeconds ?? 2.5
+  const speakerId = opts.speakerId ?? "default"
+  const { url, headers } = api.voiceWsUrl(speakerId)
+
+  let stopped = false
+  // RN's WebSocket runtime accepts a 3rd `options` arg carrying request headers
+  // (so the Bearer token rides the handshake, like the terminal WS) — but the TS
+  // lib types only declare (url, protocols). Cast the constructor to add it.
+  const WS = WebSocket as unknown as {
+    new (url: string, protocols: undefined, options: { headers: Record<string, string> }): WebSocket
+  }
+  const ws = new WS(url, undefined, { headers })
+
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    _listenStop = null
+    try {
+      ws.close()
+    } catch {
+      /* already closing */
+    }
+    resetRecorder().catch(() => {})
+  }
+  _listenStop = stop
+
+  ws.onmessage = (ev: WebSocketMessageEvent) => {
+    try {
+      onEvent(JSON.parse(String(ev.data)) as ListenEvent)
+    } catch {
+      /* ignore malformed frame */
+    }
+  }
+  ws.onerror = () => onEvent({ type: "error", error: "listen socket error" })
+  ws.onclose = () => {
+    stopped = true
+    _listenStop = null
+  }
+
+  // Wait for OPEN, then loop: record a window, send it, repeat. Recording is
+  // inherently serial (one recorder), which naturally paces the stream.
+  ws.onopen = async () => {
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true }).catch(
+      () => {}
+    )
+    while (!stopped && ws.readyState === WebSocket.OPEN) {
+      let buf: ArrayBuffer | null = null
+      try {
+        buf = await _recordClipBuffer(windowSeconds)
+      } catch {
+        buf = null
+      }
+      if (stopped || ws.readyState !== WebSocket.OPEN) break
+      if (buf && buf.byteLength > 0) {
+        try {
+          ws.send(buf) // RN frames an ArrayBuffer as a binary message
+        } catch {
+          /* socket went away — loop condition will catch it */
+        }
+      }
+    }
+  }
+
+  return stop
+}
+
+/** Stop the hands-free listen loop (if any) and release the recorder. */
+export async function stopListening(): Promise<void> {
+  if (_listenStop) _listenStop()
+  await resetRecorder().catch(() => {})
+}
+
 /** Fetch one sentence's TTS audio and write it to a temp WAV; returns the path
  *  (or null on failure so the pipeline can skip it). */
 async function fetchTts(sentence: string): Promise<string | null> {

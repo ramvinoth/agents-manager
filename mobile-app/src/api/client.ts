@@ -366,6 +366,36 @@ export const api = {
     url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}`,
     headers: authHeaders(),
   }),
+  // Enroll the user's voiceprint from a recorded clip (a few seconds of speech).
+  // Body is the raw audio Blob (same wire shape as voiceStt); the server stores a
+  // speaker embedding so hands-free listening can verify the speaker.
+  voiceEnroll: async (
+    audio: Blob,
+    speakerId = "default",
+    mime = "audio/m4a"
+  ): Promise<{ ok: boolean; speaker_id?: string; dim?: number }> => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const res = await fetch(
+      `${serverUrl()}/api/voice/enroll?speaker_id=${encodeURIComponent(speakerId)}`,
+      { method: "POST", headers: { ...authHeaders(), "Content-Type": mime }, body: audio }
+    )
+    const data = (await res.json().catch(() => null)) as
+      | { ok?: boolean; speaker_id?: string; dim?: number; error?: string }
+      | null
+    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
+    return { ok: !!data?.ok, speaker_id: data?.speaker_id, dim: data?.dim }
+  },
+  // Hands-free listening WebSocket. The app streams short audio windows (binary
+  // frames); the server runs wake-word + strict speaker verification on the GPU
+  // box and pushes back {type:"utterance",text} ONLY when the enrolled user says
+  // "Harman …". Auth rides the handshake header (RN WebSocket allows it).
+  voiceWsUrl: (speakerId = "default"): { url: string; headers: Record<string, string> } => {
+    const base = serverUrl().replace(/^http/, "ws")
+    return {
+      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}`,
+      headers: authHeaders(),
+    }
+  },
 
   // ---- host management ----
   hostsSave: (cfg: {
