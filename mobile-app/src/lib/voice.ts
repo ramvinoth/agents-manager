@@ -77,6 +77,28 @@ export async function startRecording(): Promise<Audio.Recording> {
   return recording
 }
 
+// Silence floor (dBFS) for the on-device VAD. expo-av meters loudness in dBFS —
+// roughly -160 (pure silence) up to 0 (clipping). A window whose PEAK stays
+// below this never contained speech, so we skip it entirely (no upload / decode /
+// STT) — that's what cuts the battery cost of always-listening at rest. Env-ish
+// tunable via setVadThreshold(); -45 is a conservative default that still catches
+// normal speaking volume across a room.
+let _vadFloorDb = -45
+
+/** Adjust the on-device VAD silence floor (dBFS, negative). Lower = more
+ *  sensitive (sends quieter windows). */
+export function setVadThreshold(db: number): void {
+  _vadFloorDb = db
+}
+
+/** Recording options with metering enabled so each window reports a peak dB level
+ *  for the VAD gate (HIGH_QUALITY already meters on iOS, but we set it explicitly
+ *  for both platforms). */
+const METERED_OPTIONS: Audio.RecordingOptions = {
+  ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+}
+
 /** Force-release any live recorder (call on screen unmount / error recovery so
  *  the next startRecording() can't hit the single-recorder constraint). */
 export async function resetRecorder(): Promise<void> {
@@ -124,21 +146,57 @@ async function _recordClipBlob(seconds: number): Promise<Blob | null> {
 /** Record ~`seconds` and return the raw m4a bytes as an ArrayBuffer, or null.
  *  Used by the hands-free listen loop: RN frames an ArrayBuffer as a binary
  *  WebSocket message reliably across versions (more so than a Blob), which the
- *  server reads as opcode 0x2 and decodes standalone. */
-async function _recordClipBuffer(seconds: number): Promise<ArrayBuffer | null> {
-  const rec = await startRecording()
-  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
-  await rec.stopAndUnloadAsync()
-  if (_active === rec) _active = null
+ *  server reads as opcode 0x2 and decodes standalone.
+ *
+ *  On-device VAD: with metering enabled we watch the window's PEAK loudness while
+ *  recording. If the whole window stayed below the silence floor (`_vadFloorDb`),
+ *  we return {silent:true} WITHOUT reading/encoding the file — the caller then
+ *  skips the upload + server STT for that window, which is what makes always-on
+ *  listening cheap at rest. Only windows that actually contained sound are sent. */
+async function _recordListenWindow(
+  seconds: number
+): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
+  await _release(_active)
+  _active = null
+  await Audio.setAudioModeAsync(AUDIO_MODE)
+  let peak = -160
+  const rec = new Audio.Recording()
+  try {
+    await rec.prepareToRecordAsync(METERED_OPTIONS)
+    rec.setProgressUpdateInterval(120)
+    rec.setOnRecordingStatusUpdate((s) => {
+      if (s.isRecording && typeof s.metering === "number" && s.metering > peak) {
+        peak = s.metering
+      }
+    })
+    _active = rec
+    await rec.startAsync()
+    await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
+    await rec.stopAndUnloadAsync()
+    if (_active === rec) _active = null
+  } catch {
+    if (_active === rec) _active = null
+    try {
+      await rec.stopAndUnloadAsync()
+    } catch {
+      /* already unloaded */
+    }
+    return { buf: null, silent: false }
+  }
   const uri = rec.getURI()
-  if (!uri) return null
+  // VAD gate: window never rose above the silence floor -> skip it (no upload).
+  if (peak < _vadFloorDb) {
+    if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
+    return { buf: null, silent: true }
+  }
+  if (!uri) return { buf: null, silent: false }
   try {
     const b64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     })
-    return _base64ToArrayBuffer(b64)
+    return { buf: _base64ToArrayBuffer(b64), silent: false }
   } catch {
-    return null
+    return { buf: null, silent: false }
   } finally {
     FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
   }
@@ -256,16 +314,20 @@ export async function startListening(
       () => {}
     )
     while (!stopped && ws.readyState === WebSocket.OPEN) {
-      let buf: ArrayBuffer | null = null
+      let res: { buf: ArrayBuffer | null; silent: boolean } = { buf: null, silent: false }
       try {
-        buf = await _recordClipBuffer(windowSeconds)
+        res = await _recordListenWindow(windowSeconds)
       } catch {
-        buf = null
+        res = { buf: null, silent: false }
       }
       if (stopped || ws.readyState !== WebSocket.OPEN) break
-      if (buf && buf.byteLength > 0) {
+      // On-device VAD: a silent window is dropped here — no upload, no server STT.
+      // This is the battery win: at rest, most windows are silence and cost only
+      // the local recording, never the radio or the GPU box.
+      if (res.silent) continue
+      if (res.buf && res.buf.byteLength > 0) {
         try {
-          ws.send(buf) // RN frames an ArrayBuffer as a binary message
+          ws.send(res.buf) // RN frames an ArrayBuffer as a binary message
         } catch {
           /* socket went away — loop condition will catch it */
         }
