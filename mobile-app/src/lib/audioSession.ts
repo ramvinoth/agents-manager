@@ -1,11 +1,11 @@
 /**
  * audioSession — the SINGLE owner of the iOS AVAudioSession (pure state machine).
  *
- * The app has two audio libraries that each want the one hardware audio session:
- * expo-av (recording, for STT) and react-native-track-player (streaming TTS
- * playback). If both mutate the session independently, the classic failure is
- * "recorder not prepared" on the second turn — playback still holds the session
- * when the next recording tries to start.
+ * The app has one hardware audio session (iOS AVAudioSession). Recording (STT)
+ * and playback (TTS) both go through expo-av, so a single native module owns it.
+ * Even so, they are mutually exclusive operations, and if recording tried to start
+ * before playback released the session the recorder would fail to prepare. This
+ * coordinator enforces the ordering.
  *
  * This class is the ONLY place allowed to drive record/playback transitions. It
  * enforces one invariant:

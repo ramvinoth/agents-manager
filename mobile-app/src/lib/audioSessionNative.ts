@@ -1,13 +1,21 @@
 /**
- * audioSessionNative — wires the real expo-av + react-native-track-player calls
- * into the pure AudioSession coordinator, and exposes the app-wide singleton.
+ * audioSessionNative — wires the real expo-av calls into the pure AudioSession
+ * coordinator, and exposes the app-wide singleton.
  *
- * This is the ONLY module (besides voice.ts's recorder-metering for the VAD
- * window) that touches expo-av's Audio mode / recorder or TrackPlayer. Keeping
- * the native wiring here lets audioSession.ts stay pure + unit-tested.
+ * Playback AND recording both go through expo-av (Audio.Sound + Audio.Recording),
+ * so a SINGLE native module owns the one iOS AVAudioSession. This is the fix for
+ * the "recorder not prepared" error on the 2nd turn: previously TTS used
+ * react-native-track-player, which sets the AVAudioSession .playback category via
+ * its own native code, while expo-av's recorder manages the session through a
+ * separate native manager. Two native modules fighting over the one session left
+ * it in a state the recorder couldn't prepare against — a conflict no JS layer
+ * could reconcile. With one native module, that conflict is impossible.
+ *
+ * TTS still streams: Audio.Sound plays the live AAC URL via AVPlayer, so first
+ * audio arrives quickly and long replies start speaking without waiting for the
+ * whole file.
  */
-import { Audio } from "expo-av"
-import TrackPlayer, { Event, State } from "react-native-track-player"
+import { Audio, type AVPlaybackStatus } from "expo-av"
 import { AudioSession, type AudioBackend, type RecordingHandle } from "./audioSession"
 
 // The ONE canonical audio mode: record + play, audible with the ring switch off,
@@ -19,18 +27,11 @@ export const RECORD_MODE = {
   staysActiveInBackground: true,
 } as const
 
-let _tpReady = false
-async function _ensurePlayer(): Promise<void> {
-  if (_tpReady) return
-  try {
-    await TrackPlayer.setupPlayer()
-  } catch {
-    /* already set up — setupPlayer throws if called twice */
-  }
-  _tpReady = true
-}
-
 function defaultBackend(): AudioBackend {
+  // The currently-playing TTS sound, tracked so stopPlayback (barge-in / teardown)
+  // can unload it. Only one plays at a time (the coordinator serializes).
+  let active: Audio.Sound | null = null
+
   return {
     async requestPermission() {
       const perm = await Audio.requestPermissionsAsync()
@@ -44,40 +45,46 @@ function defaultBackend(): AudioBackend {
       return recording as unknown as RecordingHandle
     },
     async playToEnd(url, headers) {
-      await _ensurePlayer()
-      await TrackPlayer.reset()
-      await TrackPlayer.add({ id: "tts", url, headers, title: "Reply", artist: "Harman" })
-      await TrackPlayer.play()
-      // Resolve when playback truly ends (started, then reached a terminal state)
-      // OR when the queue empties — whichever fires first.
-      await new Promise<void>((resolve) => {
-        let started = false
-        let done = false
-        const finish = () => {
-          if (done) return
-          done = true
-          subState.remove()
-          subQueue.remove()
-          resolve()
-        }
-        const subState = TrackPlayer.addEventListener(Event.PlaybackState, (e) => {
-          if (e.state === State.Playing) started = true
-          if (
-            started &&
-            (e.state === State.Ended || e.state === State.Stopped || e.state === State.None)
-          ) {
-            finish()
+      // Stream the reply via expo-av. AVPlayer handles the live AAC HTTP stream,
+      // so playback starts before the whole file arrives.
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: url, headers },
+        { shouldPlay: true },
+        null,
+        /* downloadFirst */ false
+      )
+      active = sound
+      try {
+        // Resolve when playback reaches the end (didJustFinish) or errors/unloads.
+        await new Promise<void>((resolve) => {
+          let done = false
+          const finish = () => {
+            if (done) return
+            done = true
+            resolve()
           }
+          sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+            if (!status.isLoaded) {
+              // Unloaded or failed to load -> nothing more will play.
+              finish()
+              return
+            }
+            if (status.didJustFinish) finish()
+          })
         })
-        const subQueue = TrackPlayer.addEventListener(Event.PlaybackQueueEnded, finish)
-      })
-      // Deterministically release the session before returning, so the caller can
-      // immediately transition to recording with the session provably free.
-      await TrackPlayer.reset()
+      } finally {
+        // Unload the sound so it releases the AVAudioSession before we hand it to
+        // the recorder. Same native module, so the session transitions cleanly.
+        if (active === sound) active = null
+        await sound.unloadAsync().catch(() => {})
+      }
     },
     async stopPlayback() {
-      await _ensurePlayer()
-      await TrackPlayer.reset()
+      // Barge-in / teardown: unload the active sound (if any). Its playToEnd()
+      // promise then resolves via the unloaded status, and the coordinator moves on.
+      const sound = active
+      active = null
+      if (sound) await sound.unloadAsync().catch(() => {})
     },
   }
 }
