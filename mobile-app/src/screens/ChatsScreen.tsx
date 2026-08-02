@@ -184,29 +184,42 @@ export default function ChatsScreen({ navigation }: Props) {
     }, [navigation, project, t])
   )
 
-  const load = useCallback(async () => {
-    setError("")
-    try {
-      const s = await api.sessions(host)
-      s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
-      setSessions(s)
-    } catch (e) {
-      const err = e as Error & { status?: number }
-      if (err.status === 401) {
-        await setToken(null)
-        navigation.replace("Login")
-        return
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setError("")
+      try {
+        const s = await api.sessions(host)
+        s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
+        setSessions(s)
+      } catch (e) {
+        const err = e as Error & { status?: number }
+        if (err.status === 401) {
+          await setToken(null)
+          navigation.replace("Login")
+          return
+        }
+        // Silent background polls must never surface a transient error banner or
+        // wipe the list — only a user-initiated load reports failures.
+        if (!silent) setError(err.message)
+      } finally {
+        if (!silent) setLoading(false)
       }
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [host, navigation])
+    },
+    [host, navigation]
+  )
 
-  // Reload on focus (returning from a thread) and whenever the active host changes.
+  // Keep the list LIVE while it's the focused screen: poll quietly in the
+  // background so new/updated chats settle into place continuously, instead of
+  // the whole list re-sorting in one jarring jump the instant you navigate back
+  // (which made muscle-memory "tap the top row" hit the wrong chat). On focus we
+  // do ONE silent refresh (no spinner, no list wipe) and start the poll; on blur
+  // we stop it. FlatList reconciles by `path` key, so reordered rows move
+  // smoothly rather than the list rebuilding.
   useFocusEffect(
     useCallback(() => {
-      load()
+      load(true) // silent refresh on return — no spinner, no visible reload
+      const id = setInterval(() => load(true), 4000)
+      return () => clearInterval(id)
     }, [load])
   )
   useEffect(() => {
@@ -226,7 +239,7 @@ export default function ChatsScreen({ navigation }: Props) {
           data={rows}
           keyExtractor={(r) => (r.kind === "header" ? `hdr:${r.project}` : r.s.path)}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
+          refreshControl={<RefreshControl refreshing={false} onRefresh={() => load(false)} />}
           ListHeaderComponent={
             <>
               <View style={[styles.searchWrap, { backgroundColor: t.bg }]}>

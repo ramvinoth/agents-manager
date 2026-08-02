@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react"
 import { ActivityIndicator, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
-import { DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
+import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 import { effectiveScheme, themeFor } from "./src/lib/theme"
 import { useThemePref } from "./src/lib/useTheme"
@@ -12,7 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { loadConfig, serverUrl, token } from "./src/state/config"
-import { registerForPush } from "./src/lib/notify"
+import { registerForPush, onNotificationTap } from "./src/lib/notify"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
 import HomeTabs from "./src/screens/HomeTabs"
@@ -42,6 +42,29 @@ export type RootStackParamList = {
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
+
+// Ref to the navigation tree so notification taps (which fire OUTSIDE React,
+// from the native module) can navigate without a screen in scope.
+export const navigationRef = createNavigationContainerRef<RootStackParamList>()
+
+// Resolve a push payload {session, host} to its session PATH and open the Thread.
+// The payload carries the session id, but Thread navigates by `path` (unique;
+// id is not), so we look the session up on its host. Best-effort — a stale id or
+// offline host just no-ops rather than throwing.
+async function openFromNotification(data: Record<string, unknown>): Promise<void> {
+  const session = typeof data.session === "string" ? data.session : ""
+  const host = typeof data.host === "string" ? data.host : "local"
+  if (!session || !navigationRef.isReady()) return
+  try {
+    const sessions = await api.sessions(host)
+    const match = sessions.find((s) => s.id === session)
+    if (!match) return
+    const label = match.title || match.id.slice(0, 8)
+    navigationRef.navigate("Thread", { host, label, path: match.path })
+  } catch {
+    /* tap routing is best-effort */
+  }
+}
 
 export default function App() {
   const [ready, setReady] = useState(false)
@@ -92,6 +115,10 @@ export default function App() {
     })()
   }, [])
 
+  // Route notification taps to the chat they belong to (foreground/background AND
+  // cold start). Set up once; teardown on unmount.
+  useEffect(() => onNotificationTap((data) => void openFromNotification(data)), [])
+
   if (!ready) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -103,7 +130,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer theme={navTheme}>
+        <NavigationContainer theme={navTheme} ref={navigationRef}>
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
             initialRouteName={initial}

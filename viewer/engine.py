@@ -778,7 +778,7 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    "Your agent has a question for you.",
-                   data={"session": session_id, "question": True})
+                   data={"session": session_id, "host": host, "question": True})
     except Exception:
         pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
@@ -827,7 +827,7 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    "Your agent has a plan to review.",
-                   data={"session": session_id, "plan": True})
+                   data={"session": session_id, "host": host, "plan": True})
     except Exception:
         pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
@@ -884,12 +884,13 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
              "tool_use_id": tool_use_id, "event": ev, "decision": None,
              "created": time.time()})
         cwd = job.get("cwd", "")
+        host = job.get("host", "local")
     # Background push: the run is now blocked waiting on the user (best-effort).
     try:
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    f"Approve {tool_name}? The agent needs your permission to continue.",
-                   data={"session": session_id, "approval": pid})
+                   data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
     decided = ev.wait(timeout=PERM_TIMEOUT)
@@ -1155,12 +1156,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 try:
                     from viewer.push import notify_all, push_preview
                     label = _push_label(session_id, cwd)
+                    phost = job.get("host", "local")
                     if rc == 0 and last_result:
                         body = push_preview(last_result)
-                        notify_all(label, body, data={"session": session_id})
+                        notify_all(label, body, data={"session": session_id, "host": phost})
                     else:
                         body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
-                        notify_all(label, body, data={"session": session_id})
+                        notify_all(label, body, data={"session": session_id, "host": phost})
                 except Exception:
                     pass
 
