@@ -63,46 +63,65 @@ async function _release(rec: Audio.Recording | null) {
   }
 }
 
-/** Fully reset the audio session so a fresh recorder can prepare. On re-entering
- *  the voice screen the session may still be held by a prior recorder or by
- *  TrackPlayer (TTS) — especially with staysActiveInBackground — which makes the
- *  next prepare throw "recorder not prepared". Tearing the session down (mode off)
- *  and re-asserting record mode clears that. */
+/** Fully reset the audio session so a fresh recorder can prepare. The usual
+ *  culprit is react-native-track-player: after a TTS reply it keeps the iOS audio
+ *  session in PLAYBACK mode, so the next Recording.prepare throws "recorder not
+ *  prepared". expo-av alone can't fix that — we must tell TrackPlayer to release
+ *  the session too, then hand it back to the recorder. Also covers a stale
+ *  recorder / staysActiveInBackground hold on screen re-entry. */
 async function _resetAudioSession() {
   await _release(_active)
   _active = null
+  // 1. Make TrackPlayer let go of the audio session (it owns it after TTS).
   try {
-    // Briefly drop recording/background hold, then re-assert — forces the native
-    // audio session to be reconfigured cleanly for a new recorder.
+    await TrackPlayer.reset()
+  } catch {
+    /* player may not be set up yet — fine */
+  }
+  // 2. Drop the recording/background hold entirely, then re-assert record mode.
+  //    The brief "everything off" state forces iOS to deactivate + reactivate the
+  //    AVAudioSession, which is what actually frees it for a new recorder.
+  try {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
+      playsInSilentModeIOS: false,
       staysActiveInBackground: false,
     })
   } catch {
     /* best effort */
   }
+  // 3. Let the native session settle before re-acquiring (races cause the error).
+  await new Promise((r) => setTimeout(r, 250))
   await Audio.setAudioModeAsync(AUDIO_MODE).catch(() => {})
 }
 
-/** Create + prepare a recording with one automatic recovery: if the first
- *  prepare fails (stale session after navigating away and back), reset the audio
- *  session and try once more. Returns the started recorder or throws. */
+/** Create + prepare a recording, recovering from a stale/held session. Tries up
+ *  to 3 times: the first attempt straight, then a full session reset + retry, with
+ *  a short backoff — because the session hand-off from TrackPlayer/background can
+ *  take a moment to actually release. Returns the started recorder or throws. */
 async function _freshRecording(options: Audio.RecordingOptions): Promise<Audio.Recording> {
   await _release(_active)
   _active = null
-  await Audio.setAudioModeAsync(AUDIO_MODE)
-  try {
-    const { recording } = await Audio.Recording.createAsync(options)
-    _active = recording
-    return recording
-  } catch {
-    // Stale/held session — reset and retry once.
-    await _resetAudioSession()
-    const { recording } = await Audio.Recording.createAsync(options)
-    _active = recording
-    return recording
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // On the first attempt just assert record mode; on retries do a full reset.
+      if (attempt === 0) {
+        await Audio.setAudioModeAsync(AUDIO_MODE)
+      } else {
+        await _resetAudioSession()
+        await new Promise((r) => setTimeout(r, attempt * 200))
+      }
+      const { recording } = await Audio.Recording.createAsync(options)
+      _active = recording
+      return recording
+    } catch (e) {
+      lastErr = e
+      await _release(_active)
+      _active = null
+    }
   }
+  throw lastErr instanceof Error ? lastErr : new Error("could not start recording")
 }
 
 /** Start a new recording and return the live handle (caller stops it via
@@ -207,16 +226,25 @@ async function _recordListenWindow(
   }
   await _release(_active)
   _active = null
-  await Audio.setAudioModeAsync(AUDIO_MODE)
-  let rec: Audio.Recording
-  try {
+  let rec: Audio.Recording | null = null
+  // Try up to 3 times, doing a full session reset (incl. TrackPlayer.reset) on
+  // retries — same recovery as _freshRecording, so a session held by a prior TTS
+  // can't wedge hands-free at start.
+  for (let attempt = 0; attempt < 3 && !rec; attempt++) {
     try {
+      if (attempt === 0) {
+        await Audio.setAudioModeAsync(AUDIO_MODE)
+      } else {
+        await _resetAudioSession()
+        await new Promise((r) => setTimeout(r, attempt * 200))
+      }
       rec = await prepare()
     } catch {
-      // Stale session after navigating away/back or a prior TTS — reset + retry.
-      await _resetAudioSession()
-      rec = await prepare()
+      rec = null
     }
+  }
+  if (!rec) return { buf: null, silent: false }
+  try {
     _active = rec
     await rec.startAsync()
     await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
