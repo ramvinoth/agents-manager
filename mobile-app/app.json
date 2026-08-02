@@ -19,7 +19,8 @@
       "buildNumber": "1",
       "infoPlist": {
         "CFBundleDisplayName": "Harman",
-        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode."
+        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode.",
+        "UIBackgroundModes": ["audio"]
       },
       "config": {
         "usesNonExemptEncryption": false

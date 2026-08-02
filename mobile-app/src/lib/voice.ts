@@ -26,15 +26,24 @@ async function ensureTrackPlayer(): Promise<void> {
   _tpReady = true
 }
 
+/** The audio-session mode used throughout: record + play, audible with the ring
+ *  switch off, and — critically for hands-free — kept alive when the app is
+ *  backgrounded or the screen is locked (paired with UIBackgroundModes:["audio"]
+ *  in app.json). iOS may still suspend under memory pressure; VAD-light windowing
+ *  keeps the cost down. */
+const AUDIO_MODE = {
+  allowsRecordingIOS: true,
+  playsInSilentModeIOS: true,
+  staysActiveInBackground: true,
+} as const
+
 /** Ask for mic permission and put the audio session into record+play mode
- *  (playsInSilentModeIOS so TTS is audible even with the ring switch off). */
+ *  (playsInSilentModeIOS so TTS is audible even with the ring switch off, and
+ *  staysActiveInBackground so hands-free keeps listening when backgrounded). */
 export async function prepareAudio(): Promise<boolean> {
   const perm = await Audio.requestPermissionsAsync()
   if (!perm.granted) return false
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-  })
+  await Audio.setAudioModeAsync(AUDIO_MODE)
   return true
 }
 
@@ -60,7 +69,7 @@ export async function startRecording(): Promise<Audio.Recording> {
   await _release(_active)
   _active = null
   // Re-assert record mode in case a prior playback left the session in play-only.
-  await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
+  await Audio.setAudioModeAsync(AUDIO_MODE)
   const { recording } = await Audio.Recording.createAsync(
     Audio.RecordingOptionsPresets.HIGH_QUALITY
   )
@@ -243,7 +252,7 @@ export async function startListening(
   // Wait for OPEN, then loop: record a window, send it, repeat. Recording is
   // inherently serial (one recorder), which naturally paces the stream.
   ws.onopen = async () => {
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true }).catch(
+    await Audio.setAudioModeAsync(AUDIO_MODE).catch(
       () => {}
     )
     while (!stopped && ws.readyState === WebSocket.OPEN) {
@@ -325,7 +334,7 @@ export async function speak(text: string): Promise<void> {
   } finally {
     await TrackPlayer.reset().catch(() => {})
     // Hand the audio session back to the recorder for the next turn.
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true }).catch(() => {})
+    await Audio.setAudioModeAsync(AUDIO_MODE).catch(() => {})
   }
 }
 
