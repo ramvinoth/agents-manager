@@ -157,19 +157,28 @@ class ChatMixin:
             if not os.path.isdir(cwd):
                 cwd = str(Path.home())
 
-        # A session can opt into a custom OpenAI-compatible provider (its meta
-        # carries a preset id). Proxy its turns to that endpoint instead of the
-        # claude CLI — local only, and never for a remote host session.
+        # A session can opt into a custom provider (its meta carries a preset id)
+        # with a conversation mode: "chat" (plain proxy, one-shot) or "agent" (the
+        # full Claude Code harness pointed at the custom endpoint). Local only.
+        provider_env = None
         if host == "local":
             from viewer.engine import SESSION_META
-            preset_id = (SESSION_META.get(session_id) or {}).get("provider", "")
+            meta = SESSION_META.get(session_id) or {}
+            preset_id = meta.get("provider", "")
             if preset_id:
-                from viewer.customrun import start_custom_run
-                if not start_custom_run(session_id, preset_id, message, cwd, host, mode):
-                    self.send_json({"error": "A message is already being processed, or the provider is unavailable"}, status=409)
+                conv_mode = meta.get("convMode", "chat")
+                if conv_mode == "agent":
+                    from viewer import providers
+                    provider_env = providers.anthropic_env(preset_id)
+                    # Fall through to start_claude_run below (with provider_env);
+                    # queue/steer work because it's a real CHAT_JOBS claude job.
+                else:
+                    from viewer.customrun import start_custom_run
+                    if not start_custom_run(session_id, preset_id, message, cwd, host, mode):
+                        self.send_json({"error": "A message is already being processed, or the provider is unavailable"}, status=409)
+                        return
+                    self.send_json({"started": True, "session": session_id})
                     return
-                self.send_json({"started": True, "session": session_id})
-                return
 
         # While a run is active: queue (next turn) instead of rejecting.
         if body.get("queue"):
@@ -177,7 +186,8 @@ class ChatMixin:
             if pos is not None:
                 self.send_json({"queued": pos, "session": session_id})
                 return
-        if not start_claude_run(session_id, ["--resume", session_id], message, mode, cwd, model, host):
+        if not start_claude_run(session_id, ["--resume", session_id], message, mode, cwd,
+                                "" if provider_env else model, host, provider_env=provider_env):
             self.send_json({"error": "A message is already being processed for this session"}, status=409)
             return
         self.send_json({"started": True, "session": session_id})

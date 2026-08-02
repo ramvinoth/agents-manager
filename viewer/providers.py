@@ -76,6 +76,21 @@ def get_api_key(pid):
     return (rec or {}).get("apiKey", "") if rec else ""
 
 
+def anthropic_env(pid):
+    """Agent mode: the {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL}
+    env that points the Claude Code harness at this preset's endpoint (our
+    llama-server, which serves the Anthropic Messages API natively). Returns None
+    when the preset is missing/incomplete so the caller can fall back cleanly."""
+    rec = get_preset(pid)
+    if not rec or not rec.get("baseUrl"):
+        return None
+    return {
+        "ANTHROPIC_BASE_URL": rec["baseUrl"],
+        "ANTHROPIC_AUTH_TOKEN": rec.get("apiKey", ""),
+        "ANTHROPIC_MODEL": rec.get("model", ""),
+    }
+
+
 def upsert_preset(pid, name, base_url, model, api_key=None):
     """Create or update a preset. A blank id mints a new uuid4 id. When api_key is
     None the existing key is preserved (edit without re-typing the secret).

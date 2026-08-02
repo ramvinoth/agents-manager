@@ -74,6 +74,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // is a device-global preference). `providers` is the list of saved presets.
   const [provider, setProvider] = useState("")
   const [providers, setProviders] = useState<Provider[]>([])
+  // Conversation mode for a custom provider: "chat" (plain proxy) or "agent"
+  // (the full Claude Code harness pointed at the endpoint). Per-session, saved
+  // server-side. Only meaningful when a custom provider is selected.
+  const [convMode, setConvMode] = useState<"chat" | "agent">("chat")
   // Inline editor for adding / editing a preset. null = closed.
   const [editing, setEditing] = useState<null | { id: string; name: string; baseUrl: string; apiKey: string; model: string }>(null)
   const [modelOptions, setModelOptions] = useState<string[]>([])
@@ -93,6 +97,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           if (m.avatar) setAvatar(m.avatar)
           setPinned(Array.isArray(m.pinned) ? m.pinned : [])
           setProvider(m.provider || "")
+          setConvMode(m.convMode === "agent" ? "agent" : "chat")
         })
         .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
@@ -168,6 +173,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     setProvider(id)
     setEditing(null)
     if (path) api.sessionMetaSave({ session: path, provider: id, host }).catch(() => {})
+  }
+
+  // Conversation mode (Chat | Agent), per-session, persisted server-side.
+  function pickConvMode(m: "chat" | "agent") {
+    setConvMode(m)
+    if (path) api.sessionMetaSave({ session: path, convMode: m, host }).catch(() => {})
   }
 
   // Open the inline editor: blank for a new preset, or pre-filled to edit one.
@@ -357,6 +368,34 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       <Text style={styles.sheetSection}>PERMISSION MODE</Text>
       <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
       <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
+
+      {/* Conversation mode applies only to a custom provider. Default (Claude) is
+          always the full agentic harness, so the control is shown disabled there. */}
+      <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
+      <Text style={styles.sheetHint}>
+        {provider === ""
+          ? "Default (Claude) is always agentic — tools, skills and MCP are on."
+          : "Chat is a plain conversation. Agent runs the full harness (tools, skills, MCP) on your model."}
+      </Text>
+      <View style={[styles.sheetPills, { opacity: provider === "" ? 0.5 : 1 }]}>
+        {(["chat", "agent"] as const).map((m) => {
+          const active = provider !== "" && convMode === m
+          return (
+            <TouchableOpacity
+              key={m}
+              testID={`sp-convmode-${m}`}
+              disabled={provider === ""}
+              style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+              onPress={() => pickConvMode(m)}
+            >
+              {active ? <Icon name="check" size={14} color="#fff" /> : null}
+              <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
+                {m === "chat" ? "Chat" : "Agent"}
+              </Text>
+            </TouchableOpacity>
+          )
+        })}
+      </View>
 
       <Text style={styles.sheetSection}>PROVIDER</Text>
       <Text style={styles.sheetHint}>

@@ -968,11 +968,16 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
-def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local"):
+def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
     host != 'local' runs claude on that SSH host instead.
+
+    provider_env (Agent mode): an optional {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+    ANTHROPIC_MODEL} dict that points the harness at a custom Anthropic-compatible
+    endpoint (our llama-server). None = the normal Anthropic-cloud Claude run,
+    byte-identical to before.
     Returns False if the session already has a running job."""
     remote = bool(host) and host != "local"
     with CHAT_LOCK:
@@ -1044,6 +1049,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env.update(host_env(host))
             except Exception:
                 pass
+            # Agent mode: point the harness at a custom Anthropic-compatible endpoint
+            # (our llama-server). Applied LAST so it wins over any inherited creds.
+            if provider_env:
+                env.update({str(k): str(v) for k, v in provider_env.items()})
             # If Playwright MCP on this host attaches to our CDP browser, it
             # must be running before claude boots (no-op / ~50ms otherwise).
             ensure_mcp_browser(host if remote else "local")

@@ -179,6 +179,11 @@ class SessionsMixin:
             # Custom LLM provider preset id ("" = Default/Claude). Runs for this
             # session are proxied to that endpoint instead of the claude CLI.
             meta["provider"] = str(body["provider"]).strip()[:64]
+        if "convMode" in body:
+            # Conversation mode for a custom provider: "chat" (plain proxy) or
+            # "agent" (full Claude Code harness pointed at the endpoint).
+            cm = str(body["convMode"]).strip()
+            meta["convMode"] = cm if cm in ("chat", "agent") else "chat"
         save_json_file(META_FILE, SESSION_META)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
@@ -186,7 +191,8 @@ class SessionsMixin:
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
                         "pinned": meta.get("pinned", []),
-                        "provider": meta.get("provider", "")})
+                        "provider": meta.get("provider", ""),
+                        "convMode": meta.get("convMode", "chat")})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -201,7 +207,7 @@ class SessionsMixin:
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
                             "systemPrompt": meta.get("systemPrompt", ""),
                             "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                            "provider": meta.get("provider", ""), "cwd": cwd})
+                            "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"), "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -212,7 +218,7 @@ class SessionsMixin:
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                        "provider": meta.get("provider", ""),
+                        "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
@@ -735,14 +741,32 @@ class SessionsMixin:
         sp = (body.get("systemPrompt") or "").strip()
         goal = (body.get("goal") or "").strip()
         provider = (body.get("provider") or "").strip()
+        conv_mode = (body.get("convMode") or "chat").strip()
+        if conv_mode not in ("chat", "agent"):
+            conv_mode = "chat"
         if sp or goal or provider:
             SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
             if provider:
                 SESSION_META[session_id]["provider"] = provider[:64]
+                SESSION_META[session_id]["convMode"] = conv_mode
             save_json_file(META_FILE, SESSION_META)
-        # A new custom-provider session is driven by the viewer (local only); the
-        # runner creates the transcript file the app then resolves via /api/resolve.
+        # A new custom-provider session (local only).
         if provider and host == "local":
+            if conv_mode == "agent":
+                # Agent mode: the full harness pointed at the custom endpoint. The
+                # claude CLI creates the transcript (as a normal Claude session).
+                from viewer import providers
+                penv = providers.anthropic_env(provider)
+                if not penv:
+                    self.send_json({"error": "Provider unavailable"}, status=502)
+                    return
+                if not start_claude_run(session_id, ["--session-id", session_id], message,
+                                        mode, cwd, "", host, provider_env=penv):
+                    self.send_json({"error": "Busy"}, status=409)
+                    return
+                self.send_json({"started": True, "session": session_id})
+                return
+            # Chat mode: the viewer proxies and creates the transcript file itself.
             from viewer.customrun import start_custom_run
             if not start_custom_run(session_id, provider, message, cwd, host, mode):
                 self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)

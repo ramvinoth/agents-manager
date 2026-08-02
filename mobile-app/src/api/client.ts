@@ -46,7 +46,7 @@ export type AgentInfo = {
   docs?: string
 }
 export type PermApproval = { id: string; tool_name: string; input: unknown }
-export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string }
+export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string; convMode?: "chat" | "agent" }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
 export type Provider = { id: string; name: string; baseUrl: string; model: string }
@@ -242,7 +242,7 @@ export const api = {
       `/api/session-meta?session=${encodeURIComponent(session)}` +
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
-  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; provider?: string; host?: string }) =>
+  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; provider?: string; convMode?: "chat" | "agent"; host?: string }) =>
     req<{ ok?: boolean }>("POST", "/api/session-meta", body),
 
   // ---- custom LLM providers (OpenAI-compatible endpoints). The apiKey is sent
