@@ -175,6 +175,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<ListItem>>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const localId = useRef(0)
+  // Optimistic user bubbles (fresh send + steer) that the server transcript may
+  // not have caught up to yet. reload() keeps re-appending these until the server
+  // shows them, so a steered message can't flash-and-vanish mid-run.
+  const pendingSteers = useRef<{ kind: "user"; id: string; text: string }[]>([])
   // --- Autoscroll model: an INVERTED list --------------------------------------
   // The thread renders newest-first with `inverted`, so item 0 sits at the bottom
   // of the screen and the list grows upward. This makes "stay on the latest" the
@@ -205,7 +209,18 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       const lines = await api.sessionRead(host, path)
       const next = groupThread(parseTranscript(lines))
-      setItems(next)
+      // A steered message gets an optimistic bubble immediately, but the server
+      // may not have written it into the transcript yet — so a naive setItems(next)
+      // here would wipe it (it flashes then vanishes). Keep any pending optimistic
+      // bubbles whose text hasn't shown up in the server transcript yet; drop each
+      // one only once the server has caught up (its text appears as a user turn).
+      const serverUserTexts = new Set(
+        next.filter((it) => it.kind === "user").map((it) => (it as { text: string }).text)
+      )
+      pendingSteers.current = pendingSteers.current.filter((b) => !serverUserTexts.has(b.text))
+      const merged =
+        pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
+      setItems(merged)
       // Track the newest tool call so the header/working bubble can name it.
       const last = next[next.length - 1]
       if (last && last.kind === "exchange") {
@@ -224,6 +239,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   useFocusEffect(
     useCallback(() => {
+      // Switching sessions: don't carry optimistic bubbles from a prior thread.
+      pendingSteers.current = []
       reload()
       // Hydrate pinned message uuids from server session meta (survives reinstall).
       if (path) {
@@ -392,10 +409,22 @@ export default function ThreadScreen({ route, navigation }: Props) {
     listRef.current?.scrollToOffset({ offset: 0, animated: true })
   }, [])
 
-  function addUserBubble(text: string) {
+  function addUserBubble(text: string): string {
     // Append in natural order; the list is `inverted`, so this lands at offset 0
     // (the bottom) and the viewport follows it automatically. No scroll call.
-    setItems((it) => [...it, { kind: "user", id: `local-${++localId.current}`, text }])
+    const id = `local-${++localId.current}`
+    // Remember it so a poll reload (which rebuilds from the server transcript)
+    // re-appends it until the server has persisted this user turn.
+    pendingSteers.current = [...pendingSteers.current, { kind: "user", id, text }]
+    setItems((it) => [...it, { kind: "user", id, text }])
+    return id
+  }
+
+  /** Drop an optimistic bubble that failed to send (from both the list and the
+   *  pending-steers set) so it doesn't get re-appended by the next reload. */
+  function dropUserBubble(id: string) {
+    pendingSteers.current = pendingSteers.current.filter((b) => b.id !== id)
+    setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === id)))
   }
 
   function startPoll(sid: string) {
@@ -466,14 +495,14 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }
         return
       }
-      addUserBubble(text)
+      const bubbleId = addUserBubble(text)
       try {
         await api.chatSteer({ path: path || sessionId, message: text, host })
       } catch (e) {
         // Don't silently swallow the message: drop the optimistic bubble and put
         // the text back in the composer so the user can retry.
         setError((e as Error).message)
-        setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === `local-${localId.current}`)))
+        dropUserBubble(bubbleId)
         setInput(text)
       }
       return
