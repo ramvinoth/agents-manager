@@ -2,9 +2,14 @@
  * Voice I/O helpers for VoiceScreen — the mechanics of recording a spoken turn
  * and speaking a reply, kept out of the screen so the component stays about UI.
  *
- * Recording uses expo-av (Audio.Recording) → an .m4a file the server transcribes
- * (its ffmpeg fallback decodes m4a). Playback writes the server's WAV bytes to a
- * temp file (expo-av can't stream a POST response) and plays it via Audio.Sound.
+ * Recording produces an .m4a the server transcribes (its ffmpeg fallback decodes
+ * m4a). Playback streams the viewer's live AAC via react-native-track-player.
+ *
+ * IMPORTANT: this module does NOT touch the iOS audio session directly. All
+ * recorder/playback/session transitions go through `audioSession` (the single
+ * owner) so recording and playback are mutually exclusive and correctly ordered —
+ * that's what prevents "recorder not prepared" on the second turn. See
+ * src/lib/audioSession.ts (pure state machine) + audioSessionNative.ts (wiring).
  *
  * All audio stays between the app, the user's viewer, and their GPU box — no
  * third party. See viewer/voice.py + deploy/speech_service.py.
@@ -12,132 +17,31 @@
 import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"
 import * as SecureStore from "expo-secure-store"
-import TrackPlayer, { Event, State } from "react-native-track-player"
 import { api } from "../api/client"
+import { audioSession } from "./audioSessionNative"
 
-// TrackPlayer must be set up once per app run before use.
-let _tpReady = false
-async function ensureTrackPlayer(): Promise<void> {
-  if (_tpReady) return
-  try {
-    await TrackPlayer.setupPlayer()
-  } catch {
-    /* already set up (setupPlayer throws if called twice) — fine */
-  }
-  _tpReady = true
-}
-
-/** The audio-session mode used throughout: record + play, audible with the ring
- *  switch off, and — critically for hands-free — kept alive when the app is
- *  backgrounded or the screen is locked (paired with UIBackgroundModes:["audio"]
- *  in app.json). iOS may still suspend under memory pressure; VAD-light windowing
- *  keeps the cost down. */
-const AUDIO_MODE = {
-  allowsRecordingIOS: true,
-  playsInSilentModeIOS: true,
-  staysActiveInBackground: true,
-} as const
-
-/** Ask for mic permission and put the audio session into record+play mode
- *  (playsInSilentModeIOS so TTS is audible even with the ring switch off, and
- *  staysActiveInBackground so hands-free keeps listening when backgrounded). */
+/** Ask for mic permission and configure the (single) audio session. Returns
+ *  whether the mic is available. */
 export async function prepareAudio(): Promise<boolean> {
-  const perm = await Audio.requestPermissionsAsync()
-  if (!perm.granted) return false
-  await Audio.setAudioModeAsync(AUDIO_MODE)
-  return true
+  return audioSession.configure()
 }
 
-// expo-av permits only ONE prepared Audio.Recording globally. If a prior one
-// wasn't unloaded (an error, or an unmount mid-record), createAsync throws
-// "Only one Recording object can be prepared at a given time." Track the live
-// recorder here and force-release any leftover before starting a new one.
-let _active: Audio.Recording | null = null
-
-async function _release(rec: Audio.Recording | null) {
-  if (!rec) return
-  try {
-    await rec.stopAndUnloadAsync()
-  } catch {
-    /* already stopped/unloaded — fine */
-  }
-}
-
-/** Fully reset the audio session so a fresh recorder can prepare. The usual
- *  culprit is react-native-track-player: after a TTS reply it keeps the iOS audio
- *  session in PLAYBACK mode, so the next Recording.prepare throws "recorder not
- *  prepared". expo-av alone can't fix that — we must tell TrackPlayer to release
- *  the session too, then hand it back to the recorder. Also covers a stale
- *  recorder / staysActiveInBackground hold on screen re-entry. */
-async function _resetAudioSession() {
-  await _release(_active)
-  _active = null
-  // 1. Make TrackPlayer let go of the audio session (it owns it after TTS).
-  try {
-    await TrackPlayer.reset()
-  } catch {
-    /* player may not be set up yet — fine */
-  }
-  // 2. Drop the recording/background hold entirely, then re-assert record mode.
-  //    The brief "everything off" state forces iOS to deactivate + reactivate the
-  //    AVAudioSession, which is what actually frees it for a new recorder.
-  try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: false,
-      staysActiveInBackground: false,
-    })
-  } catch {
-    /* best effort */
-  }
-  // 3. Let the native session settle before re-acquiring (races cause the error).
-  await new Promise((r) => setTimeout(r, 250))
-  await Audio.setAudioModeAsync(AUDIO_MODE).catch(() => {})
-}
-
-/** Create + prepare a recording, recovering from a stale/held session. Tries up
- *  to 3 times: the first attempt straight, then a full session reset + retry, with
- *  a short backoff — because the session hand-off from TrackPlayer/background can
- *  take a moment to actually release. Returns the started recorder or throws. */
-async function _freshRecording(options: Audio.RecordingOptions): Promise<Audio.Recording> {
-  await _release(_active)
-  _active = null
-  let lastErr: unknown
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      // On the first attempt just assert record mode; on retries do a full reset.
-      if (attempt === 0) {
-        await Audio.setAudioModeAsync(AUDIO_MODE)
-      } else {
-        await _resetAudioSession()
-        await new Promise((r) => setTimeout(r, attempt * 200))
-      }
-      const { recording } = await Audio.Recording.createAsync(options)
-      _active = recording
-      return recording
-    } catch (e) {
-      lastErr = e
-      await _release(_active)
-      _active = null
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error("could not start recording")
-}
-
-/** Start a new recording and return the live handle (caller stops it via
- *  stopAndTranscribe). Any stranded prior recorder is cleaned up first so the
- *  expo-av single-recorder constraint can't wedge push-to-talk. Resilient to a
- *  stale session left by a prior screen visit / TTS playback. */
+/** Start a push-to-talk recording; the coordinator guarantees any prior playback
+ *  has released the session first. Returns the live recorder handle. */
 export async function startRecording(): Promise<Audio.Recording> {
-  return _freshRecording(Audio.RecordingOptionsPresets.HIGH_QUALITY)
+  return audioSession.record(Audio.RecordingOptionsPresets.HIGH_QUALITY) as Promise<Audio.Recording>
+}
+
+/** Force-release the recorder + any playback (screen unmount / loop stop). */
+export async function resetRecorder(): Promise<void> {
+  await audioSession.reset()
 }
 
 // Silence floor (dBFS) for the on-device VAD. expo-av meters loudness in dBFS —
 // roughly -160 (pure silence) up to 0 (clipping). A window whose PEAK stays
 // below this never contained speech, so we skip it entirely (no upload / decode /
-// STT) — that's what cuts the battery cost of always-listening at rest. Env-ish
-// tunable via setVadThreshold(); -45 is a conservative default that still catches
-// normal speaking volume across a room.
+// STT) — that's what cuts the battery cost of always-listening at rest. Tunable
+// via setVadThreshold(); -45 is conservative but still catches room-level speech.
 let _vadFloorDb = -45
 
 /** Adjust the on-device VAD silence floor (dBFS, negative). Lower = more
@@ -147,29 +51,21 @@ export function setVadThreshold(db: number): void {
 }
 
 /** Recording options with metering enabled so each window reports a peak dB level
- *  for the VAD gate (HIGH_QUALITY already meters on iOS, but we set it explicitly
- *  for both platforms). */
+ *  for the VAD gate. */
 const METERED_OPTIONS: Audio.RecordingOptions = {
   ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
   isMeteringEnabled: true,
 }
 
-/** Force-release any live recorder (call on screen unmount / error recovery so
- *  the next startRecording() can't hit the single-recorder constraint). */
-export async function resetRecorder(): Promise<void> {
-  const rec = _active
-  _active = null
-  await _release(rec)
-}
-
 /**
- * Stop the recording and transcribe it. Returns the recognized text (may be ""
- * for silence). Cleans up the temp recording file afterward.
+ * Stop the current recording (via the session owner) and transcribe it. Returns
+ * the recognized text (may be "" for silence). Cleans up the temp file.
+ *
+ * The `recording` arg is accepted for call-site clarity but the owner tracks the
+ * live recorder, so we stop through it to keep session state consistent.
  */
-export async function stopAndTranscribe(recording: Audio.Recording): Promise<string> {
-  await recording.stopAndUnloadAsync()
-  if (_active === recording) _active = null // this recorder is done; clear the tracker
-  const uri = recording.getURI()
+export async function stopAndTranscribe(_recording: Audio.Recording): Promise<string> {
+  const uri = await audioSession.stopRecording()
   if (!uri) return ""
   try {
     const res = await fetch(uri)
@@ -181,14 +77,12 @@ export async function stopAndTranscribe(recording: Audio.Recording): Promise<str
   }
 }
 
-/** Record ~`seconds` of speech and return it as a Blob (m4a), or null if the
- *  recorder couldn't produce a file. Used by enrollment (one clean clip). */
+/** Record ~`seconds` of speech and return it as a Blob (m4a), or null. Used by
+ *  enrollment (one clean clip). Goes through the session owner. */
 async function _recordClipBlob(seconds: number): Promise<Blob | null> {
-  const rec = await _freshRecording(METERED_OPTIONS)
+  await audioSession.record(METERED_OPTIONS)
   await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
-  await rec.stopAndUnloadAsync()
-  if (_active === rec) _active = null
-  const uri = rec.getURI()
+  const uri = await audioSession.stopRecording()
   if (!uri) return null
   try {
     const res = await fetch(uri)
@@ -198,63 +92,29 @@ async function _recordClipBlob(seconds: number): Promise<Blob | null> {
   }
 }
 
-/** Record ~`seconds` and return the raw m4a bytes as an ArrayBuffer, or null.
- *  Used by the hands-free listen loop: RN frames an ArrayBuffer as a binary
- *  WebSocket message reliably across versions (more so than a Blob), which the
- *  server reads as opcode 0x2 and decodes standalone.
+/**
+ * Record ~`seconds` and return the raw m4a bytes as an ArrayBuffer, plus whether
+ * the window was silent. Used by the hands-free listen loop.
  *
- *  On-device VAD: with metering enabled we watch the window's PEAK loudness while
- *  recording. If the whole window stayed below the silence floor (`_vadFloorDb`),
- *  we return {silent:true} WITHOUT reading/encoding the file — the caller then
- *  skips the upload + server STT for that window, which is what makes always-on
- *  listening cheap at rest. Only windows that actually contained sound are sent. */
+ * On-device VAD: with metering enabled we watch the window's PEAK loudness. If it
+ * never rose above the silence floor, we return {silent:true} WITHOUT reading the
+ * file — the caller skips the upload + server STT for that window (the battery
+ * win). The recorder is obtained from the session owner (so it's serialized with
+ * playback); the metering callback is a read-only observation set on the handle.
+ */
 async function _recordListenWindow(
   seconds: number
 ): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
   let peak = -160
-  // Prepare a metered recorder, recovering once from a stale/held session.
-  const prepare = async (): Promise<Audio.Recording> => {
-    const rec = new Audio.Recording()
-    await rec.prepareToRecordAsync(METERED_OPTIONS)
-    rec.setProgressUpdateInterval(120)
-    rec.setOnRecordingStatusUpdate((s) => {
-      if (s.isRecording && typeof s.metering === "number" && s.metering > peak) {
-        peak = s.metering
-      }
-    })
-    return rec
-  }
-  await _release(_active)
-  _active = null
-  let rec: Audio.Recording | null = null
-  // Try up to 3 times, doing a full session reset (incl. TrackPlayer.reset) on
-  // retries — same recovery as _freshRecording, so a session held by a prior TTS
-  // can't wedge hands-free at start.
-  for (let attempt = 0; attempt < 3 && !rec; attempt++) {
-    try {
-      if (attempt === 0) {
-        await Audio.setAudioModeAsync(AUDIO_MODE)
-      } else {
-        await _resetAudioSession()
-        await new Promise((r) => setTimeout(r, attempt * 200))
-      }
-      rec = await prepare()
-    } catch {
-      rec = null
+  const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
+  rec.setProgressUpdateInterval(120)
+  rec.setOnRecordingStatusUpdate((s) => {
+    if (s.isRecording && typeof s.metering === "number" && s.metering > peak) {
+      peak = s.metering
     }
-  }
-  if (!rec) return { buf: null, silent: false }
-  try {
-    _active = rec
-    await rec.startAsync()
-    await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
-    await rec.stopAndUnloadAsync()
-    if (_active === rec) _active = null
-  } catch {
-    if (_active) _active = null
-    return { buf: null, silent: false }
-  }
-  const uri = rec.getURI()
+  })
+  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
+  const uri = await audioSession.stopRecording()
   // VAD gate: window never rose above the silence floor -> skip it (no upload).
   if (peak < _vadFloorDb) {
     if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
@@ -332,8 +192,7 @@ export type ListenEvent =
   | { type: "unenrolled" }
   | { type: "error"; error?: string }
 
-// One live hands-free session at a time. `_listenStop` cancels the record loop;
-// `_listenWs` is the open socket.
+// One live hands-free session at a time. `_listenStop` cancels the record loop.
 let _listenStop: (() => void) | null = null
 
 /**
@@ -342,12 +201,9 @@ let _listenStop: (() => void) | null = null
  * verification on the GPU box. `onEvent` fires for every window's verdict; the
  * caller acts only on {type:"utterance"} (the enrolled user said "Harman …").
  *
- * Reuses expo-av (already linked) — no new native audio dependency. Each window
- * is a self-contained m4a the box decodes standalone, so there's no stream
- * reassembly. Returns a stop() function.
- *
- * NOTE: recording and TTS playback share the one audio session, so the caller
- * pauses listening (stop()) while speaking a reply, then restarts it.
+ * Each window is a self-contained m4a the box decodes standalone, so there's no
+ * stream reassembly. Recording goes through the session owner, so it's serialized
+ * with any TTS playback. Returns a stop() function.
  */
 export async function startListening(
   onEvent: (e: ListenEvent) => void,
@@ -393,12 +249,9 @@ export async function startListening(
     _listenStop = null
   }
 
-  // Wait for OPEN, then loop: record a window, send it, repeat. Recording is
-  // inherently serial (one recorder), which naturally paces the stream.
+  // On OPEN, loop: record a window, send it, repeat. audioSession serializes each
+  // record, which naturally paces the stream.
   ws.onopen = async () => {
-    await Audio.setAudioModeAsync(AUDIO_MODE).catch(
-      () => {}
-    )
     while (!stopped && ws.readyState === WebSocket.OPEN) {
       let res: { buf: ArrayBuffer | null; silent: boolean } = { buf: null, silent: false }
       try {
@@ -408,8 +261,6 @@ export async function startListening(
       }
       if (stopped || ws.readyState !== WebSocket.OPEN) break
       // On-device VAD: a silent window is dropped here — no upload, no server STT.
-      // This is the battery win: at rest, most windows are silence and cost only
-      // the local recording, never the radio or the GPU box.
       if (res.silent) continue
       if (res.buf && res.buf.byteLength > 0) {
         try {
@@ -430,78 +281,19 @@ export async function stopListening(): Promise<void> {
   await resetRecorder().catch(() => {})
 }
 
-/** Fetch one sentence's TTS audio and write it to a temp WAV; returns the path
- *  (or null on failure so the pipeline can skip it). */
-async function fetchTts(sentence: string): Promise<string | null> {
-  try {
-    const blob = await api.voiceTts(sentence)
-    const base64 = await blobToBase64(blob)
-    const path = `${FileSystem.cacheDirectory}harman-tts-${Date.now()}-${Math.floor(Math.random() * 1e6)}.wav`
-    await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 })
-    return path
-  } catch {
-    return null
-  }
-}
-
 /**
- * Speak `text` by STREAMING it: react-native-track-player plays the viewer's
- * live AAC stream (Pocket generate_audio_stream -> ffmpeg), so the first audio
- * arrives in ~0.5s and long replies start speaking almost immediately instead
- * of waiting for the whole thing to generate. Resolves when playback finishes.
- *
- * NOTE: track-player owns the audio session while playing; we re-assert the
- * expo-av record mode afterward so the next mic press still records.
+ * Speak `text` by STREAMING it through the session owner: track-player plays the
+ * viewer's live AAC stream (Pocket generate_audio_stream -> ffmpeg), so the first
+ * audio arrives in ~0.5s. Resolves when playback finishes AND the session has been
+ * released — so a following recording sees a free session.
  */
 export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
-  await ensureTrackPlayer()
   const { url, headers } = api.voiceTtsStreamUrl(text)
-  try {
-    await TrackPlayer.reset()
-    await TrackPlayer.add({ id: "tts", url, headers, title: "Reply", artist: "Harman" })
-    await TrackPlayer.play()
-    // Resolve when playback reaches the end (or errors), polling player state.
-    await new Promise<void>((resolve) => {
-      let started = false
-      const sub = TrackPlayer.addEventListener(Event.PlaybackState, async (e) => {
-        if (e.state === State.Playing) started = true
-        // Ended / stopped after it actually started -> done.
-        if (started && (e.state === State.Ended || e.state === State.Stopped || e.state === State.None)) {
-          sub.remove()
-          resolve()
-        }
-      })
-      // Safety: also resolve if a queue-ended event fires.
-      const sub2 = TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
-        sub.remove(); sub2.remove(); resolve()
-      })
-    })
-  } catch {
-    /* streaming failed — swallow so the mic re-enables */
-  } finally {
-    await TrackPlayer.reset().catch(() => {})
-    // Hand the audio session back to the recorder for the next turn.
-    await Audio.setAudioModeAsync(AUDIO_MODE).catch(() => {})
-  }
+  await audioSession.play(url, headers)
 }
 
-/** Stop any in-progress TTS playback (the "read aloud" toggle / new turn). The
- *  active speak() promise resolves via its PlaybackState listener. */
+/** Stop any in-progress TTS playback (barge-in / new turn). */
 export async function stopSpeaking(): Promise<void> {
-  await TrackPlayer.reset().catch(() => {})
-}
-
-/** RN Blob → base64 string (FileReader is available in the RN runtime). */
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error("failed to read audio blob"))
-    reader.onloadend = () => {
-      // result is a data URL: "data:audio/wav;base64,XXXX" — strip the prefix.
-      const s = String(reader.result)
-      resolve(s.slice(s.indexOf(",") + 1))
-    }
-    reader.readAsDataURL(blob)
-  })
+  await audioSession.stopPlayback()
 }

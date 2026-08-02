@@ -9,13 +9,11 @@ import {
   enrollVoice,
   isEnrolled,
   prepareAudio,
-  resetRecorder,
   speak,
   startListening,
   startRecording,
   stopAndTranscribe,
   stopListening,
-  stopSpeaking,
   type ListenEvent,
 } from "../lib/voice"
 import { composerPrefs } from "../state/config"
@@ -77,12 +75,10 @@ export default function VoiceScreen({ route }: Props) {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
       if (maxRecRef.current) clearTimeout(maxRecRef.current)
-      // Unmounting mid-record: release the recorder so the mic is freed and the
-      // next screen visit can start a fresh recording (single-recorder rule).
+      // Unmounting: stop the hands-free loop, then release everything through the
+      // single audio-session owner (recorder + any playback) in one awaited call.
       recordingRef.current = null
       stopListening()
-      stopSpeaking()
-      resetRecorder()
     }
   }, [])
 
