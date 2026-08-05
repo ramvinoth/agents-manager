@@ -34,7 +34,6 @@ import io
 import json
 import os
 import re
-import struct
 import subprocess
 import threading
 import urllib.request
