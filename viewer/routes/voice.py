@@ -18,7 +18,6 @@ Both are normal /api routes, so the standard session gate authenticates them.
                         enrolled user says "Harman …". Hands-free listening channel.
 """
 import json
-import urllib.parse
 import urllib.request
 
 from viewer import voice

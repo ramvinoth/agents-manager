@@ -193,9 +193,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // offset (0 = pinned to the newest); it only drives the jump button's
   // visibility, never the auto-scroll.
   const distanceFromBottom = useRef(0)
-  // Signature of the pending input event (question/approval) we last notified
-  // about, so the poll pings ONCE per new prompt instead of every tick.
-  const notifiedInput = useRef("")
 
   const reload = useCallback(async () => {
     if (!path) {
