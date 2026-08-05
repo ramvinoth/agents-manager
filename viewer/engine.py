@@ -1416,17 +1416,22 @@ class StatCache:
     def __init__(self, cap=50):
         self._d = {}
         self._cap = cap
+        # Shared across worker threads; without this, put()'s pop(next(iter(...)))
+        # can race a concurrent get()/put() → "dict changed size during iteration".
+        self._lock = threading.Lock()
 
     def get(self, key, mtime, size):
-        c = self._d.get(key)
-        if c is not None and c["mtime"] == mtime and c["size"] == size:
-            return c["data"]
-        return None
+        with self._lock:
+            c = self._d.get(key)
+            if c is not None and c["mtime"] == mtime and c["size"] == size:
+                return c["data"]
+            return None
 
     def put(self, key, mtime, size, data):
-        self._d[key] = {"mtime": mtime, "size": size, "data": data}
-        if len(self._d) > self._cap:
-            self._d.pop(next(iter(self._d)))
+        with self._lock:
+            self._d[key] = {"mtime": mtime, "size": size, "data": data}
+            if len(self._d) > self._cap:
+                self._d.pop(next(iter(self._d)))
 
 
 REMOTE_SUMMARY_CACHE = StatCache()   # (hid, path) invalidated by (mtime, size)

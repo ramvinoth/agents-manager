@@ -30,6 +30,8 @@ _SESSION_CACHE_TTL = 60           # seconds a session→user lookup is trusted w
 _pool = None
 _pool_lock = threading.Lock()
 _session_cache = {}               # token -> (user_or_None, cached_at)
+_session_cache_lock = threading.Lock()
+_SESSION_CACHE_MAX = 4096         # bound so token-scanning can't grow it without limit
 
 
 def _get_pool():
@@ -177,7 +179,8 @@ def user_for_session(token):
     if not token:
         return None
     now = time.time()
-    hit = _session_cache.get(token)
+    with _session_cache_lock:
+        hit = _session_cache.get(token)
     if hit and now - hit[1] < _SESSION_CACHE_TTL:
         return hit[0]
     with _db() as cur:
@@ -191,14 +194,20 @@ def user_for_session(token):
             cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
             row = None
     user = {"id": row["id"], "username": row["username"]} if row else None
-    _session_cache[token] = (user, now)
+    with _session_cache_lock:
+        # Bound the cache: on overflow drop the oldest entry (FIFO) so a stream of
+        # distinct/invalid tokens can't grow it without limit.
+        if token not in _session_cache and len(_session_cache) >= _SESSION_CACHE_MAX:
+            _session_cache.pop(next(iter(_session_cache)), None)
+        _session_cache[token] = (user, now)
     return user
 
 
 def delete_session(token):
     if not token:
         return
-    _session_cache.pop(token, None)
+    with _session_cache_lock:
+        _session_cache.pop(token, None)
     with _db() as cur:
         cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
 
