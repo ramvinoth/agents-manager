@@ -58,7 +58,11 @@ export default function SessionSettings({
   const styles = useStyles()
   const t = useTheme()
 
-  const PillRow = ({ opts, value, onPick, testPrefix }: { opts: Opt[]; value: string; onPick: (v: string) => void; testPrefix: string }) => (
+  // A render FUNCTION (called as {renderPill(...)}), NOT a component. Defining a
+  // component inside render and using it as <PillRow/> gives it a fresh identity
+  // every keystroke, remounting its subtree — which drops focus from any TextInput
+  // rendered alongside (the "keyboard closes on each letter" bug).
+  const renderPill = (opts: Opt[], value: string, onPick: (v: string) => void, testPrefix: string) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
@@ -142,10 +146,10 @@ export default function SessionSettings({
             live behind a separate composer gear. */}
         <Text style={styles.sheetSection}>PERMISSION MODE</Text>
         <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-        <PillRow opts={modes} value={mode} onPick={onMode} testPrefix="sheet-mode" />
+        {renderPill(modes, mode, onMode, "sheet-mode")}
 
         <Text style={styles.sheetSection}>MODEL</Text>
-        <PillRow opts={models} value={model} onPick={onModel} testPrefix="sheet-model" />
+        {renderPill(models, model, onModel, "sheet-model")}
 
         {/* Notifications */}
         <View style={styles.ssRow}>

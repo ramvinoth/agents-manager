@@ -285,7 +285,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path, jumpTo: uuid })
   }
 
-  const PillRow = ({ opts, value, onPick, testPrefix }: { opts: { v: string; label: string }[]; value: string; onPick: (v: string) => void; testPrefix: string }) => (
+  // NOTE: these are render FUNCTIONS, not components — called as {renderPill(...)}
+  // / {renderCard(...)}, not <PillRow/>. Defining a component inside render and
+  // using it as JSX gives it a new identity every keystroke, so React unmounts +
+  // remounts its whole subtree — which drops focus from any TextInput inside
+  // (the "keyboard dismisses on every letter" bug). Plain calls inline instead.
+  const renderPill = (opts: { v: string; label: string }[], value: string, onPick: (v: string) => void, testPrefix: string) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
@@ -311,7 +316,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // A collapsible settings card: a stable icon + title + one-line summary of the
   // current value (so you can read state WITHOUT opening it — the muscle-memory
   // shortcut), tapping reveals the controls. `k` keys its open/closed state.
-  const Card = ({ k, icon, title, summary: sub, children }: { k: string; icon: string; title: string; summary?: string; children: React.ReactNode }) => {
+  const renderCard = (k: string, icon: string, title: string, sub: string | undefined, children: React.ReactNode) => {
     const isOpen = !!open[k]
     return (
       <View style={styles.spCard}>
@@ -360,10 +365,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       </View>
 
       {/* ── BEHAVIOUR: the knobs you actually turn (open by default). ── */}
-      <Card k="behaviour" icon="settings" title="Behaviour" summary={behaviourSummary}>
+      {renderCard("behaviour", "settings", "Behaviour", behaviourSummary, <>
         <Text style={styles.sheetSection}>PERMISSION MODE</Text>
         <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-        <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
+        {renderPill(MODES, mode, setMode, "sp-mode")}
 
         <Text style={styles.sheetSection}>PROVIDER</Text>
         <Text style={styles.sheetHint}>Default uses Claude. A custom provider routes this session to your own endpoint.</Text>
@@ -522,14 +527,14 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             </View>
           </View>
         ) : null}
-      </Card>
+      </>)}
 
       {/* ── MODEL & alerts (open by default). ── */}
-      <Card k="model" icon="sparkle" title="Model & alerts" summary={modelSummary}>
+      {renderCard("model", "sparkle", "Model & alerts", modelSummary, <>
         {provider === "" ? (
           <>
             <Text style={styles.sheetSection}>MODEL</Text>
-            <PillRow opts={MODELS} value={model} onPick={setModel} testPrefix="sp-model" />
+            {renderPill(MODELS, model, setModel, "sp-model")}
           </>
         ) : (
           <Text style={[styles.sheetHint, { marginTop: 12 }]}>This session uses {providerName} ({convMode === "agent" ? "Agent" : "Chat"} mode). Its model is set on the provider.</Text>
@@ -546,10 +551,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             trackColor={{ true: t.accent, false: t.border }}
           />
         </View>
-      </Card>
+      </>)}
 
       {/* ── PERSONA: system prompt + goal (collapsed — set once, revisited rarely). ── */}
-      <Card k="persona" icon="user" title="Persona & goal" summary={systemPrompt || goal ? "Custom instructions set" : "Default behaviour"}>
+      {renderCard("persona", "user", "Persona & goal", systemPrompt || goal ? "Custom instructions set" : "Default behaviour", <>
         <Text style={styles.sheetSection}>
           SYSTEM PROMPT {saved === "systemPrompt" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
         </Text>
@@ -575,10 +580,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           placeholder="What is this session for?"
           placeholderTextColor={t.textMuted}
         />
-      </Card>
+      </>)}
 
       {/* ── AUTOMATION: scheduled loops (collapsed). ── */}
-      <Card k="automation" icon="repeat" title="Scheduled loops" summary={loops.length ? `${loops.length} active` : "None"}>
+      {renderCard("automation", "repeat", "Scheduled loops", loops.length ? `${loops.length} active` : "None", <>
         {loops.map((l) => (
           <View key={l.id} style={styles.ssLoopRow}>
             <Icon name="repeat" size={14} color={t.textMuted} />
@@ -618,11 +623,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <Text style={styles.ssAddBtnText}>Add loop</Text>
           </TouchableOpacity>
         </View>
-      </Card>
+      </>)}
 
       {/* ── PINNED messages (collapsed; only shown when present). ── */}
       {pinnedItems.length ? (
-        <Card k="pinned" icon="pin" title="Pinned messages" summary={`${pinnedItems.length} pinned`}>
+        renderCard("pinned", "pin", "Pinned messages", `${pinnedItems.length} pinned`, <>
           {pinnedItems.map((p) => (
             <View key={p.uuid} style={styles.ssLoopRow}>
               <Icon name="pin" size={14} color={t.accent} />
@@ -634,11 +639,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               </TouchableOpacity>
             </View>
           ))}
-        </Card>
+        </>)
       ) : null}
 
       {/* ── APPEARANCE: avatar picker (collapsed — cosmetic). ── */}
-      <Card k="appearance" icon="star" title="Appearance" summary={avatar ? "Custom avatar" : "Auto avatar"}>
+      {renderCard("appearance", "star", "Appearance", avatar ? "Custom avatar" : "Auto avatar", <>
         <View style={styles.spAvatarGrid}>
           {AVATARS.map((a) => {
             const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
@@ -654,11 +659,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             )
           })}
         </View>
-      </Card>
+      </>)}
 
       {/* ── STATS: read-only (collapsed). ── */}
       {summary ? (
-        <Card k="stats" icon="info" title="Stats" summary={`${compactNumber(summary.userMessages + summary.assistantMessages)} messages`}>
+        renderCard("stats", "info", "Stats", `${compactNumber(summary.userMessages + summary.assistantMessages)} messages`, <>
           <View style={styles.statGrid}>
             <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} t={t} />
             <Stat label="You" value={compactNumber(summary.userMessages)} t={t} />
@@ -689,7 +694,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               ))}
             </View>
           ) : null}
-        </Card>
+        </>)
       ) : path ? (
         <View style={{ padding: 16 }}>
           <ActivityIndicator size="small" color={t.textMuted} />
