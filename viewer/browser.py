@@ -239,6 +239,7 @@ def cdp_http(hid, path, method="GET"):
 # scheme+host+path changed since the last look is where the action is.
 # (Query strings are ignored: challenge pages mutate their query in a loop.)
 TAB_FOLLOW = {}   # hid -> {"sig": {page_id: (scheme, host, path)}, "follow": page_id}
+TAB_FOLLOW_LOCK = threading.Lock()  # guards the pure-local RMW of a host's follow state
 
 
 def _tab_sig_key(u):
@@ -281,22 +282,29 @@ def browser_front_page(hid):
     """(id, ws_path, url) of the page the agent is working in (see TAB_FOLLOW),
     creating one if none exists."""
     pages = _browser_pages(hid)
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
-    sig = {p["id"]: _tab_sig_key(p.get("url", "")) for p in pages}
-    changed = [pid for pid, k in sig.items() if pid in st["sig"] and st["sig"][pid] != k]
-    new_tabs = [pid for pid in sig if pid not in st["sig"]]
-    pinned = time.time() < st.get("pin", 0) and st.get("follow") in sig
-    if st["follow"] is None:
-        st["follow"] = pages[0]["id"]              # first look: front tab
-    if not pinned:                                 # manual selection suppresses auto-follow briefly
-        if new_tabs and st["sig"]:
-            st["follow"] = new_tabs[0]             # a fresh tab is where work starts
-        elif changed and st["follow"] not in changed:
-            st["follow"] = changed[0]              # a navigation happened elsewhere
-    if st["follow"] not in sig:
-        st["follow"] = pages[0]["id"]              # followed tab was closed
-    st["sig"] = sig
-    p = next(x for x in pages if x["id"] == st["follow"])
+    # Lock only the pure-local follow-state RMW (not the network _browser_pages
+    # above), so concurrent tab actions can't race st["follow"]/st["sig"] and make
+    # the next() below StopIteration-crash the pump thread.
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
+        sig = {p["id"]: _tab_sig_key(p.get("url", "")) for p in pages}
+        changed = [pid for pid, k in sig.items() if pid in st["sig"] and st["sig"][pid] != k]
+        new_tabs = [pid for pid in sig if pid not in st["sig"]]
+        pinned = time.time() < st.get("pin", 0) and st.get("follow") in sig
+        if st["follow"] is None:
+            st["follow"] = pages[0]["id"]              # first look: front tab
+        if not pinned:                                 # manual selection suppresses auto-follow briefly
+            if new_tabs and st["sig"]:
+                st["follow"] = new_tabs[0]             # a fresh tab is where work starts
+            elif changed and st["follow"] not in changed:
+                st["follow"] = changed[0]              # a navigation happened elsewhere
+        if st["follow"] not in sig:
+            st["follow"] = pages[0]["id"]              # followed tab was closed
+        st["sig"] = sig
+        follow_id = st["follow"]
+    # Resolve against the pages snapshot; fall back to the front tab if the followed
+    # id vanished between the lock release and here (never StopIteration).
+    p = next((x for x in pages if x["id"] == follow_id), pages[0])
     ws_url = p.get("webSocketDebuggerUrl", "")
     # Chrome may omit the port here (ws://127.0.0.1/devtools/page/ID) — take the
     # URL path only, never substring on the port number.
@@ -312,17 +320,20 @@ def _ordered_pages(hid, pages):
     """Pages in STABLE first-seen order. /json/list is activation order, so
     without this the tab strip reshuffles every time you click a tab (the
     activated one jumps to the front). New tabs append; closed ones drop."""
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0, "order": []})
-    order = st.setdefault("order", [])
-    ids = {p["id"] for p in pages}
-    st["order"] = [i for i in order if i in ids] + [p["id"] for p in pages if p["id"] not in order]
-    idx = {pid: n for n, pid in enumerate(st["order"])}
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0, "order": []})
+        order = st.setdefault("order", [])
+        ids = {p["id"] for p in pages}
+        st["order"] = [i for i in order if i in ids] + [p["id"] for p in pages if p["id"] not in order]
+        idx = {pid: n for n, pid in enumerate(st["order"])}
     return sorted(pages, key=lambda p: idx.get(p["id"], 1 << 30))
 
 
 def browser_tabs(hid):
     """Tab strip data: every open page (stable order) plus which one the view follows."""
     pages = _ordered_pages(hid, _browser_pages(hid, create=False))
+    if not pages:
+        return []  # no debuggable pages → empty strip (never index [0] on empty)
     follow = (TAB_FOLLOW.get(hid) or {}).get("follow") or pages[0]["id"]
     return [{"id": p["id"], "title": p.get("title", "") or p.get("url", ""),
              "url": p.get("url", ""), "active": p["id"] == follow} for p in pages]
@@ -332,7 +343,8 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
     """User tab controls. Selecting also re-baselines the activity signatures so
     the pick isn't instantly overridden by the change detector; the view still
     follows the agent's NEXT navigation, which is the behavior users expect."""
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
     # A manual action pins the chosen tab for a few seconds so the auto-follow
     # detector (and background-tab churn like Cloudflare challenges) can't yank
     # the view away mid-interaction; auto-follow resumes after, tracking the agent.
