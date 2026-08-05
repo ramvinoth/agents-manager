@@ -12,12 +12,36 @@ from viewer.remote import (
     content_disposition, remote_build_zip, remote_compress, remote_delete, remote_mkdir, remote_read_bytes, remote_rename, remote_unlink, remote_upload,
 )
 
+# Files that hold credentials/secrets — never downloadable through the FS browser
+# even though the browser is otherwise full-filesystem by design. Matched by exact
+# basename (covers the local box and any remote host, since secrets share names).
+_SECRET_BASENAMES = frozenset({
+    ".viewer-hosts.json",      # SSH host passwords
+    ".viewer-providers.json",  # provider API keys
+    ".credentials.json",       # ~/.claude credentials
+})
+
+
+def _is_secret_path(name: str) -> bool:
+    """True if `name` (a path or basename) names a known secret file, or lives
+    directly under ~/.claude as a dotfile (credentials/config live there)."""
+    base = os.path.basename(name.rstrip("/"))
+    if base in _SECRET_BASENAMES:
+        return True
+    # ~/.claude/.<anything> — the credentials + settings dotfiles.
+    norm = os.path.normpath(os.path.expanduser(name))
+    claude = os.path.normpath(os.path.expanduser("~/.claude"))
+    return os.path.dirname(norm) == claude and base.startswith(".")
+
 
 class FsMixin:
     def _g_fs_download(self, req):
         fpath = (req.query.get("path") or [""])[0]
         if not fpath:
             self.send_error(400, "Missing path")
+            return
+        if _is_secret_path(fpath):
+            self.send_json({"error": "Forbidden: secret file"}, status=403)
             return
         if req.host != "local":
             try:
@@ -103,6 +127,9 @@ class FsMixin:
         for n in names:
             if not isinstance(n, str) or "/" in n or "\0" in n or n in (".", ".."):
                 self.send_json({"error": "Invalid item name"}, status=400)
+                return
+            if _is_secret_path(os.path.join(path, n)):
+                self.send_json({"error": "Forbidden: secret file"}, status=403)
                 return
         arcname = archive or ((names[0] + ".zip") if len(names) == 1 else "Archive.zip")
         if not arcname.endswith(".zip"):
