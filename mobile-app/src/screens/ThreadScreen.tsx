@@ -439,7 +439,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
   function startPoll(sid: string) {
     if (pollRef.current) clearInterval(pollRef.current)
     let ticks = 0
+    let inFlight = false // guard: a slow status+reload must not overlap the next tick
     pollRef.current = setInterval(async () => {
+      if (inFlight) return // previous tick still awaiting — skip so setItems can't race
+      inFlight = true
       ticks++
       try {
         const s = await api.chatStatus(sid)
@@ -467,6 +470,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }
       } catch {
         /* keep polling through transient errors */
+      } finally {
+        inFlight = false
       }
     }, 1500)
   }
