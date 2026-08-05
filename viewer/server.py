@@ -191,6 +191,11 @@ class SessionViewerHandler(
     def read_body(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
+            # Clamp: read_body only serves small JSON handlers (uploads read raw
+            # elsewhere). Reject negative and cap at 32 MiB so a huge/negative
+            # Content-Length can't allocate unboundedly or block on read(-1).
+            if length < 0 or length > 32 * 1024 * 1024:
+                return None
             return json.loads(self.rfile.read(length) or b"{}")
         except Exception:
             return None

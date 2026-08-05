@@ -247,6 +247,13 @@ def start_codex_new(message, cwd, model=""):
             break
         time.sleep(0.3)
     if not new:
+        # Discovery failed — don't leak the running `codex exec` child (its PIPE
+        # buffers would fill and wedge it). Kill and reap before returning.
+        try:
+            proc.kill()
+            proc.communicate(timeout=5)
+        except Exception:
+            pass
         return None
 
     session_id = new.stem

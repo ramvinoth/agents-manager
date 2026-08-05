@@ -122,7 +122,9 @@ def notify_all(title, body, data=None):
         aps = {"aps": {"alert": {"title": title, "body": (body or "")[:300]},
                        "sound": "default"}}
         if data:
-            aps.update(data)
+            # Merge caller data as top-level keys, but never let it clobber the
+            # constructed "aps" alert (which would silently drop the notification).
+            aps.update({k: v for k, v in data.items() if k != "aps"})
         payload = json.dumps(aps)
         try:
             jwt_token = _auth_jwt()
