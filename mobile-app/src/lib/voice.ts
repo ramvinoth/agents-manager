@@ -54,6 +54,10 @@ let _vadFloorDb = -45
  *  sensitive (sends quieter windows). */
 export function setVadThreshold(db: number): void {
   _vadFloorDb = db
+  // Keep the endpointer's loudness floor in sync — otherwise this knob only
+  // affects the legacy window gate and does nothing on the real hands-free/call
+  // endpointing path (which reads _endpointOpts.floorDb, snapshotted at init).
+  _endpointOpts.floorDb = db
 }
 
 /** Recording options with metering enabled so each window reports a peak dB level
