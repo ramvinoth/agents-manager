@@ -18,6 +18,13 @@ from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_comma
 from viewer.adapters import normalize_lines
 
 
+def _safe_seg(name) -> bool:
+    """A single, safe path segment (no separators, NUL, or dot-only). Guards remote
+    create/rename against a client filename escaping the browsed dir (e.g.
+    '../.ssh/authorized_keys' or an absolute path)."""
+    return isinstance(name, str) and bool(name) and "/" not in name and "\0" not in name and name not in (".", "..")
+
+
 def _auth_kwargs(cfg):
     """paramiko connect() auth kwargs from a host config:
     - a password  → password auth (no key/agent);
@@ -384,19 +391,22 @@ def remote_run_shell(hid, cmd, timeout=300):
     with SSH.lock_for(hid):
         c = SSH.get(hid)
         chan = c["client"].get_transport().open_session()
-        chan.settimeout(timeout)
-        chan.get_pty()  # some installers expect a tty
-        chan.exec_command("bash -lc " + shlex.quote(cmd))
-        out = b""
-        while True:
-            try:
-                chunk = chan.recv(65536)
-            except Exception:
-                break
-            if not chunk:
-                break
-            out += chunk
-        rc = chan.recv_exit_status()
+        try:
+            chan.settimeout(timeout)
+            chan.get_pty()  # some installers expect a tty
+            chan.exec_command("bash -lc " + shlex.quote(cmd))
+            out = b""
+            while True:
+                try:
+                    chunk = chan.recv(65536)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                out += chunk
+            rc = chan.recv_exit_status()
+        finally:
+            chan.close()  # else the channel leaks against sshd MaxSessions
     return rc, out.decode("utf-8", "replace")
 
 
@@ -976,6 +986,8 @@ def remote_fs(hid, raw, show_hidden=False):
 
 
 def remote_mkdir(hid, path, name):
+    if not _safe_seg(name):
+        return {"error": "invalid folder name"}
     with SSH.sftp(hid) as sftp:
         c = SSH.get(hid)
         base = sftp.normalize(_remote_expand(c["home"], path))
@@ -1039,6 +1051,9 @@ def remote_upload(hid, path, files):
         base = sftp.normalize(_remote_expand(c["home"], path))
         uploaded = []
         for fn, content in files:
+            if not _safe_seg(fn):
+                uploaded.append({"name": fn, "error": "invalid filename"})
+                continue
             target = posixpath.join(base, fn)
             try:
                 with sftp.open(target, "wb") as f:
@@ -1051,6 +1066,8 @@ def remote_upload(hid, path, files):
 
 def remote_rename(hid, fpath, name):
     """Rename a remote file/dir within its parent directory."""
+    if not _safe_seg(name):
+        return {"error": "invalid name"}
     with SSH.sftp(hid) as sftp:
         c = SSH.get(hid)
         target = sftp.normalize(_remote_expand(c["home"], fpath))
@@ -1163,7 +1180,10 @@ def remote_resolve(hid, sid):
         c = SSH.get(hid)
         _, out, _ = c["client"].exec_command(
             f"ls ~/.claude/projects/*/{shlex.quote(sid)}.jsonl 2>/dev/null | head -1", timeout=10)
-        line = out.read().decode().strip()
+        try:
+            line = out.read().decode().strip()
+        finally:
+            out.channel.close()  # close the exec channel so it doesn't leak
     if not line:
         return {"found": False}
     root = c["home"].rstrip("/") + "/.claude/"

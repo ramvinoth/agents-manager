@@ -171,7 +171,13 @@ def start_clone(hid, repo, parent, branch=""):
         pdir.mkdir(parents=True, exist_ok=True)
         tf = Path(os.path.expanduser(TOKEN_FILE))
         tf.parent.mkdir(parents=True, exist_ok=True)
-        tf.write_text(token)
+        # Write 0600 from creation so the git token has no world-readable window
+        # between write_text and a later chmod.
+        _fd = os.open(str(tf), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(_fd, token.encode("utf-8"))
+        finally:
+            os.close(_fd)
         os.chmod(tf, 0o600)
         threading.Thread(target=_clone_local, args=(jid, url, target, token, branch), daemon=True).start()
     else:
