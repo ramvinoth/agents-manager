@@ -76,7 +76,11 @@ export default function CapabilitiesScreen(_props: Props) {
       {loading ? (
         <ActivityIndicator size="small" color={t.textMuted} style={{ marginTop: 24 }} />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 40 }}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets
+        >
           {tab === "skills" ? (
             <>
               <TouchableOpacity testID="cap-add-skill" style={styles.capAddRow} onPress={() => setSkillEdit(null)}>

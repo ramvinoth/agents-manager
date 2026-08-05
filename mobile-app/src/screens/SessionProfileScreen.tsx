@@ -350,6 +350,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       style={{ flex: 1, backgroundColor: t.bg }}
       contentContainerStyle={{ paddingBottom: 48 }}
       keyboardShouldPersistTaps="handled"
+      // Pad the scroll content by the keyboard height and scroll the focused
+      // TextInput into view, so an open keyboard never overlaps the System
+      // Prompt / Goal / Loop / provider inputs near the bottom of the page.
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="interactive"
     >
       {/* Identity: big avatar + editable name. */}
       <View style={styles.spHeader}>

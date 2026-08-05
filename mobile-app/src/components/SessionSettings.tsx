@@ -141,6 +141,9 @@ export default function SessionSettings({
         contentContainerStyle={styles.ssScrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
+        // Keep an open keyboard from covering the System Prompt / Goal / Loop
+        // inputs: pad by the keyboard height and scroll the focused field up.
+        automaticallyAdjustKeyboardInsets
       >
         {/* Permission mode + model — the per-message controls that used to
             live behind a separate composer gear. */}
