@@ -65,7 +65,7 @@ function Inline({
         if (s.t === "code") return <Text key={i} style={styles.mdCodeInline}>{s.s}</Text>
         if (s.t === "link")
           return (
-            <Text key={i} style={styles.mdLink} onPress={() => Linking.openURL(s.href).catch(() => {})}>
+            <Text key={i} style={styles.mdLink} onPress={() => { if (s.href) Linking.openURL(s.href).catch(() => {}) }}>
               {s.s}
             </Text>
           )

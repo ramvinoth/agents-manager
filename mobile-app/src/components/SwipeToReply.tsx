@@ -23,6 +23,12 @@ export default function SwipeToReply({
   const x = useRef(new Animated.Value(0)).current
   const fired = useRef(false)
   const styles = useStyles()
+  // The PanResponder is created ONCE (useRef), so it would capture the first
+  // render's onReply forever — in a FlatList that inline closure changes every
+  // render, so a swipe after a re-render would reply to the WRONG message. Keep
+  // the latest callback in a ref and call through it.
+  const onReplyRef = useRef(onReply)
+  onReplyRef.current = onReply
 
   const pan = useRef(
     PanResponder.create({
@@ -40,7 +46,7 @@ export default function SwipeToReply({
         if (!fired.current && g.dx >= TRIGGER) fired.current = true
       },
       onPanResponderRelease: () => {
-        if (fired.current) onReply()
+        if (fired.current) onReplyRef.current()
         Animated.spring(x, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start()
       },
       onPanResponderTerminate: () => {

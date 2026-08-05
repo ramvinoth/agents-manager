@@ -15,10 +15,12 @@
  */
 let Notifications: any = null
 let ready = false
+// The cold-start notification response is returned persistently by the OS, so we
+// track the last-handled id to avoid re-navigating on a remount.
+let _lastColdId: string | null = null
 
 async function load() {
   if (ready) return Notifications
-  ready = true
   try {
     Notifications = require("expo-notifications")
     Notifications.setNotificationHandler({
@@ -33,6 +35,8 @@ async function load() {
         shouldSetBadge: false,
       }),
     })
+    ready = true // only mark ready AFTER the handler install succeeds, so a
+    // transient throw (version skew) doesn't permanently disable notifications.
   } catch {
     Notifications = null
   }
@@ -132,10 +136,16 @@ export function onNotificationTap(handler: (data: Record<string, unknown>) => vo
     const N = await load()
     if (!N || cancelled) return
     try {
-      // Cold start: the tap that launched the app is retrievable once.
+      // Cold start: the tap that launched the app. getLastNotificationResponseAsync
+      // returns it PERSISTENTLY, so a remount would re-fire it and re-navigate —
+      // dedupe by the notification id so each cold tap is handled at most once.
       const last = await N.getLastNotificationResponseAsync?.()
       const coldData = last?.notification?.request?.content?.data
-      if (coldData) handler(coldData)
+      const coldId = last?.notification?.request?.identifier
+      if (coldData && coldId && coldId !== _lastColdId) {
+        _lastColdId = coldId
+        handler(coldData)
+      }
       // Warm taps while running/backgrounded.
       sub = N.addNotificationResponseReceivedListener((resp: any) => {
         const data = resp?.notification?.request?.content?.data
