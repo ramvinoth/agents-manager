@@ -31,7 +31,10 @@ def resolve_agent_session(agent_id, rel_path):
         full = (root / rel_path).resolve()
     except Exception:
         return None
-    if not str(full).startswith(str(root)) or not full.is_file():
+    # Confine to root by PATH COMPONENTS, not string prefix: a str.startswith
+    # check treats "/root-evil/..." as inside "/root", allowing a sibling-dir
+    # escape. Comparing components (is_relative_to) closes that traversal.
+    if not (full == root or root in full.parents) or not full.is_file():
         return None
     return full
 
