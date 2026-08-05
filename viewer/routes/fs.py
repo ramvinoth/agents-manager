@@ -22,6 +22,13 @@ _SECRET_BASENAMES = frozenset({
 })
 
 
+def _safe_name(name) -> bool:
+    """A valid single path segment: a non-empty string with no separators, NUL, or
+    dot-only names. Rejects traversal in every create/rename/zip handler (replaces
+    four copy-pasted, subtly-divergent inline checks)."""
+    return isinstance(name, str) and bool(name) and "/" not in name and "\0" not in name and name not in (".", "..")
+
+
 def _is_secret_path(name: str) -> bool:
     """True if `name` (a path or basename) names a known secret file, or lives
     directly under ~/.claude as a dotfile (credentials/config live there)."""
@@ -84,7 +91,7 @@ class FsMixin:
             self.send_json({"error": "Invalid JSON body"}, status=400)
             return
         name = (body.get("name") or "").strip()
-        if not name or "/" in name or "\0" in name or name in (".", ".."):
+        if not _safe_name(name):
             self.send_json({"error": "Invalid folder name"}, status=400)
             return
         hh = body.get("host", "local")
@@ -125,7 +132,7 @@ class FsMixin:
             self.send_json({"error": "No items to download"}, status=400)
             return
         for n in names:
-            if not isinstance(n, str) or "/" in n or "\0" in n or n in (".", ".."):
+            if not _safe_name(n):
                 self.send_json({"error": "Invalid item name"}, status=400)
                 return
             if _is_secret_path(os.path.join(path, n)):
@@ -214,7 +221,7 @@ class FsMixin:
         hh = body.get("host", "local")
         fpath = (body.get("path") or "").strip()
         name = (body.get("name") or "").strip()
-        if not fpath or not name or "/" in name or "\0" in name or name in (".", ".."):
+        if not fpath or not _safe_name(name):
             self.send_json({"error": "Invalid name"}, status=400)
             return
         if hh != "local":
@@ -287,7 +294,7 @@ class FsMixin:
             self.send_json({"error": "No items to compress"}, status=400)
             return
         for n in names:
-            if not isinstance(n, str) or "/" in n or "\0" in n or n in (".", ".."):
+            if not _safe_name(n):
                 self.send_json({"error": "Invalid item name"}, status=400)
                 return
         if archive and ("/" in archive or "\0" in archive):
