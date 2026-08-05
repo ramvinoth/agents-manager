@@ -18,7 +18,7 @@ import termios
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from viewer.remote import (
     SSH, remote_run_python,
 )
@@ -246,6 +246,26 @@ def _tab_sig_key(u):
     return (q.scheme, q.netloc, q.path)
 
 
+def _safe_nav_url(url):
+    """Normalize an address-bar URL and return it only if it's a safe navigation
+    target, else None. Blocks file://, chrome://, internal-metadata, and other
+    non-web schemes so the live-view can't be turned into a local-file / SSRF read.
+    A bare hostname gets https:// prepended (the common address-bar case)."""
+    url = str(url or "").strip()
+    if not url:
+        return None
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
+        url = "https://" + url  # bare hostname typed in the address bar
+    scheme = (urlparse(url).scheme or "").lower()
+    return url if scheme in ("http", "https", "about") else None
+
+
+def _hex_tab(tab_id):
+    """CDP target ids are uppercase hex; validate so tab_id can't inject into the
+    /json/activate|close request line."""
+    return bool(re.fullmatch(r"[A-Fa-f0-9]+", str(tab_id or "")))
+
+
 def _browser_pages(hid, create=True):
     pages = [t for t in (cdp_http(hid, "/json/list") or []) if t.get("type") == "page"]
     if not pages and create:
@@ -318,12 +338,17 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
     # the view away mid-interaction; auto-follow resumes after, tracking the agent.
     PIN = 8
     if action == "select" and tab_id:
+        if not _hex_tab(tab_id):
+            return
         st["follow"] = tab_id
         st["pin"] = time.time() + PIN
         st["sig"] = {p["id"]: _tab_sig_key(p.get("url", "")) for p in _browser_pages(hid)}
         cdp_http(hid, f"/json/activate/{tab_id}")   # bring forward in headed mode
     elif action == "new":
-        target = url or "about:blank"
+        nav = _safe_nav_url(url) if url else "about:blank"
+        if not nav:
+            return
+        target = quote(nav, safe="")   # into the /json/new query — encode it
         made = cdp_http(hid, f"/json/new?{target}", method="PUT") \
             or cdp_http(hid, f"/json/new?{target}")
         if made and made.get("id"):
@@ -331,6 +356,8 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
             st["pin"] = time.time() + PIN
             st["sig"] = {p["id"]: _tab_sig_key(p.get("url", "")) for p in _browser_pages(hid)}
     elif action == "close" and tab_id:
+        if not _hex_tab(tab_id):
+            return
         cdp_http(hid, f"/json/close/{tab_id}")
         if st.get("follow") == tab_id:
             st["follow"] = None                     # next frame falls back to front
@@ -831,9 +858,7 @@ def _dispatch_browser_events(cdp, events):
                 cdp.call("Input.dispatchKeyEvent", {"type": "char", "text": "\r"})
             cdp.call("Input.dispatchKeyEvent", {"type": "keyUp", **base})
         elif t == "navigate":
-            url = str(ev.get("url", "")).strip()
-            if url and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
-                url = "https://" + url   # bare hostname typed in the address bar
+            url = _safe_nav_url(ev.get("url", ""))
             if url:
                 cdp.call("Page.navigate", {"url": url})
         elif t in ("back", "forward"):
