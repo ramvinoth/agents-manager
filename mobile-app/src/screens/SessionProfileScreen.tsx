@@ -256,8 +256,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   function addLoop() {
     const prompt = loopPrompt.trim()
     if (!prompt || !sessionId) return
+    // Create must send the RESOLVABLE rel path (…/<id>.jsonl) as `session`: the
+    // server resolves it to a file before storing. A bare id 404s (why the loop
+    // never appeared). The GET below still lists by bare id (server keys loops by
+    // the session's stem), so refresh works.
     api
-      .loopsCreate({ session: sessionId, prompt, interval: parseInterval(loopInterval) })
+      .loopsCreate({ session: path || sessionId, prompt, interval: parseInterval(loopInterval) })
       .then(() => api.loops(sessionId))
       .then((l) => Array.isArray(l) && setLoops(l))
       .catch(() => {})
