@@ -212,12 +212,27 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // A steered message gets an optimistic bubble immediately, but the server
       // may not have written it into the transcript yet — so a naive setItems(next)
       // here would wipe it (it flashes then vanishes). Keep any pending optimistic
-      // bubbles whose text hasn't shown up in the server transcript yet; drop each
-      // one only once the server has caught up (its text appears as a user turn).
-      const serverUserTexts = new Set(
-        next.filter((it) => it.kind === "user").map((it) => (it as { text: string }).text)
-      )
-      pendingSteers.current = pendingSteers.current.filter((b) => !serverUserTexts.has(b.text))
+      // bubbles the server hasn't caught up to yet; drop each one once a matching
+      // user turn appears. Match by COUNT, not set-membership: send the same text
+      // twice and each server turn consumes exactly ONE pending bubble (a Set would
+      // drop both on the first match, losing a real duplicate). The transcript user
+      // turns don't echo our client id, so text-with-count is the best identity we
+      // have here.
+      const serverTextCounts = new Map<string, number>()
+      for (const it of next) {
+        if (it.kind === "user") {
+          const txt = (it as { text: string }).text
+          serverTextCounts.set(txt, (serverTextCounts.get(txt) || 0) + 1)
+        }
+      }
+      pendingSteers.current = pendingSteers.current.filter((b) => {
+        const n = serverTextCounts.get(b.text) || 0
+        if (n > 0) {
+          serverTextCounts.set(b.text, n - 1) // this server turn consumes this bubble
+          return false
+        }
+        return true // not caught up yet — keep the optimistic bubble
+      })
       const merged =
         pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
       setItems(merged)
