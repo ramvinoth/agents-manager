@@ -69,8 +69,10 @@ def save_json_file(path, data):
         tmp = path.parent / (path.name + ".tmp")
         tmp.write_text(text)
         os.replace(tmp, path)
-    except Exception:
-        pass
+    except Exception as e:
+        # A write failure here is real data loss (session meta / loops not persisted),
+        # so surface it instead of swallowing silently.
+        print(f"[engine] save_json_file failed for {path}: {e}", flush=True)
 
 
 LOOPS = load_json_file(LOOPS_FILE, {})     # id -> {session, path, prompt, interval, nextRun, runs, lastRc, enabled}
