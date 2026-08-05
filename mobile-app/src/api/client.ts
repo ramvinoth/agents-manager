@@ -156,6 +156,27 @@ export const api = {
     const env = (await res.json()) as { lines?: string[] }
     return Array.isArray(env.lines) ? env.lines : []
   },
+  // Like sessionRead but returns the paging envelope too: `start` is the byte
+  // offset of the first returned line (0 ⇒ we've reached the top of the file, so
+  // there's no older history to load). Used by the thread to grow its window when
+  // the user scrolls up.
+  sessionReadPage: async (
+    host: string,
+    path: string,
+    tail = 400
+  ): Promise<{ lines: string[]; start: number; size: number }> => {
+    if (!serverUrl()) throw new Error("No server configured")
+    const q = new URLSearchParams({ tail: String(tail) })
+    if (host && host !== "local") q.set("host", host)
+    const res = await fetch(`${serverUrl()}/api/session/${path}?${q.toString()}`, { headers: authHeaders() })
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`) as Error & { status?: number }
+      err.status = res.status
+      throw err
+    }
+    const env = (await res.json()) as { lines?: string[]; start?: number; size?: number }
+    return { lines: Array.isArray(env.lines) ? env.lines : [], start: env.start ?? 0, size: env.size ?? 0 }
+  },
   // Start a brand-new agent session in `cwd`. Returns the new session id plus the
   // transcript path, which the thread screen opens directly.
   newSession: (body: {

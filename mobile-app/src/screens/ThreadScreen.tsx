@@ -60,6 +60,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const { host, path, label } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
+  // How many trailing transcript lines to fetch. Grows when the user scrolls to
+  // the top of the (inverted) list to lazy-load older history. hasMoreRef tracks
+  // whether the server still has older lines beyond the current window.
+  const [windowLines, setWindowLines] = useState(400)
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
   // Seed the composer from a persisted per-session draft so unsent text survives
   // navigating back and app restarts. Keyed by path (existing chats).
   const [input, setInput] = useState(() => draftFor(path || ""))
@@ -204,7 +210,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
     const sid = (path.split("/").pop() || "").replace(/\.jsonl$/, "")
     if (sid) setSessionId(sid)
     try {
-      const lines = await api.sessionRead(host, path)
+      const page = await api.sessionReadPage(host, path, windowLines)
+      // start === 0 means the window reaches the top of the file → no older
+      // history to lazy-load. Otherwise scrolling up can grow the window.
+      hasMoreRef.current = page.start > 0
+      const lines = page.lines
       const next = groupThread(parseTranscript(lines))
       // A steered message gets an optimistic bubble immediately, but the server
       // may not have written it into the transcript yet — so a naive setItems(next)
@@ -247,7 +257,22 @@ export default function ThreadScreen({ route, navigation }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [host, path])
+  }, [host, path, windowLines])
+
+  // Lazy-load older history when the user scrolls to the TOP of the (inverted)
+  // list. Grow the tail window and re-read; maintainVisibleContentPosition keeps
+  // the current rows anchored so the viewport doesn't jump. Guarded so a burst of
+  // onEndReached events triggers only one fetch, and only while more remains.
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current || !path) return
+    loadingMoreRef.current = true
+    setWindowLines((n) => n + 400)
+    // reload() re-runs via its windowLines dep; release the guard shortly after so
+    // the next scroll-to-top can page again.
+    setTimeout(() => {
+      loadingMoreRef.current = false
+    }, 600)
+  }, [path])
 
   useFocusEffect(
     useCallback(() => {
@@ -843,6 +868,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
         inverted
         data={listData}
         keyExtractor={(it) => it.id}
+        // Lazy-load older history: in an inverted list the "end" is the TOP, so
+        // onEndReached fires as the user scrolls up into older messages.
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        // Keep the visible rows anchored when older messages prepend above, so the
+        // viewport doesn't jump on a page-in.
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         // onScroll is display-only: in the inverted list, contentOffset.y is the
         // distance from the bottom (0 = pinned to newest). It drives just the
         // jump-to-latest button and the day-pill flash — never the scroll itself.
