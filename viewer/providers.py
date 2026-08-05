@@ -77,16 +77,24 @@ def get_api_key(pid):
 
 
 def anthropic_env(pid):
-    """Agent mode: the {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL}
-    env that points the Claude Code harness at this preset's endpoint (our
-    llama-server, which serves the Anthropic Messages API natively). Returns None
-    when the preset is missing/incomplete so the caller can fall back cleanly."""
+    """Agent mode: the ANTHROPIC_* env that points the Claude Code harness at this
+    preset's endpoint (our llama-server, which serves the Anthropic Messages API).
+    Returns None when the preset is missing/incomplete so the caller falls back.
+
+    Claude Code requires ANTHROPIC_API_KEY (not AUTH_TOKEN) to authenticate against
+    a custom ANTHROPIC_BASE_URL, and setting it is what makes the CLI use that
+    endpoint instead of falling back to OAuth. We also blank ANTHROPIC_AUTH_TOKEN so
+    an inherited proxy token (e.g. a LiteLLM token in the shell / user settings)
+    can't leak and redirect requests. The caller applies these via a `--settings`
+    file's env block, which overrides the user's ~/.claude/settings.json — plain
+    process env vars do NOT (settings.json wins over them)."""
     rec = get_preset(pid)
     if not rec or not rec.get("baseUrl"):
         return None
     return {
         "ANTHROPIC_BASE_URL": rec["baseUrl"],
-        "ANTHROPIC_AUTH_TOKEN": rec.get("apiKey", ""),
+        "ANTHROPIC_API_KEY": rec.get("apiKey", "") or "dummy_key",
+        "ANTHROPIC_AUTH_TOKEN": "",
         "ANTHROPIC_MODEL": rec.get("model", ""),
     }
 

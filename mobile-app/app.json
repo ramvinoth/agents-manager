@@ -42,6 +42,12 @@
     "plugins": [
       "expo-secure-store",
       [
+        "@config-plugins/react-native-callkeep",
+        {
+          "appName": "Harman"
+        }
+      ],
+      [
         "expo-av",
         {
           "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode."

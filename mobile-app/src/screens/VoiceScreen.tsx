@@ -1,31 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from "react"
+import React, { useRef, useState } from "react"
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { Audio } from "expo-av"
 import type { RootStackParamList } from "../../App"
-import { api } from "../api/client"
-import { groupThread, parseTranscript } from "../lib/thread"
-import {
-  enrollVoice,
-  isEnrolled,
-  prepareAudio,
-  speak,
-  startListening,
-  startRecording,
-  stopAndTranscribe,
-  stopListening,
-  type ListenEvent,
-} from "../lib/voice"
-import { composerPrefs } from "../state/config"
+import { setAssistantVoice, startRecording, stopAndTranscribe } from "../lib/voice"
+import { useAssistantTurn } from "../lib/useAssistantTurn"
+import { ExchangeView } from "./ThreadScreen"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Voice">
-
-// The voice loop's phases — each maps to a mic-button state + status line.
-// "waiting" is the hands-free resting state (listening for the wake word).
-type Phase = "idle" | "listening" | "waiting" | "thinking" | "speaking" | "denied"
 
 /**
  * Voice conversation for one session, in two modes:
@@ -36,22 +21,23 @@ type Phase = "idle" | "listening" | "waiting" | "thinking" | "speaking" | "denie
  *    says "Harman …" (wake word + strict speaker verification on the GPU box).
  *    Requires a one-time voice enrollment.
  *
- * Both modes reuse the same chat pipeline (api.chat + status poll); voice is just
- * audio I/O around a normal turn.
+ * The shared turn engine (phase machine, runTurn, hands-free loop, enrollment)
+ * lives in `useAssistantTurn` — the same hook drives the CallKit Call screen.
+ * This screen adds only the push-to-talk gesture handling on top.
  */
 export default function VoiceScreen({ route }: Props) {
   const { host, path, label } = route.params
   const styles = useStyles()
   const t = useTheme()
-  const [phase, setPhase] = useState<Phase>("idle")
-  const [heard, setHeard] = useState("") // last transcribed user utterance
-  const [reply, setReply] = useState("") // last spoken agent reply
-  const [error, setError] = useState("")
+  const turn = useAssistantTurn(host, path)
+  const {
+    phase, setPhase, heard, reply, replyItem, error, setError, runTurn,
+    startHandsFree, stopHandsFree, enrolled, enrolling, onEnroll,
+    assistantVoice, setAssistantVoicePref,
+  } = turn
+
   const [handsFree, setHandsFree] = useState(false)
-  const [enrolled, setEnrolled] = useState(false)
-  const [enrolling, setEnrolling] = useState(false)
   const recordingRef = useRef<Audio.Recording | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // True between onPressIn and onPressOut. Guards the async gap while the
   // recorder is still starting up: if the finger lifts before startRecording()
   // resolves, we must stop immediately rather than strand a live recording (the
@@ -60,75 +46,6 @@ export default function VoiceScreen({ route }: Props) {
   // Safety: a max recording length so a lost onPressOut (app backgrounded
   // mid-press, gesture cancelled) can't leave the recorder running forever.
   const maxRecRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Hands-free bookkeeping: the active listen-loop stopper, and a busy flag so a
-  // wake utterance that lands while a turn is already running is ignored.
-  const listenStopRef = useRef<null | (() => void)>(null)
-  const busyRef = useRef(false)
-  const handsFreeRef = useRef(false)
-  const sid = (path?.split("/").pop() || "").replace(/\.jsonl$/, "")
-
-  useEffect(() => {
-    prepareAudio().then((ok) => !ok && setPhase("denied"))
-    // Remember a prior enrollment so re-opening this (or another) session doesn't
-    // force the user to enroll again — the voiceprint already lives on the server.
-    isEnrolled().then(setEnrolled)
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-      if (maxRecRef.current) clearTimeout(maxRecRef.current)
-      // Unmounting: stop the hands-free loop, then release everything through the
-      // single audio-session owner (recorder + any playback) in one awaited call.
-      recordingRef.current = null
-      stopListening()
-    }
-  }, [])
-
-  /** Wait for the in-flight turn to finish, then return the agent's final text
-   *  by reading + parsing the transcript tail (same source the thread renders). */
-  const awaitReply = useCallback((): Promise<string> => {
-    return new Promise((resolve) => {
-      let ticks = 0
-      if (pollRef.current) clearInterval(pollRef.current)
-      pollRef.current = setInterval(async () => {
-        ticks++
-        try {
-          const s = await api.chatStatus(sid)
-          if (!s.running || ticks > 400) {
-            if (pollRef.current) clearInterval(pollRef.current)
-            pollRef.current = null
-            const lines = await api.sessionRead(host, path || "", 60)
-            const items = groupThread(parseTranscript(lines))
-            let last = ""
-            for (const it of items) if (it.kind === "exchange" && it.finalText) last = it.finalText
-            resolve(last)
-          }
-        } catch {
-          /* keep polling through transient errors */
-        }
-      }, 1500)
-    })
-  }, [sid, host, path])
-
-  /** Run one turn from already-transcribed text: send it into the SAME chat
-   *  pipeline a typed message uses, await the reply, and speak it. Shared by
-   *  push-to-talk (finishTurn) and hands-free (onListenEvent). */
-  const runTurn = useCallback(
-    async (text: string): Promise<void> => {
-      if (!text.trim()) return
-      setHeard(text)
-      setPhase("thinking")
-      try {
-        const p = composerPrefs()
-        await api.chat({ message: text, path: path || undefined, host, agent: "claude", mode: p.mode, model: p.model })
-        const answer = await awaitReply()
-        setReply(answer)
-        setPhase("speaking")
-        await speak(answer)
-      } catch (e) {
-        setError((e as Error).message)
-      }
-    },
-    [host, path, awaitReply]
-  )
 
   async function onPressIn() {
     // Only start from a settled idle state; ignore presses while busy.
@@ -195,79 +112,16 @@ export default function VoiceScreen({ route }: Props) {
 
   // ---- Hands-free mode --------------------------------------------------------
 
-  /** Begin the hands-free listen loop: stream windows, act on wake utterances. */
-  const startHandsFree = useCallback(async () => {
-    setError("")
-    setPhase("waiting")
-    const stop = await startListening(onListenEvent, { speakerId: "default" })
-    listenStopRef.current = stop
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  /** Stop the hands-free loop and settle back to idle. */
-  const stopHandsFree = useCallback(async () => {
-    listenStopRef.current = null
-    await stopListening()
-    if (!busyRef.current) setPhase("idle")
-  }, [])
-
-  /** Each window's verdict from the server. Fire a turn only on a verified
-   *  "Harman …" utterance; ignore idle windows and anything while already busy. */
-  const onListenEvent = useCallback(
-    async (e: ListenEvent) => {
-      if (e.type === "unenrolled") {
-        setEnrolled(false)
-        setError("Enroll your voice first so Harman only answers you.")
-        return
-      }
-      if (e.type === "error") return
-      if (e.type !== "utterance" || !e.text.trim()) return
-      if (busyRef.current) return // a turn is already running
-      busyRef.current = true
-      // Pause listening while we run + speak the turn (mic and playback share the
-      // one audio session); resume afterward if still in hands-free mode.
-      await stopListening()
-      try {
-        await runTurn(e.text)
-      } finally {
-        busyRef.current = false
-        if (handsFreeRef.current) {
-          setPhase("waiting")
-          const stop = await startListening(onListenEvent, { speakerId: "default" })
-          listenStopRef.current = stop
-        } else {
-          setPhase("idle")
-        }
-      }
-    },
-    [runTurn]
-  )
-
-  /** Toggle hands-free on/off. Turning it on requires an enrolled voiceprint. */
+  /** Toggle hands-free on/off. Turning it on requires an enrolled voiceprint.
+   *  The loop itself lives in the shared hook. */
   async function toggleHandsFree(on: boolean) {
     if (on && !enrolled) {
-      setError("Enroll your voice first (tap “Enroll my voice”).")
+      setError("Enroll your voice first (tap “Enroll”).")
       return
     }
     setHandsFree(on)
-    handsFreeRef.current = on
     if (on) await startHandsFree()
     else await stopHandsFree()
-  }
-
-  /** Record ~5s and enroll the voiceprint so hands-free can verify the speaker. */
-  async function onEnroll() {
-    setError("")
-    setEnrolling(true)
-    try {
-      const ok = await enrollVoice(5, "default")
-      setEnrolled(ok)
-      if (!ok) setError("Enrollment failed — try again in a quiet spot.")
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setEnrolling(false)
-    }
   }
 
   const status =
@@ -290,57 +144,126 @@ export default function VoiceScreen({ route }: Props) {
         </Text>
         {heard ? (
           <View style={{ alignSelf: "flex-end", maxWidth: "85%", backgroundColor: t.accent, borderRadius: 16, padding: 12 }}>
-            <Text style={{ color: "#fff", fontSize: 16 }}>{heard}</Text>
+            <Text style={{ color: "#fff", fontSize: 16, flexShrink: 1 }}>{heard}</Text>
           </View>
         ) : null}
-        {reply ? (
-          <View style={{ alignSelf: "flex-start", maxWidth: "85%", backgroundColor: t.chipBg, borderRadius: 16, padding: 12 }}>
-            <Text style={{ color: t.text, fontSize: 16 }}>{reply}</Text>
-          </View>
-        ) : null}
-        {error ? <Text style={[styles.error, { textAlign: "center" }]}>{error}</Text> : null}
-      </ScrollView>
-
-      {/* Hands-free controls: enroll once, then toggle. */}
-      <View style={{ alignSelf: "stretch", paddingHorizontal: 24, gap: 12 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={{ color: t.text, fontSize: 15, fontWeight: "600" }}>Hands-free</Text>
-            <Text style={{ color: t.textMuted, fontSize: 12 }}>
-              {enrolled ? "Say “Harman” then your question" : "Enroll your voice to enable"}
-            </Text>
-          </View>
-          <Switch
-            testID="voice-handsfree"
-            value={handsFree}
-            onValueChange={toggleHandsFree}
-            disabled={phase === "denied" || !enrolled}
+        {replyItem ? (
+          // Harness turn: render the whole exchange chat-style — tool steps, plan
+          // card, and markdown — identical to the thread, not just plain prose.
+          <ExchangeView
+            finalText={replyItem.finalText}
+            steps={replyItem.steps}
+            plan={replyItem.plan?.input}
+            defaultOpen
+            ts={replyItem.ts}
           />
-        </View>
-        {!enrolled ? (
-          <Pressable
-            testID="voice-enroll"
-            onPress={onEnroll}
-            disabled={enrolling || phase === "denied"}
+        ) : reply ? (
+          // Assistant-appliance path (no exchange item): plain spoken text.
+          <View style={{ alignSelf: "flex-start", maxWidth: "85%", backgroundColor: t.chipBg, borderRadius: 16, padding: 12 }}>
+            <Text style={{ color: t.text, fontSize: 16, flexShrink: 1 }}>{reply}</Text>
+          </View>
+        ) : null}
+        {error ? (
+          <View
             style={{
-              alignItems: "center",
-              paddingVertical: 12,
-              borderRadius: 12,
-              backgroundColor: t.chipBg,
-              borderWidth: 1,
-              borderColor: t.border,
+              alignSelf: "center", maxWidth: "90%", flexDirection: "row", alignItems: "center", gap: 8,
+              backgroundColor: t.dangerBg, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
             }}
           >
-            {enrolling ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <ActivityIndicator color={t.accent} />
-                <Text style={{ color: t.text }}>Recording — keep talking…</Text>
-              </View>
-            ) : (
-              <Text style={{ color: t.accent, fontWeight: "600" }}>Enroll my voice</Text>
-            )}
-          </Pressable>
+            <Icon name="warning" size={16} color={t.danger} />
+            <Text style={{ color: t.danger, fontSize: 13, flex: 1 }}>{error}</Text>
+            <Pressable onPress={() => setError("")} hitSlop={8}>
+              <Icon name="close" size={16} color={t.danger} />
+            </Pressable>
+          </View>
         ) : null}
+      </ScrollView>
+
+      {/* Settings card: mode toggles + enroll, grouped so the eye parses one
+          block instead of three loose rows. Icon + title + one-line hint each. */}
+      <View
+        style={{
+          alignSelf: "stretch",
+          marginHorizontal: 20,
+          backgroundColor: t.surface,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: t.border,
+          overflow: "hidden",
+        }}
+      >
+        {/* Assistant voice — the headline capability, so it leads. */}
+        <View style={{ flexDirection: "row", alignItems: "center", padding: 16, gap: 12 }}>
+          <View
+            style={{
+              width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center",
+              backgroundColor: assistantVoice ? t.accent : t.chipBg,
+            }}
+          >
+            <Icon name="sparkle" size={20} color={assistantVoice ? "#fff" : t.textMuted} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: t.text, fontSize: 15, fontWeight: "600" }}>Assistant voice</Text>
+            <Text style={{ color: t.textMuted, fontSize: 12 }}>Natural voice · live tools</Text>
+          </View>
+          <Switch
+            testID="voice-assistant"
+            value={assistantVoice}
+            onValueChange={(on) => {
+              setAssistantVoicePref(on)
+              setAssistantVoice(on)
+            }}
+            disabled={phase === "denied"}
+          />
+        </View>
+
+        <View style={{ height: 1, backgroundColor: t.border, marginLeft: 64 }} />
+
+        {/* Hands-free — needs enrollment; the hint doubles as the CTA. */}
+        <View style={{ flexDirection: "row", alignItems: "center", padding: 16, gap: 12 }}>
+          <View
+            style={{
+              width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center",
+              backgroundColor: handsFree ? t.accent : t.chipBg,
+            }}
+          >
+            <Icon name="volume" size={20} color={handsFree ? "#fff" : t.textMuted} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: t.text, fontSize: 15, fontWeight: "600" }}>Hands-free</Text>
+            <Text style={{ color: t.textMuted, fontSize: 12 }}>
+              {enrolled ? "Say “Harman”, then ask" : "Enroll your voice to enable"}
+            </Text>
+          </View>
+          {enrolled ? (
+            <Switch
+              testID="voice-handsfree"
+              value={handsFree}
+              onValueChange={toggleHandsFree}
+              disabled={phase === "denied"}
+            />
+          ) : (
+            <Pressable
+              testID="voice-enroll"
+              onPress={onEnroll}
+              disabled={enrolling || phase === "denied"}
+              style={{
+                paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+                backgroundColor: t.chipBg, borderWidth: 1, borderColor: t.accent,
+                flexDirection: "row", alignItems: "center", gap: 6,
+              }}
+            >
+              {enrolling ? (
+                <>
+                  <ActivityIndicator color={t.accent} size="small" />
+                  <Text style={{ color: t.accent, fontWeight: "600", fontSize: 13 }}>Recording…</Text>
+                </>
+              ) : (
+                <Text style={{ color: t.accent, fontWeight: "600", fontSize: 13 }}>Enroll</Text>
+              )}
+            </Pressable>
+          )}
+        </View>
       </View>
 
       {/* Push-to-talk button + status. Hidden while hands-free is active. */}

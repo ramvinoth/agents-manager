@@ -40,6 +40,13 @@ function defaultBackend(): AudioBackend {
     async setRecordMode() {
       await Audio.setAudioModeAsync(RECORD_MODE)
     },
+    async adoptRecordMode() {
+      // CallKit already activated the AVAudioSession for the call; we only assert
+      // OUR record+play mode on top. setAudioModeAsync sets the category/options
+      // without owning activation, so it composes with CallKit rather than fighting
+      // it. Same expo-av module the recorder/player use, so no cross-module conflict.
+      await Audio.setAudioModeAsync(RECORD_MODE)
+    },
     async startRecorder(options) {
       const { recording } = await Audio.Recording.createAsync(options as Audio.RecordingOptions)
       return recording as unknown as RecordingHandle
@@ -85,6 +92,12 @@ function defaultBackend(): AudioBackend {
       const sound = active
       active = null
       if (sound) await sound.unloadAsync().catch(() => {})
+    },
+    async setPlaybackVolume(v: number) {
+      // Duck / restore the live TTS while the user speaks over it. Fire-and-forget
+      // against the active sound; harmless if it just unloaded (barge-in halt).
+      const sound = active
+      if (sound) await sound.setStatusAsync({ volume: Math.max(0, Math.min(1, v)) }).catch(() => {})
     },
   }
 }

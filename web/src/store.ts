@@ -177,6 +177,7 @@ interface AppState {
   steerMessage: (msg: string) => Promise<string | undefined>
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
+  answerQuestion: (picks: string[]) => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
@@ -1103,6 +1104,31 @@ export const useStore = create<AppState>((set, get) => {
         await api.chatPermissionDecide({ session: sid, id, decision })
       } catch {
         /* the run will time out and deny if this never lands */
+      }
+    },
+
+    // Answer a parked AskUserQuestion. This must hit the dedicated endpoint (which
+    // unblocks the waiting call or resumes the session), NOT sendChat — a normal
+    // chat message just gets QUEUED behind the still-blocked run, which is exactly
+    // the "it adds to the queue instead of answering" bug.
+    answerQuestion: async (picks) => {
+      const { currentSessionPath, permMode, model } = get()
+      if (!currentSessionPath) return
+      set({ chatRunning: true, chatStatus: null })
+      try {
+        const res = await api.chatQuestionAnswer({
+          session: currentSessionPath,
+          picks,
+          mode: permMode,
+          model,
+        })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+        await pollTick()
+        const sid = d.session || sessionIdOf(currentSessionPath)
+        watchChat(sid)
+      } catch (e: any) {
+        set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to answer: " + (e?.message || e) } })
       }
     },
 

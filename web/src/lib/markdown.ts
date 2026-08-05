@@ -150,3 +150,52 @@ export function renderMarkdown(text: string): string {
     })
     .join("")
 }
+
+/** A rendered markdown segment: either an HTML blob (injected via
+ *  dangerouslySetInnerHTML) or a mermaid diagram (rendered by a React component
+ *  that OWNS its SVG, so React re-renders never wipe it). */
+export type MarkdownSegment =
+  | { type: "html"; html: string }
+  | { type: "mermaid"; source: string }
+
+/** Split markdown into React-renderable segments, isolating ```mermaid fences so
+ *  each becomes a stateful <MermaidDiagram> instead of imperatively-injected SVG
+ *  living inside React-owned innerHTML (the source of the wipe/flicker bugs). */
+export function renderMarkdownSegments(text: string): MarkdownSegment[] {
+  if (!text || typeof text !== "string") return []
+  const segs: MarkdownSegment[] = []
+  let htmlBuf = ""
+  const flush = () => {
+    if (htmlBuf) {
+      segs.push({ type: "html", html: htmlBuf })
+      htmlBuf = ""
+    }
+  }
+  const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
+  let lastIdx = 0
+  let match: RegExpExecArray | null
+  const emitPart = (part: { type: "text" | "code"; content: string; lang?: string }) => {
+    if (part.type === "code") {
+      if ((part.lang || "").toLowerCase() === "mermaid") {
+        flush()
+        segs.push({ type: "mermaid", source: part.content })
+        return
+      }
+      htmlBuf += `<pre><code class="language-${part.lang}">${highlightCode(
+        esc(part.content),
+        part.lang || ""
+      )}</code></pre>`
+      return
+    }
+    htmlBuf += renderInline(part.content)
+  }
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    if (match.index > lastIdx)
+      emitPart({ type: "text", content: text.slice(lastIdx, match.index) })
+    emitPart({ type: "code", lang: match[1], content: match[2].trim() })
+    lastIdx = match.index + match[0].length
+  }
+  if (lastIdx < text.length) emitPart({ type: "text", content: text.slice(lastIdx) })
+  flush()
+  return segs
+}

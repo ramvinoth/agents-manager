@@ -333,6 +333,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
       headerRight: () => (
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           <TouchableOpacity
+            testID="thread-call"
+            accessibilityLabel="call-mode"
+            onPress={() => navigation.navigate("Call", { host, label, path })}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
+          >
+            <Icon name="phone" size={20} color={t.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity
             testID="thread-voice"
             accessibilityLabel="voice-mode"
             onPress={() => navigation.navigate("Voice", { host, label, path })}
@@ -1228,7 +1237,7 @@ function ReadAloudButton({ text }: { text: string }) {
 
 // An agent exchange: the final response, with the tool-call steps collapsed
 // underneath (tap "N steps" to reveal them; each step expands to its result).
-function ExchangeView({
+export function ExchangeView({
   finalText,
   steps,
   plan,

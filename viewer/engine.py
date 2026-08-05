@@ -1016,6 +1016,30 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     if model and model != "default" and re.fullmatch(r"[A-Za-z0-9._-]+", model):
         cmd += ["--model", model]
 
+    # Custom-provider agent mode: point the harness at the preset's endpoint. The
+    # claude CLI reads env from ~/.claude/settings.json and that WINS over the
+    # subprocess environment — so injecting ANTHROPIC_* into env alone is silently
+    # overridden by any base URL pinned in settings.json (e.g. a LiteLLM proxy).
+    # A `--settings <file>` with the endpoint in its `env` DOES take precedence
+    # (verified: it forces /v1/messages to the given base URL). We write a temp
+    # settings file and pass it, so the session's provider actually routes to its
+    # model (e.g. Qwen on :8081) instead of leaking to the global default.
+    provider_settings_path = None
+    if provider_env:
+        try:
+            import tempfile
+            penv = {k: str(v) for k, v in provider_env.items()}
+            # Clear any inherited small-fast model so background calls don't leak to
+            # a different endpoint's model namespace.
+            penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
+            fd, provider_settings_path = tempfile.mkstemp(prefix="viewer-prov-", suffix=".json")
+            with os.fdopen(fd, "w") as f:
+                json.dump({"env": penv}, f)
+            os.chmod(provider_settings_path, 0o600)
+            cmd += ["--settings", provider_settings_path]
+        except Exception as e:
+            print(f"[engine] provider settings write failed: {e}", flush=True)
+
     # Per-session system prompt and goal, managed from the viewer's panel.
     meta = SESSION_META.get(session_id) or {}
     extra = []

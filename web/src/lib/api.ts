@@ -194,6 +194,11 @@ class ApiClient {
   chatPermissionDecide(body: Body) {
     return this.postRes("/api/chat/permission/decide", body)
   }
+  // Answer a parked AskUserQuestion (async). The server unblocks the waiting call
+  // or resumes the session with the composed answer — NOT a queued chat message.
+  chatQuestionAnswer(body: Body) {
+    return this.postRes("/api/chat/question/answer", this.wh(body))
+  }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
   }

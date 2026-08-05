@@ -67,19 +67,31 @@ class VoiceMixin:
         """Proxy a LIVE AAC stream from the speech service to the client, chunk
         by chunk, so a streaming player starts almost immediately. text comes in
         the query string (a GET, so react-native-track-player can play the URL
-        with an Authorization header)."""
+        with an Authorization header).
+
+        Two modes:
+          - normal: `text` is an already-generated reply -> speak it (Pocket/Kokoro).
+          - Assistant (?assistant=1): `text` is the USER'S UTTERANCE -> the assistant service
+            (:8099) routes it to the Qwen agent and speaks the answer in the assistant's
+            cloned voice. Same AAC contract, so the proxy loop is identical."""
         text = (req.query.get("text") or [""])[0].strip()
         if not text:
             self.send_json({"error": "empty text"}, status=400)
             return
-        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
-        from viewer.speakable import speakable
-        text = speakable(text) or text
-        if not SPEECH_SERVICE_URL:
+        assistant_mode = (req.query.get("assistant") or ["0"])[0] in ("1", "true", "yes")
+        if assistant_mode:
+            from viewer.config import ASSISTANT_SERVICE_URL
+            base = ASSISTANT_SERVICE_URL
+        else:
+            # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
+            from viewer.speakable import speakable
+            text = speakable(text) or text
+            base = SPEECH_SERVICE_URL
+        if not base:
             self.send_json({"error": "voice disabled"}, status=502)
             return
         import json as _json
-        url = SPEECH_SERVICE_URL.rstrip("/") + "/synthesize_stream_aac"
+        url = base.rstrip("/") + "/synthesize_stream_aac"
         body = _json.dumps({"text": text}).encode("utf-8")
         upstream = urllib.request.Request(url, data=body, method="POST",
                                           headers={"Content-Type": "application/json"})
@@ -143,9 +155,21 @@ class VoiceMixin:
         that actually contain speech — so this is cheap at rest."""
         from viewer.browser import WSServer
         speaker_id = (req.query.get("speaker_id") or ["default"])[0]
+        # Call mode: once a phone call is connected, the call itself is the "I'm
+        # talking to you" signal, so we DON'T require the "Harman" wake word before
+        # every turn (that's not how a real call works). Speaker verification still
+        # gates WHO — only the enrolled user's speech fires a turn. Push-to-talk and
+        # the classic hands-free screen keep wake-word gating (mode absent).
+        call_mode = (req.query.get("mode") or ["wake"])[0] == "call"
+        # Wakeguard mode: barge-in during call playback. The device sends
+        # echo-cancelled windows WHILE the assistant is speaking; we only need to
+        # know if the user said "Harman …" (no speaker verify — AEC already
+        # removed the assistant's own voice). Returns {type:"wake", text:tail}.
+        wakeguard_mode = (req.query.get("mode") or ["wake"])[0] == "wakeguard"
         ws = WSServer.upgrade(self)
         if not ws:
             return
+        n_win = 0
         try:
             while True:
                 op, payload = ws.recv()
@@ -161,22 +185,63 @@ class VoiceMixin:
                     continue
                 if op != 0x2 or not payload:  # expect binary audio otherwise
                     continue
+                n_win += 1
+                # Wakeguard: cheap wake-only check for barge-in windows. Fires
+                # {type:"wake", text:tail} when the user said "Harman …" over the
+                # assistant; otherwise {type:"idle"}. No speaker verify (AEC on
+                # device already removed the assistant's voice from the signal).
+                if wakeguard_mode:
+                    try:
+                        wg = voice.wakeguard(bytes(payload), "audio/wav")
+                    except voice.VoiceError as e:
+                        print(f"[voice.ws] wakeguard error (win {n_win}): {e}", flush=True)
+                        ws.send_text(json.dumps({"type": "error", "error": str(e)}))
+                        continue
+                    if wg.get("wake"):
+                        print(f"[voice.ws] wakeguard win={n_win} WAKE text={wg.get('text','')!r}", flush=True)
+                        ws.send_text(json.dumps({"type": "wake", "text": wg.get("text", "")}))
+                    else:
+                        ws.send_text(json.dumps({"type": "idle"}))
+                    continue
                 try:
-                    result = voice.segment(bytes(payload), speaker_id, "audio/wav")
+                    result = voice.segment(bytes(payload), speaker_id, "audio/wav",
+                                           no_wake=call_mode)
                 except voice.VoiceError as e:
+                    print(f"[voice.ws] segment error (win {n_win}): {e}", flush=True)
                     ws.send_text(json.dumps({"type": "error", "error": str(e)}))
                     continue
-                if result.get("wake") and result.get("match") and result.get("text"):
+                # Diagnostic: every window's verdict, so a "stuck on Listening" can be
+                # traced to whether windows arrive and what they score.
+                print(f"[voice.ws] win={n_win} bytes={len(payload)} mode={'call' if call_mode else 'wake'} "
+                      f"speech={result.get('speech')} wake={result.get('wake')} "
+                      f"match={result.get('match')} score={result.get('score')} "
+                      f"text={result.get('text','')!r}", flush=True)
+                # Decide whether this window fires a turn:
+                #  - wake mode (mic hands-free): require the "Harman" wake word AND
+                #    a speaker match — only the enrolled user, and only on the wake
+                #    phrase, may drive the assistant while it's passively listening.
+                #  - call mode (an active phone call the user placed): the call
+                #    itself is the identity + intent signal, so fire on ANY speech
+                #    with words. No wake word, no per-utterance speaker match —
+                #    requiring a biometric match every turn is both overkill for a
+                #    call you started on your own phone and, in practice, the thing
+                #    that was blocking it (live match scores sat below threshold).
+                if call_mode:
+                    fires = bool(result.get("speech") and result.get("text"))
+                else:
+                    fires = bool(result.get("wake") and result.get("match") and result.get("text"))
+                if fires:
                     ws.send_text(json.dumps({
                         "type": "utterance",
                         "text": result.get("text", ""),
                         "score": result.get("score", 0.0),
                     }))
-                elif result.get("wake") and result.get("unenrolled"):
+                elif not call_mode and result.get("wake") and result.get("unenrolled"):
                     ws.send_text(json.dumps({"type": "unenrolled"}))
                 else:
                     ws.send_text(json.dumps({"type": "idle"}))
         except Exception:
             pass
         finally:
+            print(f"[voice.ws] closed after {n_win} windows", flush=True)
             ws.close()

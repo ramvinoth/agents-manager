@@ -12,6 +12,7 @@ CHAT_JOBS entry with the canonical field set so /api/chat/status reports the run
 as working/done and the busy guard holds.
 """
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -115,6 +116,30 @@ def _history_messages(path):
     return msgs[-_HISTORY_LIMIT:]
 
 
+_AUDIO_TAIL_RE = re.compile(
+    # A tab (or newline) followed by a long run of base64-ish chars with no
+    # spaces — Step-Audio's TTS parser glues its audio payload onto the text
+    # like "the visible reply\t<base64 audio blob>". Real prose never contains
+    # a 40+ char unbroken base64 run after a tab, so this is safe to strip.
+    r"[\t\n]+[A-Za-z0-9+/=]{40,}\s*$"
+)
+
+# Step-Audio also emits inline audio codec tokens like "<audio_3852>" (often a
+# run of them prefixed before the visible text). Strip every such token.
+_AUDIO_TOKEN_RE = re.compile(r"<audio_\d+>")
+
+
+def _strip_audio_payload(text):
+    """Remove any TTS/audio tokens an audio-first model (Step-Audio) mixes into
+    its text content — both the trailing base64 blob and inline <audio_N> codec
+    tokens — so the chat window shows clean prose only."""
+    if not text:
+        return text
+    text = _AUDIO_TAIL_RE.sub("", text)
+    text = _AUDIO_TOKEN_RE.sub("", text)
+    return text.strip()
+
+
 def _enforce_alternating(messages):
     """Collapse consecutive same-role turns into one. Templates like Gemma's
     require strictly alternating user/assistant messages; merging keeps the
@@ -148,7 +173,8 @@ def _chat_completion(base_url, api_key, model, messages):
     choices = data.get("choices") or []
     if not choices:
         raise ValueError("Endpoint returned no choices")
-    return (choices[0].get("message") or {}).get("content", "") or ""
+    content = (choices[0].get("message") or {}).get("content", "") or ""
+    return _strip_audio_payload(content)
 
 
 def start_custom_run(session_id, preset_id, message, cwd, host="local", mode=""):

@@ -99,15 +99,36 @@ def enroll(audio: bytes, speaker_id: str = "default",
 
 
 def segment(audio: bytes, speaker_id: str = "default",
-            content_type: str = "audio/wav") -> dict:
+            content_type: str = "audio/wav", no_wake: bool = False) -> dict:
     """Wake + speaker-verify one audio window. Returns the service's
     {speech, wake, match, score, text}. The caller fires a chat turn only when
-    wake AND match are both true (strict: only the enrolled user's "Harman…")."""
+    wake AND match are both true (strict: only the enrolled user's "Harman…").
+
+    Pass no_wake=True for CALL mode: the box then returns the full transcript for
+    any speech even without the "Harman" wake word, so a call fires on plain
+    speech (the call itself is the intent signal)."""
     if not audio:
         return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
-    q = urllib.parse.urlencode({"speaker_id": speaker_id or "default"})
+    params = {"speaker_id": speaker_id or "default"}
+    if no_wake:
+        params["no_wake"] = "1"
+    q = urllib.parse.urlencode(params)
     raw = _post_q("/segment", q, audio, content_type or "application/octet-stream")
     try:
         return json.loads(raw)
     except ValueError:
         raise VoiceError("speech service returned a malformed segment response")
+
+
+def wakeguard(audio: bytes, content_type: str = "audio/wav") -> dict:
+    """Barge-in wake check for a window captured WHILE the assistant is speaking.
+    The audio is echo-cancelled on the device (voiceProcessingIO), so this only
+    gates on the wake word — no speaker verify. Returns {wake, text}: wake=True
+    with the command tail when the user said "Harman …" over the assistant."""
+    if not audio:
+        return {"wake": False, "text": ""}
+    raw = _post_q("/wakeguard", "", audio, content_type or "application/octet-stream")
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise VoiceError("speech service returned a malformed wakeguard response")

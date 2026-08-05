@@ -56,6 +56,8 @@ export type IconName =
   | "mic"
   | "micOff"
   | "volume"
+  | "phone"
+  | "phoneOff"
 
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
@@ -105,6 +107,8 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   mic: "mic",
   micOff: "mic-off",
   volume: "volume-high-outline",
+  phone: "call",
+  phoneOff: "call-outline",
 }
 
 export default function Icon({

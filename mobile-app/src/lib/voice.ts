@@ -19,6 +19,12 @@ import * as FileSystem from "expo-file-system"
 import * as SecureStore from "expo-secure-store"
 import { api } from "../api/client"
 import { audioSession } from "./audioSessionNative"
+import {
+  endpointVerdict,
+  observeFrame,
+  type EndpointOptions,
+  type EndpointState,
+} from "./endpoint"
 
 /** Ask for mic permission and configure the (single) audio session. Returns
  *  whether the mic is available. */
@@ -133,6 +139,84 @@ async function _recordListenWindow(
   }
 }
 
+/** Default endpointing profile for the call/hands-free loop: forgiving 1.5s
+ *  silence-hang (tolerates thinking pauses; resuming speech extends the window),
+ *  a 15s hard cap, and a 4s "you never spoke" give-up so a truly silent window is
+ *  dropped fast (battery). Tunable via setEndpointOptions(). */
+let _endpointOpts: EndpointOptions = {
+  floorDb: _vadFloorDb,
+  silenceHangMs: 1500,
+  maxMs: 15000,
+  noSpeechTimeoutMs: 4000,
+}
+
+/** Adjust the endpointing profile (e.g. a snappier hang). Loudness floor stays in
+ *  sync with the VAD threshold unless overridden here. */
+export function setEndpointOptions(opts: Partial<EndpointOptions>): void {
+  _endpointOpts = { ..._endpointOpts, floorDb: _vadFloorDb, ...opts }
+}
+
+/**
+ * Record ONE utterance with silence-based endpointing: keep recording until the
+ * speaker finishes (≈`silenceHangMs` of trailing quiet after speech), or the hard
+ * cap, or give up if they never spoke. Returns the m4a bytes + whether the window
+ * was silent — same shape as `_recordListenWindow`, so the loop is a drop-in swap.
+ *
+ * This is what makes the call feel natural: instead of a fixed 2.5s window that
+ * clips mid-sentence, the clip grows to fit what you actually said, and a thinking
+ * pause shorter than the hang doesn't end your turn (resuming speech resets the
+ * silence timer — barge-in-to-extend, handled purely in `observeFrame`).
+ *
+ * The endpoint decision is the pure `endpoint.ts` helper fed by expo-av metering
+ * frames; timing uses the frame's own `s.durationMillis` (monotonic, no Date).
+ */
+async function _recordEndpointedWindow(): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
+  let state: EndpointState = { heardSpeech: false, lastLoudMs: -1 }
+  let stopReason: "endpoint" | "max" | "no-speech" | null = null
+  const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
+  rec.setProgressUpdateInterval(100)
+
+  await new Promise<void>((resolve) => {
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    rec.setOnRecordingStatusUpdate((s) => {
+      if (!s.isRecording || typeof s.metering !== "number" || typeof s.durationMillis !== "number") return
+      const now = s.durationMillis
+      state = observeFrame(state, s.metering, now, _endpointOpts.floorDb)
+      const v = endpointVerdict(state, now, now, _endpointOpts)
+      if (v.done) {
+        stopReason = v.reason
+        done()
+      }
+    })
+    // Absolute safety net in case status updates stall: cap slightly above maxMs.
+    setTimeout(done, _endpointOpts.maxMs + 1000)
+  })
+
+  const uri = await audioSession.stopRecording()
+  // Never spoke → drop it like a silent VAD window (no upload / server STT).
+  if (stopReason === "no-speech" || !state.heardSpeech) {
+    if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
+    return { buf: null, silent: true }
+  }
+  if (!uri) return { buf: null, silent: false }
+  try {
+    const b64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    })
+    return { buf: _base64ToArrayBuffer(b64), silent: false }
+  } catch {
+    return { buf: null, silent: false }
+  } finally {
+    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
+  }
+}
+
+
 /** Decode a base64 string to an ArrayBuffer (atob is available in the RN/Hermes
  *  runtime; falls back to a manual decode if not). */
 function _base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -161,6 +245,27 @@ function _atobPolyfill(input: string): string {
  *  The voiceprint itself lives on the server, keyed by speaker_id; this is just a
  *  local "we've done it" flag. */
 const ENROLLED_KEY = "harman.voice.enrolled"
+
+/** Whether the assistant voice is on: the utterance is answered +
+ *  spoken by the assistant service (Qwen brain + cloned voice) in one call,
+ *  instead of the default chat pipeline + Kokoro/Pocket TTS. Persisted locally. */
+const ASSISTANT_KEY = "harman.voice.assistant"
+
+export async function isAssistantVoice(): Promise<boolean> {
+  try {
+    return (await SecureStore.getItemAsync(ASSISTANT_KEY)) === "1"
+  } catch {
+    return false
+  }
+}
+
+export async function setAssistantVoice(on: boolean): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(ASSISTANT_KEY, on ? "1" : "0")
+  } catch {
+    /* best-effort persistence */
+  }
+}
 
 export async function isEnrolled(): Promise<boolean> {
   try {
@@ -207,12 +312,12 @@ let _listenStop: (() => void) | null = null
  */
 export async function startListening(
   onEvent: (e: ListenEvent) => void,
-  opts: { windowSeconds?: number; speakerId?: string } = {}
+  opts: { windowSeconds?: number; speakerId?: string; callMode?: boolean } = {}
 ): Promise<() => void> {
   await stopListening() // never run two loops at once
   const windowSeconds = opts.windowSeconds ?? 2.5
   const speakerId = opts.speakerId ?? "default"
-  const { url, headers } = api.voiceWsUrl(speakerId)
+  const { url, headers } = api.voiceWsUrl(speakerId, opts.callMode ?? false)
 
   let stopped = false
   // RN's WebSocket runtime accepts a 3rd `options` arg carrying request headers
@@ -249,13 +354,16 @@ export async function startListening(
     _listenStop = null
   }
 
-  // On OPEN, loop: record a window, send it, repeat. audioSession serializes each
-  // record, which naturally paces the stream.
+  // On OPEN, loop: record ONE endpointed utterance (grows to fit what was said,
+  // ends on a natural pause), send it, repeat. audioSession serializes each record,
+  // which naturally paces the stream. `windowSeconds` is retained for API
+  // compatibility but the utterance length is now decided by endpointing.
+  void windowSeconds
   ws.onopen = async () => {
     while (!stopped && ws.readyState === WebSocket.OPEN) {
       let res: { buf: ArrayBuffer | null; silent: boolean } = { buf: null, silent: false }
       try {
-        res = await _recordListenWindow(windowSeconds)
+        res = await _recordEndpointedWindow()
       } catch {
         res = { buf: null, silent: false }
       }
@@ -287,9 +395,9 @@ export async function stopListening(): Promise<void> {
  * audio arrives in ~0.5s. Resolves when playback finishes AND the session has been
  * released — so a following recording sees a free session.
  */
-export async function speak(text: string): Promise<void> {
+export async function speak(text: string, assistant?: boolean): Promise<void> {
   if (!text.trim()) return
-  const { url, headers } = api.voiceTtsStreamUrl(text)
+  const { url, headers } = api.voiceTtsStreamUrl(text, assistant)
   await audioSession.play(url, headers)
 }
 

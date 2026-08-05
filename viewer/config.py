@@ -75,6 +75,13 @@ VERIFY_SERVICE_URL = os.environ.get(
     "HARMAN_VERIFY_URL", "http://100.115.120.89:8095")
 VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
 
+# The Harman assistant voice service (deploy/harman_assistant_service.py):
+# takes a USER UTTERANCE, routes action requests to the Qwen agent (:8081),
+# and speaks the answer in the cloned assistant voice (Step-Audio :8000 + token2wav),
+# streamed as ADTS-AAC — same contract as the Pocket TTS stream, so the voice
+# route can proxy it unchanged. Selected per-request via ?assistant=1.
+ASSISTANT_SERVICE_URL = os.environ.get("HARMAN_ASSISTANT_URL", "http://100.115.120.89:8099")
+
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
 

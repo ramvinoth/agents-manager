@@ -47,6 +47,10 @@ function makeBackend() {
       await tick()
       log.push("setRecordMode")
     },
+    async adoptRecordMode() {
+      await tick()
+      log.push("adoptRecordMode")
+    },
     async startRecorder() {
       await tick()
       // This is the crux: iOS throws here if playback still owns the session.
@@ -178,6 +182,30 @@ test("reset() releases recorder and playback", async () => {
   await s.reset()
   assert.equal(s.getState(), "idle")
   assert.ok(m.log.includes("stopRecorder"))
+})
+
+test("adoptActiveSession uses the CallKit path (adoptRecordMode, no re-activate)", async () => {
+  const m = makeBackend()
+  const s = new AudioSession(m.backend)
+  // CallKit fires didActivateAudioSession -> adopt. It must set OUR record mode via
+  // adoptRecordMode() (the non-activating path), NOT the plain setRecordMode().
+  await s.adoptActiveSession()
+  assert.ok(s.isConfigured(), "adopting marks the session configured")
+  assert.ok(m.log.includes("adoptRecordMode"), "used the CallKit adopt path")
+  assert.ok(!m.log.includes("setRecordMode"), "did not use the activating path")
+  // A record right after adopting starts cleanly (session is hot from CallKit).
+  const r = await s.record({})
+  assert.equal(s.getState(), "recording")
+  assert.ok(r)
+})
+
+test("adoptActiveSession falls back to setRecordMode when adopt path is absent", async () => {
+  const m = makeBackend()
+  // A backend WITHOUT the optional CallKit path (e.g. non-call use).
+  delete (m.backend as { adoptRecordMode?: () => Promise<void> }).adoptRecordMode
+  const s = new AudioSession(m.backend)
+  await s.adoptActiveSession()
+  assert.ok(m.log.includes("setRecordMode"), "fell back to the plain path")
 })
 
 // Report after the microtask/timer queue drains.

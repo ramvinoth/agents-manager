@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
-import { renderMarkdown } from "@/lib/markdown"
+import { renderMarkdownSegments } from "@/lib/markdown"
+import { MermaidDiagram } from "./MermaidDiagram"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
@@ -10,8 +11,23 @@ import { extractImages } from "@/lib/parser"
 import type { AssistantTurn, Block, ImagePart, Turn } from "@/lib/types"
 
 function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => renderMarkdown(text), [text])
-  return <div className="markdown-content" dangerouslySetInnerHTML={{ __html: html }} />
+  // Split into segments so ```mermaid fences render as React-owned <MermaidDiagram>
+  // components (SVG in state) instead of imperatively-injected SVG inside
+  // dangerouslySetInnerHTML — the latter was wiped by every streaming re-render /
+  // poll / scroll, causing the diagram to flicker and reset to code.
+  const dark = document.documentElement.classList.contains("dark")
+  const segments = useMemo(() => renderMarkdownSegments(text), [text])
+  return (
+    <div className="markdown-content">
+      {segments.map((seg, i) =>
+        seg.type === "mermaid" ? (
+          <MermaidDiagram key={i} source={seg.source} dark={dark} />
+        ) : (
+          <div key={i} dangerouslySetInnerHTML={{ __html: seg.html }} />
+        )
+      )}
+    </div>
+  )
 }
 
 function Images({ images }: { images: ImagePart[] }) {

@@ -3,6 +3,17 @@ import { Linking, ScrollView, Text, View } from "react-native"
 import { parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
 import { useTheme, type Theme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
+import MermaidView from "./MermaidView"
+
+/** Whether a #rrggbb background is dark (perceived luminance < 0.5). Used to pick
+ *  the mermaid diagram theme since Theme carries no explicit dark flag. */
+function isDarkBg(hex: string): boolean {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex || "")
+  if (!m) return false
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+}
 
 /**
  * Renders the markdown that agent replies are written in. Parsing lives in
@@ -79,6 +90,15 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
         />
       )
     case "code":
+      // Mermaid fences render as a diagram (WebView); everything else stays a
+      // horizontally-scrollable code block. A failed diagram shows "Diagram error"
+      // inside the WebView, so a broken graph never blanks the message.
+      if ((b.lang || "").toLowerCase() === "mermaid") {
+        // Derive dark from the palette's background luminance (no scheme flag on
+        // Theme). Dark bg → dark mermaid theme.
+        const dark = isDarkBg(t.bg)
+        return <MermaidView source={b.text} dark={dark} textColor={t.text} />
+      }
       // Horizontal scroll rather than wrapping — wrapped code is unreadable.
       return (
         <View style={[styles.mdCodeBlock, { backgroundColor: t.codeBg }]}>

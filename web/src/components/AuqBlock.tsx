@@ -17,29 +17,33 @@ interface Question {
 }
 
 export function AuqBlock({ block }: { block: ToolUseBlock }) {
-  const sendChat = useStore((s) => s.sendChat)
+  const answerQuestion = useStore((s) => s.answerQuestion)
   const agentLabel = useAgentLabel()
   const input = block.input as { questions?: Question[] } | undefined
   const questions = input?.questions || []
   const answered = block.result != null
   const [picks, setPicks] = useState<Record<number, string[]>>({})
+  const [sent, setSent] = useState(false)
 
   const optionsOf = (q: Question): Option[] =>
     (q.options || []).map((o) => (typeof o === "string" ? { label: o } : o))
   const needsSubmit = !answered && (questions.length > 1 || questions.some((q) => q.multiSelect))
 
   function send(p: Record<number, string[]>) {
-    const parts: string[] = []
-    questions.forEach((q, qi) => {
-      const picked = p[qi] || []
-      if (picked.length) parts.push((questions.length > 1 ? `${q.question} → ` : "") + picked.join(", "))
-    })
-    if (parts.length < questions.length) return
-    sendChat(parts.join("\n"))
+    if (sent) return
+    // Every question must have a pick before we answer.
+    if (questions.some((_, qi) => !(p[qi] || []).length)) return
+    setSent(true)
+    // One comma-joined label string per question, positionally aligned — the
+    // server composes the answer text from these. This goes to the dedicated
+    // question-answer endpoint (unblocks the waiting run / resumes it), NOT the
+    // chat queue.
+    const out = questions.map((_, qi) => (p[qi] || []).join(", "))
+    answerQuestion(out)
   }
 
   function pick(qi: number, label: string, multi: boolean) {
-    if (answered) return
+    if (answered || sent) return
     const cur = picks[qi] || []
     const next = multi ? (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]) : [label]
     const updated = { ...picks, [qi]: next }
@@ -75,12 +79,12 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
               return (
                 <button
                   key={oi}
-                  disabled={answered}
+                  disabled={answered || sent}
                   onClick={() => pick(qi, o.label, !!q.multiSelect)}
                   className={cn(
                     "flex flex-col rounded-md border px-3 py-2 text-left transition-colors",
                     picked ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
-                    answered && "opacity-60"
+                    (answered || sent) && "opacity-60"
                   )}
                 >
                   <span className="flex items-center gap-1.5 font-medium">
@@ -97,7 +101,7 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
         </div>
       ))}
       {needsSubmit && (
-        <Button size="sm" onClick={() => send(picks)}>
+        <Button size="sm" disabled={sent} onClick={() => send(picks)}>
           Send answer{questions.length > 1 ? "s" : ""}
         </Button>
       )}

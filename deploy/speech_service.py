@@ -345,6 +345,10 @@ async def segment(request: Request):
     if not raw:
         return JSONResponse({"error": "empty audio body"}, status_code=400)
     speaker_id = (request.query_params.get("speaker_id") or "default").strip()
+    # Call mode: the phone call is itself the intent signal, so we do NOT require
+    # the "Harman" wake word — return the full transcript for any speech so the
+    # caller can fire a turn on it. Hands-free (no_wake unset) keeps strict gating.
+    no_wake = (request.query_params.get("no_wake") or "") in ("1", "true", "yes")
     try:
         audio = _decode_to_mono16k(raw)
     except Exception as e:
@@ -357,7 +361,10 @@ async def segment(request: Request):
         return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
     is_wake, rest = _strip_wake(text)
     if not is_wake:
-        return {"speech": True, "wake": False, "match": False, "score": 0.0, "text": ""}
+        # No wake word. In call mode, still surface the full transcript so the
+        # caller fires on plain speech; in strict mode, withhold it.
+        return {"speech": True, "wake": False, "match": False, "score": 0.0,
+                "text": text if no_wake else ""}
     enrolled = _load_voiceprint(speaker_id)
     if enrolled is None:
         # No enrollment yet: report wake but cannot verify. match stays False so
@@ -384,6 +391,42 @@ async def transcribe(request: Request):
     stream.accept_waveform(STT_SAMPLE_RATE, audio)
     _stt.decode_stream(stream)
     return {"text": (stream.result.text or "").strip()}
+
+
+@app.post("/wakeguard")
+async def wakeguard(request: Request):
+    """Barge-in wake guard: cheap "did the user say Harman?" check for a window
+    captured WHILE the assistant is speaking (call-mode barge-in).
+
+    Body = raw audio (echo-cancelled PCM/WAV from the phone's voiceProcessingIO,
+    so the assistant's own TTS is already removed from the signal). Returns:
+        {wake: bool, text: str}
+    - wake: did the transcript start with the wake word ("Harman")
+    - text: the transcript with the wake word stripped (the command / question)
+
+    Unlike /segment this SKIPS speaker verification: the hardware AEC already
+    strips the assistant's voice, so the only thing left to gate on is the wake
+    word. The RMS energy gate short-circuits the (near-silent, echo-cancelled)
+    windows before any STT runs, so it's cheap to loop continuously."""
+    if _stt is None:
+        return JSONResponse({"error": "STT model not loaded"}, status_code=503)
+    raw = await request.body()
+    if not raw:
+        return {"wake": False, "text": ""}
+    try:
+        audio = _decode_to_mono16k(raw)
+    except Exception as e:
+        return JSONResponse({"error": f"decode failed: {e}"}, status_code=400)
+    # Echo-cancelled window with no user speech is near-silent -> skip STT.
+    if audio.size == 0 or float(np.sqrt(np.mean(audio * audio))) < 0.004:
+        return {"wake": False, "text": ""}
+    text = _transcribe_np(audio)
+    if not text:
+        return {"wake": False, "text": ""}
+    is_wake, rest = _strip_wake(text)
+    if not is_wake:
+        return {"wake": False, "text": ""}
+    return {"wake": True, "text": rest}
 
 
 @app.post("/synthesize")

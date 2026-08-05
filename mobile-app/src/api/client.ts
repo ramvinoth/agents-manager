@@ -383,8 +383,11 @@ export const api = {
   // AAC stream (Pocket generate_audio_stream -> ffmpeg). track-player plays the
   // URL and can send the Authorization header, so first audio arrives in ~0.5s
   // even for a long reply. Returns { url, headers } for TrackPlayer.add().
-  voiceTtsStreamUrl: (text: string): { url: string; headers: Record<string, string> } => ({
-    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}`,
+  // assistant=true routes to the Harman assistant service: `text` is the user's
+  // UTTERANCE (not a pre-made reply); the server answers via the Qwen agent and
+  // speaks it back in the cloned assistant voice — brain + voice in one stream.
+  voiceTtsStreamUrl: (text: string, assistant?: boolean): { url: string; headers: Record<string, string> } => ({
+    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}${assistant ? "&assistant=1" : ""}`,
     headers: authHeaders(),
   }),
   // Enroll the user's voiceprint from a recorded clip (a few seconds of speech).
@@ -410,10 +413,25 @@ export const api = {
   // frames); the server runs wake-word + strict speaker verification on the GPU
   // box and pushes back {type:"utterance",text} ONLY when the enrolled user says
   // "Harman …". Auth rides the handshake header (RN WebSocket allows it).
-  voiceWsUrl: (speakerId = "default"): { url: string; headers: Record<string, string> } => {
+  voiceWsUrl: (speakerId = "default", callMode = false): { url: string; headers: Record<string, string> } => {
+    const base = serverUrl().replace(/^http/, "ws")
+    // callMode drops the per-turn "Harman" wake word (a phone call is already the
+    // "talking to you" signal); speaker verification still gates who.
+    const mode = callMode ? "&mode=call" : ""
+    return {
+      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}${mode}`,
+      headers: authHeaders(),
+    }
+  },
+
+  // Barge-in wake-guard WS: a lightweight keyword-spotting stream that runs WHILE
+  // the assistant is speaking. The server uses a cheap KWS pass (not full STT) so
+  // it can loop continuously; it fires only when the wake word "Harman" is heard,
+  // returning the transcript tail for command parsing (stop / end / new question).
+  voiceWakeguardWsUrl: (speakerId = "default"): { url: string; headers: Record<string, string> } => {
     const base = serverUrl().replace(/^http/, "ws")
     return {
-      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}`,
+      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}&mode=wakeguard`,
       headers: authHeaders(),
     }
   },
