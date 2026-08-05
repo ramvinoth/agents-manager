@@ -1319,7 +1319,12 @@ def serve_browser_ws(handler, hid):
                     except (socket.timeout, OSError):
                         pass
                     except Exception:
-                        cur_gen = -1; continue        # reconnect
+                        # Reconnect, but back off first so a persistently-failing
+                        # tab (e.g. crashed renderer) can't spin this thread tight
+                        # and pin a CPU.
+                        cur_gen = -1
+                        stop.wait(0.5)
+                        continue
                 else:
                     stop.wait(0.2)
                 now = time.time()
