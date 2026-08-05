@@ -177,6 +177,10 @@ export function useAssistantTurn(
         const m = mic
         mic = null
         if (m) await m.stop().catch(() => {})
+        // Always undo any active duck. onSpeechChange(false) is the only other
+        // restore edge, and it won't fire if we tear down mid-speech — so without
+        // this the TTS (and the NEXT utterance's sound) could stay stuck at 0.25.
+        audioSession.setPlaybackVolume(1.0).catch(() => {})
       }
       try {
         mic = await startWakeguard(

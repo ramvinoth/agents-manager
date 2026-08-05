@@ -54,9 +54,11 @@ function defaultBackend(): AudioBackend {
     async playToEnd(url, headers) {
       // Stream the reply via expo-av. AVPlayer handles the live AAC HTTP stream,
       // so playback starts before the whole file arrives.
+      // Start at full volume: a prior turn's barge-in duck must never carry over
+      // to a fresh utterance (the duck is applied live to whatever `active` is).
       const { sound } = await Audio.Sound.createAsync(
         { uri: url, headers },
-        { shouldPlay: true },
+        { shouldPlay: true, volume: 1.0 },
         null,
         /* downloadFirst */ false
       )
