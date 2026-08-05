@@ -37,6 +37,11 @@ _HOME_ENC = str(Path.home()).replace("/", "-")
 LOOPS_FILE = Path.home() / ".claude" / ".viewer-loops.json"
 META_FILE = Path.home() / ".claude" / ".viewer-meta.json"
 LOOPS_LOCK = threading.Lock()
+# Guards SESSION_META across its scattered read-modify-write + save sites. Without
+# it, a setdefault/pop in one worker thread races a json.dumps snapshot in another
+# ("dict changed size during iteration") and drops updates. Hold it around the whole
+# mutate-then-save so writes are atomic w.r.t. each other.
+META_LOCK = threading.Lock()
 
 
 def load_json_file(path, default):
