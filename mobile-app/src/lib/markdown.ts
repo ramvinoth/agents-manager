@@ -14,6 +14,7 @@ export type Span =
   | { t: "italic"; s: string }
   | { t: "code"; s: string }
   | { t: "link"; s: string; href: string }
+  | { t: "math"; s: string }   // inline TeX (between $…$ / \(…\)) — rendered natively-ish
 
 export type MdBlock =
   | { t: "p"; spans: Span[] }
@@ -23,24 +24,33 @@ export type MdBlock =
   | { t: "table"; header: string[]; rows: string[][] }
   | { t: "quote"; spans: Span[] }
   | { t: "hr" }
+  | { t: "mathblock"; text: string }   // display TeX (between $$…$$ / \[…\]) — WebView
 
-/** Inline spans. Code is extracted first so **bold** inside `code` stays literal. */
+/** Inline spans. Math is matched FIRST so `_`/`*` inside a formula (A_k, \phi_k)
+ *  can't be mis-read as italic; code next so **bold** inside `code` stays literal. */
 export function parseInline(src: string): Span[] {
   const out: Span[] = []
-  // `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | bare url
+  // $…$ | \(…\) math | `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | url
   const re =
-    /(`+)([^`]+?)\1|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g
+    /\$([^\n$]+?)\$|\\\(([^]+?)\\\)|(`+)([^`]+?)\3|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(src))) {
+    // $…$ math, but not currency: skip if it starts/ends with a space or is a bare number.
+    if (m[1] !== undefined) {
+      const t = m[1]
+      if (/^\s|\s$/.test(t) || /^\d[\d.,]*$/.test(t)) continue  // "$5 and $6", "$9.99" → literal
+    }
     if (m.index > last) out.push({ t: "text", s: src.slice(last, m.index) })
-    if (m[2] !== undefined) out.push({ t: "code", s: m[2] })
-    else if (m[3] !== undefined) out.push({ t: "bold", s: m[3] })
-    else if (m[4] !== undefined) out.push({ t: "bold", s: m[4] })
-    else if (m[5] !== undefined) out.push({ t: "italic", s: m[5] })
-    else if (m[6] !== undefined) out.push({ t: "italic", s: m[6] })
-    else if (m[7] !== undefined) out.push({ t: "link", s: m[7], href: m[8] })
-    else if (m[9] !== undefined) out.push({ t: "link", s: m[9], href: m[9] })
+    if (m[1] !== undefined) out.push({ t: "math", s: m[1].trim() })
+    else if (m[2] !== undefined) out.push({ t: "math", s: m[2].trim() })
+    else if (m[4] !== undefined) out.push({ t: "code", s: m[4] })
+    else if (m[5] !== undefined) out.push({ t: "bold", s: m[5] })
+    else if (m[6] !== undefined) out.push({ t: "bold", s: m[6] })
+    else if (m[7] !== undefined) out.push({ t: "italic", s: m[7] })
+    else if (m[8] !== undefined) out.push({ t: "italic", s: m[8] })
+    else if (m[9] !== undefined) out.push({ t: "link", s: m[9], href: m[10] })
+    else if (m[11] !== undefined) out.push({ t: "link", s: m[11], href: m[11] })
     last = re.lastIndex
   }
   if (last < src.length) out.push({ t: "text", s: src.slice(last) })
@@ -80,6 +90,32 @@ export function parseMarkdown(src: string): MdBlock[] {
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) body.push(lines[i++])
       blocks.push({ t: "code", lang, text: body.join("\n") })
       continue
+    }
+
+    // Display math — $$…$$ or \[…\], possibly spanning multiple lines. Rendered
+    // as a centered equation (WebView) rather than inline.
+    const dm = line.match(/^\s*(\$\$|\\\[)(.*)$/)
+    if (dm) {
+      const open = dm[1]
+      const close = open === "$$" ? "$$" : "\\]"
+      let rest = dm[2]
+      const buf: string[] = []
+      // Single-line case: $$ x $$ on one line.
+      const endIdx = rest.indexOf(close)
+      if (endIdx >= 0) {
+        buf.push(rest.slice(0, endIdx))
+      } else {
+        buf.push(rest)
+        i++
+        while (i < lines.length && lines[i].indexOf(close) < 0) buf.push(lines[i++])
+        if (i < lines.length) buf.push(lines[i].slice(0, lines[i].indexOf(close)))
+      }
+      const tex = buf.join("\n").trim()
+      if (tex) {
+        flushPara()
+        blocks.push({ t: "mathblock", text: tex })
+        continue
+      }
     }
 
     if (!line.trim()) {

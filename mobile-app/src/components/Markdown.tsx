@@ -1,9 +1,11 @@
 import React, { useMemo } from "react"
 import { Linking, ScrollView, Text, View } from "react-native"
 import { parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
+import { texToUnicode } from "../lib/texUnicode"
 import { useTheme, type Theme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
 import MermaidView from "./MermaidView"
+import MathView from "./MathView"
 
 /** Whether a #rrggbb background is dark (perceived luminance < 0.5). Used to pick
  *  the mermaid diagram theme since Theme carries no explicit dark flag. */
@@ -63,6 +65,13 @@ function Inline({
         if (s.t === "bold") return <Text key={i} style={styles.mdBold}>{s.s}</Text>
         if (s.t === "italic") return <Text key={i} style={styles.mdItalic}>{s.s}</Text>
         if (s.t === "code") return <Text key={i} style={styles.mdCodeInline}>{s.s}</Text>
+        if (s.t === "math") {
+          // Inline math: show Unicode when the TeX is simple enough (keeps native
+          // text selection); otherwise fall back to the monospace source so a
+          // complex formula is at least legible (display math uses the WebView).
+          const u = texToUnicode(s.s)
+          return <Text key={i} style={u ? styles.mdItalic : styles.mdCodeInline}>{u ?? s.s}</Text>
+        }
         if (s.t === "link")
           return (
             <Text key={i} style={styles.mdLink} onPress={() => { if (s.href) Linking.openURL(s.href).catch(() => {}) }}>
@@ -146,6 +155,9 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
       )
     case "hr":
       return <View style={styles.mdHr} />
+    case "mathblock":
+      // Display equation → full-fidelity KaTeX in a WebView (bundled offline).
+      return <MathView tex={b.text} dark={isDarkBg(t.bg)} textColor={color || t.text} />
     default:
       return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[base, styles.mdPara]} />
   }

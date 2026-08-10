@@ -8,7 +8,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "tsc": "tsc --noEmit",
-    "test": "node --experimental-strip-types src/lib/thread.test.ts && node --experimental-strip-types src/lib/audioSession.test.ts && node --experimental-strip-types src/lib/endpoint.test.ts && node --experimental-strip-types src/lib/bargeCommand.test.ts",
+    "test": "node --experimental-strip-types src/lib/thread.test.ts && node --experimental-strip-types src/lib/audioSession.test.ts && node --experimental-strip-types src/lib/endpoint.test.ts && node --experimental-strip-types src/lib/bargeCommand.test.ts && node --experimental-strip-types src/lib/texUnicode.test.ts",
     "check": "npm run test && npm run tsc"
   },
   "dependencies": {
