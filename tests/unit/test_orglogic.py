@@ -114,6 +114,46 @@ def test_is_red_helper():
     assert orglogic.is_red("move_card") is False
 
 
+# ── allowed() responsibility scope ───────────────────────────────────────────
+
+def test_allowed_ic_can_manage_cards():
+    for a in ("card_create", "card_move", "card_update", "task_done", "board_list", "card_list"):
+        assert orglogic.allowed(a, "ic") is True, a
+
+
+def test_allowed_ic_cannot_create_project_or_hire():
+    assert orglogic.allowed("project_create", "ic") is False
+    assert orglogic.allowed("employee_create", "ic") is False
+
+
+def test_allowed_lead_can_project_and_reassign_not_hire():
+    assert orglogic.allowed("project_create", "lead") is True
+    assert orglogic.allowed("card_assign", "lead") is True
+    assert orglogic.allowed("employee_create", "lead") is False
+
+
+def test_allowed_manager_can_hire():
+    assert orglogic.allowed("employee_create", "manager") is True
+    assert orglogic.allowed("employee_update", "manager") is True
+    # manager also inherits everything below
+    assert orglogic.allowed("project_create", "manager") is True
+    assert orglogic.allowed("card_create", "manager") is True
+
+
+def test_allowed_unknown_action_denied():
+    assert orglogic.allowed("nuke_everything", "manager") is False
+
+
+def test_allowed_unknown_level_denied():
+    assert orglogic.allowed("card_create", "intern") is False
+    assert orglogic.allowed("card_create", "") is False
+
+
+def test_allowed_accepts_dict():
+    assert orglogic.allowed({"action": "project_create"}, "lead") is True
+    assert orglogic.allowed({"action": "employee_create"}, "ic") is False
+
+
 # ── dedupe_skill ─────────────────────────────────────────────────────────────
 
 def test_dedupe_exact_after_normalization():

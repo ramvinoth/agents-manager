@@ -112,6 +112,55 @@ def is_red(action):
     return classify_action(action) == "red"
 
 
+# ── Responsibility scope: authority level bounds WHAT an employee may do ──────
+# Orthogonal to the Green/Red gate (which bounds HOW RISKY). An action must be
+# BOTH within the caller's responsibility scope AND (if Red) approved by Ram.
+# Levels are ordered least→most authority; each action names the MINIMUM level.
+
+LEVELS = ("ic", "lead", "manager")
+
+# action -> minimum level required. Unlisted actions are denied by scope (return
+# False) — deny-by-default; add here to grant.
+_MIN_LEVEL = {
+    # individual contributor: manage cards on work you're assigned
+    "card_create": "ic",
+    "card_move": "ic",
+    "card_update": "ic",
+    "card_assign_self": "ic",
+    "task_done": "ic",
+    "board_list": "ic",
+    "card_list": "ic",
+    "skill_propose": "ic",
+    # lead: shape projects + move work across people
+    "project_create": "lead",
+    "card_assign": "lead",           # assign to someone else
+    "reassign_across_employees": "lead",
+    "approval_resolve": "lead",
+    # manager: hire / change the org
+    "employee_create": "manager",
+    "employee_update": "manager",
+}
+
+
+def _level_rank(level):
+    try:
+        return LEVELS.index(level)
+    except ValueError:
+        return -1  # unknown level → below everything → allowed nothing
+
+
+def allowed(action, level):
+    """True if an employee at `level` has the AUTHORITY to perform `action`.
+    Deny-by-default: an action not in the responsibility table, or an unknown
+    level, returns False. This is the scope gate ONLY — the Green/Red risk gate
+    (classify_action) is applied separately by the caller."""
+    name = action.get("action", "") if isinstance(action, dict) else (action or "")
+    required = _MIN_LEVEL.get(name)
+    if required is None:
+        return False
+    return _level_rank(level) >= _level_rank(required)
+
+
 # ── Learned-skill dedup: keep the shared skill library clean ──────────────────
 
 def _norm_skill(name):

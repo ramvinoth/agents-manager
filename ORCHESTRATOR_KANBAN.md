@@ -27,8 +27,32 @@ A card Emma creates in her session is one write, instantly visible in the projec
 board. No sync, no drift, no duplication. (Filter predicates + column ordering live pure in `lib/`,
 unit-tested.)
 
+## Permission gated by RESPONSIBILITY (Ram, 2026-08-15)
+Every action an employee's `kanban` MCP attempts is gated through the permission layer, and the gate
+is keyed to that employee's **responsibility/authority level** — not a flat allow-all. Layers:
+1. **Authn**: the MCP callback carries the session's per-run `perm_token` (reuse the
+   `register_permission` pattern, engine.py:861 — token matched against the job; route auth-exempt
+   like `/api/chat/permission`, server.py:77). No token → rejected.
+2. **Responsibility scope**: each employee has an authority level (e.g. `ic` < `lead` < `manager`).
+   An action is allowed only if within the employee's scope — e.g. an IC can create/move/assign cards
+   on their own project; only a lead+ can create projects or reassign across employees; hiring stays
+   Harman/CEO. Table-driven in `orglogic` (pure, testable) → `allowed(action, level)`.
+3. **Green/Red charter gate**: on top of scope, destructive/secret/money/infra actions are Red →
+   Harman queues an approval; Ram decides. `classify_action` already implements this.
+4. **Audit**: every attempt (allowed or denied, by whom, at what level) appends to `audit_log`.
+So permission = responsibility: authority bounds *what* you can do; the Green/Red gate bounds *how
+risky*; the audit records *that you did*. An over-scope or Red action doesn't silently fail — it
+becomes an approval item surfaced to the responsible party.
+
 ## Decisions locked (Ram, 2026-08-15)
-- **Board scope**: one common main board; all other boards are pre-filtered views (above). ✅
+- **Employees run in AGENT mode** (Ram, confirmed). MCP tools only attach to agent-mode
+  (Claude-CLI) sessions — spawned in `start_claude_run` via `--mcp-config` (verified engine.py:1018).
+  Chat-mode custom-provider sessions (customrun.py) never spawn `claude`, so they can't carry an MCP
+  tool. Requiring agent mode means the `kanban` MCP works UNIFORMLY for every employee. Feasible for
+  cheap local models too: an employee's provider must expose an Anthropic Messages endpoint
+  (`/v1/messages`) — the Qwen llama-swap gateway already does. Consequence: employee creation must set
+  a provider whose `anthropic_env` resolves (else Harman can't spawn the employee's session).
+- **Board scope**: one common main board; all other boards are pre-filtered views. ✅
 - **Escalation cadence**: **hybrid** — batch Green-adjacent asks at loop end; interrupt immediately
   only for destructive / secret / money. All actions hit Approvals page + audit regardless; only Red
   pings Ram. ✅

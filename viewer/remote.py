@@ -1304,6 +1304,7 @@ def remote_setup_perm_mcp(hid, port):
     if not viewer_tailnet_base(port):
         raise RuntimeError("no tailnet address for the viewer (remote AUQ needs it)")
     helper_src = (Path(__file__).parent / "permission_mcp.py").read_text()
+    kanban_src = (Path(__file__).parent / "kanban_mcp.py").read_text()
     with SSH.sftp(hid) as sftp:
         home = SSH.get(hid)["home"].rstrip("/")
         d = f"{home}/{_REMOTE_PERM_DIR}"
@@ -1316,10 +1317,16 @@ def remote_setup_perm_mcp(hid, port):
             except IOError:
                 pass
         helper_path = f"{d}/permission_mcp.py"
+        kanban_path = f"{d}/kanban_mcp.py"
         cfg_path = f"{d}/mcp.json"
         with sftp.open(helper_path, "w") as f:
             f.write(helper_src)
-        cfg = {"mcpServers": {"viewerperm": {"command": "python3", "args": [helper_path]}}}
+        with sftp.open(kanban_path, "w") as f:
+            f.write(kanban_src)
+        cfg = {"mcpServers": {
+            "viewerperm": {"command": "python3", "args": [helper_path]},
+            "viewerkanban": {"command": "python3", "args": [kanban_path]},
+        }}
         with sftp.open(cfg_path, "w") as f:
             f.write(json.dumps(cfg))
     return cfg_path

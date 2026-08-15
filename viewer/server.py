@@ -59,11 +59,13 @@ from viewer.routes.git import GitMixin
 from viewer.routes.push import PushMixin
 from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
+from viewer.routes.orchestrator import OrchestratorMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
+    OrchestratorMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -73,8 +75,14 @@ class SessionViewerHandler(
     # sign up / sign in; the drag-drop viewer is fully client-side (no /api). ----
     # /api/chat/permission is called by the local permission MCP subprocess (no
     # viewer session); it authenticates with a per-run token in the body instead.
+    # The /api/org/* write paths are likewise reachable by the kanban MCP subprocess,
+    # which authenticates with a per-run kanban token; those handlers do their own
+    # current_user()-else-token check (see OrchestratorMixin).
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
-                  "/api/chat/permission", "/api/push/unregister"}
+                  "/api/chat/permission", "/api/push/unregister",
+                  "/api/org/board", "/api/org/cards", "/api/org/cards/move",
+                  "/api/org/cards/assign", "/api/org/cards/update", "/api/org/cards/done",
+                  "/api/org/employees", "/api/org/projects"}
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -275,6 +283,12 @@ class SessionViewerHandler(
         "/api/voice/tts/stream": "_g_voice_tts_stream",
         "/api/providers": "_g_providers",
         "/api/providers/models": "_g_providers_models",
+        "/api/org/employees": "_g_org_employees",
+        "/api/org/projects": "_g_org_projects",
+        "/api/org/board": "_g_org_board",
+        "/api/org/cards": "_g_org_cards",
+        "/api/org/approvals": "_g_org_approvals",
+        "/api/org/audit": "_g_org_audit",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -330,6 +344,15 @@ class SessionViewerHandler(
         "/api/session-meta": "_p_session_meta",
         "/api/providers": "_p_providers",
         "/api/providers/delete": "_p_providers_delete",
+        "/api/org/employees": "_p_org_employees",
+        "/api/org/employees/update": "_p_org_employees_update",
+        "/api/org/projects": "_p_org_projects",
+        "/api/org/cards": "_p_org_cards",
+        "/api/org/cards/move": "_p_org_cards_move",
+        "/api/org/cards/assign": "_p_org_cards_assign",
+        "/api/org/cards/update": "_p_org_cards_update",
+        "/api/org/cards/done": "_p_org_cards_done",
+        "/api/org/approvals/resolve": "_p_org_approvals_resolve",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),

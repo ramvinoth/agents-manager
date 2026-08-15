@@ -734,16 +734,61 @@ def start_copilot_new(message, cwd, host="local"):
 
 
 def _write_perm_mcp_config():
-    """Write (idempotently) the --mcp-config that registers permission_mcp.py as
-    an MCP server 'viewerperm'. Additive — the driven claude still loads the
-    user's ambient MCP servers (Playwright etc.) since we omit --strict-mcp-config."""
+    """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
+    'viewerperm' (permission_mcp.py) and 'viewerkanban' (kanban_mcp.py). Additive —
+    the driven claude still loads the user's ambient MCP servers (Playwright etc.)
+    since we omit --strict-mcp-config. The kanban tool is only *usable* when the run
+    also sets VIEWER_KANBAN_* env (employee sessions); without it the tool's calls
+    fail auth server-side, which is harmless."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
-    server = str(Path(__file__).parent / "permission_mcp.py")
-    cfg = {"mcpServers": {"viewerperm": {"command": sys.executable or "python3",
-                                         "args": [server]}}}
+    perm = str(Path(__file__).parent / "permission_mcp.py")
+    kanban = str(Path(__file__).parent / "kanban_mcp.py")
+    py = sys.executable or "python3"
+    cfg = {"mcpServers": {
+        "viewerperm": {"command": py, "args": [perm]},
+        "viewerkanban": {"command": py, "args": [kanban]},
+    }}
     with open(path, "w") as f:
         json.dump(cfg, f)
     return path
+
+
+def _resolve_employee(session_id):
+    """Map a session to its (employee_row_or_None, responsibility_level). A session
+    is linked to an employee via its session-meta provider preset id (the employee's
+    provider). No link → (None, 'ic') — least authority, the safe default."""
+    try:
+        meta = SESSION_META.get(session_id) or {}
+        provider_id = meta.get("provider")
+        if not provider_id:
+            return None, "ic"
+        from viewer import db
+        for emp in db.employee_list():
+            if emp.get("provider") == provider_id:
+                return emp, emp.get("level") or _emp_level(emp)
+    except Exception:
+        pass
+    return None, "ic"
+
+
+def _emp_level(emp):
+    """Derive a responsibility level from an employee's role when no explicit level
+    column is set. Conservative: only obvious lead/manager role names elevate."""
+    role = (emp.get("role") or "").lower()
+    if any(w in role for w in ("manager", "head", "director", "lead")):
+        return "manager" if ("manager" in role or "head" in role or "director" in role) else "lead"
+    return "ic"
+
+
+def validate_kanban_token(session_id, token):
+    """Called by the org routes for an MCP caller: confirm the per-run kanban token
+    matches this session's job, and return {'employee', 'level'} for scoping. None
+    if unknown/unauthorized — the handler then 401s."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job or not job.get("kanban_token") or job.get("kanban_token") != token:
+            return None
+        return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
 
 
 def _perm_mcp_config_path(host):
@@ -1015,6 +1060,14 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
+    # Kanban (org board) tool token: an employee's agent session can create/move
+    # cards from inside a turn. Minted per run; the route handler validates it and
+    # scopes writes by the employee's responsibility level (see routes/orchestrator).
+    kanban_token = secrets.token_hex(16)
+    job["kanban_token"] = kanban_token
+    # Resolve which employee (and authority level) this session runs as, from its
+    # session-meta provider link. No employee → default 'ic' scope.
+    job["employee"], job["employee_level"] = _resolve_employee(session_id)
     cmd += ["--mcp-config", _perm_mcp_config_path(host),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
@@ -1067,6 +1120,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
                 env["VIEWER_PERM_TOKEN"] = perm_token
+            if kanban_token:  # let kanban_mcp.py reach the org board for this session
+                env["VIEWER_KANBAN_SESSION"] = session_id
+                env["VIEWER_KANBAN_PORT"] = str(PORT)
+                env["VIEWER_KANBAN_TOKEN"] = kanban_token
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -1104,6 +1161,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  "VIEWER_PERM_TOKEN": perm_token}
                     if base:
                         rperm_env["VIEWER_PERM_BASE"] = base
+                    # Same reach-back for the kanban tool on the remote host.
+                    if kanban_token:
+                        rperm_env["VIEWER_KANBAN_SESSION"] = session_id
+                        rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                        if base:
+                            rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
