@@ -20,8 +20,6 @@ import NewChatScreen from "./src/screens/NewChatScreen"
 import ThreadScreen from "./src/screens/ThreadScreen"
 import VoiceScreen from "./src/screens/VoiceScreen"
 import CallScreen from "./src/screens/CallScreen"
-import FilesScreen from "./src/screens/FilesScreen"
-import SessionInfoScreen from "./src/screens/SessionInfoScreen"
 import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import HostEditScreen from "./src/screens/HostEditScreen"
@@ -35,8 +33,6 @@ export type RootStackParamList = {
   Thread: { host: string; label: string; path?: string; jumpTo?: string }
   Voice: { host: string; label: string; path?: string }
   Call: { host: string; label: string; path?: string }
-  Files: { host: string; path?: string }
-  SessionInfo: { host: string; path: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string }
   Capabilities: undefined
   HostEdit: { host?: HostConfig } | undefined
@@ -173,8 +169,6 @@ export default function App() {
             <Stack.Screen name="Thread" component={ThreadScreen} options={({ route }) => ({ title: route.params.label })} />
             <Stack.Screen name="Voice" component={VoiceScreen} options={({ route }) => ({ title: `Voice — ${route.params.label}` })} />
             <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
-            <Stack.Screen name="Files" component={FilesScreen} options={{ title: "Files" }} />
-            <Stack.Screen name="SessionInfo" component={SessionInfoScreen} options={{ title: "Session info" }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
