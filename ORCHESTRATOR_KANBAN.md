@@ -168,21 +168,27 @@ re-run. This is what makes "everything works on fresh install" true.
    that works end-to-end*, then each phase adds a complete layer — NOT a permanently-reduced scope.
    Phasing below is the delivery order; the destination is the whole design.
 
-## Full scope checklist (do not lose sight — Ram: "remember the full picture, don't half-ass it")
-- [ ] Postgres: employees, projects, cards, board-columns, views, approvals, audit_log (+ accessors + tests)
-- [ ] Employee identity persists; sessions link employeeId+projectId; Harman resumes/spawns on demand
-- [ ] ONE canonical board; session/project/employee/CEO are filtered views (pure filter logic in lib/)
-- [ ] `kanban` MCP tool auto-registered per session; any agent can create/move/assign cards from a turn
-- [ ] REST /api/org/* (employees, projects, cards, views, approvals, audit) — net-new, no dupes
-- [ ] App: swipe-right session → filtered board; KanbanScreen (drag/assign/move); CEO dashboard
-- [ ] Approvals & Questions page (Harman's queue) + read-only Audit log timeline
-- [ ] Harman loop: monitor + assign/unblock within Green; hybrid escalation; only Red pings Ram
-- [ ] Harman can hire (create employees/projects), audited
-- [ ] Optional budget ceiling (concurrent agent sessions / tokens), toggleable off
-- [ ] Organizational learning: `skill_propose` MCP + governed promotion to shared `~/.claude/skills`
-      + `skills_learned` ledger (provenance) + "skills learned" CEO view; dedup before write
-- [ ] `make bootstrap`: idempotent fresh-install of skills + MCP tools + seed (CEO Ram, manager Harman,
-      default columns) — everything works on a clean checkout
+## Full scope checklist — ALL SHIPPED (P0–P4 on `feature/orchestrator`, verified live)
+- [x] Postgres: employees, projects, cards, board-columns, approvals, audit_log, skills_learned (+ accessors + tests) — P0
+- [x] Employee identity persists; sessions link employee via provider preset; Harman spawns on demand — P0/P1/P3
+- [x] ONE canonical board; session/project/employee/CEO are filtered views (pure filter logic in lib/board.ts + orglogic.py) — P0/P2
+- [x] `kanban` MCP tool auto-registered per (agent-mode) session; any agent creates/moves/assigns cards from a turn — P1
+- [x] REST /api/org/* (employees, projects, board, cards, approvals, audit, harman, skills) — net-new, no dupes — P1/P3/P4
+- [x] App: per-session board icon → filtered board; KanbanScreen (drag/assign/move); CEO dashboard (OrgScreen) — P2
+- [x] Approvals queue (Approve/Deny) + read-only Audit timeline — P2
+- [x] Harman loop: monitor + assign/spawn within Green; hybrid escalation; only Red pings Ram — P3 (hooked into loop_scheduler)
+- [x] Harman can hire (create employees/projects), audited — P1 route (manager authority)
+- [x] Budget ceiling (concurrent agent sessions), HARD_CAP-bounded; on-by-default but inert until a project is managed — P3
+- [x] Organizational learning: `skill_propose` MCP + governed promotion to shared `~/.claude/skills`
+      + `skills_learned` ledger (provenance) + "Skills learned" CEO view; dedupe→approval before overwrite — P4
+- [x] `make bootstrap`: idempotent fresh-install — init_db + seed CEO Ram + manager Harman + skills dir
+      + default Harman config; README updated — P4
+
+## Still OPEN (Ram's calls, not code)
+- [ ] Merge `feature/orchestrator` into the main line (Red-tier — Ram's explicit OK required).
+- [ ] First real run: create a project + cards, toggle Harman onto that project, watch it assign+spawn
+      (burns real GPU — deliberately gated behind Ram starting it).
+
 
 ## Build phasing (once approved)
 - **P0 Data**: db.py tables (employees, projects, boards, cards, approvals, audit_log) + accessors + tests.
