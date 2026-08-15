@@ -99,8 +99,81 @@ def init_db():
               host        TEXT NOT NULL DEFAULT 'local',
               created_at  DOUBLE PRECISION NOT NULL
             );
+            -- ── Orchestrator ("Harman") empire tables ─────────────────────────
+            -- ONE canonical Kanban board: a single cards table; every per-session
+            -- / project / employee / CEO "board" is a filtered VIEW of it. See
+            -- ORCHESTRATOR_KANBAN.md + viewer/orglogic.py.
+            CREATE TABLE IF NOT EXISTS employees (
+              id         SERIAL PRIMARY KEY,
+              name       TEXT NOT NULL,
+              role       TEXT NOT NULL DEFAULT '',
+              provider   TEXT NOT NULL DEFAULT '',
+              model      TEXT NOT NULL DEFAULT '',
+              conv_mode  TEXT NOT NULL DEFAULT 'chat',
+              avatar     TEXT NOT NULL DEFAULT '',
+              status     TEXT NOT NULL DEFAULT 'active',
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS projects (
+              id          SERIAL PRIMARY KEY,
+              name        TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              host        TEXT NOT NULL DEFAULT 'local',
+              cwd         TEXT NOT NULL DEFAULT '',
+              created_by  TEXT NOT NULL DEFAULT '',
+              created_at  DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS board_columns (
+              id       SERIAL PRIMARY KEY,
+              name     TEXT NOT NULL,
+              position INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS cards (
+              id         SERIAL PRIMARY KEY,
+              title      TEXT NOT NULL,
+              body       TEXT NOT NULL DEFAULT '',
+              column_id  INTEGER REFERENCES board_columns(id) ON DELETE SET NULL,
+              assignee   INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+              project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              session_id TEXT,
+              position   DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS approvals (
+              id          SERIAL PRIMARY KEY,
+              kind        TEXT NOT NULL,
+              summary     TEXT NOT NULL DEFAULT '',
+              detail      JSONB NOT NULL DEFAULT '{}'::jsonb,
+              status      TEXT NOT NULL DEFAULT 'open',
+              created_by  TEXT NOT NULL DEFAULT '',
+              created_at  DOUBLE PRECISION NOT NULL,
+              resolved_at DOUBLE PRECISION,
+              resolution  TEXT
+            );
+            CREATE TABLE IF NOT EXISTS audit_log (
+              id         SERIAL PRIMARY KEY,
+              actor      TEXT NOT NULL DEFAULT '',
+              action     TEXT NOT NULL,
+              target     JSONB NOT NULL DEFAULT '{}'::jsonb,
+              outcome    TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS skills_learned (
+              id             SERIAL PRIMARY KEY,
+              name           TEXT NOT NULL,
+              path           TEXT NOT NULL DEFAULT '',
+              origin_employee INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+              origin_card    INTEGER,
+              origin_session TEXT,
+              status         TEXT NOT NULL DEFAULT 'proposed',
+              created_at     DOUBLE PRECISION NOT NULL
+            );
             """
         )
+    # Seed the one board's default columns (idempotent).
+    board_columns_seed()
 
 
 def close_pool():
@@ -349,3 +422,249 @@ def pending_plan_get_open(session_id):
 def pending_plan_delete(session_id):
     with _db() as cur:
         cur.execute("DELETE FROM pending_plans WHERE session_id = %s", (session_id,))
+
+
+# ── Orchestrator ("Harman") accessors ────────────────────────────────────────
+# Dumb CRUD only: policy (Green/Red gate, audit-on-action) lives in the
+# orchestrator layer (P1+), not here. Rows come back as RealDictCursor dicts.
+
+def _now():
+    return time.time()
+
+
+# Employees -------------------------------------------------------------------
+
+def employee_create(name, role="", provider="", model="", conv_mode="chat", avatar="", status="active"):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO employees(name, role, provider, model, conv_mode, avatar, status, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (name, role, provider, model, conv_mode, avatar, status, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def employee_list():
+    with _db() as cur:
+        cur.execute("SELECT * FROM employees ORDER BY id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def employee_get(emp_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM employees WHERE id = %s", (emp_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def employee_update(emp_id, **fields):
+    """Update the given columns (name/role/provider/model/conv_mode/avatar/status)."""
+    allowed = ("name", "role", "provider", "model", "conv_mode", "avatar", "status")
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return employee_get(emp_id)
+    cols = ", ".join(f"{k} = %s" for k in sets)
+    with _db() as cur:
+        cur.execute(f"UPDATE employees SET {cols} WHERE id = %s RETURNING *",
+                    (*sets.values(), emp_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def employee_set_status(emp_id, status):
+    return employee_update(emp_id, status=status)
+
+
+# Projects --------------------------------------------------------------------
+
+def project_create(name, description="", host="local", cwd="", created_by=""):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO projects(name, description, host, cwd, created_by, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            (name, description, host, cwd, created_by, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def project_list():
+    with _db() as cur:
+        cur.execute("SELECT * FROM projects ORDER BY id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def project_get(project_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM projects WHERE id = %s", (project_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# Board columns (the ONE board's layout) --------------------------------------
+
+_DEFAULT_COLUMNS = ("Todo", "Doing", "Review", "Done")
+
+
+def board_columns_seed():
+    """Idempotently seed the default columns if the board has none yet."""
+    with _db() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM board_columns")
+        if cur.fetchone()["n"]:
+            return
+        for i, name in enumerate(_DEFAULT_COLUMNS):
+            cur.execute("INSERT INTO board_columns(name, position) VALUES(%s,%s)", (name, i))
+
+
+def board_columns_list():
+    with _db() as cur:
+        cur.execute("SELECT * FROM board_columns ORDER BY position, id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+# Cards (the ONLY card store) -------------------------------------------------
+
+def card_create(title, body="", column_id=None, assignee=None, project_id=None,
+                session_id=None, position=1.0, created_by=""):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO cards(title, body, column_id, assignee, project_id, session_id, "
+            "position, created_by, created_at, updated_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (title, body, column_id, assignee, project_id, session_id, position,
+             created_by, _now(), _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def card_list(session_id=None, project_id=None, assignee=None, column_id=None):
+    """All cards, optionally narrowed by any combination of filters (AND). The
+    canonical fetch behind every board VIEW; ordering by position is applied in
+    viewer.orglogic for the pure/testable path."""
+    clauses, params = [], []
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    if assignee is not None:
+        clauses.append("assignee = %s"); params.append(assignee)
+    if column_id is not None:
+        clauses.append("column_id = %s"); params.append(column_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with _db() as cur:
+        cur.execute(f"SELECT * FROM cards{where} ORDER BY position, id", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def card_get(card_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM cards WHERE id = %s", (card_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def card_update(card_id, **fields):
+    allowed = ("title", "body", "column_id", "assignee", "project_id", "session_id", "position")
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return card_get(card_id)
+    sets["updated_at"] = _now()
+    cols = ", ".join(f"{k} = %s" for k in sets)
+    with _db() as cur:
+        cur.execute(f"UPDATE cards SET {cols} WHERE id = %s RETURNING *",
+                    (*sets.values(), card_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def card_move(card_id, column_id, position):
+    return card_update(card_id, column_id=column_id, position=position)
+
+
+def card_assign(card_id, assignee):
+    return card_update(card_id, assignee=assignee)
+
+
+# Approvals -------------------------------------------------------------------
+
+def approval_open(kind, summary="", detail=None, created_by=""):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO approvals(kind, summary, detail, status, created_by, created_at) "
+            "VALUES(%s,%s,%s,'open',%s,%s) RETURNING *",
+            (kind, summary, Json(detail or {}), created_by, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def approval_list_open():
+    with _db() as cur:
+        cur.execute("SELECT * FROM approvals WHERE status = 'open' ORDER BY created_at")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def approval_resolve(approval_id, resolution):
+    """Mark an approval resolved ('approved'/'denied'/free text)."""
+    with _db() as cur:
+        cur.execute(
+            "UPDATE approvals SET status = 'resolved', resolution = %s, resolved_at = %s "
+            "WHERE id = %s RETURNING *",
+            (resolution, _now(), approval_id),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# Audit log (append-only) -----------------------------------------------------
+
+def audit_append(actor, action, target=None, outcome=""):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO audit_log(actor, action, target, outcome, created_at) "
+            "VALUES(%s,%s,%s,%s,%s) RETURNING id",
+            (actor, action, Json(target or {}), outcome, _now()),
+        )
+        return cur.fetchone()["id"]
+
+
+def audit_list(limit=100, actor=None, action=None):
+    clauses, params = [], []
+    if actor is not None:
+        clauses.append("actor = %s"); params.append(actor)
+    if action is not None:
+        clauses.append("action = %s"); params.append(action)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(int(limit))
+    with _db() as cur:
+        cur.execute(f"SELECT * FROM audit_log{where} ORDER BY id DESC LIMIT %s", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+# Learned skills (provenance ledger; content stays a SKILL.md file) -----------
+
+def skill_learned_record(name, path="", origin_employee=None, origin_card=None,
+                         origin_session=None, status="proposed"):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO skills_learned(name, path, origin_employee, origin_card, "
+            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (name, path, origin_employee, origin_card, origin_session, status, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def skill_learned_list(status=None):
+    clauses, params = [], []
+    if status is not None:
+        clauses.append("status = %s"); params.append(status)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with _db() as cur:
+        cur.execute(f"SELECT * FROM skills_learned{where} ORDER BY id DESC", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def skill_learned_set_status(skill_id, status):
+    with _db() as cur:
+        cur.execute("UPDATE skills_learned SET status = %s WHERE id = %s RETURNING *",
+                    (status, skill_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
