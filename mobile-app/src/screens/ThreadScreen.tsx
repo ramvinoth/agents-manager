@@ -8,6 +8,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   Text,
   TextInput,
@@ -22,6 +23,7 @@ import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
 import { extractImages, fmtClock, fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, resultToText, type Block, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
+import { splitThinking } from "../lib/thinking"
 import { ensurePermission } from "../lib/notify"
 import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
 import { useTheme } from "../lib/useTheme"
@@ -1319,6 +1321,11 @@ export function ExchangeView({
     setOpen((o) => !o)
   }
   const toolCount = useMemo(() => steps.filter((b) => b.kind === "tool").length, [steps])
+  // Some models (Qwen3) emit their reasoning inline as <think>…</think> before the
+  // answer. Split it out so it renders as a collapsed block and the read-aloud/body
+  // only use the actual reply. When there's no <think>, body === finalText.
+  const { thinking: think, body } = useMemo(() => splitThinking(finalText), [finalText])
+  const [thinkOpen, setThinkOpen] = useState(false)
   return (
     <View style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
       {/* Steps (tool calls + narration) render ABOVE the final answer: the steps
@@ -1347,18 +1354,31 @@ export function ExchangeView({
         </>
       ) : null}
       {plan ? <PlanCard input={plan} /> : null}
-      {finalText ? (
-        <View style={steps.length ? { marginTop: 8 } : undefined}>
-          <Markdown text={finalText} color={t.text} selectable onLongPress={onLongPress} />
+      {think ? (
+        <Pressable onPress={() => setThinkOpen((o) => !o)} style={{ marginTop: steps.length ? 8 : 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Icon name={thinkOpen ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
+            <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>Thinking</Text>
+          </View>
+          {thinkOpen ? (
+            <View style={{ marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: t.border }}>
+              <Text selectable style={{ color: t.textMuted, fontSize: 13, lineHeight: 18 }}>{think}</Text>
+            </View>
+          ) : null}
+        </Pressable>
+      ) : null}
+      {body ? (
+        <View style={steps.length || think ? { marginTop: 8 } : undefined}>
+          <Markdown text={body} color={t.text} selectable onLongPress={onLongPress} />
         </View>
       ) : null}
       {!finalText && !steps.length && !plan ? (
         <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
       ) : null}
       {/* Footer row: read-aloud speaker first, timestamp pushed to the end. */}
-      {ts || finalText ? (
+      {ts || body ? (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-          {finalText ? <ReadAloudButton text={finalText} /> : null}
+          {body ? <ReadAloudButton text={body} /> : null}
           {ts ? <Text style={[styles.msgTime, { color: t.textMuted, marginTop: 0, marginLeft: "auto" }]}>{fmtClock(ts)}</Text> : null}
         </View>
       ) : null}

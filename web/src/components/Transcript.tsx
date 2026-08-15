@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
 import { renderMarkdownSegments } from "@/lib/markdown"
+import { splitThinking } from "@/lib/thinking"
 import { MermaidDiagram } from "./MermaidDiagram"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -116,6 +117,25 @@ function blockHasImages(b: Block): boolean {
   return b.type === "tool_use" && extractImages(b.result).length > 0
 }
 
+// Some models (Qwen3) emit inline <think>…</think> reasoning before the answer.
+// Render it as a collapsed <details> and show only the reply body by default.
+function TextBlock({ text }: { text: string }) {
+  const { thinking, body } = useMemo(() => splitThinking(text), [text])
+  return (
+    <>
+      {thinking && (
+        <details className="mb-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs">
+          <summary className="cursor-pointer select-none italic text-muted-foreground">Thinking</summary>
+          <div className="mt-1 whitespace-pre-wrap border-l-2 border-border pl-2 text-muted-foreground">
+            {thinking}
+          </div>
+        </details>
+      )}
+      {body && <Markdown text={body} />}
+    </>
+  )
+}
+
 function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
   const showTools = useStore((s) => s.visible.tools)
   // Even with the Tools filter off, keep tool-calls that carry images (e.g.
@@ -128,7 +148,7 @@ function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
     <div className="space-y-2">
       {blocks.map((b, i) =>
         b.type === "text" ? (
-          <Markdown key={i} text={b.text} />
+          <TextBlock key={i} text={b.text} />
         ) : b.name === "AskUserQuestion" ? (
           <AuqBlock key={i} block={b} />
         ) : (
