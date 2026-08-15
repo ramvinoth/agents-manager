@@ -66,6 +66,7 @@ export type Approval = { id: number; kind: string; summary: string; detail: unkn
 export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 export type HarmanConfig = { enabled: boolean; interval: number; budget: number; projects: number[] }
+export type LearnedSkill = { id: number; name: string; path: string; origin_employee: number | null; origin_card: number | null; origin_session: string | null; status: string; created_at: number }
 export type ChatStatus = {
   running?: boolean
   idle?: boolean
@@ -531,4 +532,5 @@ export const api = {
   orgAudit: (limit = 100) => req<{ audit: AuditEntry[] }>("GET", `/api/org/audit?limit=${limit}`),
   orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
   orgSetHarman: (patch: Partial<HarmanConfig>) => req<HarmanConfig>("POST", "/api/org/harman", patch),
+  orgSkills: () => req<{ skills: LearnedSkill[] }>("GET", "/api/org/skills"),
 }

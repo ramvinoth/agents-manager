@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type OrgProject } from "../api/client"
+import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -23,24 +23,27 @@ export default function OrgScreen({ navigation }: Props) {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  const [skills, setSkills] = useState<LearnedSkill[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, a, au, h] = await Promise.all([
+      const [e, p, a, au, h, sk] = await Promise.all([
         api.orgEmployees(),
         api.orgProjects(),
         api.orgApprovals(),
         api.orgAudit(50),
         api.orgHarman().catch(() => null),
+        api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
       ])
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
       setApprovals(a.approvals || [])
       setAudit(au.audit || [])
       setHarman(h)
+      setSkills(sk.skills || [])
     } catch (err) {
       const ex = err as Error & { status?: number }
       if (ex.status === 401) { setToken(null); navigation.replace("Login"); return }
@@ -202,6 +205,16 @@ export default function OrgScreen({ navigation }: Props) {
             </Row>
           </TouchableOpacity>
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No projects yet.</Text>}
+      </Section>
+
+      <Section title="Skills learned">
+        {skills.length ? skills.map((s) => (
+          <View key={s.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
+            <Icon name={s.status === "active" ? "sparkle" : "clock"} size={14} color={s.status === "active" ? t.accent : t.textMuted} />
+            <Text style={{ color: t.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{s.name}</Text>
+            <Text style={{ color: t.textMuted, fontSize: 11 }}>{s.status}</Text>
+          </View>
+        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing learned yet.</Text>}
       </Section>
 
       <Section title="Audit">
