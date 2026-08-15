@@ -92,7 +92,7 @@ export default function OrgScreen({ navigation }: Props) {
   async function submitCreate(values: Record<string, string>) {
     try {
       if (creating === "employee") {
-        await api.orgCreateEmployee({ name: values.name, role: values.role || "" })
+        await api.orgCreateEmployee({ name: values.name, role: values.role || "", provider: values.provider || "" })
       } else {
         await api.orgCreateProject({ name: values.name, cwd: values.cwd || "", description: values.description || "" })
       }
@@ -308,6 +308,12 @@ export default function OrgScreen({ navigation }: Props) {
         fields={[
           { key: "name", label: "Name", placeholder: "e.g. Ada", required: true },
           { key: "role", label: "Role", placeholder: "e.g. Engineer, Designer", autoCapitalize: "sentences" },
+          ...(providers.length ? [{
+            key: "provider",
+            label: "Model",
+            options: providers.map((p) => ({ value: p.id, label: p.name })),
+            defaultValue: harman?.default_provider || undefined,
+          }] : []),
         ]}
         onSubmit={submitCreate}
         onClose={() => setCreating(null)}

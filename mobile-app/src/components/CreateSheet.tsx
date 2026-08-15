@@ -5,8 +5,12 @@ import { useStyles } from "../screens/styles"
 import { useTheme } from "../lib/useTheme"
 
 /**
- * A field in a CreateSheet form. `key` is the value returned; `suggestions` render
- * as tappable chips above the input (e.g. recent working dirs for a project cwd).
+ * A field in a CreateSheet form. `key` is the value returned.
+ * - Text field (default): a labelled input; `suggestions` render as tappable chips
+ *   above it (e.g. recent working dirs for a project cwd).
+ * - Select field: pass `options` and the field renders as single-select chips
+ *   instead of an input (e.g. picking an employee's provider). The returned value
+ *   is the chosen option's `value`.
  */
 export type CreateField = {
   key: string
@@ -15,6 +19,8 @@ export type CreateField = {
   required?: boolean
   autoCapitalize?: "none" | "sentences"
   suggestions?: string[]
+  options?: { value: string; label: string }[]
+  defaultValue?: string
 }
 
 /**
@@ -48,8 +54,13 @@ export default function CreateSheet({
   const [busy, setBusy] = useState(false)
 
   // Reset the form each time the sheet opens so stale input never carries over.
+  // Seed any field defaults (e.g. a preselected provider) so required selects can
+  // be pre-satisfied.
   useEffect(() => {
-    if (visible) { setValues({}); setBusy(false) }
+    if (visible) {
+      setValues(Object.fromEntries(fields.filter((f) => f.defaultValue).map((f) => [f.key, f.defaultValue as string])))
+      setBusy(false)
+    }
   }, [visible])
 
   const canSubmit = fields.every((f) => !f.required || (values[f.key] || "").trim())
@@ -74,16 +85,35 @@ export default function CreateSheet({
           <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>
             {f.label}{f.required ? "" : "  (optional)"}
           </Text>
-          <TextInput
-            testID={`create-${f.key}`}
-            style={[styles.input, { color: t.text, borderColor: t.border }]}
-            value={values[f.key] || ""}
-            onChangeText={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))}
-            placeholder={f.placeholder}
-            placeholderTextColor={t.textMuted}
-            autoCapitalize={f.autoCapitalize || "sentences"}
-            autoCorrect={false}
-          />
+          {f.options ? (
+            // Select field: single-select chips (tap again to clear an optional one).
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {f.options.map((o) => {
+                const on = (values[f.key] || "") === o.value
+                return (
+                  <TouchableOpacity
+                    key={o.value}
+                    testID={`create-${f.key}-opt-${o.value}`}
+                    onPress={() => setValues((cur) => ({ ...cur, [f.key]: on && !f.required ? "" : o.value }))}
+                    style={{ borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: on ? t.accent : t.chipBg }}
+                  >
+                    <Text style={{ color: on ? "#fff" : t.text, fontSize: 13 }}>{o.label}</Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+          ) : (
+            <TextInput
+              testID={`create-${f.key}`}
+              style={[styles.input, { color: t.text, borderColor: t.border }]}
+              value={values[f.key] || ""}
+              onChangeText={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))}
+              placeholder={f.placeholder}
+              placeholderTextColor={t.textMuted}
+              autoCapitalize={f.autoCapitalize || "sentences"}
+              autoCorrect={false}
+            />
+          )}
           {f.suggestions?.length ? (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
               {f.suggestions.slice(0, 6).map((s) => (
