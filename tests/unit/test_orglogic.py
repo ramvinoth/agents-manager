@@ -183,6 +183,31 @@ def test_suitable_employee_role_match_then_first():
     assert orglogic.suitable_employee({"title": "x"}, [{"id": 3, "status": "paused"}]) is None
 
 
+def test_suitable_employee_excludes_manager_and_ceo():
+    # The CEO/manager (first in the list) must NOT be picked to work a card — only doers.
+    emps = [{"id": 1, "name": "Ram", "role": "Founder/CEO", "status": "active"},
+            {"id": 2, "name": "Harman", "role": "Manager", "status": "active"},
+            {"id": 3, "name": "Ada", "role": "Engineer", "status": "active"}]
+    assert orglogic.suitable_employee({"title": "do the thing"}, emps)["id"] == 3
+
+
+def test_suitable_employee_prefers_spawnable_worker():
+    # With an org default provider absent, prefer the worker that has its own provider.
+    emps = [{"id": 1, "name": "Ann", "role": "eng", "status": "active", "provider": ""},
+            {"id": 2, "name": "Bob", "role": "eng", "status": "active", "provider": "p1"}]
+    assert orglogic.suitable_employee({"title": "x"}, emps)["id"] == 2
+    # A default provider makes everyone spawnable → first worker (role order) wins again.
+    assert orglogic.suitable_employee({"title": "x"}, emps, default_provider="d")["id"] == 1
+
+
+def test_plan_prefers_spawnable_worker_over_ceo():
+    emps = [{"id": 1, "name": "Ram", "role": "Founder/CEO", "status": "active"},
+            {"id": 3, "name": "Ada", "role": "Engineer", "status": "active", "provider": "p1"}]
+    actions = orglogic.plan_assignments([_card(100)], emps, COLS, running=set(),
+                                        projects=[10], budget=2)
+    assert actions[0]["employee"] == 3 and actions[0]["spawn"] is True
+
+
 def _card(id, project=10, column=1, assignee=None, **extra):
     return {"id": id, "project_id": project, "column_id": column, "assignee": assignee, **extra}
 

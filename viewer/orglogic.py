@@ -189,29 +189,44 @@ def _emp_level(emp):
     if emp.get("level") in LEVELS:
         return emp["level"]
     role = (emp.get("role") or "").lower()
-    if any(w in role for w in ("manager", "head", "director")):
+    if any(w in role for w in ("manager", "head", "director", "founder", "ceo", "chief")):
         return "manager"
     if "lead" in role:
         return "lead"
     return "ic"
 
 
-def suitable_employee(card, employees):
-    """Pick an active employee to work `card`: prefer one whose role appears in the
-    card title/body (a light skill match), else the first active employee. Returns
-    the employee dict or None. Deterministic (stable order)."""
+def _spawnable(emp, default_provider):
+    """Can Harman actually start a session for this employee? True if the employee has
+    its own provider preset, or the org supplies a default one to fall back on. (Mirrors
+    _spawn_employee_session's `preset_id = employee.provider or default_provider`.)"""
+    return bool((emp.get("provider") or "").strip() or (default_provider or "").strip())
+
+
+def suitable_employee(card, employees, *, default_provider=""):
+    """Pick an active employee to WORK `card` (an actual doer, not a manager/CEO).
+    Candidates are active, non-manager, and spawnable (own provider or an org default).
+    Among them, prefer one whose role appears in the card title/body (a light skill
+    match), else the first. Returns the employee dict or None. Deterministic.
+
+    Falls back to any active non-manager if none are spawnable (so a misconfigured org
+    still gets an assignment — the spawn just won't fire), and finally to the old
+    first-active behaviour only when no worker exists at all."""
     active = [e for e in employees if (e.get("status") or "active") == "active"]
     if not active:
         return None
+    workers = [e for e in active if _emp_level(e) != "manager"]
+    pool = [e for e in workers if _spawnable(e, default_provider)] or workers or active
     text = ((card.get("title") or "") + " " + (card.get("body") or "")).lower()
-    for e in active:
+    for e in pool:
         role = (e.get("role") or "").strip().lower()
         if role and role in text:
             return e
-    return active[0]
+    return pool[0]
 
 
-def plan_assignments(cards, employees, columns, running, *, projects, budget):
+def plan_assignments(cards, employees, columns, running, *, projects, budget,
+                     default_provider=""):
     """Given the board, return a list of intended Action dicts for Harman to execute.
     PURE — no side effects. `running` is the set of card ids already in flight (the
     in-progress guard); `projects` is the set of project ids Harman manages (empty =
@@ -247,7 +262,7 @@ def plan_assignments(cards, employees, columns, running, *, projects, budget):
         col = card.get("column_id")
         # Unassigned Todo → assign + (maybe) spawn.
         if col == todo and not card.get("assignee"):
-            emp = suitable_employee(card, employees)
+            emp = suitable_employee(card, employees, default_provider=default_provider)
             if not emp:
                 continue
             level = emp.get("level") or _emp_level(emp)

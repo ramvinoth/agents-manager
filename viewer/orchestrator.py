@@ -142,7 +142,8 @@ def harman_tick(*, dry_run=False):
 
         actions = orglogic.plan_assignments(
             cards, emps, columns, running,
-            projects=cfg["projects"], budget=cfg["budget"])
+            projects=cfg["projects"], budget=cfg["budget"],
+            default_provider=cfg["default_provider"])
         if not actions:
             return
 
