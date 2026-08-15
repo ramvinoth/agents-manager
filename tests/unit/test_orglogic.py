@@ -154,6 +154,77 @@ def test_allowed_accepts_dict():
     assert orglogic.allowed({"action": "employee_create"}, "ic") is False
 
 
+# ── Harman planning (project_columns / suitable_employee / plan_assignments) ──
+
+COLS = [
+    {"id": 1, "name": "Todo", "position": 0},
+    {"id": 2, "name": "Doing", "position": 1},
+    {"id": 3, "name": "Review", "position": 2},
+    {"id": 4, "name": "Done", "position": 3},
+]
+
+
+def test_project_columns_by_name():
+    s = orglogic.project_columns(COLS)
+    assert s == {"todo": 1, "doing": 2, "review": 3, "done": 4}
+
+
+def test_project_columns_fallback_position():
+    cols = [{"id": 9, "name": "Backlog", "position": 0}, {"id": 8, "name": "WIP", "position": 1}, {"id": 7, "name": "Shipped", "position": 2}]
+    s = orglogic.project_columns(cols)
+    assert s["todo"] == 9 and s["done"] == 7 and s["doing"] == 8
+
+
+def test_suitable_employee_role_match_then_first():
+    emps = [{"id": 1, "name": "Ann", "role": "designer", "status": "active"},
+            {"id": 2, "name": "Bob", "role": "ios dev", "status": "active"}]
+    assert orglogic.suitable_employee({"title": "Fix the iOS dev crash"}, emps)["id"] == 2
+    assert orglogic.suitable_employee({"title": "Write docs"}, emps)["id"] == 1  # first active
+    assert orglogic.suitable_employee({"title": "x"}, [{"id": 3, "status": "paused"}]) is None
+
+
+def _card(id, project=10, column=1, assignee=None, **extra):
+    return {"id": id, "project_id": project, "column_id": column, "assignee": assignee, **extra}
+
+
+def test_plan_assigns_unassigned_todo_in_managed_project():
+    emps = [{"id": 1, "name": "Ann", "role": "", "status": "active"}]
+    actions = orglogic.plan_assignments([_card(100)], emps, COLS, running=set(), projects=[10], budget=2)
+    assert len(actions) == 1
+    a = actions[0]
+    assert a["kind"] == "assign" and a["card_id"] == 100 and a["employee"] == 1 and a["spawn"] is True
+
+
+def test_plan_skips_unmanaged_project():
+    emps = [{"id": 1, "status": "active"}]
+    assert orglogic.plan_assignments([_card(100, project=99)], emps, COLS, running=set(), projects=[10], budget=2) == []
+
+
+def test_plan_skips_running_card():
+    emps = [{"id": 1, "status": "active"}]
+    assert orglogic.plan_assignments([_card(100)], emps, COLS, running={100}, projects=[10], budget=2) == []
+
+
+def test_plan_budget_caps_spawns_not_assigns():
+    emps = [{"id": 1, "status": "active"}]
+    cards = [_card(1), _card(2), _card(3)]
+    actions = orglogic.plan_assignments(cards, emps, COLS, running=set(), projects=[10], budget=2)
+    # all three assigned, but only two spawned (budget=2)
+    assert len(actions) == 3
+    assert sum(1 for a in actions if a["spawn"]) == 2
+
+
+def test_plan_advance_doing_when_session_done():
+    emps = [{"id": 1, "status": "active"}]
+    cards = [_card(5, column=2, assignee=1, _session_done_ok=True)]
+    actions = orglogic.plan_assignments(cards, emps, COLS, running=set(), projects=[10], budget=2)
+    assert actions == [{"kind": "advance", "card_id": 5, "to_column": 3, "reason": "session finished ok → Review"}]
+
+
+def test_plan_no_employee_no_action():
+    assert orglogic.plan_assignments([_card(1)], [], COLS, running=set(), projects=[10], budget=2) == []
+
+
 # ── dedupe_skill ─────────────────────────────────────────────────────────────
 
 def test_dedupe_exact_after_normalization():

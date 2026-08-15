@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Approval, type AuditEntry, type Employee, type OrgProject } from "../api/client"
+import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type OrgProject } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -22,22 +22,25 @@ export default function OrgScreen({ navigation }: Props) {
   const [projects, setProjects] = useState<OrgProject[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
+  const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, a, au] = await Promise.all([
+      const [e, p, a, au, h] = await Promise.all([
         api.orgEmployees(),
         api.orgProjects(),
         api.orgApprovals(),
         api.orgAudit(50),
+        api.orgHarman().catch(() => null),
       ])
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
       setApprovals(a.approvals || [])
       setAudit(au.audit || [])
+      setHarman(h)
     } catch (err) {
       const ex = err as Error & { status?: number }
       if (ex.status === 401) { setToken(null); navigation.replace("Login"); return }
@@ -86,6 +89,22 @@ export default function OrgScreen({ navigation }: Props) {
     } catch { load() }
   }
 
+  async function patchHarman(patch: Partial<HarmanConfig>) {
+    if (!harman) return
+    const next = { ...harman, ...patch }
+    setHarman(next) // optimistic
+    try {
+      const saved = await api.orgSetHarman(patch)
+      setHarman(saved)
+    } catch { load() }
+  }
+
+  function toggleManaged(projectId: number) {
+    if (!harman) return
+    const has = harman.projects.includes(projectId)
+    patchHarman({ projects: has ? harman.projects.filter((p) => p !== projectId) : [...harman.projects, projectId] })
+  }
+
   if (loading) {
     return <View style={{ flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center" }}><ActivityIndicator /></View>
   }
@@ -111,6 +130,42 @@ export default function OrgScreen({ navigation }: Props) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 16 }}>
       {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
+
+      {harman ? (
+        <Section title="Harman (manager)">
+          <Row>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: t.text, fontWeight: "600" }}>Autonomous manager</Text>
+                <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
+                  {harman.enabled
+                    ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
+                    : "Off"}
+                </Text>
+              </View>
+              <Switch value={harman.enabled} onValueChange={(v) => patchHarman({ enabled: v })} />
+            </View>
+            {/* Which projects Harman manages (auto-assign + spawn). Empty = does nothing. */}
+            {projects.length ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                {projects.map((p) => {
+                  const on = harman.projects.includes(p.id)
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      testID={`harman-proj-${p.id}`}
+                      onPress={() => toggleManaged(p.id)}
+                      style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
+                    >
+                      <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{p.name}</Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            ) : null}
+          </Row>
+        </Section>
+      ) : null}
 
       <Section title="Approvals" >
         {approvals.length ? approvals.map((a) => (

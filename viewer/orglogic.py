@@ -161,7 +161,114 @@ def allowed(action, level):
     return _level_rank(level) >= _level_rank(required)
 
 
-# ── Learned-skill dedup: keep the shared skill library clean ──────────────────
+# ── Harman's autonomous planning: board state → intended actions (PURE) ───────
+# Deterministic list→list so the manager's decisions are unit-tested without a DB
+# or spawning any model. The orchestrator (viewer/orchestrator.py) executes the
+# returned intents; NOTHING here has side effects.
+
+def project_columns(columns):
+    """Map the board's columns to logical slots by name (case-insensitive), else
+    fall back to position order: first=todo, last=done, 2nd=doing, 3rd=review.
+    Returns {"todo","doing","review","done"} of column ids (any may be None)."""
+    by_name = {}
+    for c in columns:
+        by_name[(c.get("name") or "").strip().lower()] = c.get("id")
+    ordered = sorted(columns, key=lambda c: (c.get("position", 0), c.get("id", 0)))
+    ids = [c.get("id") for c in ordered]
+    return {
+        "todo": by_name.get("todo", ids[0] if ids else None),
+        "doing": by_name.get("doing", ids[1] if len(ids) > 1 else None),
+        "review": by_name.get("review", ids[2] if len(ids) > 2 else None),
+        "done": by_name.get("done", ids[-1] if ids else None),
+    }
+
+
+def _emp_level(emp):
+    """Responsibility level for an employee, from an explicit 'level' or its role
+    name. Conservative: only clear lead/manager role words elevate; default 'ic'."""
+    if emp.get("level") in LEVELS:
+        return emp["level"]
+    role = (emp.get("role") or "").lower()
+    if any(w in role for w in ("manager", "head", "director")):
+        return "manager"
+    if "lead" in role:
+        return "lead"
+    return "ic"
+
+
+def suitable_employee(card, employees):
+    """Pick an active employee to work `card`: prefer one whose role appears in the
+    card title/body (a light skill match), else the first active employee. Returns
+    the employee dict or None. Deterministic (stable order)."""
+    active = [e for e in employees if (e.get("status") or "active") == "active"]
+    if not active:
+        return None
+    text = ((card.get("title") or "") + " " + (card.get("body") or "")).lower()
+    for e in active:
+        role = (e.get("role") or "").strip().lower()
+        if role and role in text:
+            return e
+    return active[0]
+
+
+def plan_assignments(cards, employees, columns, running, *, projects, budget):
+    """Given the board, return a list of intended Action dicts for Harman to execute.
+    PURE — no side effects. `running` is the set of card ids already in flight (the
+    in-progress guard); `projects` is the set of project ids Harman manages (empty =
+    manage nothing); `budget` caps how many NEW spawns this plan may emit.
+
+    Action shapes:
+      {"kind":"assign", "card_id", "employee", "level", "spawn", "reason"}
+      {"kind":"advance", "card_id", "to_column", "reason"}
+      {"kind":"escalate", "approval_kind", "summary", "detail"}
+
+    Rules: only cards whose project_id is in `projects`; an unassigned card in Todo
+    not already running → assign (spawn if the chosen employee has no live session);
+    a card in Doing whose owning session finished-ok → advance to Review. Every
+    candidate passes the responsibility gate (allowed); a red action becomes an
+    escalate (never an execute)."""
+    slots = project_columns(columns)
+    todo, doing, review = slots["todo"], slots["doing"], slots["review"]
+    managed = set(projects or [])
+    running = set(running or [])
+    # employee id -> has a live session? (derived from `running` by assignee is not
+    # enough; callers pass employees already tagged with `_busy` when they hold a
+    # running session — default False.)
+    out = []
+    spawned = 0
+    cap = budget if budget is not None else 0
+    for card in cards:
+        pid = card.get("project_id")
+        if pid not in managed:
+            continue
+        cid = card.get("id")
+        if cid in running:
+            continue
+        col = card.get("column_id")
+        # Unassigned Todo → assign + (maybe) spawn.
+        if col == todo and not card.get("assignee"):
+            emp = suitable_employee(card, employees)
+            if not emp:
+                continue
+            level = emp.get("level") or _emp_level(emp)
+            want_spawn = not emp.get("_busy")
+            if want_spawn and budget is not None and (len(running) + spawned) >= cap:
+                want_spawn = False  # budget reached; assign but don't spawn this tick
+            if want_spawn:
+                spawned += 1
+            out.append({
+                "kind": "assign", "card_id": cid, "employee": emp.get("id"),
+                "level": level, "spawn": want_spawn,
+                "reason": f"unassigned Todo → {emp.get('name')}",
+            })
+        # Doing card whose session finished successfully → advance to Review.
+        elif col == doing and card.get("_session_done_ok"):
+            if review:
+                out.append({"kind": "advance", "card_id": cid, "to_column": review,
+                            "reason": "session finished ok → Review"})
+    return out
+
+
 
 def _norm_skill(name):
     """Normalize a skill name for comparison: lowercase, non-alphanumeric → single

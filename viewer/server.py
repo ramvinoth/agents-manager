@@ -289,6 +289,7 @@ class SessionViewerHandler(
         "/api/org/cards": "_g_org_cards",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
+        "/api/org/harman": "_g_org_harman",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -353,6 +354,7 @@ class SessionViewerHandler(
         "/api/org/cards/update": "_p_org_cards_update",
         "/api/org/cards/done": "_p_org_cards_done",
         "/api/org/approvals/resolve": "_p_org_approvals_resolve",
+        "/api/org/harman": "_p_org_harman",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),

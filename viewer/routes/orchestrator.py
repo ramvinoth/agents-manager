@@ -214,3 +214,29 @@ class OrchestratorMixin:
             self.send_json({"error": "Unauthorized"}, status=401); return
         limit = (req.query.get("limit") or ["100"])[0]
         self.send_json({"audit": db.audit_list(limit=int(limit))})
+
+    # ── Harman autonomous-manager config (CEO only) ──────────────────────────
+    def _g_org_harman(self, req):
+        if not self.current_user():
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        from viewer.orchestrator import get_config
+        self.send_json(get_config())
+
+    def _p_org_harman(self, req):
+        user = self.current_user()
+        if not user:
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        body = self.read_body() or {}
+        patch = {}
+        if "enabled" in body:
+            patch["enabled"] = bool(body["enabled"])
+        if "interval" in body:
+            patch["interval"] = int(body["interval"])
+        if "budget" in body:
+            patch["budget"] = int(body["budget"])
+        if "projects" in body:
+            patch["projects"] = [int(p) for p in (body["projects"] or [])]
+        from viewer.orchestrator import set_config
+        cfg = set_config(patch)
+        db.audit_append(f"user:{user['username']}", "harman_config", patch, "ok")
+        self.send_json(cfg)

@@ -176,6 +176,13 @@ def loop_scheduler(launch):
                 launch(lp["session"], lp["path"], lp["prompt"], lp.get("model", ""))
             except Exception:
                 pass
+        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
+        # thread). Self-throttles to its own interval; exception-safe internally.
+        try:
+            from viewer.orchestrator import harman_tick
+            harman_tick()
+        except Exception:
+            pass
 
 
 def frontmatter_description(path):

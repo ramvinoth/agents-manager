@@ -65,6 +65,7 @@ export type Card = { id: number; title: string; body: string; column_id: number 
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
+export type HarmanConfig = { enabled: boolean; interval: number; budget: number; projects: number[] }
 export type ChatStatus = {
   running?: boolean
   idle?: boolean
@@ -528,4 +529,6 @@ export const api = {
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),
   orgAudit: (limit = 100) => req<{ audit: AuditEntry[] }>("GET", `/api/org/audit?limit=${limit}`),
+  orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
+  orgSetHarman: (patch: Partial<HarmanConfig>) => req<HarmanConfig>("POST", "/api/org/harman", patch),
 }
