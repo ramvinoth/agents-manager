@@ -446,7 +446,7 @@ def main():
         print(f"  ⚠ web UI not built ({UI_DIR}) — run: cd web && npm install && npm run build")
 
     threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
-    server = PooledHTTPServer(("0.0.0.0", PORT), SessionViewerHandler)
+    server = PooledHTTPServer((os.environ.get("VIEWER_HOST","0.0.0.0"), PORT), SessionViewerHandler)
 
     print("Agents")
     print(f"  Local:     http://localhost:{PORT}/")
