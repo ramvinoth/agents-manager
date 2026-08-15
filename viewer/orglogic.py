@@ -304,3 +304,16 @@ def dedupe_skill(name, existing_names):
         if f" {target} " in f" {e} " or f" {e} " in f" {target} ":
             return True
     return False
+
+
+def build_skill_md(name, trigger, body, origin_employee=None):
+    """Assemble a SKILL.md document (pure) for a promoted org skill: YAML frontmatter
+    with the name + a `description` (the trigger — when to use the skill), the body
+    (the procedure/lesson), and an origin credit line. Deterministic → unit-tested."""
+    desc = (trigger or "").replace("\n", " ").strip() or name
+    lines = ["---", f"name: {name}", f"description: {desc}", "---", ""]
+    lines.append((body or "").strip())
+    if origin_employee:
+        lines.append("")
+        lines.append(f"_Learned by {origin_employee}._")
+    return "\n".join(lines).rstrip() + "\n"

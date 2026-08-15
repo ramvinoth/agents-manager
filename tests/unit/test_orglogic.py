@@ -225,6 +225,22 @@ def test_plan_no_employee_no_action():
     assert orglogic.plan_assignments([_card(1)], [], COLS, running=set(), projects=[10], budget=2) == []
 
 
+# ── build_skill_md ───────────────────────────────────────────────────────────
+
+def test_build_skill_md_frontmatter_and_body():
+    md = orglogic.build_skill_md("ship-flow", "when shipping the app", "1. sync\n2. build", origin_employee="Emma")
+    assert md.startswith("---\nname: ship-flow\ndescription: when shipping the app\n---\n")
+    assert "1. sync\n2. build" in md
+    assert "_Learned by Emma._" in md
+    assert md.endswith("\n")
+
+
+def test_build_skill_md_no_origin_and_blank_trigger():
+    md = orglogic.build_skill_md("x", "", "do it")
+    assert "description: x" in md  # falls back to the name
+    assert "_Learned by" not in md
+
+
 # ── dedupe_skill ─────────────────────────────────────────────────────────────
 
 def test_dedupe_exact_after_normalization():

@@ -31,6 +31,7 @@ _TOOLS = {
     "card_assign": ("POST", "/api/org/cards/assign"),
     "card_update": ("POST", "/api/org/cards/update"),
     "task_done":   ("POST", "/api/org/cards/done"),
+    "skill_propose": ("POST", "/api/org/skills/propose"),
 }
 
 _TOOL_LIST = [
@@ -55,6 +56,12 @@ _TOOL_LIST = [
     {"name": "task_done", "description": "Mark a card done (move to the Done column).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
+    {"name": "skill_propose", "description": "Propose a reusable skill learned from this work so the whole team inherits it. Novel skills are promoted immediately; ones that overlap an existing skill are queued for the CEO to review.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "trigger", "body"], "properties": {
+         "name": {"type": "string", "description": "short kebab/underscore id"},
+         "trigger": {"type": "string", "description": "when to use this skill (its description)"},
+         "body": {"type": "string", "description": "the procedure/lesson"},
+         "from_card": {"type": "integer"}}}},
 ]
 
 

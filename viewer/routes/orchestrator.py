@@ -204,9 +204,26 @@ class OrchestratorMixin:
         user = self.current_user()
         if not user:
             self.send_json({"error": "Unauthorized"}, status=401); return
-        row = db.approval_resolve(body.get("id"), body.get("resolution", "approved"))
+        resolution = body.get("resolution", "approved")
+        row = db.approval_resolve(body.get("id"), resolution)
+        # Approving a 'skill' overlap approval finishes the governed promotion:
+        # write the SKILL.md (the CEO OK'd the merge) and flip the ledger to active.
+        if row and resolution == "approved" and row.get("kind") == "skill":
+            try:
+                from viewer import skills
+                detail = row.get("detail") or {}
+                name, content = detail.get("name"), detail.get("content", "")
+                if name:
+                    p = skills.write_skill(name, content)
+                    for s in db.skill_learned_list(status="proposed"):
+                        if s.get("name") == name:
+                            db.skill_learned_set_status(s["id"], "active")
+                    db.audit_append(f"user:{user['username']}", "skill_promote",
+                                    {"name": name, "path": str(p)}, "active")
+            except Exception:
+                pass
         db.audit_append(f"user:{user['username']}", "approval_resolve",
-                        {"id": body.get("id")}, body.get("resolution", "approved"))
+                        {"id": body.get("id")}, resolution)
         self.send_json(row or {"error": "not found"})
 
     def _g_org_audit(self, req):
@@ -240,3 +257,45 @@ class OrchestratorMixin:
         cfg = set_config(patch)
         db.audit_append(f"user:{user['username']}", "harman_config", patch, "ok")
         self.send_json(cfg)
+
+    # ── Organizational learning: an employee/CEO proposes a skill ─────────────
+    def _g_org_skills(self, req):
+        if not self.current_user():
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        self.send_json({"skills": db.skill_learned_list()})
+
+    def _p_org_skills_propose(self, req):
+        """Propose a learned skill. Novel + non-overlapping → promote immediately
+        (write SKILL.md to the shared user library + ledger 'active'). Overlaps an
+        existing skill → do NOT overwrite; open a 'skill' approval for the CEO to
+        decide the merge (ledger 'proposed'). Every attempt audited."""
+        body = self.read_body() or {}
+        kind, level, actor = self._org_caller(body)
+        if kind is None:
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        from viewer import skills
+        name = (body.get("name") or "").strip()
+        if not skills.valid_name(name):
+            self.send_json({"error": "Bad skill name"}, status=400); return
+        trigger = body.get("trigger", "")
+        content = orglogic.build_skill_md(name, trigger, body.get("body", ""),
+                                          origin_employee=actor)
+        origin = {"card": body.get("from_card"), "session": body.get("session")}
+        existing = skills.list_skill_names()
+        if orglogic.dedupe_skill(name, existing):
+            # Overlap → governed: queue an approval, don't overwrite.
+            ap = db.approval_open("skill", f"{actor}: promote skill '{name}' (overlaps existing)",
+                                  {"name": name, "content": content, **origin}, created_by=actor)
+            rec = db.skill_learned_record(name, path="", origin_employee=None,
+                                          origin_card=origin.get("card"),
+                                          origin_session=origin.get("session"), status="proposed")
+            db.audit_append(actor, "skill_propose", {"name": name, "approval": ap["id"]}, "queued")
+            self.send_json({"queued": True, "approval": ap["id"], "skill": rec["id"]})
+            return
+        # Novel → promote now.
+        p = skills.write_skill(name, content)
+        rec = db.skill_learned_record(name, path=str(p), origin_employee=None,
+                                      origin_card=origin.get("card"),
+                                      origin_session=origin.get("session"), status="active")
+        db.audit_append(actor, "skill_promote", {"name": name, "path": str(p)}, "active")
+        self.send_json({"promoted": True, "path": str(p), "skill": rec["id"]})
