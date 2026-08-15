@@ -95,8 +95,16 @@ def _spawn_employee_session(employee, card, project, default_provider=""):
     sid = str(_uuid.uuid4())
     cwd = (project or {}).get("cwd") or str(Path.home())
     goal = card.get("title") or ""
+    # Give the session a readable name (never leave it a bare UUID): who is working
+    # on what, in which project — so it's identifiable in the chat list and board.
+    emp_name = (employee.get("name") or "Employee").strip()
+    proj_name = ((project or {}).get("name") or "").strip()
+    card_title = (card.get("title") or "Task").strip()
+    title = (f"{emp_name} · {proj_name} · {card_title}" if proj_name
+             else f"{emp_name} · {card_title}")[:200]
     with META_LOCK:
-        SESSION_META[sid] = {"provider": preset_id, "convMode": "agent", "goal": goal}
+        SESSION_META[sid] = {"provider": preset_id, "convMode": "agent",
+                             "goal": goal, "title": title}
         save_json_file(META_FILE, SESSION_META)
     task = (card.get("body") or card.get("title") or "").strip()
     ok = start_claude_run(sid, ["--session-id", sid], task, "acceptEdits", cwd,
