@@ -139,6 +139,15 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
       <TouchableOpacity
+        testID="open-org"
+        style={styles.profileInfoRow}
+        onPress={() => navigation.navigate("Org")}
+      >
+        <Icon name="folder" size={18} color={t.accent} />
+        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Company & board</Text>
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
+      </TouchableOpacity>
+      <TouchableOpacity
         testID="open-server-picker"
         style={styles.profileInfoRow}
         onPress={() => setServerOpen(true)}

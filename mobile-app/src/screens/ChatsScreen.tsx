@@ -351,9 +351,19 @@ export default function ChatsScreen({ navigation }: Props) {
                 </View>
                 <View style={styles.chatMetaCol}>
                   <Text style={[styles.chatTime, unread ? styles.chatTimeUnread : null]}>{relTime(item.modified)}</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     {item.favorite ? <Icon name="star" size={13} color={t.accent} /> : null}
                     {unread ? <View style={styles.unreadDot} /> : null}
+                    {/* Open this session's Kanban board (its filtered view). A tap
+                        target rather than a swipe — the chat list lives inside the
+                        bottom-tab pager, which would swallow a horizontal swipe. */}
+                    <TouchableOpacity
+                      testID={`chat-board-${item.id}`}
+                      onPress={() => navigation.navigate("Kanban", { session: item.id, title: name })}
+                      hitSlop={8}
+                    >
+                      <Icon name="folder" size={15} color={t.textMuted} />
+                    </TouchableOpacity>
                   </View>
                 </View>
               </TouchableOpacity>

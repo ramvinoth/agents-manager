@@ -57,6 +57,14 @@ export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
 export type Loop = { id: string; session: string; prompt: string; interval: number; nextRun?: number; runs?: number; enabled?: boolean }
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
+// ---- org / Kanban (the "empire") ----
+export type Employee = { id: number; name: string; role: string; provider: string; model: string; conv_mode: string; avatar: string; status: string; created_at: number }
+export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number }
+export type BoardColumn = { id: number; name: string; position: number }
+export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number }
+export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
+export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
+export type CardFilter = { session?: string; project?: number; assignee?: number }
 export type ChatStatus = {
   running?: boolean
   idle?: boolean
@@ -491,4 +499,33 @@ export const api = {
     if (opts.init) p.set("init", opts.init)
     return `${base}/api/terminal/ws?${p.toString()}`
   },
+
+  // ---- org / Kanban (the "empire") ----
+  orgEmployees: () => req<{ employees: Employee[] }>("GET", "/api/org/employees"),
+  orgCreateEmployee: (body: { name: string; role?: string; provider?: string; model?: string }) =>
+    req<Employee>("POST", "/api/org/employees", body),
+  orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
+  orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
+    req<OrgProject>("POST", "/api/org/projects", body),
+  orgBoard: () => req<{ columns: BoardColumn[] }>("GET", "/api/org/board"),
+  orgCards: (filter: CardFilter = {}) => {
+    const p = new URLSearchParams()
+    if (filter.session !== undefined) p.set("session", filter.session)
+    if (filter.project !== undefined) p.set("project", String(filter.project))
+    if (filter.assignee !== undefined) p.set("assignee", String(filter.assignee))
+    const q = p.toString()
+    return req<{ cards: Card[] }>("GET", `/api/org/cards${q ? "?" + q : ""}`)
+  },
+  orgCreateCard: (body: { title: string; body?: string; column_id?: number; project_id?: number; session?: string; position?: number }) =>
+    req<Card>("POST", "/api/org/cards", body),
+  orgMoveCard: (body: { card_id: number; column_id: number; position: number }) =>
+    req<Card>("POST", "/api/org/cards/move", body),
+  orgAssignCard: (body: { card_id: number; assignee: number }) =>
+    req<Card>("POST", "/api/org/cards/assign", body),
+  orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) =>
+    req<Card>("POST", "/api/org/cards/update", body),
+  orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
+  orgResolveApproval: (body: { id: number; resolution: string }) =>
+    req<Approval>("POST", "/api/org/approvals/resolve", body),
+  orgAudit: (limit = 100) => req<{ audit: AuditEntry[] }>("GET", `/api/org/audit?limit=${limit}`),
 }
