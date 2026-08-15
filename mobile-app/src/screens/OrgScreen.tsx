@@ -151,6 +151,25 @@ export default function OrgScreen({ navigation }: Props) {
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 16 }}>
       {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
 
+      {/* First-run guide: shown until the CEO has at least one project. A fresh
+          install otherwise looks like empty lists with no hint of the workflow. */}
+      {projects.length === 0 ? (
+        <View style={{ backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 14, marginBottom: 18 }}>
+          <Text style={{ color: t.text, fontWeight: "700", fontSize: 15, marginBottom: 8 }}>Set up your first run</Text>
+          {[
+            "Create a project — give it a name and the workspace directory Harman should work in.",
+            "Add an employee — pick a model (the free local one keeps Opus tokens untouched).",
+            "Open the project board and add a card or two describing the work.",
+            "Point Harman at the project in the manager panel above — it assigns and runs the work.",
+          ].map((step, i) => (
+            <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
+              <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>{i + 1}.</Text>
+              <Text style={{ color: t.textMuted, fontSize: 13, flex: 1, lineHeight: 18 }}>{step}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       {harman ? (
         <Section title="Harman (manager)">
           <Row>
