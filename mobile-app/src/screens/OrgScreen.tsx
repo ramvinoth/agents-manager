@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
+import CreateSheet from "../components/CreateSheet"
 import { useTheme } from "../lib/useTheme"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
@@ -74,18 +75,29 @@ export default function OrgScreen({ navigation }: Props) {
     })
   }, [navigation, t])
 
-  function promptAdd(kind: "employee" | "project") {
-    const AlertAny = Alert as unknown as { prompt?: (t: string, m: string | undefined, cb: (v: string) => void) => void }
-    if (!AlertAny.prompt) return
-    AlertAny.prompt(kind === "employee" ? "New employee" : "New project", "Name", async (name: string) => {
-      const n = (name || "").trim()
-      if (!n) return
-      try {
-        if (kind === "employee") await api.orgCreateEmployee({ name: n })
-        else await api.orgCreateProject({ name: n })
-        load()
-      } catch (e) { setError((e as Error).message) }
-    })
+  // Create employee / project via a cross-platform sheet (Alert.prompt is iOS-only,
+  // so the old inline prompt silently no-opped on Android). A project needs a real
+  // workspace dir — without a cwd a Harman-spawned session falls back to $HOME, which
+  // is wrong — so we offer recent dirs as suggestions.
+  const [creating, setCreating] = useState<null | "employee" | "project">(null)
+  const [dirs, setDirs] = useState<string[]>([])
+
+  function openCreate(kind: "employee" | "project") {
+    setCreating(kind)
+    if (kind === "project" && !dirs.length) {
+      api.projects("local").then((ps) => setDirs(ps.map((p) => p.cwd))).catch(() => {})
+    }
+  }
+
+  async function submitCreate(values: Record<string, string>) {
+    try {
+      if (creating === "employee") {
+        await api.orgCreateEmployee({ name: values.name, role: values.role || "" })
+      } else {
+        await api.orgCreateProject({ name: values.name, cwd: values.cwd || "", description: values.description || "" })
+      }
+      load()
+    } catch (e) { setError((e as Error).message) }
   }
 
   async function resolve(a: Approval, resolution: "approved" | "denied") {
@@ -135,6 +147,7 @@ export default function OrgScreen({ navigation }: Props) {
   )
 
   return (
+    <>
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 16 }}>
       {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
 
@@ -212,7 +225,7 @@ export default function OrgScreen({ navigation }: Props) {
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing needs your approval.</Text>}
       </Section>
 
-      <Section title="Employees" onAdd={() => promptAdd("employee")}>
+      <Section title="Employees" onAdd={() => openCreate("employee")}>
         {employees.length ? employees.map((e) => {
           const open = editEmp === e.id
           const provName = providers.find((p) => p.id === e.provider)?.name
@@ -256,7 +269,7 @@ export default function OrgScreen({ navigation }: Props) {
         }) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No employees yet.</Text>}
       </Section>
 
-      <Section title="Projects" onAdd={() => promptAdd("project")}>
+      <Section title="Projects" onAdd={() => openCreate("project")}>
         {projects.length ? projects.map((p) => (
           <TouchableOpacity key={p.id} onPress={() => navigation.navigate("Kanban", { project: p.id, title: p.name })}>
             <Row>
@@ -287,5 +300,29 @@ export default function OrgScreen({ navigation }: Props) {
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No activity yet.</Text>}
       </Section>
     </ScrollView>
+
+      <CreateSheet
+        visible={creating === "employee"}
+        title="New employee"
+        submitLabel="Hire"
+        fields={[
+          { key: "name", label: "Name", placeholder: "e.g. Ada", required: true },
+          { key: "role", label: "Role", placeholder: "e.g. Engineer, Designer", autoCapitalize: "sentences" },
+        ]}
+        onSubmit={submitCreate}
+        onClose={() => setCreating(null)}
+      />
+      <CreateSheet
+        visible={creating === "project"}
+        title="New project"
+        fields={[
+          { key: "name", label: "Name", placeholder: "e.g. Onboarding revamp", required: true },
+          { key: "cwd", label: "Workspace directory", placeholder: "/path/to/repo", required: true, autoCapitalize: "none", suggestions: dirs },
+          { key: "description", label: "Description", placeholder: "What is this project?" },
+        ]}
+        onSubmit={submitCreate}
+        onClose={() => setCreating(null)}
+      />
+    </>
   )
 }
