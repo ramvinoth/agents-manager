@@ -253,6 +253,8 @@ class OrchestratorMixin:
             patch["budget"] = int(body["budget"])
         if "projects" in body:
             patch["projects"] = [int(p) for p in (body["projects"] or [])]
+        if "default_provider" in body:
+            patch["default_provider"] = str(body["default_provider"] or "")
         from viewer.orchestrator import set_config
         cfg = set_config(patch)
         db.audit_append(f"user:{user['username']}", "harman_config", patch, "ok")

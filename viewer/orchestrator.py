@@ -24,7 +24,7 @@ from viewer.config import CHAT_JOBS, CHAT_LOCK
 
 HARMAN_FILE = Path.home() / ".claude" / ".viewer-harman.json"
 HARD_CAP = 4                 # absolute ceiling on concurrent auto-run sessions
-_DEFAULT = {"enabled": True, "interval": 30, "budget": 2, "projects": []}
+_DEFAULT = {"enabled": True, "interval": 30, "budget": 2, "projects": [], "default_provider": ""}
 _last_run = 0.0
 
 
@@ -37,6 +37,7 @@ def _load_config():
     cfg["interval"] = max(10, int(cfg.get("interval", 30) or 30))
     cfg["projects"] = [int(p) for p in (cfg.get("projects") or [])]
     cfg["enabled"] = bool(cfg.get("enabled", True))
+    cfg["default_provider"] = str(cfg.get("default_provider") or "")
     return cfg
 
 
@@ -49,7 +50,7 @@ def set_config(patch):
     """Merge a partial config and persist. Returns the effective config."""
     from viewer.engine import load_json_file, save_json_file
     cur = load_json_file(HARMAN_FILE, {}) or {}
-    for k in ("enabled", "interval", "budget", "projects"):
+    for k in ("enabled", "interval", "budget", "projects", "default_provider"):
         if k in patch:
             cur[k] = patch[k]
     save_json_file(HARMAN_FILE, cur)
@@ -78,17 +79,19 @@ def _live_employee_ids():
         return out
 
 
-def _spawn_employee_session(employee, card, project):
-    """Start an agent-mode session for `employee` to work `card`. Returns the new
-    session id, or None if the employee has no usable provider endpoint."""
+def _spawn_employee_session(employee, card, project, default_provider=""):
+    """Start an agent-mode session for `employee` to work `card`. The employee's own
+    provider preset wins; if it has none, fall back to the org's `default_provider`
+    (e.g. the free local Qwen preset) so we never touch a paid model by default.
+    Returns the new session id, or None if no usable Anthropic provider resolves."""
     import uuid as _uuid
     from viewer import providers
     from viewer.engine import SESSION_META, META_LOCK, save_json_file, META_FILE, start_claude_run
 
-    preset_id = employee.get("provider")
+    preset_id = employee.get("provider") or default_provider
     penv = providers.anthropic_env(preset_id) if preset_id else None
     if not penv:
-        return None  # employee must have an Anthropic-capable provider (agent mode)
+        return None  # no Anthropic-capable provider (employee's nor the org default)
     sid = str(_uuid.uuid4())
     cwd = (project or {}).get("cwd") or str(Path.home())
     goal = card.get("title") or ""
@@ -156,7 +159,7 @@ def harman_tick(*, dry_run=False):
                         emp = emps_by_id.get(eid)
                         card = cards_by_id.get(cid)
                         proj = db.project_get(card.get("project_id")) if card else None
-                        sid = _spawn_employee_session(emp, card, proj) if emp and card else None
+                        sid = _spawn_employee_session(emp, card, proj, cfg["default_provider"]) if emp and card else None
                         db.audit_append("harman", "spawn_session",
                                         {"card": cid, "employee": eid, "session": sid},
                                         "ok" if sid else "no_provider")

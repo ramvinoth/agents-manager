@@ -47,6 +47,7 @@ export type AgentInfo = {
 }
 export type PermApproval = { id: string; tool_name: string; input: unknown }
 export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string; convMode?: "chat" | "agent" }
+export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
 export type Provider = { id: string; name: string; baseUrl: string; model: string }
@@ -65,7 +66,7 @@ export type Card = { id: number; title: string; body: string; column_id: number 
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
-export type HarmanConfig = { enabled: boolean; interval: number; budget: number; projects: number[] }
+export type HarmanConfig = { enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
 export type LearnedSkill = { id: number; name: string; path: string; origin_employee: number | null; origin_card: number | null; origin_session: string | null; status: string; created_at: number }
 export type ChatStatus = {
   running?: boolean
@@ -263,6 +264,14 @@ export const api = {
     req<SessionSummary>(
       "GET",
       `/api/session-summary?session=${encodeURIComponent(session)}` +
+        (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+    ),
+
+  // ---- git status for a session's working dir (host-aware) ----
+  gitStatus: (host: string, cwd: string) =>
+    req<GitStatus>(
+      "GET",
+      `/api/git/status?cwd=${encodeURIComponent(cwd)}` +
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
 
@@ -506,6 +515,8 @@ export const api = {
   orgEmployees: () => req<{ employees: Employee[] }>("GET", "/api/org/employees"),
   orgCreateEmployee: (body: { name: string; role?: string; provider?: string; model?: string }) =>
     req<Employee>("POST", "/api/org/employees", body),
+  orgUpdateEmployee: (body: { id: number; name?: string; role?: string; provider?: string; model?: string; conv_mode?: string; avatar?: string; status?: string }) =>
+    req<Employee>("POST", "/api/org/employees/update", body),
   orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
   orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
     req<OrgProject>("POST", "/api/org/projects", body),

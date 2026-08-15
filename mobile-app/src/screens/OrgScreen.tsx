@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject } from "../api/client"
+import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -24,19 +24,22 @@ export default function OrgScreen({ navigation }: Props) {
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [editEmp, setEditEmp] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, a, au, h, sk] = await Promise.all([
+      const [e, p, a, au, h, sk, pr] = await Promise.all([
         api.orgEmployees(),
         api.orgProjects(),
         api.orgApprovals(),
         api.orgAudit(50),
         api.orgHarman().catch(() => null),
         api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
+        api.providers().catch(() => ({ providers: [] as Provider[] })),
       ])
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
@@ -44,6 +47,7 @@ export default function OrgScreen({ navigation }: Props) {
       setAudit(au.audit || [])
       setHarman(h)
       setSkills(sk.skills || [])
+      setProviders(pr.providers || [])
     } catch (err) {
       const ex = err as Error & { status?: number }
       if (ex.status === 401) { setToken(null); navigation.replace("Login"); return }
@@ -166,6 +170,27 @@ export default function OrgScreen({ navigation }: Props) {
                 })}
               </View>
             ) : null}
+            {/* Default model new employees run under (free local Qwen keeps Opus tokens untouched). */}
+            {providers.length ? (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Default employee model</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {providers.map((pr) => {
+                    const on = harman.default_provider === pr.id
+                    return (
+                      <TouchableOpacity
+                        key={pr.id}
+                        testID={`harman-provider-${pr.id}`}
+                        onPress={() => patchHarman({ default_provider: on ? "" : pr.id })}
+                        style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
+                      >
+                        <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
+                      </TouchableOpacity>
+                    )
+                  })}
+                </View>
+              </View>
+            ) : null}
           </Row>
         </Section>
       ) : null}
@@ -188,12 +213,47 @@ export default function OrgScreen({ navigation }: Props) {
       </Section>
 
       <Section title="Employees" onAdd={() => promptAdd("employee")}>
-        {employees.length ? employees.map((e) => (
-          <Row key={e.id}>
-            <Text style={{ color: t.text, fontWeight: "600" }}>{e.avatar ? e.avatar + " " : ""}{e.name}</Text>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>{e.role || "—"} · {e.status}</Text>
-          </Row>
-        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No employees yet.</Text>}
+        {employees.length ? employees.map((e) => {
+          const open = editEmp === e.id
+          const provName = providers.find((p) => p.id === e.provider)?.name
+          return (
+            <TouchableOpacity key={e.id} activeOpacity={0.7} onPress={() => setEditEmp(open ? null : e.id)}>
+              <Row>
+                <Text style={{ color: t.text, fontWeight: "600" }}>{e.avatar ? e.avatar + " " : ""}{e.name}</Text>
+                <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
+                  {e.role || "—"} · {e.status} · {provName || "default model"}
+                </Text>
+                {open && providers.length ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Model</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {providers.map((pr) => {
+                        const on = e.provider === pr.id
+                        return (
+                          <TouchableOpacity
+                            key={pr.id}
+                            testID={`emp-${e.id}-provider-${pr.id}`}
+                            onPress={async () => {
+                              const next = on ? "" : pr.id
+                              setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, provider: next } : x))
+                              try { await api.orgUpdateEmployee({ id: e.id, provider: next }); load() } catch { load() }
+                            }}
+                            style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
+                          >
+                            <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
+                          </TouchableOpacity>
+                        )
+                      })}
+                    </View>
+                    <Text style={{ color: t.textMuted, fontSize: 11, marginTop: 6 }}>
+                      Unset = uses the org default model.
+                    </Text>
+                  </View>
+                ) : null}
+              </Row>
+            </TouchableOpacity>
+          )
+        }) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No employees yet.</Text>}
       </Section>
 
       <Section title="Projects" onAdd={() => promptAdd("project")}>

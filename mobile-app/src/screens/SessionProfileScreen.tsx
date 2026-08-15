@@ -10,7 +10,7 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Loop, type Provider, type SessionSummary } from "../api/client"
+import { api, type GitStatus, type Loop, type Provider, type SessionSummary } from "../api/client"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { fmtInterval, parseInterval } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
@@ -88,6 +88,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
   // occasional). Stable order + icons = muscle memory.
   const [open, setOpen] = useState<Record<string, boolean>>({ behaviour: true, model: true })
+  // Git status for the session's working dir (repo·branch·remote·ahead/behind).
+  // null until loaded; {repo:false} when the cwd isn't a git repo (card hidden).
+  const [cwd, setCwd] = useState("")
+  const [git, setGit] = useState<GitStatus | null>(null)
+  const [syncing, setSyncing] = useState(false)
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
 
   // Load meta + loops + stats once. A missing session (fresh chat with no path
@@ -103,6 +108,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           setPinned(Array.isArray(m.pinned) ? m.pinned : [])
           setProvider(m.provider || "")
           setConvMode(m.convMode === "agent" ? "agent" : "chat")
+          if (m.cwd) { setCwd(m.cwd); loadGit(m.cwd) }
         })
         .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
@@ -287,6 +293,33 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   function openPinned(uuid: string) {
     navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path, jumpTo: uuid })
+  }
+
+  // Git: fetch repo/branch/ahead-behind for the session's cwd. Silent on error
+  // (a non-repo cwd returns {repo:false} → card hidden).
+  function loadGit(dir: string) {
+    if (!dir) return
+    api.gitStatus(host, dir).then(setGit).catch(() => setGit({ repo: false }))
+  }
+
+  // Sync: hand the commit→push→rebase instruction to the model in this session.
+  // Mirrors web GitSection's SYNC_PROMPT; the work runs as a normal turn, so we
+  // send + open the thread to watch it.
+  async function doSync() {
+    if (!path || syncing) return
+    setSyncing(true)
+    const prompt = `Sync the current git branch with the remote. In this repo, step by step:
+1. Run \`git status\`. Commit any uncommitted changes with a clear message (leave obviously unrelated junk files alone).
+2. \`git fetch origin\` and determine the default branch (master or main).
+3. Push the current branch to origin (use \`-u\` to set the upstream if it has none).
+4. If the current branch is NOT the default branch, rebase it onto the latest \`origin/<default>\`, resolving any conflicts carefully — read both sides of each conflict and preserve the intent of both changes; never blindly take one side. If the project has a fast build/test command, run it after resolving to sanity-check.
+5. If the rebase rewrote history, push again with \`--force-with-lease\`.
+6. Finish with a short summary: commits made, push result, rebase outcome, and any conflicts you resolved.`
+    try {
+      await api.chat({ message: prompt, path, host, agent: "claude" })
+      navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path })
+    } catch { /* surfaced in the thread */ }
+    finally { setSyncing(false) }
   }
 
   // NOTE: these are render FUNCTIONS, not components — called as {renderPill(...)}
@@ -537,6 +570,39 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </View>
         ) : null}
       </>)}
+
+      {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}
+      {git?.repo ? renderCard("git", "fork", "Git",
+        `${git.name || "repo"} · ${git.branch || "?"}`,
+        <>
+          <View style={styles.ssRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.ssRowLabel}>{git.name || "repo"}</Text>
+              <Text style={styles.ssRowHint} numberOfLines={1}>{git.branch || "?"}{git.remote ? ` · ${git.remote}` : ""}</Text>
+            </View>
+            <TouchableOpacity testID="sp-git-refresh" onPress={() => loadGit(cwd)} hitSlop={8}>
+              <Icon name="repeat" size={16} color={t.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+            {(git.dirty ?? 0) > 0 ? (
+              <Text style={{ color: "#d97706", fontSize: 12 }}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
+            ) : null}
+            {git.ahead != null && git.ahead > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↑{git.ahead}</Text> : null}
+            {git.behind != null && git.behind > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↓{git.behind}</Text> : null}
+            {(git.dirty ?? 0) === 0 && !git.ahead && !git.behind ? <Text style={{ color: t.textMuted, fontSize: 12 }}>Up to date</Text> : null}
+          </View>
+          <TouchableOpacity
+            testID="sp-git-sync"
+            disabled={syncing}
+            onPress={doSync}
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, backgroundColor: t.accent, borderRadius: 8, paddingVertical: 10, opacity: syncing ? 0.6 : 1 }}
+          >
+            <Icon name="repeat" size={15} color="#fff" />
+            <Text style={{ color: "#fff", fontWeight: "600" }}>{syncing ? "Syncing…" : "Sync branch"}</Text>
+          </TouchableOpacity>
+          <Text style={[styles.sheetHint, { marginTop: 8 }]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
+        </>) : null}
 
       {/* ── MODEL & alerts (open by default). ── */}
       {renderCard("model", "sparkle", "Model & alerts", modelSummary, <>
