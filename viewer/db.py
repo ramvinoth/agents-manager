@@ -584,6 +584,14 @@ def card_assign(card_id, assignee):
     return card_update(card_id, assignee=assignee)
 
 
+def card_delete(card_id):
+    """Hard-delete a card (a pure work item — no provenance to preserve, unlike an
+    employee). Returns True if a row was removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
+        return cur.rowcount > 0
+
+
 # Approvals -------------------------------------------------------------------
 
 def approval_open(kind, summary="", detail=None, created_by=""):

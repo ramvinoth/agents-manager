@@ -114,6 +114,15 @@ def test_is_red_helper():
     assert orglogic.is_red("move_card") is False
 
 
+def test_card_delete_is_red_and_lead_scoped():
+    # Deleting a card is destructive → red (queued for an MCP employee), and needs
+    # lead+ authority (an IC cannot delete work items).
+    assert orglogic.classify_action("card_delete") == "red"
+    assert orglogic.allowed("card_delete", "ic") is False
+    assert orglogic.allowed("card_delete", "lead") is True
+    assert orglogic.allowed("card_delete", "manager") is True
+
+
 # ── allowed() responsibility scope ───────────────────────────────────────────
 
 def test_allowed_ic_can_manage_cards():

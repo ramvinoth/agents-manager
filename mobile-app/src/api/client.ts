@@ -537,6 +537,8 @@ export const api = {
     req<Card>("POST", "/api/org/cards/assign", body),
   orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) =>
     req<Card>("POST", "/api/org/cards/update", body),
+  orgDeleteCard: (body: { card_id: number }) =>
+    req<{ deleted?: boolean }>("POST", "/api/org/cards/delete", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),

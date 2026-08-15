@@ -92,6 +92,23 @@ export default function KanbanScreen({ route, navigation }: Props) {
     [cards, load]
   )
 
+  const deleteCard = useCallback(
+    (card: Card) => {
+      Alert.alert(card.title, "Delete this card?", [
+        { text: "Cancel", style: "cancel" as const },
+        {
+          text: "Delete",
+          style: "destructive" as const,
+          onPress: async () => {
+            setCards((cur) => cur.filter((c) => c.id !== card.id)) // optimistic
+            try { await api.orgDeleteCard({ card_id: card.id }) } catch { load() }
+          },
+        },
+      ])
+    },
+    [load]
+  )
+
   const promptMove = useCallback(
     (card: Card) => {
       const others = columns.filter((c) => c.id !== card.column_id)
@@ -100,11 +117,12 @@ export default function KanbanScreen({ route, navigation }: Props) {
         "Move to column",
         [
           ...others.map((col) => ({ text: col.name, onPress: () => moveCard(card, col.id, 9999) })),
+          { text: "Delete card", style: "destructive" as const, onPress: () => deleteCard(card) },
           { text: "Cancel", style: "cancel" as const },
         ]
       )
     },
-    [columns, moveCard]
+    [columns, moveCard, deleteCard]
   )
 
   const promptAssign = useCallback(

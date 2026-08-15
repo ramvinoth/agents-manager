@@ -178,6 +178,18 @@ class OrchestratorMixin:
             self.send_json(resp, status=status); return
         self.send_json(make() or {"error": "not found"})
 
+    def _p_org_cards_delete(self, req):
+        body = self.read_body() or {}
+        kind, level, actor = self._org_caller(body)
+        if kind is None:
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        make = lambda: db.card_delete(body.get("card_id"))
+        if kind == "mcp":
+            resp, status = self._org_do("card_delete", level, actor,
+                                        {"card_id": body.get("card_id")}, make)
+            self.send_json(resp, status=status); return
+        self.send_json({"deleted": bool(make())})
+
     def _p_org_cards_done(self, req):
         """Move a card to the Done column (last column by position)."""
         body = self.read_body() or {}

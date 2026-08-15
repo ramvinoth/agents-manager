@@ -236,31 +236,50 @@ export default function OrgScreen({ navigation }: Props) {
                 <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
                   {e.role || "—"} · {e.status} · {provName || "default model"}
                 </Text>
-                {open && providers.length ? (
+                {open ? (
                   <View style={{ marginTop: 10 }}>
-                    <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Model</Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                      {providers.map((pr) => {
-                        const on = e.provider === pr.id
-                        return (
-                          <TouchableOpacity
-                            key={pr.id}
-                            testID={`emp-${e.id}-provider-${pr.id}`}
-                            onPress={async () => {
-                              const next = on ? "" : pr.id
-                              setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, provider: next } : x))
-                              try { await api.orgUpdateEmployee({ id: e.id, provider: next }); load() } catch { load() }
-                            }}
-                            style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
-                          >
-                            <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
-                          </TouchableOpacity>
-                        )
-                      })}
-                    </View>
-                    <Text style={{ color: t.textMuted, fontSize: 11, marginTop: 6 }}>
-                      Unset = uses the org default model.
-                    </Text>
+                    {providers.length ? (
+                      <>
+                        <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Model</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {providers.map((pr) => {
+                            const on = e.provider === pr.id
+                            return (
+                              <TouchableOpacity
+                                key={pr.id}
+                                testID={`emp-${e.id}-provider-${pr.id}`}
+                                onPress={async () => {
+                                  const next = on ? "" : pr.id
+                                  setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, provider: next } : x))
+                                  try { await api.orgUpdateEmployee({ id: e.id, provider: next }); load() } catch { load() }
+                                }}
+                                style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
+                              >
+                                <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
+                              </TouchableOpacity>
+                            )
+                          })}
+                        </View>
+                        <Text style={{ color: t.textMuted, fontSize: 11, marginTop: 6 }}>
+                          Unset = uses the org default model.
+                        </Text>
+                      </>
+                    ) : null}
+                    {/* Archive is a reversible soft-delete: an archived employee is
+                        skipped by Harman's planner but keeps its card/skill history. */}
+                    <TouchableOpacity
+                      testID={`emp-${e.id}-archive`}
+                      onPress={async () => {
+                        const next = e.status === "archived" ? "active" : "archived"
+                        setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, status: next } : x))
+                        try { await api.orgUpdateEmployee({ id: e.id, status: next }); load() } catch { load() }
+                      }}
+                      style={{ marginTop: 12, alignSelf: "flex-start", borderRadius: 8, borderWidth: 1, borderColor: t.border, paddingHorizontal: 12, paddingVertical: 7 }}
+                    >
+                      <Text style={{ color: e.status === "archived" ? t.accent : t.danger, fontSize: 13, fontWeight: "600" }}>
+                        {e.status === "archived" ? "Restore" : "Archive"}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 ) : null}
               </Row>

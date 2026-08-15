@@ -79,7 +79,7 @@ def next_position(cards_in_column, index):
 _RED_ACTIONS = {
     # irreversible data loss
     "delete_session", "delete_transcript", "git_reset_hard", "git_force_push",
-    "delete_provider", "delete_file", "delete_employee", "delete_project",
+    "delete_provider", "delete_file", "delete_employee", "delete_project", "card_delete",
     # secrets / keys
     "create_secret", "reveal_secret", "rotate_secret", "write_api_key",
     # money / leaving the perimeter
@@ -134,6 +134,7 @@ _MIN_LEVEL = {
     # lead: shape projects + move work across people
     "project_create": "lead",
     "card_assign": "lead",           # assign to someone else
+    "card_delete": "lead",           # remove a work item (also red → queued for MCP)
     "reassign_across_employees": "lead",
     "approval_resolve": "lead",
     # manager: hire / change the org

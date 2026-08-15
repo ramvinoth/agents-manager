@@ -82,6 +82,7 @@ class SessionViewerHandler(
                   "/api/chat/permission", "/api/push/unregister",
                   "/api/org/board", "/api/org/cards", "/api/org/cards/move",
                   "/api/org/cards/assign", "/api/org/cards/update", "/api/org/cards/done",
+                  "/api/org/cards/delete",
                   "/api/org/employees", "/api/org/projects", "/api/org/skills/propose"}
 
     def _cookie(self, name):
@@ -354,6 +355,7 @@ class SessionViewerHandler(
         "/api/org/cards/assign": "_p_org_cards_assign",
         "/api/org/cards/update": "_p_org_cards_update",
         "/api/org/cards/done": "_p_org_cards_done",
+        "/api/org/cards/delete": "_p_org_cards_delete",
         "/api/org/approvals/resolve": "_p_org_approvals_resolve",
         "/api/org/harman": "_p_org_harman",
         "/api/org/skills/propose": "_p_org_skills_propose",
