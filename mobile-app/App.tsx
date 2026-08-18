@@ -22,6 +22,7 @@ import VoiceScreen from "./src/screens/VoiceScreen"
 import CallScreen from "./src/screens/CallScreen"
 import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
+import ProvidersScreen from "./src/screens/ProvidersScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import OrgScreen from "./src/screens/OrgScreen"
 import HostEditScreen from "./src/screens/HostEditScreen"
@@ -37,6 +38,7 @@ export type RootStackParamList = {
   Call: { host: string; label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string }
   Capabilities: undefined
+  Providers: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   Org: undefined
   HostEdit: { host?: HostConfig } | undefined
@@ -175,6 +177,7 @@ export default function App() {
             <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
+            <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />

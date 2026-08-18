@@ -148,6 +148,15 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
       <TouchableOpacity
+        testID="open-providers"
+        style={styles.profileInfoRow}
+        onPress={() => navigation.navigate("Providers")}
+      >
+        <Icon name="server" size={18} color={t.accent} />
+        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Model providers</Text>
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
+      </TouchableOpacity>
+      <TouchableOpacity
         testID="open-server-picker"
         style={styles.profileInfoRow}
         onPress={() => setServerOpen(true)}

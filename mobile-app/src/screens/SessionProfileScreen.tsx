@@ -19,6 +19,7 @@ import { composerPrefs, notifyEveryReply, setComposerPrefs, setNotifyEveryReply 
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
+import ProviderPicker from "../components/ProviderPicker"
 import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionProfile">
@@ -78,12 +79,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // (the full Claude Code harness pointed at the endpoint). Per-session, saved
   // server-side. Only meaningful when a custom provider is selected.
   const [convMode, setConvMode] = useState<"chat" | "agent">("chat")
-  // Inline editor for adding / editing a preset. null = closed.
-  const [editing, setEditing] = useState<null | { id: string; name: string; baseUrl: string; apiKey: string; model: string }>(null)
-  const [modelOptions, setModelOptions] = useState<string[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [savingProvider, setSavingProvider] = useState(false)
-  const [customModel, setCustomModel] = useState(false)
+  // Bottom-sheet provider picker (select-only). Provider CRUD lives in ProvidersScreen.
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   // Which collapsible cards are open. Behaviour + Model open by default (the
   // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
   // occasional). Stable order + icons = muscle memory.
@@ -182,7 +179,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // Select Default (or a saved preset) for THIS session — persisted server-side.
   function pickProvider(id: string) {
     setProvider(id)
-    setEditing(null)
     if (path) api.sessionMetaSave({ session: path, provider: id, host }).catch(() => {})
   }
 
@@ -192,72 +188,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     if (path) api.sessionMetaSave({ session: path, convMode: m, host }).catch(() => {})
   }
 
-  // Open the inline editor: blank for a new preset, or pre-filled to edit one.
-  // The apiKey is never returned by the server, so the field starts empty and an
-  // empty value on save means "keep the existing key".
-  function openEditor(p?: Provider) {
-    setModelOptions([])
-    setCustomModel(false)
-    setEditing(
-      p
-        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model }
-        : { id: "", name: "", baseUrl: "", apiKey: "", model: "" }
-    )
-  }
-
-  // Populate the model dropdown from the endpoint (fetched server-side so the key
-  // never leaves the box). Works before the preset is saved via baseUrl+key.
-  function loadModels() {
-    if (!editing) return
-    setLoadingModels(true)
-    const q = editing.id
-      ? { id: editing.id }
-      : { baseUrl: editing.baseUrl.trim(), key: editing.apiKey.trim() || undefined }
-    api
-      .providerModels(q)
-      .then((r) => {
-        setModelOptions(r.models || [])
-        if (!r.models?.length) setCustomModel(true)
-      })
-      .catch(() => setCustomModel(true))
-      .finally(() => setLoadingModels(false))
-  }
-
-  // Save the preset (create or update), then select it for this session.
-  function saveProvider() {
-    if (!editing) return
-    const name = editing.name.trim()
-    const baseUrl = editing.baseUrl.trim()
-    const model = editing.model.trim()
-    if (!baseUrl || !model) return
-    setSavingProvider(true)
-    api
-      .providerSave({
-        id: editing.id || undefined,
-        name: name || baseUrl,
-        baseUrl,
-        model,
-        // Empty => keep the existing key (edit without re-typing the secret).
-        ...(editing.apiKey.trim() ? { apiKey: editing.apiKey.trim() } : {}),
-      })
-      .then((saved) => {
-        if (saved.error) return
-        setProviders((all) => {
-          const rest = all.filter((x) => x.id !== saved.id)
-          return [...rest, saved].sort((a, b) => a.name.localeCompare(b.name))
-        })
-        setEditing(null)
-        pickProvider(saved.id)
-      })
-      .catch(() => {})
-      .finally(() => setSavingProvider(false))
-  }
-
-  function deleteProvider(id: string) {
-    setProviders((all) => all.filter((p) => p.id !== id))
-    if (provider === id) pickProvider("")
-    api.providerDelete(id).catch(() => {})
-  }
 
   function addLoop() {
     const prompt = loopPrompt.trim()
@@ -414,36 +344,25 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
         <Text style={styles.sheetSection}>PROVIDER</Text>
         <Text style={styles.sheetHint}>Default uses Claude. A custom provider routes this session to your own endpoint.</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
-          <TouchableOpacity
-            testID="sp-provider-default"
-            style={[styles.sheetPill, provider === "" ? styles.sheetPillActive : null]}
-            onPress={() => pickProvider("")}
-          >
-            {provider === "" ? <Icon name="check" size={14} color="#fff" /> : null}
-            <Text style={[styles.sheetPillText, provider === "" ? styles.sheetPillTextActive : null]}>Default</Text>
-          </TouchableOpacity>
-          {providers.map((p) => {
-            const active = provider === p.id
-            return (
-              <TouchableOpacity
-                key={p.id}
-                testID={`sp-provider-${p.id}`}
-                style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                onPress={() => pickProvider(p.id)}
-                onLongPress={() => openEditor(p)}
-                delayLongPress={300}
-              >
-                {active ? <Icon name="check" size={14} color="#fff" /> : null}
-                <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{p.name}</Text>
-              </TouchableOpacity>
-            )
-          })}
-          <TouchableOpacity testID="sp-provider-add" style={styles.sheetPill} onPress={() => openEditor()}>
-            <Icon name="add" size={14} color={t.accent} />
-            <Text style={[styles.sheetPillText, { color: t.accent }]}>Custom</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        <TouchableOpacity
+          testID="sp-provider-row"
+          style={styles.profileInfoRow}
+          onPress={() => setProviderPickerOpen(true)}
+        >
+          <Icon name={provider === "" ? "sparkle" : "server"} size={18} color={t.accent} />
+          <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]} numberOfLines={1}>
+            {providerName}
+          </Text>
+          <Icon name="chevronRight" size={18} color={t.textMuted} />
+        </TouchableOpacity>
+        <ProviderPicker
+          visible={providerPickerOpen}
+          providers={providers}
+          selected={provider}
+          onSelect={pickProvider}
+          onClose={() => setProviderPickerOpen(false)}
+          onManage={() => navigation.navigate("Providers")}
+        />
 
         {/* Conversation mode — only meaningful for a custom provider. */}
         {provider !== "" ? (
@@ -471,104 +390,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </>
         ) : null}
 
-        {/* Inline editor for a custom provider. */}
-        {editing ? (
-          <View style={{ paddingHorizontal: 2, gap: 8, marginTop: 4 }}>
-            <TextInput
-              testID="sp-provider-name"
-              style={styles.ssInput}
-              value={editing.name}
-              onChangeText={(v) => setEditing((e) => (e ? { ...e, name: v } : e))}
-              placeholder="Name (e.g. BrainTwin llama)"
-              placeholderTextColor={t.textMuted}
-            />
-            <TextInput
-              testID="sp-provider-baseurl"
-              style={styles.ssInput}
-              value={editing.baseUrl}
-              onChangeText={(v) => setEditing((e) => (e ? { ...e, baseUrl: v } : e))}
-              placeholder="Base URL (https://inference.braintwin.ai)"
-              placeholderTextColor={t.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-            />
-            <TextInput
-              testID="sp-provider-key"
-              style={styles.ssInput}
-              value={editing.apiKey}
-              onChangeText={(v) => setEditing((e) => (e ? { ...e, apiKey: v } : e))}
-              placeholder={editing.id ? "API key (leave blank to keep current)" : "API key (sk-…)"}
-              placeholderTextColor={t.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", paddingHorizontal: 16 }}>
-              <TouchableOpacity
-                testID="sp-provider-load-models"
-                style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() ? 1 : 0.5 }]}
-                disabled={!editing.baseUrl.trim() || loadingModels}
-                onPress={loadModels}
-              >
-                <Text style={styles.ssAddBtnText}>{loadingModels ? "Loading…" : "Load models"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity testID="sp-provider-model-custom" onPress={() => setCustomModel((c) => !c)}>
-                <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
-                  {customModel ? "Pick from list" : "Enter manually"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {customModel || (!modelOptions.length && !!editing.model) ? (
-              <TextInput
-                testID="sp-provider-model-input"
-                style={styles.ssInput}
-                value={editing.model}
-                onChangeText={(v) => setEditing((e) => (e ? { ...e, model: v } : e))}
-                placeholder="Model name (e.g. gemma-2b)"
-                placeholderTextColor={t.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            ) : modelOptions.length ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4, paddingHorizontal: 16 }}>
-                {modelOptions.map((m) => {
-                  const active = editing.model === m
-                  return (
-                    <TouchableOpacity
-                      key={m}
-                      testID={`sp-provider-model-${m}`}
-                      style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                      onPress={() => setEditing((e) => (e ? { ...e, model: m } : e))}
-                    >
-                      <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m}</Text>
-                    </TouchableOpacity>
-                  )
-                })}
-              </ScrollView>
-            ) : (
-              <Text style={styles.sheetHint}>Load models from the endpoint, or tap “Enter manually”.</Text>
-            )}
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2, paddingHorizontal: 16 }}>
-              <TouchableOpacity
-                testID="sp-provider-save"
-                style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() && editing.model.trim() ? 1 : 0.5 }]}
-                disabled={!editing.baseUrl.trim() || !editing.model.trim() || savingProvider}
-                onPress={saveProvider}
-              >
-                <Text style={styles.ssAddBtnText}>{savingProvider ? "Saving…" : "Save & use"}</Text>
-              </TouchableOpacity>
-              {editing.id ? (
-                <TouchableOpacity testID="sp-provider-delete" onPress={() => deleteProvider(editing.id)}>
-                  <Text style={{ color: t.danger, fontSize: 13, fontWeight: "600" }}>Delete</Text>
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity testID="sp-provider-cancel" onPress={() => setEditing(null)}>
-                <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
       </>)}
 
       {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}
