@@ -16,24 +16,13 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { useStore } from "@/store"
-import { ProvidersDialog } from "./ProvidersDialog"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { LoopsDialog } from "./settings/LoopsDialog"
 import { GitDialog } from "./settings/GitDialog"
+import { ModelProviderDialog } from "./settings/ModelProviderDialog"
 import type { VisibleTypes } from "@/lib/types"
-
-// Radix Select forbids an empty-string item value, so Default (Claude) — whose
-// real provider id is "" — uses this sentinel in the dropdown only.
-const DEFAULT_PROVIDER = "__default__"
 
 function SectionHeader({
   icon: Icon,
@@ -107,9 +96,7 @@ const TYPE_META: Record<keyof VisibleTypes, { label: string; icon: React.Compone
 }
 const TYPES: (keyof VisibleTypes)[] = ["user", "assistant", "tools", "system"]
 
-const HELP = "mt-2 text-[11px] leading-relaxed text-muted-foreground/60"
-
-type Modal = "systemPrompt" | "goal" | "loops" | "git" | "providers" | null
+type Modal = "provider" | "systemPrompt" | "goal" | "loops" | "git" | null
 
 export function SettingsPanel() {
   const meta = useStore((s) => s.meta)
@@ -129,6 +116,9 @@ export function SettingsPanel() {
 
   const sysPrompt = meta?.systemPrompt || ""
   const goal = meta?.goal || ""
+  const providerName = meta?.provider
+    ? providers.find((p) => p.id === meta.provider)?.name || "Custom provider"
+    : "Default (Claude)"
 
   return (
     <div className="h-full overflow-y-auto">
@@ -161,54 +151,19 @@ export function SettingsPanel() {
 
         {/* Model provider — per-session choice from the global library. */}
         <section className="py-4">
-          <SectionHeader icon={Server} title="Model provider">
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => setModal("providers")}>
-              Manage
-            </Button>
-          </SectionHeader>
-          <Select
-            value={meta?.provider ? meta.provider : DEFAULT_PROVIDER}
-            onValueChange={(v) => saveMeta("provider", v === DEFAULT_PROVIDER ? "" : v)}
-          >
-            <SelectTrigger size="sm" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={DEFAULT_PROVIDER}>Default (Claude)</SelectItem>
-              {providers.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {meta?.provider ? (
-            <div className="mt-2">
-              <div className="mb-1 text-[11px] text-muted-foreground">Conversation mode</div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(["chat", "agent"] as const).map((m) => {
-                  const on = (meta?.convMode || "chat") === m
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => saveMeta("convMode", m)}
-                      className={cn(
-                        "rounded-md border py-1.5 text-xs capitalize transition-colors",
-                        on
-                          ? "border-primary/40 bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-                      )}
-                    >
-                      {m}
-                    </button>
-                  )
-                })}
+          <SectionHeader icon={Server} title="Model provider" />
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <Server className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left" onClick={() => setModal("provider")}>
+              <div className="text-sm font-medium">{providerName}</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {meta?.provider ? `${meta.convMode || "chat"} mode` : "Uses your Claude login"}
               </div>
-              <p className={HELP}>Chat proxies plainly to the endpoint; Agent runs the full harness against it.</p>
-            </div>
-          ) : (
-            <p className={HELP}>Route this chat to a custom model endpoint, or use your Claude login.</p>
-          )}
+            </button>
+            <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("provider")} title="Choose provider">
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
         </section>
 
         {/* System prompt / Goal / Loops / Git — summary rows opening modals. */}
@@ -266,7 +221,7 @@ export function SettingsPanel() {
         </section>
       </div>
 
-      {modal === "providers" && <ProvidersDialog onClose={() => setModal(null)} />}
+      {modal === "provider" && <ModelProviderDialog onClose={() => setModal(null)} />}
       {modal === "systemPrompt" && (
         <TextFieldDialog
           title="System prompt"
