@@ -1123,6 +1123,19 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         try:
             env = dict(os.environ)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            # CRITICAL: never let the SERVER'S OWN model/provider env leak into the
+            # child claude. If the viewer was launched from a shell that exported
+            # ANTHROPIC_* or CLAUDE_CODE_MAX_* (e.g. pointing at a LiteLLM proxy),
+            # a real OS env var BEATS a --settings file's env block — so an inherited
+            # ANTHROPIC_BASE_URL / CLAUDE_CODE_MAX_CONTEXT_TOKENS would silently
+            # override the per-session provider settings and reroute the turn to the
+            # wrong endpoint / wrong context window. Strip them so the child starts
+            # clean: a custom-provider session gets exactly provider_env (below); a
+            # Default session gets only what ~/.claude/settings.json specifies.
+            for _k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                       "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+                       "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+                env.pop(_k, None)
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
