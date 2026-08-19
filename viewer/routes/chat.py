@@ -163,19 +163,30 @@ class ChatMixin:
         provider_env = None
         if host == "local":
             from viewer.engine import SESSION_META
+            from viewer import providers
             meta = SESSION_META.get(session_id) or {}
             preset_id = meta.get("provider", "")
             if preset_id:
+                # A provider is SET but must actually resolve. A deleted/renamed
+                # preset id is an ERROR — never silently fall through to Default
+                # (which would reroute the turn to the inherited base URL the user
+                # never chose, e.g. a LiteLLM proxy). Fail loudly and actionably.
+                # (preset_id == "" means "Default/Claude" and is handled by falling
+                # through with provider_env=None — that path is intentional.)
+                if not providers.get_preset(preset_id):
+                    self.send_json({"error": "The model provider set for this chat no longer "
+                                    "exists. Open Session settings and choose a provider."},
+                                   status=400)
+                    return
                 conv_mode = meta.get("convMode", "chat")
                 if conv_mode == "agent":
-                    from viewer import providers
                     provider_env = providers.anthropic_env(preset_id)
                     # Fall through to start_claude_run below (with provider_env);
                     # queue/steer work because it's a real CHAT_JOBS claude job.
                 else:
                     from viewer.customrun import start_custom_run
                     if not start_custom_run(session_id, preset_id, message, cwd, host, mode):
-                        self.send_json({"error": "A message is already being processed, or the provider is unavailable"}, status=409)
+                        self.send_json({"error": "A message is already being processed for this session"}, status=409)
                         return
                     self.send_json({"started": True, "session": session_id})
                     return
