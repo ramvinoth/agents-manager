@@ -242,6 +242,9 @@ class ApiClient {
   loopsCreate(body: Body) {
     return this.postRes("/api/loops", body)
   }
+  loopsEdit(body: Body) {
+    return this.postRes("/api/loops/edit", body)
+  }
   loopsDelete(id: string) {
     return this.postRes("/api/loops/delete", { id })
   }

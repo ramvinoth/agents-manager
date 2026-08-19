@@ -127,6 +127,39 @@ class SessionsMixin:
             save_json_file(LOOPS_FILE, LOOPS)
         self.send_json({"created": lid, "interval": interval})
 
+    def handle_edit_loop(self):
+        """Update an existing loop in place, preserving its id, session and run
+        history. Only the fields present in the body change; the schedule
+        (`nextRun`) is recomputed only when the interval actually changes."""
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        lid = body.get("id", "")
+        with LOOPS_LOCK:
+            loop = LOOPS.get(lid)
+            if not loop:
+                self.send_json({"error": "Loop not found"}, status=404)
+                return
+            if "prompt" in body:
+                prompt = (body.get("prompt") or "").strip()
+                if not prompt:
+                    self.send_json({"error": "Empty prompt"}, status=400)
+                    return
+                loop["prompt"] = prompt
+            if "interval" in body:
+                interval = parse_interval(body.get("interval", ""))
+                if not interval:
+                    self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
+                    return
+                if interval != loop.get("interval"):
+                    loop["interval"] = interval
+                    loop["nextRun"] = time.time() + interval
+            if "model" in body:
+                loop["model"] = (body.get("model") or "").strip()
+            save_json_file(LOOPS_FILE, LOOPS)
+        self.send_json({"updated": lid, "interval": loop.get("interval")})
+
     # ----- Slash commands / projects / session resolution -----
 
     def _g_loops(self, req):
@@ -324,6 +357,9 @@ class SessionsMixin:
 
     def _p_loops(self, req):
         self.handle_create_loop()
+
+    def _p_loops_edit(self, req):
+        self.handle_edit_loop()
 
     def serve_remote_agent_session(self, host, agent, rel_path, q):
         if not any(k in q for k in ("tail", "before", "from")):

@@ -158,6 +158,7 @@ interface AppState {
   loadProviders: () => Promise<void>
   loadLoops: () => Promise<void>
   createLoop: (prompt: string, interval: number, model: string) => Promise<void>
+  editLoop: (id: string, prompt: string, interval: number, model: string) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
   toggleVisible: (t: keyof VisibleTypes) => void
   loadProjects: () => Promise<void>
@@ -989,6 +990,12 @@ export const useStore = create<AppState>((set, get) => {
       const { currentSessionPath } = get()
       if (!prompt.trim()) return
       const res = await api.loopsCreate({ session: currentSessionPath, prompt, interval, model })
+      await res.json().catch(() => ({}))
+      get().loadLoops()
+    },
+    editLoop: async (id, prompt, interval, model) => {
+      if (!prompt.trim()) return
+      const res = await api.loopsEdit({ id, prompt, interval, model })
       await res.json().catch(() => ({}))
       get().loadLoops()
     },

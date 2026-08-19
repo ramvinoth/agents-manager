@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
   Repeat,
-  Trash2,
   User,
   Bot,
   Wrench,
@@ -9,16 +8,13 @@ import {
   FileText,
   Target,
   Filter,
-  Check,
-  Plus,
   Server,
   GitBranch,
-  RefreshCw,
-  Loader2,
+  Pencil,
+  X,
+  ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -28,10 +24,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { fmtInterval, parseInterval } from "@/lib/format"
-import { SYNC_PROMPT } from "@/lib/git"
-import { useStore, useAgentLabel } from "@/store"
+import { useStore } from "@/store"
 import { ProvidersDialog } from "./ProvidersDialog"
+import { TextFieldDialog } from "./settings/TextFieldDialog"
+import { LoopsDialog } from "./settings/LoopsDialog"
+import { GitDialog } from "./settings/GitDialog"
 import type { VisibleTypes } from "@/lib/types"
 
 // Radix Select forbids an empty-string item value, so Default (Claude) — whose
@@ -41,12 +38,10 @@ const DEFAULT_PROVIDER = "__default__"
 function SectionHeader({
   icon: Icon,
   title,
-  saved,
   children,
 }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
-  saved?: boolean
   children?: React.ReactNode
 }) {
   return (
@@ -55,12 +50,51 @@ function SectionHeader({
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </span>
-      {saved && (
-        <span className="flex items-center gap-0.5 text-[10px] text-emerald-500">
-          <Check className="size-3" /> Saved
-        </span>
-      )}
       {children && <span className="ml-auto">{children}</span>}
+    </div>
+  )
+}
+
+/** A tappable summary row: icon · title + one-line preview → opens a modal.
+ *  Optional edit + clear affordances (clear hidden when there's nothing set). */
+function SummaryRow({
+  icon: Icon,
+  title,
+  preview,
+  isSet,
+  onOpen,
+  onClear,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  preview: string
+  isSet: boolean
+  onOpen: () => void
+  onClear?: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        <div className="text-sm font-medium">{title}</div>
+        <div className={cn("truncate text-[11px]", isSet ? "text-muted-foreground" : "text-muted-foreground/50 italic")}>
+          {preview}
+        </div>
+      </button>
+      <Button variant="ghost" size="icon" className="size-7" onClick={onOpen} title={`Edit ${title.toLowerCase()}`}>
+        <Pencil className="size-3.5" />
+      </Button>
+      {isSet && onClear && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-destructive"
+          onClick={onClear}
+          title="Clear"
+        >
+          <X className="size-3.5" />
+        </Button>
+      )}
     </div>
   )
 }
@@ -75,45 +109,26 @@ const TYPES: (keyof VisibleTypes)[] = ["user", "assistant", "tools", "system"]
 
 const HELP = "mt-2 text-[11px] leading-relaxed text-muted-foreground/60"
 
+type Modal = "systemPrompt" | "goal" | "loops" | "git" | "providers" | null
+
 export function SettingsPanel() {
   const meta = useStore((s) => s.meta)
   const saveMeta = useStore((s) => s.saveMeta)
   const loops = useStore((s) => s.loops)
-  const createLoop = useStore((s) => s.createLoop)
-  const deleteLoop = useStore((s) => s.deleteLoop)
   const visible = useStore((s) => s.visible)
   const toggleVisible = useStore((s) => s.toggleVisible)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const providers = useStore((s) => s.providers)
   const git = useStore((s) => s.git)
-  const chatRunning = useStore((s) => s.chatRunning)
-  const sendChat = useStore((s) => s.sendChat)
-  const loadGitStatus = useStore((s) => s.loadGitStatus)
-  const agentLabel = useAgentLabel()
 
-  const [sysPrompt, setSysPrompt] = useState("")
-  const [goal, setGoal] = useState("")
-  const [loopPrompt, setLoopPrompt] = useState("")
-  const [loopInterval, setLoopInterval] = useState("1h")
-  const [saved, setSaved] = useState<"systemPrompt" | "goal" | null>(null)
-  const [manageOpen, setManageOpen] = useState(false)
-  const [gitRefreshing, setGitRefreshing] = useState(false)
-
-  useEffect(() => {
-    setSysPrompt(meta?.systemPrompt || "")
-    setGoal(meta?.goal || "")
-  }, [meta?.systemPrompt, meta?.goal])
-
-  function save(field: "systemPrompt" | "goal", value: string) {
-    if ((field === "systemPrompt" ? meta?.systemPrompt : meta?.goal) === value) return
-    saveMeta(field, value)
-    setSaved(field)
-    setTimeout(() => setSaved((f) => (f === field ? null : f)), 1600)
-  }
+  const [modal, setModal] = useState<Modal>(null)
 
   if (!currentSessionPath) {
     return <div className="p-4 text-xs text-muted-foreground">No session loaded.</div>
   }
+
+  const sysPrompt = meta?.systemPrompt || ""
+  const goal = meta?.goal || ""
 
   return (
     <div className="h-full overflow-y-auto">
@@ -147,12 +162,7 @@ export function SettingsPanel() {
         {/* Model provider — per-session choice from the global library. */}
         <section className="py-4">
           <SectionHeader icon={Server} title="Model provider">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => setManageOpen(true)}
-            >
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => setModal("providers")}>
               Manage
             </Button>
           </SectionHeader>
@@ -194,166 +204,91 @@ export function SettingsPanel() {
                   )
                 })}
               </div>
-              <p className={HELP}>
-                Chat proxies plainly to the endpoint; Agent runs the full harness against it.
-              </p>
+              <p className={HELP}>Chat proxies plainly to the endpoint; Agent runs the full harness against it.</p>
             </div>
           ) : (
             <p className={HELP}>Route this chat to a custom model endpoint, or use your Claude login.</p>
           )}
         </section>
 
-        {/* Git — repo/branch details + Sync (shown only for a repo cwd). */}
-        {git?.repo && (
-          <section className="py-4">
-            <SectionHeader icon={GitBranch} title="Git">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[11px]"
-                disabled={gitRefreshing}
-                onClick={async () => {
-                  setGitRefreshing(true)
-                  await loadGitStatus()
-                  setGitRefreshing(false)
-                }}
-              >
-                {gitRefreshing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-              </Button>
-            </SectionHeader>
-            <div className="space-y-1 text-xs">
-              <div className="flex items-center gap-1.5">
-                <span className="font-medium text-foreground">{git.name || "repo"}</span>
-                <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
-                  {git.branch || "—"}
-                </Badge>
-              </div>
-              {git.remote && (
-                <div className="truncate font-mono text-[11px] text-muted-foreground" title={git.remote}>
-                  {git.remote}
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                {git.dirty ? (
-                  <Badge variant="secondary" className="px-1.5 text-[10px] text-amber-500">
-                    {git.dirty} change{git.dirty === 1 ? "" : "s"}
-                  </Badge>
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">Up to date</span>
-                )}
-                {!!git.ahead && <Badge variant="outline" className="px-1.5 text-[10px]">↑{git.ahead}</Badge>}
-                {!!git.behind && <Badge variant="outline" className="px-1.5 text-[10px]">↓{git.behind}</Badge>}
-              </div>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="mt-2 h-8 w-full gap-1.5"
-              disabled={chatRunning}
-              onClick={() => sendChat(SYNC_PROMPT)}
-            >
-              <RefreshCw className="size-3.5" /> Sync branch
-            </Button>
-            <p className={HELP}>Commits, pushes, and rebases this branch onto the default branch.</p>
-          </section>
-        )}
-
-        {/* System prompt */}
-        <section className="py-4">
-          <SectionHeader icon={FileText} title="System prompt" saved={saved === "systemPrompt"} />
-          <Textarea
-            value={sysPrompt}
-            onChange={(e) => setSysPrompt(e.target.value)}
-            onBlur={() => save("systemPrompt", sysPrompt)}
-            placeholder="Add instructions for this session…"
-            className="min-h-20 resize-none text-xs leading-relaxed"
+        {/* System prompt / Goal / Loops / Git — summary rows opening modals. */}
+        <section className="space-y-2 py-4">
+          <SummaryRow
+            icon={FileText}
+            title="System prompt"
+            preview={sysPrompt || "Not set — tap to add instructions"}
+            isSet={!!sysPrompt}
+            onOpen={() => setModal("systemPrompt")}
+            onClear={() => saveMeta("systemPrompt", "")}
           />
-          <p className={HELP}>Appended to {agentLabel}'s system prompt on the next message.</p>
-        </section>
-
-        {/* Goal */}
-        <section className="py-4">
-          <SectionHeader icon={Target} title="Goal" saved={saved === "goal"} />
-          <Input
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            onBlur={() => save("goal", goal)}
-            placeholder="What is this session for?"
-            className="h-9 text-sm"
+          <SummaryRow
+            icon={Target}
+            title="Goal"
+            preview={goal || "Not set — what is this session for?"}
+            isSet={!!goal}
+            onOpen={() => setModal("goal")}
+            onClear={() => saveMeta("goal", "")}
           />
-        </section>
-
-        {/* Loops */}
-        <section className="py-4">
-          <SectionHeader icon={Repeat} title="Loops">
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <Repeat className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left" onClick={() => setModal("loops")}>
+              <div className="text-sm font-medium">Loops</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {loops.length ? `${loops.length} loop${loops.length === 1 ? "" : "s"} scheduled` : "No loops — tap to add"}
+              </div>
+            </button>
             {loops.length > 0 && (
               <Badge variant="secondary" className="h-5 min-w-5 justify-center px-1.5 text-[10px] tabular-nums">
                 {loops.length}
               </Badge>
             )}
-          </SectionHeader>
-
-          {loops.length > 0 && (
-            <div className="mb-2 space-y-1.5">
-              {loops.map((l) => (
-                <div
-                  key={l.id}
-                  className="group flex items-center gap-2 rounded-md border border-border bg-card/40 px-2.5 py-2 text-xs"
-                >
-                  <Repeat className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate" title={l.prompt}>
-                    {l.prompt}
-                  </span>
-                  <Badge variant="outline" className="shrink-0 px-1.5 text-[10px] font-normal tabular-nums">
-                    {fmtInterval(l.interval)}
-                  </Badge>
-                  <button
-                    onClick={() => deleteLoop(l.id)}
-                    className="shrink-0 text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100"
-                    aria-label="Delete loop"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
+            <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("loops")} title="Manage loops">
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+          {git?.repo && (
+            <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+              <GitBranch className="size-4 shrink-0 text-muted-foreground" />
+              <button className="min-w-0 flex-1 text-left" onClick={() => setModal("git")}>
+                <div className="text-sm font-medium">Git</div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {(git.name || "repo") + " · " + (git.branch || "—")}
                 </div>
-              ))}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Textarea
-              value={loopPrompt}
-              onChange={(e) => setLoopPrompt(e.target.value)}
-              placeholder="Prompt to run on a schedule…"
-              className="min-h-16 resize-none text-xs leading-relaxed"
-            />
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] text-muted-foreground">Runs every</span>
-              <Input
-                value={loopInterval}
-                onChange={(e) => setLoopInterval(e.target.value)}
-                placeholder="1h"
-                className="h-8 w-14 px-2 text-center text-xs tabular-nums"
-                title="Interval — e.g. 30s, 5m, 1h"
-              />
-              <Button
-                size="sm"
-                className="ml-auto h-8 gap-1 px-3 text-xs"
-                disabled={!loopPrompt.trim()}
-                onClick={() => {
-                  createLoop(loopPrompt, parseInterval(loopInterval), "")
-                  setLoopPrompt("")
-                }}
-              >
-                <Plus className="size-3.5" /> Add loop
+              </button>
+              {!!git.dirty && (
+                <Badge variant="secondary" className="px-1.5 text-[10px] text-amber-500">{git.dirty}</Badge>
+              )}
+              <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("git")} title="Git details">
+                <ChevronRight className="size-4" />
               </Button>
             </div>
-          </div>
-          {loops.length === 0 && (
-            <p className={HELP}>Automatically re-runs a prompt on a schedule.</p>
           )}
         </section>
       </div>
-      {manageOpen && <ProvidersDialog onClose={() => setManageOpen(false)} />}
+
+      {modal === "providers" && <ProvidersDialog onClose={() => setModal(null)} />}
+      {modal === "systemPrompt" && (
+        <TextFieldDialog
+          title="System prompt"
+          description="Appended to the agent's system prompt on the next message."
+          value={sysPrompt}
+          placeholder="Add instructions for this session…"
+          onSave={(v) => saveMeta("systemPrompt", v)}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "goal" && (
+        <TextFieldDialog
+          title="Goal"
+          description="What is this session for? The agent keeps working toward it."
+          value={goal}
+          placeholder="What is this session for?"
+          onSave={(v) => saveMeta("goal", v)}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "loops" && <LoopsDialog onClose={() => setModal(null)} />}
+      {modal === "git" && <GitDialog onClose={() => setModal(null)} />}
     </div>
   )
 }
