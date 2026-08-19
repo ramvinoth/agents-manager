@@ -9,7 +9,7 @@ import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Providers">
 
-type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model: string }
+type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model: string; contextLimit: string }
 
 /**
  * The GLOBAL provider library — add / edit / delete the custom model endpoints
@@ -45,8 +45,8 @@ export default function ProvidersScreen({ navigation }: Props) {
     setCustomModel(false)
     setEditing(
       p
-        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model }
-        : { id: "", name: "", baseUrl: "", apiKey: "", model: "" }
+        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model, contextLimit: p.contextLimit ? String(p.contextLimit) : "" }
+        : { id: "", name: "", baseUrl: "", apiKey: "", model: "", contextLimit: "" }
     )
   }
 
@@ -84,6 +84,8 @@ export default function ProvidersScreen({ navigation }: Props) {
         baseUrl,
         model,
         ...(editing.apiKey.trim() ? { apiKey: editing.apiKey.trim() } : {}),
+        // Always send contextLimit so clearing the field (→ 0) actually clears it.
+        contextLimit: Math.max(0, parseInt(editing.contextLimit.trim(), 10) || 0),
       })
       .then((saved) => {
         if (saved.error) return
@@ -238,6 +240,18 @@ export default function ProvidersScreen({ navigation }: Props) {
           ) : (
             <Text style={styles.sheetHint}>Load models from the endpoint, or tap “Enter manually”.</Text>
           )}
+          <TextInput
+            testID="provider-context-limit"
+            style={styles.ssInput}
+            value={editing.contextLimit}
+            onChangeText={(v) => setEditing((e) => (e ? { ...e, contextLimit: v.replace(/[^0-9]/g, "") } : e))}
+            placeholder="Context limit (tokens, e.g. 242000)"
+            placeholderTextColor={t.textMuted}
+            keyboardType="number-pad"
+          />
+          <Text style={styles.sheetHint}>
+            The endpoint&apos;s real max context. Lets the agent compact before overflowing it. Leave blank if unsure.
+          </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
             <TouchableOpacity
               testID="provider-save"

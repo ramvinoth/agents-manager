@@ -50,7 +50,7 @@ export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: strin
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
-export type Provider = { id: string; name: string; baseUrl: string; model: string }
+export type Provider = { id: string; name: string; baseUrl: string; model: string; contextLimit?: number }
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
@@ -289,7 +289,7 @@ export const api = {
   //      on save but never returned; /models is fetched server-side so the key
   //      never touches the device. ----
   providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
-  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string }) =>
+  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; contextLimit?: number }) =>
     req<Provider & { error?: string }>("POST", "/api/providers", body),
   providerDelete: (id: string) => req<{ deleted?: boolean }>("POST", "/api/providers/delete", { id }),
   // Populate the model dropdown: either from a saved preset (id), or by probing a

@@ -32,6 +32,8 @@ class ProvidersMixin:
                 body.get("model", ""),
                 # None => keep existing key (edit without re-typing the secret).
                 body.get("apiKey") if "apiKey" in body else None,
+                # None => keep existing context limit; 0 clears it.
+                body.get("contextLimit") if "contextLimit" in body else None,
             )
         except ValueError as e:
             self.send_json({"error": str(e)}, status=400)
