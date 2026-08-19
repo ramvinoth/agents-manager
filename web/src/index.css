@@ -187,3 +187,31 @@ body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* Mermaid diagrams render via the <MermaidDiagram> React component (SVG owned in
+   component state). The toolbar + one of {svg, source} are always present; the
+   component decides which to show, so CSS here is purely presentational. */
+.mermaid-diagram > .mermaid-toolbar {
+  display: flex; gap: 0.375rem; justify-content: flex-end; margin-bottom: 0.25rem;
+}
+.mermaid-diagram > .mermaid-svg { display: flex; justify-content: center; padding: 0.25rem 0; overflow-x: auto; }
+.mermaid-diagram .mermaid-svg svg { max-width: 100%; height: auto; }
+.mermaid-toolbar button {
+  font-size: 0.72rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+  border: 1px solid var(--border, #d4d4d8); background: var(--muted, #f4f4f5);
+  color: var(--muted-foreground, #52525b); cursor: pointer;
+}
+.mermaid-toolbar button:hover { background: var(--accent, #e4e4e7); }
+.mermaid-toolbar button.copied { color: #16a34a; border-color: #16a34a; }
+.mermaid-dl-wrap { position: relative; }
+.mermaid-dl-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+  display: flex; flex-direction: column; min-width: 132px;
+  border: 1px solid var(--border, #d4d4d8); border-radius: 0.5rem; overflow: hidden;
+  background: var(--popover, #ffffff); box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+}
+.mermaid-dl-menu button {
+  text-align: left; font-size: 0.8rem; padding: 0.5rem 0.75rem; border: none;
+  background: transparent; color: var(--popover-foreground, #18181b); cursor: pointer;
+}
+.mermaid-dl-menu button:hover { background: var(--accent, #f4f4f5); }

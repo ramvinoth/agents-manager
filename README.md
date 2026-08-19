@@ -34,7 +34,10 @@ createdb viewer
 # 2. Build the web UI
 cd web && npm install && npm run build && cd ..
 
-# 3. Run the server (defaults to :8091)
+# 3. Bootstrap the empire (idempotent: tables + seed CEO/Harman + skills dir)
+make bootstrap
+
+# 4. Run the server (defaults to :8091)
 make serve         # or: python3 server.py 8091
 ```
 

@@ -146,22 +146,19 @@ class CapabilitiesMixin:
         if not re.fullmatch(r"[\w-]+", name):
             self.send_json({"error": "Skill name must be letters/digits/dashes/underscores"}, status=400)
             return
+        cwd = None
         if scope == "project":
             cwd = self.session_cwd(body.get("session", ""))
             if not cwd:
                 self.send_json({"error": "Session not found for project scope"}, status=404)
                 return
-            base = cwd / ".claude" / "skills"
-        else:
-            base = Path.home() / ".claude" / "skills"
         try:
-            d = base / name
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "SKILL.md").write_text(content)
+            from viewer import skills
+            p = skills.write_skill(name, content, scope=scope, cwd=cwd)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
             return
-        self.send_json({"saved": True, "path": str(d / "SKILL.md")})
+        self.send_json({"saved": True, "path": str(p)})
 
     def session_cwd(self, rel):
         full = self.resolve_session_quiet(rel) if rel else None

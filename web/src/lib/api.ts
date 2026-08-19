@@ -2,6 +2,8 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
+import type { Provider } from "./types"
+
 type Body = Record<string, unknown>
 
 class ApiClient {
@@ -143,6 +145,36 @@ class ApiClient {
     return this.getJSON(`/api/git/clone/status?id=${encodeURIComponent(id)}`)
   }
 
+  // ---- model providers (global library — NOT host-scoped) ----
+  /** The saved custom-endpoint presets. apiKey is never returned. */
+  providers() {
+    return this.getJSON<{ providers: Provider[] }>("/api/providers")
+  }
+  /** Create (omit id) or update a preset. apiKey omitted = keep existing;
+   *  contextLimit 0 = clear, omitted = keep. Returns the saved public preset. */
+  providerSave(body: {
+    id?: string
+    name: string
+    baseUrl: string
+    model: string
+    apiKey?: string
+    contextLimit?: number
+  }) {
+    return this.postJSON<Provider & { error?: string }>("/api/providers", body)
+  }
+  providerDelete(id: string) {
+    return this.postJSON<{ deleted?: boolean }>("/api/providers/delete", { id })
+  }
+  /** List an endpoint's models — from a saved preset (id) or by probing a
+   *  baseUrl+key before saving. The key never leaves the server. */
+  providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
+    const params =
+      "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
+    return this.getJSON<{ models: string[]; error?: string }>(
+      "/api/providers/models?" + new URLSearchParams(params).toString()
+    )
+  }
+
   // ---- session lifecycle ----
   newSession(body: Body) {
     return this.postRes("/api/new-session", this.wha(body))
@@ -194,6 +226,11 @@ class ApiClient {
   chatPermissionDecide(body: Body) {
     return this.postRes("/api/chat/permission/decide", body)
   }
+  // Answer a parked AskUserQuestion (async). The server unblocks the waiting call
+  // or resumes the session with the composed answer — NOT a queued chat message.
+  chatQuestionAnswer(body: Body) {
+    return this.postRes("/api/chat/question/answer", this.wh(body))
+  }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
   }
@@ -204,6 +241,9 @@ class ApiClient {
   }
   loopsCreate(body: Body) {
     return this.postRes("/api/loops", body)
+  }
+  loopsEdit(body: Body) {
+    return this.postRes("/api/loops/edit", body)
   }
   loopsDelete(id: string) {
     return this.postRes("/api/loops/delete", { id })

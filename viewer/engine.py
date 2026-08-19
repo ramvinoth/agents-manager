@@ -37,6 +37,11 @@ _HOME_ENC = str(Path.home()).replace("/", "-")
 LOOPS_FILE = Path.home() / ".claude" / ".viewer-loops.json"
 META_FILE = Path.home() / ".claude" / ".viewer-meta.json"
 LOOPS_LOCK = threading.Lock()
+# Guards SESSION_META across its scattered read-modify-write + save sites. Without
+# it, a setdefault/pop in one worker thread races a json.dumps snapshot in another
+# ("dict changed size during iteration") and drops updates. Hold it around the whole
+# mutate-then-save so writes are atomic w.r.t. each other.
+META_LOCK = threading.Lock()
 
 
 def load_json_file(path, default):
@@ -64,8 +69,10 @@ def save_json_file(path, data):
         tmp = path.parent / (path.name + ".tmp")
         tmp.write_text(text)
         os.replace(tmp, path)
-    except Exception:
-        pass
+    except Exception as e:
+        # A write failure here is real data loss (session meta / loops not persisted),
+        # so surface it instead of swallowing silently.
+        print(f"[engine] save_json_file failed for {path}: {e}", flush=True)
 
 
 LOOPS = load_json_file(LOOPS_FILE, {})     # id -> {session, path, prompt, interval, nextRun, runs, lastRc, enabled}
@@ -169,6 +176,13 @@ def loop_scheduler(launch):
                 launch(lp["session"], lp["path"], lp["prompt"], lp.get("model", ""))
             except Exception:
                 pass
+        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
+        # thread). Self-throttles to its own interval; exception-safe internally.
+        try:
+            from viewer.orchestrator import harman_tick
+            harman_tick()
+        except Exception:
+            pass
 
 
 def frontmatter_description(path):
@@ -727,16 +741,61 @@ def start_copilot_new(message, cwd, host="local"):
 
 
 def _write_perm_mcp_config():
-    """Write (idempotently) the --mcp-config that registers permission_mcp.py as
-    an MCP server 'viewerperm'. Additive — the driven claude still loads the
-    user's ambient MCP servers (Playwright etc.) since we omit --strict-mcp-config."""
+    """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
+    'viewerperm' (permission_mcp.py) and 'viewerkanban' (kanban_mcp.py). Additive —
+    the driven claude still loads the user's ambient MCP servers (Playwright etc.)
+    since we omit --strict-mcp-config. The kanban tool is only *usable* when the run
+    also sets VIEWER_KANBAN_* env (employee sessions); without it the tool's calls
+    fail auth server-side, which is harmless."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
-    server = str(Path(__file__).parent / "permission_mcp.py")
-    cfg = {"mcpServers": {"viewerperm": {"command": sys.executable or "python3",
-                                         "args": [server]}}}
+    perm = str(Path(__file__).parent / "permission_mcp.py")
+    kanban = str(Path(__file__).parent / "kanban_mcp.py")
+    py = sys.executable or "python3"
+    cfg = {"mcpServers": {
+        "viewerperm": {"command": py, "args": [perm]},
+        "viewerkanban": {"command": py, "args": [kanban]},
+    }}
     with open(path, "w") as f:
         json.dump(cfg, f)
     return path
+
+
+def _resolve_employee(session_id):
+    """Map a session to its (employee_row_or_None, responsibility_level). A session
+    is linked to an employee via its session-meta provider preset id (the employee's
+    provider). No link → (None, 'ic') — least authority, the safe default."""
+    try:
+        meta = SESSION_META.get(session_id) or {}
+        provider_id = meta.get("provider")
+        if not provider_id:
+            return None, "ic"
+        from viewer import db
+        for emp in db.employee_list():
+            if emp.get("provider") == provider_id:
+                return emp, emp.get("level") or _emp_level(emp)
+    except Exception:
+        pass
+    return None, "ic"
+
+
+def _emp_level(emp):
+    """Derive a responsibility level from an employee's role when no explicit level
+    column is set. Conservative: only obvious lead/manager role names elevate."""
+    role = (emp.get("role") or "").lower()
+    if any(w in role for w in ("manager", "head", "director", "lead")):
+        return "manager" if ("manager" in role or "head" in role or "director" in role) else "lead"
+    return "ic"
+
+
+def validate_kanban_token(session_id, token):
+    """Called by the org routes for an MCP caller: confirm the per-run kanban token
+    matches this session's job, and return {'employee', 'level'} for scoping. None
+    if unknown/unauthorized — the handler then 401s."""
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        if not job or not job.get("kanban_token") or job.get("kanban_token") != token:
+            return None
+        return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
 
 
 def _perm_mcp_config_path(host):
@@ -778,7 +837,7 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    "Your agent has a question for you.",
-                   data={"session": session_id, "question": True})
+                   data={"session": session_id, "host": host, "question": True})
     except Exception:
         pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
@@ -827,7 +886,7 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    "Your agent has a plan to review.",
-                   data={"session": session_id, "plan": True})
+                   data={"session": session_id, "host": host, "plan": True})
     except Exception:
         pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
@@ -884,12 +943,13 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
              "tool_use_id": tool_use_id, "event": ev, "decision": None,
              "created": time.time()})
         cwd = job.get("cwd", "")
+        host = job.get("host", "local")
     # Background push: the run is now blocked waiting on the user (best-effort).
     try:
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
                    f"Approve {tool_name}? The agent needs your permission to continue.",
-                   data={"session": session_id, "approval": pid})
+                   data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
     decided = ev.wait(timeout=PERM_TIMEOUT)
@@ -967,11 +1027,16 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
-def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local"):
+def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
     host != 'local' runs claude on that SSH host instead.
+
+    provider_env (Agent mode): an optional {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+    ANTHROPIC_MODEL} dict that points the harness at a custom Anthropic-compatible
+    endpoint (our llama-server). None = the normal Anthropic-cloud Claude run,
+    byte-identical to before.
     Returns False if the session already has a running job."""
     remote = bool(host) and host != "local"
     with CHAT_LOCK:
@@ -1002,6 +1067,14 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
+    # Kanban (org board) tool token: an employee's agent session can create/move
+    # cards from inside a turn. Minted per run; the route handler validates it and
+    # scopes writes by the employee's responsibility level (see routes/orchestrator).
+    kanban_token = secrets.token_hex(16)
+    job["kanban_token"] = kanban_token
+    # Resolve which employee (and authority level) this session runs as, from its
+    # session-meta provider link. No employee → default 'ic' scope.
+    job["employee"], job["employee_level"] = _resolve_employee(session_id)
     cmd += ["--mcp-config", _perm_mcp_config_path(host),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
@@ -1009,6 +1082,30 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # (an invalid model id). Treat it — and blank — as "omit --model".
     if model and model != "default" and re.fullmatch(r"[A-Za-z0-9._-]+", model):
         cmd += ["--model", model]
+
+    # Custom-provider agent mode: point the harness at the preset's endpoint. The
+    # claude CLI reads env from ~/.claude/settings.json and that WINS over the
+    # subprocess environment — so injecting ANTHROPIC_* into env alone is silently
+    # overridden by any base URL pinned in settings.json (e.g. a LiteLLM proxy).
+    # A `--settings <file>` with the endpoint in its `env` DOES take precedence
+    # (verified: it forces /v1/messages to the given base URL). We write a temp
+    # settings file and pass it, so the session's provider actually routes to its
+    # model (e.g. Qwen on :8081) instead of leaking to the global default.
+    provider_settings_path = None
+    if provider_env:
+        try:
+            import tempfile
+            penv = {k: str(v) for k, v in provider_env.items()}
+            # Clear any inherited small-fast model so background calls don't leak to
+            # a different endpoint's model namespace.
+            penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
+            fd, provider_settings_path = tempfile.mkstemp(prefix="viewer-prov-", suffix=".json")
+            with os.fdopen(fd, "w") as f:
+                json.dump({"env": penv}, f)
+            os.chmod(provider_settings_path, 0o600)
+            cmd += ["--settings", provider_settings_path]
+        except Exception as e:
+            print(f"[engine] provider settings write failed: {e}", flush=True)
 
     # Per-session system prompt and goal, managed from the viewer's panel.
     meta = SESSION_META.get(session_id) or {}
@@ -1026,10 +1123,27 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         try:
             env = dict(os.environ)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            # CRITICAL: never let the SERVER'S OWN model/provider env leak into the
+            # child claude. If the viewer was launched from a shell that exported
+            # ANTHROPIC_* or CLAUDE_CODE_MAX_* (e.g. pointing at a LiteLLM proxy),
+            # a real OS env var BEATS a --settings file's env block — so an inherited
+            # ANTHROPIC_BASE_URL / CLAUDE_CODE_MAX_CONTEXT_TOKENS would silently
+            # override the per-session provider settings and reroute the turn to the
+            # wrong endpoint / wrong context window. Strip them so the child starts
+            # clean: a custom-provider session gets exactly provider_env (below); a
+            # Default session gets only what ~/.claude/settings.json specifies.
+            for _k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                       "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+                       "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+                env.pop(_k, None)
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
                 env["VIEWER_PERM_TOKEN"] = perm_token
+            if kanban_token:  # let kanban_mcp.py reach the org board for this session
+                env["VIEWER_KANBAN_SESSION"] = session_id
+                env["VIEWER_KANBAN_PORT"] = str(PORT)
+                env["VIEWER_KANBAN_TOKEN"] = kanban_token
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -1043,6 +1157,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env.update(host_env(host))
             except Exception:
                 pass
+            # Agent mode: point the harness at a custom Anthropic-compatible endpoint
+            # (our llama-server). Applied LAST so it wins over any inherited creds.
+            if provider_env:
+                env.update({str(k): str(v) for k, v in provider_env.items()})
             # If Playwright MCP on this host attaches to our CDP browser, it
             # must be running before claude boots (no-op / ~50ms otherwise).
             ensure_mcp_browser(host if remote else "local")
@@ -1063,6 +1181,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  "VIEWER_PERM_TOKEN": perm_token}
                     if base:
                         rperm_env["VIEWER_PERM_BASE"] = base
+                    # Same reach-back for the kanban tool on the remote host.
+                    if kanban_token:
+                        rperm_env["VIEWER_KANBAN_SESSION"] = session_id
+                        rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                        if base:
+                            rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
@@ -1155,12 +1279,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 try:
                     from viewer.push import notify_all, push_preview
                     label = _push_label(session_id, cwd)
+                    phost = job.get("host", "local")
                     if rc == 0 and last_result:
                         body = push_preview(last_result)
-                        notify_all(label, body, data={"session": session_id})
+                        notify_all(label, body, data={"session": session_id, "host": phost})
                     else:
                         body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
-                        notify_all(label, body, data={"session": session_id})
+                        notify_all(label, body, data={"session": session_id, "host": phost})
                 except Exception:
                     pass
 
@@ -1376,17 +1501,22 @@ class StatCache:
     def __init__(self, cap=50):
         self._d = {}
         self._cap = cap
+        # Shared across worker threads; without this, put()'s pop(next(iter(...)))
+        # can race a concurrent get()/put() → "dict changed size during iteration".
+        self._lock = threading.Lock()
 
     def get(self, key, mtime, size):
-        c = self._d.get(key)
-        if c is not None and c["mtime"] == mtime and c["size"] == size:
-            return c["data"]
-        return None
+        with self._lock:
+            c = self._d.get(key)
+            if c is not None and c["mtime"] == mtime and c["size"] == size:
+                return c["data"]
+            return None
 
     def put(self, key, mtime, size, data):
-        self._d[key] = {"mtime": mtime, "size": size, "data": data}
-        if len(self._d) > self._cap:
-            self._d.pop(next(iter(self._d)))
+        with self._lock:
+            self._d[key] = {"mtime": mtime, "size": size, "data": data}
+            if len(self._d) > self._cap:
+                self._d.pop(next(iter(self._d)))
 
 
 REMOTE_SUMMARY_CACHE = StatCache()   # (hid, path) invalidated by (mtime, size)

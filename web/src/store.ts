@@ -8,6 +8,7 @@ import type {
   GitStatus,
   HostInfo,
   Loop,
+  Provider,
   SessionAnalysis,
   SessionListItem,
   SessionMeta,
@@ -110,6 +111,8 @@ interface AppState {
   meta: SessionMeta | null
   git: GitStatus | null
   loops: Loop[]
+  /** Global custom-provider library (from /api/providers). Session-independent. */
+  providers: Provider[]
   visible: VisibleTypes
   searchOpen: boolean
   searchQuery: string
@@ -150,10 +153,12 @@ interface AppState {
   analyzeSession: (refresh?: boolean) => Promise<void>
   maybeAutoAnalyze: () => void
   loadMeta: () => Promise<void>
-  saveMeta: (field: "goal" | "systemPrompt", value: string) => Promise<void>
+  saveMeta: (field: "goal" | "systemPrompt" | "provider" | "convMode", value: string) => Promise<void>
   loadGitStatus: () => Promise<void>
+  loadProviders: () => Promise<void>
   loadLoops: () => Promise<void>
   createLoop: (prompt: string, interval: number, model: string) => Promise<void>
+  editLoop: (id: string, prompt: string, interval: number, model: string) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
   toggleVisible: (t: keyof VisibleTypes) => void
   loadProjects: () => Promise<void>
@@ -177,6 +182,7 @@ interface AppState {
   steerMessage: (msg: string) => Promise<string | undefined>
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
+  answerQuestion: (picks: string[]) => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
@@ -231,6 +237,7 @@ export const useStore = create<AppState>((set, get) => {
     api.setAgent(get().currentAgent)
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
     get().loadAgents()
+    get().loadProviders() // global provider library — session-independent
     api.getPrefs().then((p: any) => {
       if (p && p.theme) {
         localStorage.setItem("theme", p.theme)
@@ -498,6 +505,7 @@ export const useStore = create<AppState>((set, get) => {
     meta: null,
     git: null,
     loops: [],
+    providers: [],
     visible: { user: true, assistant: true, system: true, tools: true },
     searchOpen: false,
     searchQuery: "",
@@ -958,6 +966,16 @@ export const useStore = create<AppState>((set, get) => {
         /* ignore */
       }
     },
+    // The global custom-provider library (session-independent). Loaded once at
+    // boot and refreshed after CRUD in the ProvidersDialog.
+    loadProviders: async () => {
+      try {
+        const r = await api.providers()
+        set({ providers: r.providers || [] })
+      } catch {
+        /* ignore — keep last known list */
+      }
+    },
     loadLoops: async () => {
       const sid = sessionIdOf(get().currentSessionPath)
       if (!sid) return
@@ -972,6 +990,12 @@ export const useStore = create<AppState>((set, get) => {
       const { currentSessionPath } = get()
       if (!prompt.trim()) return
       const res = await api.loopsCreate({ session: currentSessionPath, prompt, interval, model })
+      await res.json().catch(() => ({}))
+      get().loadLoops()
+    },
+    editLoop: async (id, prompt, interval, model) => {
+      if (!prompt.trim()) return
+      const res = await api.loopsEdit({ id, prompt, interval, model })
       await res.json().catch(() => ({}))
       get().loadLoops()
     },
@@ -1103,6 +1127,31 @@ export const useStore = create<AppState>((set, get) => {
         await api.chatPermissionDecide({ session: sid, id, decision })
       } catch {
         /* the run will time out and deny if this never lands */
+      }
+    },
+
+    // Answer a parked AskUserQuestion. This must hit the dedicated endpoint (which
+    // unblocks the waiting call or resumes the session), NOT sendChat — a normal
+    // chat message just gets QUEUED behind the still-blocked run, which is exactly
+    // the "it adds to the queue instead of answering" bug.
+    answerQuestion: async (picks) => {
+      const { currentSessionPath, permMode, model } = get()
+      if (!currentSessionPath) return
+      set({ chatRunning: true, chatStatus: null })
+      try {
+        const res = await api.chatQuestionAnswer({
+          session: currentSessionPath,
+          picks,
+          mode: permMode,
+          model,
+        })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+        await pollTick()
+        const sid = d.session || sessionIdOf(currentSessionPath)
+        watchChat(sid)
+      } catch (e: any) {
+        set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to answer: " + (e?.message || e) } })
       }
     },
 

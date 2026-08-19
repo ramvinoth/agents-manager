@@ -60,6 +60,28 @@ PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decisi
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a
                                   # human may take a while; the CLI holds the turn)
 
+# ===== Voice (speech-to-text + text-to-speech) =====
+# STT + TTS run on the GPU box (suha-ai) as a persistent sherpa-onnx service —
+# Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
+# The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
+SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:8095")
+SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
+                                     # (Qwen synthesizes a whole reply in one
+                                     # pass — a long paragraph can take 30s+)
+# Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
+# service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
+# streaming is pointed at a separate engine (e.g. Pocket on :8097).
+VERIFY_SERVICE_URL = os.environ.get(
+    "HARMAN_VERIFY_URL", "http://100.115.120.89:8095")
+VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
+
+# The Harman assistant voice service (deploy/harman_assistant_service.py):
+# takes a USER UTTERANCE, routes action requests to the Qwen agent (:8081),
+# and speaks the answer in the cloned assistant voice (Step-Audio :8000 + token2wav),
+# streamed as ADTS-AAC — same contract as the Pocket TTS stream, so the voice
+# route can proxy it unchanged. Selected per-request via ?assistant=1.
+ASSISTANT_SERVICE_URL = os.environ.get("HARMAN_ASSISTANT_URL", "http://100.115.120.89:8099")
+
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
 

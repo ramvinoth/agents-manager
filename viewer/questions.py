@@ -87,13 +87,11 @@ def detect_pending(records):
     # 1. Locate the last AskUserQuestion tool_use (index + input).
     last_auq_id = None
     last_auq_input = None
-    last_auq_idx = -1
-    for i, rec in enumerate(records):
+    for rec in records:
         for b in _blocks(rec):
             if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
                 last_auq_id = b.get("id")
                 last_auq_input = b.get("input")
-                last_auq_idx = i
     if not last_auq_id:
         return None
 
