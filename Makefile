@@ -15,7 +15,7 @@ REMOTE ?= $(VIEWER_TEST_REMOTE)
 NODE_PATH := $(shell npm root -g)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint unit web smoke e2e test check serve _up
+.PHONY: help lint unit web smoke e2e test check serve _up bootstrap
 
 help:  ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -29,6 +29,9 @@ lint:  ## Ruff (real defects only) + Python & JS syntax
 
 unit:  ## Fast hermetic unit tests (pure functions; no server/DB/SSH)
 	python3 -m pytest tests/unit -q
+
+bootstrap:  ## Idempotent fresh-install: DB tables + seed CEO/Harman + skills dir + config
+	python3 -m viewer.bootstrap
 
 web:  ## Type-check + build the React app (web/ → web/dist)
 	cd web && npm run build

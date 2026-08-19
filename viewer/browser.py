@@ -18,7 +18,7 @@ import termios
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from viewer.remote import (
     SSH, remote_run_python,
 )
@@ -239,11 +239,32 @@ def cdp_http(hid, path, method="GET"):
 # scheme+host+path changed since the last look is where the action is.
 # (Query strings are ignored: challenge pages mutate their query in a loop.)
 TAB_FOLLOW = {}   # hid -> {"sig": {page_id: (scheme, host, path)}, "follow": page_id}
+TAB_FOLLOW_LOCK = threading.Lock()  # guards the pure-local RMW of a host's follow state
 
 
 def _tab_sig_key(u):
     q = urlparse(u)
     return (q.scheme, q.netloc, q.path)
+
+
+def _safe_nav_url(url):
+    """Normalize an address-bar URL and return it only if it's a safe navigation
+    target, else None. Blocks file://, chrome://, internal-metadata, and other
+    non-web schemes so the live-view can't be turned into a local-file / SSRF read.
+    A bare hostname gets https:// prepended (the common address-bar case)."""
+    url = str(url or "").strip()
+    if not url:
+        return None
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
+        url = "https://" + url  # bare hostname typed in the address bar
+    scheme = (urlparse(url).scheme or "").lower()
+    return url if scheme in ("http", "https", "about") else None
+
+
+def _hex_tab(tab_id):
+    """CDP target ids are uppercase hex; validate so tab_id can't inject into the
+    /json/activate|close request line."""
+    return bool(re.fullmatch(r"[A-Fa-f0-9]+", str(tab_id or "")))
 
 
 def _browser_pages(hid, create=True):
@@ -261,22 +282,29 @@ def browser_front_page(hid):
     """(id, ws_path, url) of the page the agent is working in (see TAB_FOLLOW),
     creating one if none exists."""
     pages = _browser_pages(hid)
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
-    sig = {p["id"]: _tab_sig_key(p.get("url", "")) for p in pages}
-    changed = [pid for pid, k in sig.items() if pid in st["sig"] and st["sig"][pid] != k]
-    new_tabs = [pid for pid in sig if pid not in st["sig"]]
-    pinned = time.time() < st.get("pin", 0) and st.get("follow") in sig
-    if st["follow"] is None:
-        st["follow"] = pages[0]["id"]              # first look: front tab
-    if not pinned:                                 # manual selection suppresses auto-follow briefly
-        if new_tabs and st["sig"]:
-            st["follow"] = new_tabs[0]             # a fresh tab is where work starts
-        elif changed and st["follow"] not in changed:
-            st["follow"] = changed[0]              # a navigation happened elsewhere
-    if st["follow"] not in sig:
-        st["follow"] = pages[0]["id"]              # followed tab was closed
-    st["sig"] = sig
-    p = next(x for x in pages if x["id"] == st["follow"])
+    # Lock only the pure-local follow-state RMW (not the network _browser_pages
+    # above), so concurrent tab actions can't race st["follow"]/st["sig"] and make
+    # the next() below StopIteration-crash the pump thread.
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
+        sig = {p["id"]: _tab_sig_key(p.get("url", "")) for p in pages}
+        changed = [pid for pid, k in sig.items() if pid in st["sig"] and st["sig"][pid] != k]
+        new_tabs = [pid for pid in sig if pid not in st["sig"]]
+        pinned = time.time() < st.get("pin", 0) and st.get("follow") in sig
+        if st["follow"] is None:
+            st["follow"] = pages[0]["id"]              # first look: front tab
+        if not pinned:                                 # manual selection suppresses auto-follow briefly
+            if new_tabs and st["sig"]:
+                st["follow"] = new_tabs[0]             # a fresh tab is where work starts
+            elif changed and st["follow"] not in changed:
+                st["follow"] = changed[0]              # a navigation happened elsewhere
+        if st["follow"] not in sig:
+            st["follow"] = pages[0]["id"]              # followed tab was closed
+        st["sig"] = sig
+        follow_id = st["follow"]
+    # Resolve against the pages snapshot; fall back to the front tab if the followed
+    # id vanished between the lock release and here (never StopIteration).
+    p = next((x for x in pages if x["id"] == follow_id), pages[0])
     ws_url = p.get("webSocketDebuggerUrl", "")
     # Chrome may omit the port here (ws://127.0.0.1/devtools/page/ID) — take the
     # URL path only, never substring on the port number.
@@ -292,17 +320,20 @@ def _ordered_pages(hid, pages):
     """Pages in STABLE first-seen order. /json/list is activation order, so
     without this the tab strip reshuffles every time you click a tab (the
     activated one jumps to the front). New tabs append; closed ones drop."""
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0, "order": []})
-    order = st.setdefault("order", [])
-    ids = {p["id"] for p in pages}
-    st["order"] = [i for i in order if i in ids] + [p["id"] for p in pages if p["id"] not in order]
-    idx = {pid: n for n, pid in enumerate(st["order"])}
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0, "order": []})
+        order = st.setdefault("order", [])
+        ids = {p["id"] for p in pages}
+        st["order"] = [i for i in order if i in ids] + [p["id"] for p in pages if p["id"] not in order]
+        idx = {pid: n for n, pid in enumerate(st["order"])}
     return sorted(pages, key=lambda p: idx.get(p["id"], 1 << 30))
 
 
 def browser_tabs(hid):
     """Tab strip data: every open page (stable order) plus which one the view follows."""
     pages = _ordered_pages(hid, _browser_pages(hid, create=False))
+    if not pages:
+        return []  # no debuggable pages → empty strip (never index [0] on empty)
     follow = (TAB_FOLLOW.get(hid) or {}).get("follow") or pages[0]["id"]
     return [{"id": p["id"], "title": p.get("title", "") or p.get("url", ""),
              "url": p.get("url", ""), "active": p["id"] == follow} for p in pages]
@@ -312,18 +343,24 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
     """User tab controls. Selecting also re-baselines the activity signatures so
     the pick isn't instantly overridden by the change detector; the view still
     follows the agent's NEXT navigation, which is the behavior users expect."""
-    st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
+    with TAB_FOLLOW_LOCK:
+        st = TAB_FOLLOW.setdefault(hid, {"sig": {}, "follow": None, "pin": 0})
     # A manual action pins the chosen tab for a few seconds so the auto-follow
     # detector (and background-tab churn like Cloudflare challenges) can't yank
     # the view away mid-interaction; auto-follow resumes after, tracking the agent.
     PIN = 8
     if action == "select" and tab_id:
+        if not _hex_tab(tab_id):
+            return
         st["follow"] = tab_id
         st["pin"] = time.time() + PIN
         st["sig"] = {p["id"]: _tab_sig_key(p.get("url", "")) for p in _browser_pages(hid)}
         cdp_http(hid, f"/json/activate/{tab_id}")   # bring forward in headed mode
     elif action == "new":
-        target = url or "about:blank"
+        nav = _safe_nav_url(url) if url else "about:blank"
+        if not nav:
+            return
+        target = quote(nav, safe="")   # into the /json/new query — encode it
         made = cdp_http(hid, f"/json/new?{target}", method="PUT") \
             or cdp_http(hid, f"/json/new?{target}")
         if made and made.get("id"):
@@ -331,6 +368,8 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
             st["pin"] = time.time() + PIN
             st["sig"] = {p["id"]: _tab_sig_key(p.get("url", "")) for p in _browser_pages(hid)}
     elif action == "close" and tab_id:
+        if not _hex_tab(tab_id):
+            return
         cdp_http(hid, f"/json/close/{tab_id}")
         if st.get("follow") == tab_id:
             st["follow"] = None                     # next frame falls back to front
@@ -831,9 +870,7 @@ def _dispatch_browser_events(cdp, events):
                 cdp.call("Input.dispatchKeyEvent", {"type": "char", "text": "\r"})
             cdp.call("Input.dispatchKeyEvent", {"type": "keyUp", **base})
         elif t == "navigate":
-            url = str(ev.get("url", "")).strip()
-            if url and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
-                url = "https://" + url   # bare hostname typed in the address bar
+            url = _safe_nav_url(ev.get("url", ""))
             if url:
                 cdp.call("Page.navigate", {"url": url})
         elif t in ("back", "forward"):
@@ -1294,7 +1331,12 @@ def serve_browser_ws(handler, hid):
                     except (socket.timeout, OSError):
                         pass
                     except Exception:
-                        cur_gen = -1; continue        # reconnect
+                        # Reconnect, but back off first so a persistently-failing
+                        # tab (e.g. crashed renderer) can't spin this thread tight
+                        # and pin a CPU.
+                        cur_gen = -1
+                        stop.wait(0.5)
+                        continue
                 else:
                     stop.wait(0.2)
                 now = time.time()

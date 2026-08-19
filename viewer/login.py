@@ -21,6 +21,12 @@ from viewer.remote import (
 )
 
 
+def _redact(text):
+    """Strip any OAuth token from text before it's surfaced to the client. The
+    error field returns raw CLI buffer tails, which can contain the token."""
+    return re.sub(r"sk-ant-oat[0-9A-Za-z_-]+", "<token>", text or "")
+
+
 def auth_status():
     """Report whether claude is logged in, based on stored credentials."""
     info = {"loggedIn": False, "method": None, "subscriptionType": None}
@@ -128,7 +134,7 @@ class LoginManager:
                     self.stage = "done"
                 else:
                     self.stage = "error"
-                    self.error = self.buffer[-500:].strip()
+                    self.error = _redact(self.buffer[-500:].strip())
                 self.pid = None
                 try:
                     os.close(fd)
@@ -139,8 +145,14 @@ class LoginManager:
 
     def _save_token(self, token):
         try:
-            VIEWER_TOKEN_FILE.write_text(token)
-            VIEWER_TOKEN_FILE.chmod(0o600)
+            # Create with 0600 from the start (open+O_CREAT with mode) so there's no
+            # world-readable window between write_text and a later chmod.
+            fd = os.open(str(VIEWER_TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, token.encode("utf-8"))
+            finally:
+                os.close(fd)
+            VIEWER_TOKEN_FILE.chmod(0o600)  # tighten if it pre-existed at a looser mode
         except Exception:
             pass
 
@@ -305,7 +317,7 @@ class CodexLoginManager:
                     self.stage = "done"
                 else:
                     self.stage = "error"
-                    self.error = self.buffer[-500:].strip()
+                    self.error = _redact(self.buffer[-500:].strip())
                 self.pid = None
                 try:
                     os.close(fd)
@@ -459,7 +471,7 @@ class RemoteCodexLoginManager:
                     self.stage = "done"
                 else:
                     self.stage = "error"
-                    self.error = self.buffer[-500:].strip()
+                    self.error = _redact(self.buffer[-500:].strip())
                 self.chan = None
                 return
 

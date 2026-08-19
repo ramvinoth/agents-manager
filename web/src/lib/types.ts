@@ -165,6 +165,24 @@ export interface SessionMeta {
   goal?: string
   systemPrompt?: string
   cwd?: string
+  /** Custom LLM provider preset id ("" or undefined = Default/Claude). */
+  provider?: string
+  /** Conversation mode for a custom provider: plain proxy vs full agent harness. */
+  convMode?: "chat" | "agent"
+}
+
+/**
+ * A saved custom LLM provider (OpenAI/Anthropic-compatible endpoint) from the
+ * global library at /api/providers. `apiKey` is never returned by the server —
+ * it's write-only. `contextLimit` is the endpoint's real max context in tokens
+ * (0/undefined = unknown), used to declare the window to the agent harness.
+ */
+export interface Provider {
+  id: string
+  name: string
+  baseUrl: string
+  model: string
+  contextLimit?: number
 }
 
 export interface GitRepo {

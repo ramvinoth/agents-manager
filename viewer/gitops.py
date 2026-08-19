@@ -171,7 +171,13 @@ def start_clone(hid, repo, parent, branch=""):
         pdir.mkdir(parents=True, exist_ok=True)
         tf = Path(os.path.expanduser(TOKEN_FILE))
         tf.parent.mkdir(parents=True, exist_ok=True)
-        tf.write_text(token)
+        # Write 0600 from creation so the git token has no world-readable window
+        # between write_text and a later chmod.
+        _fd = os.open(str(tf), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(_fd, token.encode("utf-8"))
+        finally:
+            os.close(_fd)
         os.chmod(tf, 0o600)
         threading.Thread(target=_clone_local, args=(jid, url, target, token, branch), daemon=True).start()
     else:
@@ -185,7 +191,7 @@ def _clone_local(jid, url, target, token, branch=""):
     checks out the new working branch when one was requested."""
     proc = None
     try:
-        env = dict(os.environ, GH_TOKEN=token)
+        env = dict(os.environ, GH_TOKEN=token, GIT_TERMINAL_PROMPT="0")
         proc = subprocess.Popen(["git", "clone", "--progress",
                                  "-c", "credential.helper=" + CRED_HELPER, url, str(target)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
@@ -231,6 +237,7 @@ def _clone_remote(jid, hid, url, parent, name, token, branch=""):
     tgt = _q_path(parent.rstrip("/") + "/" + name)
     cmd = ("umask 077; mkdir -p ~/.claude && printf %s " + shlex.quote(token) + " > " + TOKEN_FILE
            + " && export GH_TOKEN=" + shlex.quote(token)
+           + " && export GIT_TERMINAL_PROMPT=0"  # fail fast instead of prompting on the pty (bad token → 900s hang)
            + " && if [ -e " + tgt + " ] && [ -n \"$(ls -A " + tgt + " 2>/dev/null)\" ];"
            + " then echo VIEWER_EXISTS; exit 9; fi"
            + " && mkdir -p " + _q_path(parent)

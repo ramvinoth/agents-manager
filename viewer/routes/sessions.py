@@ -13,7 +13,7 @@ from viewer.config import (
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    LOOPS, LOOPS_FILE, LOOPS_LOCK, META_FILE, SESSION_META, extract_cwd, get_host, parse_interval, save_json_file, session_analysis, start_claude_run, start_copilot_new,
+    LOOPS, LOOPS_FILE, LOOPS_LOCK, META_FILE, META_LOCK, SESSION_META, extract_cwd, get_host, parse_interval, save_json_file, session_analysis, start_claude_run, start_copilot_new,
 )
 from viewer.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
@@ -127,6 +127,39 @@ class SessionsMixin:
             save_json_file(LOOPS_FILE, LOOPS)
         self.send_json({"created": lid, "interval": interval})
 
+    def handle_edit_loop(self):
+        """Update an existing loop in place, preserving its id, session and run
+        history. Only the fields present in the body change; the schedule
+        (`nextRun`) is recomputed only when the interval actually changes."""
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        lid = body.get("id", "")
+        with LOOPS_LOCK:
+            loop = LOOPS.get(lid)
+            if not loop:
+                self.send_json({"error": "Loop not found"}, status=404)
+                return
+            if "prompt" in body:
+                prompt = (body.get("prompt") or "").strip()
+                if not prompt:
+                    self.send_json({"error": "Empty prompt"}, status=400)
+                    return
+                loop["prompt"] = prompt
+            if "interval" in body:
+                interval = parse_interval(body.get("interval", ""))
+                if not interval:
+                    self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
+                    return
+                if interval != loop.get("interval"):
+                    loop["interval"] = interval
+                    loop["nextRun"] = time.time() + interval
+            if "model" in body:
+                loop["model"] = (body.get("model") or "").strip()
+            save_json_file(LOOPS_FILE, LOOPS)
+        self.send_json({"updated": lid, "interval": loop.get("interval")})
+
     # ----- Slash commands / projects / session resolution -----
 
     def _g_loops(self, req):
@@ -158,30 +191,42 @@ class SessionsMixin:
             self.send_json({"error": "Session not found"}, status=404)
             return
         sid = full.stem
-        meta = SESSION_META.setdefault(sid, {})
-        if "goal" in body:
-            meta["goal"] = str(body["goal"]).strip()
-        if "systemPrompt" in body:
-            meta["systemPrompt"] = str(body["systemPrompt"]).strip()
-        if "avatar" in body:
-            # A short emoji/token chosen on the Session profile page. Cap length
-            # so a stray payload can't bloat the persisted meta file.
-            meta["avatar"] = str(body["avatar"]).strip()[:16]
-        if "archived" in body:
-            meta["archived"] = bool(body["archived"])
-        if "favorite" in body:
-            meta["favorite"] = bool(body["favorite"])
-        if "pinned" in body:
-            # A list of pinned message uuids. Cap count + id length so a stray
-            # payload can't bloat the persisted meta file.
-            meta["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
-        save_json_file(META_FILE, SESSION_META)
+        with META_LOCK:
+            meta = SESSION_META.setdefault(sid, {})
+            if "goal" in body:
+                meta["goal"] = str(body["goal"]).strip()
+            if "systemPrompt" in body:
+                meta["systemPrompt"] = str(body["systemPrompt"]).strip()
+            if "avatar" in body:
+                # A short emoji/token chosen on the Session profile page. Cap length
+                # so a stray payload can't bloat the persisted meta file.
+                meta["avatar"] = str(body["avatar"]).strip()[:16]
+            if "archived" in body:
+                meta["archived"] = bool(body["archived"])
+            if "favorite" in body:
+                meta["favorite"] = bool(body["favorite"])
+            if "pinned" in body:
+                # A list of pinned message uuids. Cap count + id length so a stray
+                # payload can't bloat the persisted meta file.
+                meta["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
+            if "provider" in body:
+                # Custom LLM provider preset id ("" = Default/Claude). Runs for this
+                # session are proxied to that endpoint instead of the claude CLI.
+                meta["provider"] = str(body["provider"]).strip()[:64]
+            if "convMode" in body:
+                # Conversation mode for a custom provider: "chat" (plain proxy) or
+                # "agent" (full Claude Code harness pointed at the endpoint).
+                cm = str(body["convMode"]).strip()
+                meta["convMode"] = cm if cm in ("chat", "agent") else "chat"
+            save_json_file(META_FILE, SESSION_META)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
-                        "pinned": meta.get("pinned", [])})
+                        "pinned": meta.get("pinned", []),
+                        "provider": meta.get("provider", ""),
+                        "convMode": meta.get("convMode", "chat")})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -195,7 +240,8 @@ class SessionsMixin:
                 cwd = ""
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
                             "systemPrompt": meta.get("systemPrompt", ""),
-                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []), "cwd": cwd})
+                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                            "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"), "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -206,6 +252,7 @@ class SessionsMixin:
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                        "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
@@ -311,6 +358,9 @@ class SessionsMixin:
     def _p_loops(self, req):
         self.handle_create_loop()
 
+    def _p_loops_edit(self, req):
+        self.handle_edit_loop()
+
     def serve_remote_agent_session(self, host, agent, rel_path, q):
         if not any(k in q for k in ("tail", "before", "from")):
             self.send_json({"error": "Remote sessions require tail/from/before"}, status=400)
@@ -351,8 +401,9 @@ class SessionsMixin:
             except Exception as e:
                 self.send_json({"error": str(e)}, status=500)
                 return
-            if SESSION_META.pop(full.stem, None) is not None:
-                save_json_file(META_FILE, SESSION_META)
+            with META_LOCK:
+                if SESSION_META.pop(full.stem, None) is not None:
+                    save_json_file(META_FILE, SESSION_META)
             from viewer import questions
             questions.clear(full.stem)
             questions.clear_plan(full.stem)
@@ -368,7 +419,8 @@ class SessionsMixin:
                     for lid in [lid for lid, lp in LOOPS.items() if lp["session"] == sid]:
                         LOOPS.pop(lid, None)
                     save_json_file(LOOPS_FILE, LOOPS)
-                SESSION_META.pop(sid, None) and save_json_file(META_FILE, SESSION_META)
+                with META_LOCK:
+                    SESSION_META.pop(sid, None) and save_json_file(META_FILE, SESSION_META)
             self.send_json(r)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
@@ -389,8 +441,9 @@ class SessionsMixin:
                 LOOPS.pop(lid, None)
             if stale:
                 save_json_file(LOOPS_FILE, LOOPS)
-        if SESSION_META.pop(sid, None) is not None:
-            save_json_file(META_FILE, SESSION_META)
+        with META_LOCK:
+            if SESSION_META.pop(sid, None) is not None:
+                save_json_file(META_FILE, SESSION_META)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
     def split_at_uuid(self, full_path, cut_uuid):
@@ -427,8 +480,9 @@ class SessionsMixin:
             if not full:
                 self.send_json({"error": "Session not found"}, status=404)
                 return
-            SESSION_META.setdefault(full.stem, {})["title"] = title
-            save_json_file(META_FILE, SESSION_META)
+            with META_LOCK:
+                SESSION_META.setdefault(full.stem, {})["title"] = title
+                save_json_file(META_FILE, SESSION_META)
             self.send_json({"renamed": True, "title": title})
             return
         if body.get("host", "local") != "local":
@@ -616,8 +670,9 @@ class SessionsMixin:
             title = (body.get("title") or "").strip()[:200]
             res = codex_fork(body.get("session", ""), cut_uuid, title)
             if title and res.get("session"):
-                SESSION_META.setdefault(res["session"], {})["title"] = title
-                save_json_file(META_FILE, SESSION_META)
+                with META_LOCK:
+                    SESSION_META.setdefault(res["session"], {})["title"] = title
+                    save_json_file(META_FILE, SESSION_META)
             self.send_host_result(res)
             return
         if host != "local":
@@ -705,8 +760,9 @@ class SessionsMixin:
             new_id, rel = res
             title = (body.get("title") or "").strip()[:200]
             if title:
-                SESSION_META.setdefault(new_id, {})["title"] = title
-                save_json_file(META_FILE, SESSION_META)
+                with META_LOCK:
+                    SESSION_META.setdefault(new_id, {})["title"] = title
+                    save_json_file(META_FILE, SESSION_META)
             self.send_json({"started": True, "session": new_id, "path": rel})
             return
 
@@ -718,8 +774,9 @@ class SessionsMixin:
             new_id, rel = res
             title = (body.get("title") or "").strip()[:200]
             if title:  # Copilot has no rename convention → store the name in the viewer's meta
-                SESSION_META.setdefault(new_id, {})["title"] = title
-                save_json_file(META_FILE, SESSION_META)
+                with META_LOCK:
+                    SESSION_META.setdefault(new_id, {})["title"] = title
+                    save_json_file(META_FILE, SESSION_META)
             self.send_json({"started": True, "session": new_id, "path": rel})
             return
 
@@ -727,9 +784,40 @@ class SessionsMixin:
         # Pre-store system prompt / goal so the very first run already gets them.
         sp = (body.get("systemPrompt") or "").strip()
         goal = (body.get("goal") or "").strip()
-        if sp or goal:
-            SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
-            save_json_file(META_FILE, SESSION_META)
+        provider = (body.get("provider") or "").strip()
+        conv_mode = (body.get("convMode") or "chat").strip()
+        if conv_mode not in ("chat", "agent"):
+            conv_mode = "chat"
+        if sp or goal or provider:
+            with META_LOCK:
+                SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
+                if provider:
+                    SESSION_META[session_id]["provider"] = provider[:64]
+                    SESSION_META[session_id]["convMode"] = conv_mode
+                save_json_file(META_FILE, SESSION_META)
+        # A new custom-provider session (local only).
+        if provider and host == "local":
+            if conv_mode == "agent":
+                # Agent mode: the full harness pointed at the custom endpoint. The
+                # claude CLI creates the transcript (as a normal Claude session).
+                from viewer import providers
+                penv = providers.anthropic_env(provider)
+                if not penv:
+                    self.send_json({"error": "Provider unavailable"}, status=502)
+                    return
+                if not start_claude_run(session_id, ["--session-id", session_id], message,
+                                        mode, cwd, "", host, provider_env=penv):
+                    self.send_json({"error": "Busy"}, status=409)
+                    return
+                self.send_json({"started": True, "session": session_id})
+                return
+            # Chat mode: the viewer proxies and creates the transcript file itself.
+            from viewer.customrun import start_custom_run
+            if not start_custom_run(session_id, provider, message, cwd, host, mode):
+                self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)
+                return
+            self.send_json({"started": True, "session": session_id})
+            return
         if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host):
             self.send_json({"error": "Busy"}, status=409)
             return
