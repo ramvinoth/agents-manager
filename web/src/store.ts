@@ -8,6 +8,7 @@ import type {
   GitStatus,
   HostInfo,
   Loop,
+  Provider,
   SessionAnalysis,
   SessionListItem,
   SessionMeta,
@@ -110,6 +111,8 @@ interface AppState {
   meta: SessionMeta | null
   git: GitStatus | null
   loops: Loop[]
+  /** Global custom-provider library (from /api/providers). Session-independent. */
+  providers: Provider[]
   visible: VisibleTypes
   searchOpen: boolean
   searchQuery: string
@@ -150,8 +153,9 @@ interface AppState {
   analyzeSession: (refresh?: boolean) => Promise<void>
   maybeAutoAnalyze: () => void
   loadMeta: () => Promise<void>
-  saveMeta: (field: "goal" | "systemPrompt", value: string) => Promise<void>
+  saveMeta: (field: "goal" | "systemPrompt" | "provider" | "convMode", value: string) => Promise<void>
   loadGitStatus: () => Promise<void>
+  loadProviders: () => Promise<void>
   loadLoops: () => Promise<void>
   createLoop: (prompt: string, interval: number, model: string) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
@@ -232,6 +236,7 @@ export const useStore = create<AppState>((set, get) => {
     api.setAgent(get().currentAgent)
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
     get().loadAgents()
+    get().loadProviders() // global provider library — session-independent
     api.getPrefs().then((p: any) => {
       if (p && p.theme) {
         localStorage.setItem("theme", p.theme)
@@ -499,6 +504,7 @@ export const useStore = create<AppState>((set, get) => {
     meta: null,
     git: null,
     loops: [],
+    providers: [],
     visible: { user: true, assistant: true, system: true, tools: true },
     searchOpen: false,
     searchQuery: "",
@@ -957,6 +963,16 @@ export const useStore = create<AppState>((set, get) => {
         await (await api.sessionMetaSave({ session: currentSessionPath, [field]: value })).json()
       } catch {
         /* ignore */
+      }
+    },
+    // The global custom-provider library (session-independent). Loaded once at
+    // boot and refreshed after CRUD in the ProvidersDialog.
+    loadProviders: async () => {
+      try {
+        const r = await api.providers()
+        set({ providers: r.providers || [] })
+      } catch {
+        /* ignore — keep last known list */
       }
     },
     loadLoops: async () => {

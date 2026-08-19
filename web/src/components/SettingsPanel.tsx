@@ -11,15 +11,32 @@ import {
   Filter,
   Check,
   Plus,
+  Server,
+  GitBranch,
+  RefreshCw,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { fmtInterval, parseInterval } from "@/lib/format"
+import { SYNC_PROMPT } from "@/lib/git"
 import { useStore, useAgentLabel } from "@/store"
+import { ProvidersDialog } from "./ProvidersDialog"
 import type { VisibleTypes } from "@/lib/types"
+
+// Radix Select forbids an empty-string item value, so Default (Claude) — whose
+// real provider id is "" — uses this sentinel in the dropdown only.
+const DEFAULT_PROVIDER = "__default__"
 
 function SectionHeader({
   icon: Icon,
@@ -67,6 +84,11 @@ export function SettingsPanel() {
   const visible = useStore((s) => s.visible)
   const toggleVisible = useStore((s) => s.toggleVisible)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
+  const providers = useStore((s) => s.providers)
+  const git = useStore((s) => s.git)
+  const chatRunning = useStore((s) => s.chatRunning)
+  const sendChat = useStore((s) => s.sendChat)
+  const loadGitStatus = useStore((s) => s.loadGitStatus)
   const agentLabel = useAgentLabel()
 
   const [sysPrompt, setSysPrompt] = useState("")
@@ -74,6 +96,8 @@ export function SettingsPanel() {
   const [loopPrompt, setLoopPrompt] = useState("")
   const [loopInterval, setLoopInterval] = useState("1h")
   const [saved, setSaved] = useState<"systemPrompt" | "goal" | null>(null)
+  const [manageOpen, setManageOpen] = useState(false)
+  const [gitRefreshing, setGitRefreshing] = useState(false)
 
   useEffect(() => {
     setSysPrompt(meta?.systemPrompt || "")
@@ -119,6 +143,120 @@ export function SettingsPanel() {
             })}
           </div>
         </section>
+
+        {/* Model provider — per-session choice from the global library. */}
+        <section className="py-4">
+          <SectionHeader icon={Server} title="Model provider">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => setManageOpen(true)}
+            >
+              Manage
+            </Button>
+          </SectionHeader>
+          <Select
+            value={meta?.provider ? meta.provider : DEFAULT_PROVIDER}
+            onValueChange={(v) => saveMeta("provider", v === DEFAULT_PROVIDER ? "" : v)}
+          >
+            <SelectTrigger size="sm" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_PROVIDER}>Default (Claude)</SelectItem>
+              {providers.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {meta?.provider ? (
+            <div className="mt-2">
+              <div className="mb-1 text-[11px] text-muted-foreground">Conversation mode</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(["chat", "agent"] as const).map((m) => {
+                  const on = (meta?.convMode || "chat") === m
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => saveMeta("convMode", m)}
+                      className={cn(
+                        "rounded-md border py-1.5 text-xs capitalize transition-colors",
+                        on
+                          ? "border-primary/40 bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                      )}
+                    >
+                      {m}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className={HELP}>
+                Chat proxies plainly to the endpoint; Agent runs the full harness against it.
+              </p>
+            </div>
+          ) : (
+            <p className={HELP}>Route this chat to a custom model endpoint, or use your Claude login.</p>
+          )}
+        </section>
+
+        {/* Git — repo/branch details + Sync (shown only for a repo cwd). */}
+        {git?.repo && (
+          <section className="py-4">
+            <SectionHeader icon={GitBranch} title="Git">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[11px]"
+                disabled={gitRefreshing}
+                onClick={async () => {
+                  setGitRefreshing(true)
+                  await loadGitStatus()
+                  setGitRefreshing(false)
+                }}
+              >
+                {gitRefreshing ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+              </Button>
+            </SectionHeader>
+            <div className="space-y-1 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium text-foreground">{git.name || "repo"}</span>
+                <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
+                  {git.branch || "—"}
+                </Badge>
+              </div>
+              {git.remote && (
+                <div className="truncate font-mono text-[11px] text-muted-foreground" title={git.remote}>
+                  {git.remote}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                {git.dirty ? (
+                  <Badge variant="secondary" className="px-1.5 text-[10px] text-amber-500">
+                    {git.dirty} change{git.dirty === 1 ? "" : "s"}
+                  </Badge>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">Up to date</span>
+                )}
+                {!!git.ahead && <Badge variant="outline" className="px-1.5 text-[10px]">↑{git.ahead}</Badge>}
+                {!!git.behind && <Badge variant="outline" className="px-1.5 text-[10px]">↓{git.behind}</Badge>}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2 h-8 w-full gap-1.5"
+              disabled={chatRunning}
+              onClick={() => sendChat(SYNC_PROMPT)}
+            >
+              <RefreshCw className="size-3.5" /> Sync branch
+            </Button>
+            <p className={HELP}>Commits, pushes, and rebases this branch onto the default branch.</p>
+          </section>
+        )}
 
         {/* System prompt */}
         <section className="py-4">
@@ -215,6 +353,7 @@ export function SettingsPanel() {
           )}
         </section>
       </div>
+      {manageOpen && <ProvidersDialog onClose={() => setManageOpen(false)} />}
     </div>
   )
 }
