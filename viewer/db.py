@@ -90,6 +90,16 @@ def init_db():
               host        TEXT NOT NULL DEFAULT 'local',
               created_at  DOUBLE PRECISION NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS session_tokens (
+              session_id     TEXT PRIMARY KEY,
+              perm_token     TEXT NOT NULL DEFAULT '',
+              kanban_token   TEXT NOT NULL DEFAULT '',
+              employee_id    INTEGER,
+              employee_level TEXT NOT NULL DEFAULT 'ic',
+              cwd            TEXT NOT NULL DEFAULT '',
+              host           TEXT NOT NULL DEFAULT 'local',
+              created_at     DOUBLE PRECISION NOT NULL
+            );
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
             CREATE TABLE IF NOT EXISTS pending_plans (
               session_id  TEXT PRIMARY KEY,
@@ -388,6 +398,40 @@ def pending_question_delete(session_id):
     """Drop any pending question for a session (e.g. session deleted)."""
     with _db() as cur:
         cur.execute("DELETE FROM pending_questions WHERE session_id = %s", (session_id,))
+
+
+# ---- session tokens (survive a server restart) --------------------------------
+# The per-run perm/kanban tokens live in the server's in-memory CHAT_JOBS, which
+# is wiped on restart. Persist them here so a session's still-running MCP tools
+# (and the durable pending question/plan that references them) stay authorized
+# across a restart. Cleared when the run's job is reaped.
+
+def session_token_set(session_id, perm_token, kanban_token, employee_id,
+                      employee_level="ic", cwd="", host="local"):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_tokens(session_id, perm_token, kanban_token, "
+            "employee_id, employee_level, cwd, host, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (session_id) DO UPDATE SET "
+            "perm_token = EXCLUDED.perm_token, kanban_token = EXCLUDED.kanban_token, "
+            "employee_id = EXCLUDED.employee_id, employee_level = EXCLUDED.employee_level, "
+            "cwd = EXCLUDED.cwd, host = EXCLUDED.host, created_at = EXCLUDED.created_at",
+            (session_id, perm_token or "", kanban_token or "", employee_id,
+             employee_level or "ic", cwd or "", host or "local", _now()),
+        )
+
+
+def session_token_get(session_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM session_tokens WHERE session_id = %s", (session_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def session_token_delete(session_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM session_tokens WHERE session_id = %s", (session_id,))
 
 
 # ---- pending plans (ExitPlanMode approval) -------------------------------------
