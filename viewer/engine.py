@@ -1144,6 +1144,16 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env["VIEWER_KANBAN_SESSION"] = session_id
                 env["VIEWER_KANBAN_PORT"] = str(PORT)
                 env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                # Scope the session's kanban tools to its own project's board:
+                # find-or-create the org project for this (host, cwd) so the agent
+                # only ever sees/edits tasks under the project it's working in.
+                try:
+                    from viewer import db as _db
+                    proj = _db.project_ensure(host, cwd, os.path.basename(cwd.rstrip("/")) or cwd)
+                    kanban_project = str(proj["id"])
+                    env["VIEWER_KANBAN_PROJECT"] = kanban_project
+                except Exception:
+                    kanban_project = ""
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -1185,6 +1195,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     if kanban_token:
                         rperm_env["VIEWER_KANBAN_SESSION"] = session_id
                         rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                        if kanban_project:
+                            rperm_env["VIEWER_KANBAN_PROJECT"] = kanban_project
                         if base:
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)

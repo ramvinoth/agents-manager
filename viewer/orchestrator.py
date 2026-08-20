@@ -132,55 +132,58 @@ def harman_tick(*, dry_run=False):
             return
         _last_run = now
 
-        cards = db.card_list()
         employees = db.employee_list()
-        columns = db.board_columns_list()
         running = _running_card_ids()
         busy_emps = _live_employee_ids()
         # Tag employees the planner should not spawn for (already have a live session).
         emps = [dict(e, _busy=(e.get("id") in busy_emps)) for e in employees]
-
-        actions = orglogic.plan_assignments(
-            cards, emps, columns, running,
-            projects=cfg["projects"], budget=cfg["budget"],
-            default_provider=cfg["default_provider"])
-        if not actions:
-            return
-
-        slots = orglogic.project_columns(columns)
-        doing = slots["doing"]
-        cards_by_id = {c["id"]: c for c in cards}
         emps_by_id = {e["id"]: e for e in employees}
 
-        for a in actions:
-            if dry_run:
-                db.audit_append("harman", "tick_dryrun", a, "planned")
+        # Columns are per-project now, so plan each managed project against its own
+        # board and act on its actions before moving to the next.
+        for pid in cfg["projects"]:
+            cards = db.card_list(project_id=pid)
+            columns = db.board_columns_list(pid)
+            actions = orglogic.plan_assignments(
+                cards, emps, columns, running,
+                projects=[pid], budget=cfg["budget"],
+                default_provider=cfg["default_provider"])
+            if not actions:
                 continue
-            try:
-                if a["kind"] == "assign":
-                    cid, eid = a["card_id"], a["employee"]
-                    db.card_assign(cid, eid)
-                    if doing:
-                        doing_cards = [c for c in db.card_list(column_id=doing)]
-                        db.card_move(cid, doing, orglogic.next_position(doing_cards, len(doing_cards)))
-                    db.audit_append("harman", "card_assign", {"card": cid, "employee": eid}, "ok")
-                    if a.get("spawn"):
-                        emp = emps_by_id.get(eid)
-                        card = cards_by_id.get(cid)
-                        proj = db.project_get(card.get("project_id")) if card else None
-                        sid = _spawn_employee_session(emp, card, proj, cfg["default_provider"]) if emp and card else None
-                        db.audit_append("harman", "spawn_session",
-                                        {"card": cid, "employee": eid, "session": sid},
-                                        "ok" if sid else "no_provider")
-                elif a["kind"] == "advance":
-                    db.card_move(a["card_id"], a["to_column"], 1.0)
-                    db.audit_append("harman", "card_advance",
-                                    {"card": a["card_id"], "to": a["to_column"]}, "ok")
-                elif a["kind"] == "escalate":
-                    ap = db.approval_open(a.get("approval_kind", "infra"), a.get("summary", ""),
-                                          a.get("detail", {}), created_by="harman")
-                    db.audit_append("harman", "escalate", {"approval": ap["id"]}, "pending")
-            except Exception as e:  # one bad action shouldn't abort the rest
-                db.audit_append("harman", a.get("kind", "action"), {"error": str(e)[:200]}, "error")
+
+            slots = orglogic.project_columns(columns)
+            doing = slots["doing"]
+            cards_by_id = {c["id"]: c for c in cards}
+
+            for a in actions:
+                if dry_run:
+                    db.audit_append("harman", "tick_dryrun", a, "planned")
+                    continue
+                try:
+                    if a["kind"] == "assign":
+                        cid, eid = a["card_id"], a["employee"]
+                        db.card_assign(cid, eid)
+                        if doing:
+                            doing_cards = [c for c in db.card_list(column_id=doing)]
+                            db.card_move(cid, doing, orglogic.next_position(doing_cards, len(doing_cards)))
+                        db.audit_append("harman", "card_assign", {"card": cid, "employee": eid}, "ok")
+                        if a.get("spawn"):
+                            emp = emps_by_id.get(eid)
+                            card = cards_by_id.get(cid)
+                            proj = db.project_get(card.get("project_id")) if card else None
+                            sid = _spawn_employee_session(emp, card, proj, cfg["default_provider"]) if emp and card else None
+                            db.audit_append("harman", "spawn_session",
+                                            {"card": cid, "employee": eid, "session": sid},
+                                            "ok" if sid else "no_provider")
+                    elif a["kind"] == "advance":
+                        db.card_move(a["card_id"], a["to_column"], 1.0)
+                        db.audit_append("harman", "card_advance",
+                                        {"card": a["card_id"], "to": a["to_column"]}, "ok")
+                    elif a["kind"] == "escalate":
+                        ap = db.approval_open(a.get("approval_kind", "infra"), a.get("summary", ""),
+                                              a.get("detail", {}), created_by="harman")
+                        db.audit_append("harman", "escalate", {"approval": ap["id"]}, "pending")
+                except Exception as e:  # one bad action shouldn't abort the rest
+                    db.audit_append("harman", a.get("kind", "action"), {"error": str(e)[:200]}, "error")
     except Exception:
         pass

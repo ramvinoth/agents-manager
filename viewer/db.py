@@ -124,9 +124,10 @@ def init_db():
               created_at  DOUBLE PRECISION NOT NULL
             );
             CREATE TABLE IF NOT EXISTS board_columns (
-              id       SERIAL PRIMARY KEY,
-              name     TEXT NOT NULL,
-              position INTEGER NOT NULL DEFAULT 0
+              id         SERIAL PRIMARY KEY,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              name       TEXT NOT NULL,
+              position   INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS cards (
               id         SERIAL PRIMARY KEY,
@@ -172,8 +173,6 @@ def init_db():
             );
             """
         )
-    # Seed the one board's default columns (idempotent).
-    board_columns_seed()
 
 
 def close_pool():
@@ -477,6 +476,10 @@ def employee_set_status(emp_id, status):
 
 # Projects --------------------------------------------------------------------
 
+# Every project gets this column layout the moment it's created.
+_DEFAULT_COLUMNS = ("Todo", "Doing", "Review", "Done")
+
+
 def project_create(name, description="", host="local", cwd="", created_by=""):
     with _db() as cur:
         cur.execute(
@@ -484,7 +487,13 @@ def project_create(name, description="", host="local", cwd="", created_by=""):
             "VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
             (name, description, host, cwd, created_by, _now()),
         )
-        return dict(cur.fetchone())
+        proj = dict(cur.fetchone())
+        for i, cname in enumerate(_DEFAULT_COLUMNS):
+            cur.execute(
+                "INSERT INTO board_columns(project_id, name, position) VALUES(%s,%s,%s)",
+                (proj["id"], cname, i),
+            )
+    return proj
 
 
 def project_list():
@@ -500,25 +509,84 @@ def project_get(project_id):
     return dict(row) if row else None
 
 
-# Board columns (the ONE board's layout) --------------------------------------
-
-_DEFAULT_COLUMNS = ("Todo", "Doing", "Review", "Done")
-
-
-def board_columns_seed():
-    """Idempotently seed the default columns if the board has none yet."""
+def project_get_by_cwd(host, cwd):
+    cwd = _norm_cwd(host, cwd)
     with _db() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM board_columns")
-        if cur.fetchone()["n"]:
-            return
-        for i, name in enumerate(_DEFAULT_COLUMNS):
-            cur.execute("INSERT INTO board_columns(name, position) VALUES(%s,%s)", (name, i))
+        cur.execute("SELECT * FROM projects WHERE host = %s AND cwd = %s ORDER BY id LIMIT 1",
+                    (host, cwd))
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
-def board_columns_list():
+def project_ensure(host, cwd, name, created_by=""):
+    """Find-or-create the org project for a (host, cwd) directory. The single
+    bridge between the LHS's cwd-keyed projects and the org board — resolved
+    server-side so no client duplicates the mapping. cwd is normalized (tilde
+    expanded on local) so the web entry point and a spawned agent session, which
+    may pass the same dir in different forms, always land on ONE project. New
+    projects get the default columns via project_create."""
+    cwd = _norm_cwd(host, cwd)
+    existing = project_get_by_cwd(host, cwd)
+    if existing:
+        return existing
+    return project_create(name or cwd, "", host, cwd, created_by)
+
+
+def _norm_cwd(host, cwd):
+    """Canonical form of a directory used as a project key. On the local host we
+    expand a leading ~ and strip a trailing slash so "~/x", "/home/u/x" and
+    "/home/u/x/" don't fork into separate projects. Remote paths are left as-is
+    (their home dir isn't ours to expand)."""
+    cwd = (cwd or "").rstrip("/")
+    if host in (None, "", "local") and cwd.startswith("~"):
+        cwd = os.path.expanduser(cwd)
+    return cwd or "/"
+
+
+# Board columns (per project) -------------------------------------------------
+
+def board_columns_list(project_id):
     with _db() as cur:
-        cur.execute("SELECT * FROM board_columns ORDER BY position, id")
+        cur.execute("SELECT * FROM board_columns WHERE project_id = %s ORDER BY position, id",
+                    (project_id,))
         return [dict(r) for r in cur.fetchall()]
+
+
+def board_column_create(project_id, name, position=0):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO board_columns(project_id, name, position) VALUES(%s,%s,%s) RETURNING *",
+            (project_id, name, position),
+        )
+        return dict(cur.fetchone())
+
+
+def board_column_update(column_id, **fields):
+    allowed = {k: v for k, v in fields.items() if k in ("name", "position") and v is not None}
+    if not allowed:
+        return board_column_get(column_id)
+    sets = ", ".join(f"{k} = %s" for k in allowed)
+    with _db() as cur:
+        cur.execute(f"UPDATE board_columns SET {sets} WHERE id = %s RETURNING *",
+                    (*allowed.values(), column_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def board_column_get(column_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM board_columns WHERE id = %s", (column_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def board_column_delete(column_id):
+    """Delete a column. Cards in it keep existing (column_id FK is ON DELETE
+    SET NULL) so no task is lost when its column is removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM board_columns WHERE id = %s", (column_id,))
+        return cur.rowcount > 0
+
 
 
 # Cards (the ONLY card store) -------------------------------------------------

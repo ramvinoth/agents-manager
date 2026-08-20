@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ArrowLeft } from "lucide-react"
+import { Folder, ChevronRight, ArrowLeft, ClipboardList } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
+import { KanbanDialog } from "@/components/kanban/KanbanDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
@@ -32,9 +33,11 @@ function groupSessions(sessions: SessionListItem[]): Group[] {
 export function SessionList() {
   const sessions = useStore((s) => s.sessions)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
+  const currentHost = useStore((s) => s.currentHost)
   const loadSession = useStore((s) => s.loadSession)
   const [dir, setDir] = useState<string | null>(null)
   const [q, setQ] = useState("")
+  const [tasksFor, setTasksFor] = useState<Group | null>(null)
 
   const groups = useMemo(() => groupSessions(sessions), [sessions])
   const active = dir ? groups.find((g) => g.dir === dir) : null
@@ -82,6 +85,17 @@ export function SessionList() {
                 >
                   <ArrowLeft className="size-4" /> All projects
                 </button>,
+                // Fixed "Tasks" row — always first under a project. Opens the
+                // project's Kanban board, shared by every session in this dir.
+                <button
+                  key="tasks"
+                  onClick={() => setTasksFor(active)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <ClipboardList className="size-4 shrink-0 text-primary" />
+                  <span className="flex-1 font-medium">Tasks</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </button>,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -100,6 +114,14 @@ export function SessionList() {
               ]}
         </div>
       </div>
+      {tasksFor && (
+        <KanbanDialog
+          host={currentHost}
+          cwd={tasksFor.project || tasksFor.dir}
+          name={projectName(tasksFor.project || tasksFor.dir)}
+          onClose={() => setTasksFor(null)}
+        />
+      )}
     </div>
   )
 }

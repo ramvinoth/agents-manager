@@ -19,6 +19,9 @@ import urllib.request
 
 SESSION = os.environ.get("VIEWER_KANBAN_SESSION", "")
 TOKEN = os.environ.get("VIEWER_KANBAN_TOKEN", "")
+# The org project this session works under. Its kanban tools are scoped to this
+# project's board so an agent only sees/edits tasks in the project it's in.
+PROJECT = os.environ.get("VIEWER_KANBAN_PROJECT", "")
 BASE = os.environ.get("VIEWER_KANBAN_BASE") or (
     "http://127.0.0.1:" + os.environ.get("VIEWER_KANBAN_PORT", "8091"))
 
@@ -35,9 +38,10 @@ _TOOLS = {
 }
 
 _TOOL_LIST = [
-    {"name": "board_list", "description": "List the board's columns.",
-     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}}},
-    {"name": "card_list", "description": "List cards, optionally filtered by session/project/assignee.",
+    {"name": "board_list", "description": "List your project's board columns.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "project": {"type": "integer"}}}},
+    {"name": "card_list", "description": "List cards in your project, optionally filtered by session/assignee.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"}, "assignee": {"type": "integer"}}}},
     {"name": "card_create", "description": "Create a card on the board (title required).",
@@ -80,6 +84,15 @@ def _call(tool, args):
     payload = dict(args or {})
     payload["session"] = SESSION
     payload["token"] = TOKEN
+    # Default project-scoped tools to THIS session's project so the board an agent
+    # sees, and the cards it creates, stay within the project it's working in.
+    if PROJECT:
+        if tool == "board_list":
+            payload.setdefault("project", PROJECT)
+        elif tool == "card_list":
+            payload.setdefault("project", PROJECT)
+        elif tool == "card_create":
+            payload.setdefault("project_id", PROJECT)
     url = BASE + path
     try:
         if method == "GET":

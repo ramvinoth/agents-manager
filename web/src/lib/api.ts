@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider } from "./types"
+import type { Provider, Employee, OrgProject, BoardColumn, Card, CardFilter } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -128,6 +128,50 @@ class ApiClient {
   }
   projects() {
     return this.getJSON("/api/projects" + this.qs("?"))
+  }
+
+  // ---- org / Kanban (project-scoped board) ----
+  orgEmployees() {
+    return this.getJSON<{ employees: Employee[] }>("/api/org/employees")
+  }
+  /** Find-or-create the org project for a (host, cwd) directory → the board it maps to. */
+  orgProjectForCwd(body: { host: string; cwd: string; name?: string }) {
+    return this.postJSON<OrgProject>("/api/org/project-for-cwd", body)
+  }
+  orgBoard(projectId: number) {
+    return this.getJSON<{ columns: BoardColumn[] }>(`/api/org/board?project=${projectId}`)
+  }
+  orgCards(filter: CardFilter = {}) {
+    const p = new URLSearchParams()
+    if (filter.session) p.set("session", filter.session)
+    if (filter.project != null) p.set("project", String(filter.project))
+    if (filter.assignee != null) p.set("assignee", String(filter.assignee))
+    const q = p.toString()
+    return this.getJSON<{ cards: Card[] }>(`/api/org/cards${q ? "?" + q : ""}`)
+  }
+  orgCreateCard(body: { title: string; body?: string; column_id?: number; project_id?: number; assignee?: number; session?: string; position?: number }) {
+    return this.postJSON<Card>("/api/org/cards", body)
+  }
+  orgMoveCard(body: { card_id: number; column_id: number; position: number }) {
+    return this.postJSON<Card>("/api/org/cards/move", body)
+  }
+  orgAssignCard(body: { card_id: number; assignee: number }) {
+    return this.postJSON<Card>("/api/org/cards/assign", body)
+  }
+  orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) {
+    return this.postJSON<Card>("/api/org/cards/update", body)
+  }
+  orgDeleteCard(cardId: number) {
+    return this.postJSON<{ deleted?: boolean }>("/api/org/cards/delete", { card_id: cardId })
+  }
+  orgCreateColumn(body: { project_id: number; name: string; position?: number }) {
+    return this.postJSON<BoardColumn>("/api/org/columns", body)
+  }
+  orgUpdateColumn(body: { id: number; name?: string; position?: number }) {
+    return this.postJSON<BoardColumn>("/api/org/columns/update", body)
+  }
+  orgDeleteColumn(id: number) {
+    return this.postJSON<{ deleted?: boolean }>("/api/org/columns/delete", { id })
   }
 
   // ---- git (repo picker / clone / status) ----
