@@ -157,6 +157,14 @@ def loop_scheduler(launch):
                      if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
             for sid in stale:
                 CHAT_JOBS.pop(sid, None)
+                # The run is truly over — drop its persisted tokens too, so a
+                # stale credential can't authorize an MCP call after the session
+                # ends (preserves the "only live sessions" guarantee).
+                try:
+                    from viewer import db
+                    db.session_token_delete(sid)
+                except Exception:
+                    pass
         due = []
         with LOOPS_LOCK:
             for lid, lp in LOOPS.items():
@@ -790,12 +798,25 @@ def _emp_level(emp):
 def validate_kanban_token(session_id, token):
     """Called by the org routes for an MCP caller: confirm the per-run kanban token
     matches this session's job, and return {'employee', 'level'} for scoping. None
-    if unknown/unauthorized — the handler then 401s."""
+    if unknown/unauthorized — the handler then 401s. Falls back to the persisted
+    session_tokens row when CHAT_JOBS has no entry (e.g. after a server restart),
+    so a still-running session's kanban tools keep working."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
-        if not job or not job.get("kanban_token") or job.get("kanban_token") != token:
+        if job:
+            if not job.get("kanban_token") or job.get("kanban_token") != token:
+                return None
+            return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
+    # No live job (restart): validate against the persisted token.
+    try:
+        from viewer import db
+        row = db.session_token_get(session_id)
+        if not row or not row.get("kanban_token") or row["kanban_token"] != token:
             return None
-        return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
+        emp = db.employee_get(row["employee_id"]) if row.get("employee_id") else None
+        return {"employee": emp, "level": row.get("employee_level") or "ic"}
+    except Exception:
+        return None
 
 
 def _perm_mcp_config_path(host):
@@ -916,8 +937,18 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
     (or PERM_TIMEOUT -> deny). Returns {'behavior': 'allow'|'deny', ...}."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
-        if not job or not job.get("perm_token") or job.get("perm_token") != token:
-            return {"behavior": "deny", "message": "Unknown or unauthorized session"}
+        authed = bool(job and job.get("perm_token") and job.get("perm_token") == token)
+    if not authed:
+        # No live job (e.g. server restarted) — validate against the persisted
+        # token so a durable AskUserQuestion/ExitPlanMode can still be answered.
+        try:
+            from viewer import db
+            row = db.session_token_get(session_id)
+            authed = bool(row and row.get("perm_token") and row["perm_token"] == token)
+        except Exception:
+            authed = False
+    if not authed:
+        return {"behavior": "deny", "message": "Unknown or unauthorized session"}
     # AskUserQuestion routes through the permission tool (the CLI's own design:
     # checkPermissions returns behavior:"ask"). We BLOCK here until the user picks
     # an answer, then return {behavior:"deny", message:<answer>} — the shape the CLI
@@ -1075,6 +1106,18 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # Resolve which employee (and authority level) this session runs as, from its
     # session-meta provider link. No employee → default 'ic' scope.
     job["employee"], job["employee_level"] = _resolve_employee(session_id)
+    # Persist the per-run tokens so they survive a server restart: CHAT_JOBS is
+    # in-memory, but the durable pending question/plan (and a still-running MCP
+    # subprocess) must stay authorized after a restart. Cleared when the job is
+    # reaped. Best-effort — a DB hiccup must not block the run from starting.
+    try:
+        emp = job.get("employee") or {}
+        from viewer import db
+        db.session_token_set(session_id, perm_token, kanban_token,
+                             emp.get("id"), job.get("employee_level") or "ic",
+                             cwd, host)
+    except Exception:
+        pass
     cmd += ["--mcp-config", _perm_mcp_config_path(host),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
