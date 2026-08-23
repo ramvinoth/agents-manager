@@ -1327,6 +1327,16 @@ def remote_setup_perm_mcp(hid, port):
             "viewerperm": {"command": "python3", "args": [helper_path]},
             "viewerkanban": {"command": "python3", "args": [kanban_path]},
         }}
+        # Merge user MCP servers from ~/.claude/mcp.json on the remote host
+        try:
+            user_mcp_path = f"{home}/.claude/mcp.json"
+            with sftp.open(user_mcp_path, "r") as uf:
+                user_cfg = json.loads(uf.read())
+            for name, srv in (user_cfg.get("mcpServers") or {}).items():
+                if name not in cfg["mcpServers"]:
+                    cfg["mcpServers"][name] = srv
+        except Exception:
+            pass
         with sftp.open(cfg_path, "w") as f:
             f.write(json.dumps(cfg))
     return cfg_path
