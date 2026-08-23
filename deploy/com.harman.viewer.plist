@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for the Harman viewer on macOS (systemd's counterpart).
+  install.sh renders __WORKDIR__ / __PYTHON__ / __PORT__ and drops the result at
+  ~/Library/LaunchAgents/com.harman.viewer.plist, then `launchctl bootstrap`s it.
+
+  KeepAlive restarts the server if it dies (≈ Restart=always). We deliberately do
+  NOT set an ANTHROPIC_*/CLAUDE_CODE_MAX_* environment here: a clean env is exactly
+  what we want so those vars never leak into spawned `claude` children.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.harman.viewer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>server.py</string>
+        <string>__PORT__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VIEWER_HOST</key>
+        <string>0.0.0.0</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__WORKDIR__/deploy/harman-viewer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__WORKDIR__/deploy/harman-viewer.log</string>
+</dict>
+</plist>

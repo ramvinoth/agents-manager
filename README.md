@@ -47,6 +47,30 @@ registration is closed and it's login-only. Viewing a dropped `.jsonl` needs no 
 Set `DATABASE_URL` to point at a non-default Postgres; it defaults to the local `viewer`
 database over the Unix socket.
 
+## Install on a new machine
+
+`deploy/install.sh` does the whole thing idempotently and leaves a **reboot-surviving**
+service running on `:8091` — system deps, the `viewer` database, bootstrap, the web build,
+and the service. It is cross-platform: **Linux** installs a systemd unit
+(`harman-viewer.service`), **macOS** installs a launchd agent (`com.harman.viewer`).
+
+```bash
+git clone <repo-url> ~/Documents/projects/agents
+cd ~/Documents/projects/agents
+deploy/install.sh
+```
+
+Environment knobs: `PORT=` (default 8091), `DATABASE_URL=` (skip local DB creation),
+`SERVICE_USER=` (Linux systemd `User=`), `SKIP_DEPS=1` (packages already present),
+`NO_SERVICE=1` (set up everything but don't install the service).
+
+Notes:
+- **Linux** uses `apt` + `sudo -u postgres`; **macOS** uses Homebrew (`brew install …` +
+  `brew services`) — install [Homebrew](https://brew.sh) first.
+- Re-running is safe; every step is a no-op if already done.
+- The Cloudflare tunnel and the optional voice/GPU services in `deploy/` are host-specific
+  and stay manual.
+
 ## Development
 
 `make check` is the full gate — lint (ruff + Python/JS syntax) + web build + an API smoke

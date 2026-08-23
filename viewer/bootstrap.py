@@ -45,10 +45,9 @@ def _ensure_harman_config():
 
 def bootstrap():
     report = []
-    # 1. Tables + seeded board columns (already idempotent).
+    # 1. Tables. Board columns are created per-project on demand (no global board).
     db.init_db()
-    cols = [c["name"] for c in db.board_columns_list()]
-    report.append(f"DB ready · columns: {', '.join(cols)}")
+    report.append("DB ready")
     # 2. CEO + Harman.
     created, present = _ensure_employees()
     if created:

@@ -111,9 +111,49 @@ class OrchestratorMixin:
         db.audit_append(actor, "project_create", {"id": proj["id"]}, "done")
         self.send_json(proj)
 
-    # ── board + cards (the ONE board; filters make the views) ─────────────────
+    # ── board + cards (columns are per project) ───────────────────────────────
     def _g_org_board(self, req):
-        self.send_json({"columns": db.board_columns_list()})
+        project = (req.query.get("project") or [None])[0]
+        if not project:
+            self.send_json({"error": "project required"}, status=400); return
+        self.send_json({"columns": db.board_columns_list(int(project))})
+
+    def _p_org_project_for_cwd(self, req):
+        """Find-or-create the org project for a (host, cwd) directory and return
+        it. The web 'Tasks' entry point calls this to resolve which board a
+        session-directory maps to. App-authed."""
+        body = self.read_body() or {}
+        kind, level, actor = self._org_caller(body)
+        if kind is None:
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        cwd = (body.get("cwd") or "").strip()
+        if not cwd:
+            self.send_json({"error": "cwd required"}, status=400); return
+        proj = db.project_ensure(body.get("host", "local"), cwd, body.get("name", ""), actor)
+        self.send_json(proj)
+
+    def _p_org_columns(self, req):
+        body = self.read_body() or {}
+        if not self.current_user():
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        pid = body.get("project_id")
+        if not pid:
+            self.send_json({"error": "project_id required"}, status=400); return
+        self.send_json(db.board_column_create(pid, body.get("name", ""), body.get("position", 0)))
+
+    def _p_org_columns_update(self, req):
+        body = self.read_body() or {}
+        if not self.current_user():
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        row = db.board_column_update(body.get("id"), name=body.get("name"),
+                                     position=body.get("position"))
+        self.send_json(row or {"error": "not found"})
+
+    def _p_org_columns_delete(self, req):
+        body = self.read_body() or {}
+        if not self.current_user():
+            self.send_json({"error": "Unauthorized"}, status=401); return
+        self.send_json({"deleted": db.board_column_delete(body.get("id"))})
 
     def _g_org_cards(self, req):
         session = (req.query.get("session") or [None])[0]
@@ -191,12 +231,15 @@ class OrchestratorMixin:
         self.send_json({"deleted": bool(make())})
 
     def _p_org_cards_done(self, req):
-        """Move a card to the Done column (last column by position)."""
+        """Move a card to the Done column (last column by position) of its own
+        project's board."""
         body = self.read_body() or {}
         kind, level, actor = self._org_caller(body)
         if kind is None:
             self.send_json({"error": "Unauthorized"}, status=401); return
-        cols = db.board_columns_list()
+        card_rows = db.card_list()
+        card = next((c for c in card_rows if c["id"] == body.get("card_id")), None)
+        cols = db.board_columns_list(card["project_id"]) if card and card.get("project_id") else []
         done_id = cols[-1]["id"] if cols else None
         make = lambda: db.card_move(body.get("card_id"), done_id, body.get("position", 1.0))
         if kind == "mcp":

@@ -213,6 +213,49 @@ export interface Loop {
 }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
+// ---- org / Kanban ----------------------------------------------------------
+export interface Employee {
+  id: number
+  name: string
+  role: string
+  provider: string
+  model: string
+  conv_mode: string
+  avatar: string
+  status: string
+  created_at: number
+}
+export interface OrgProject {
+  id: number
+  name: string
+  description: string
+  host: string
+  cwd: string
+  created_by: string
+  created_at: number
+}
+export interface BoardColumn {
+  id: number
+  project_id: number
+  name: string
+  position: number
+}
+export interface Card {
+  id: number
+  title: string
+  body: string
+  column_id: number | null
+  assignee: number | null
+  project_id: number | null
+  session_id: string | null
+  position: number
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+export type CardFilter = { session?: string; project?: number; assignee?: number }
+
+
 export interface FileEntry {
   name: string
   dir: boolean

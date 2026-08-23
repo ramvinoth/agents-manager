@@ -1,0 +1,24 @@
+[Unit]
+Description=Harman viewer server (agents) on :8091
+# The Cloudflare tunnel (agents-tunnel.service) forwards agents.suhai.ai here.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tim
+WorkingDirectory=/home/tim/Documents/projects/agents
+# Bind on all interfaces so both the tunnel and localhost (MCP subprocesses)
+# reach it. DATABASE_URL defaults to the local `dbname=viewer`.
+Environment=VIEWER_HOST=0.0.0.0
+# Deliberately DO NOT inherit ANTHROPIC_*/CLAUDE_CODE_MAX_* — a systemd unit
+# starts with a clean env, which is exactly what we want: those vars would leak
+# into spawned claude children and reroute their provider/context window.
+ExecStart=/usr/bin/python3 server.py 8091
+Restart=always
+RestartSec=3
+# Give in-flight requests a moment to finish on stop/restart.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
