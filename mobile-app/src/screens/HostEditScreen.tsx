@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
@@ -75,8 +75,7 @@ export default function HostEditScreen({ route, navigation }: Props) {
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled">
+    <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
         <Text style={styles.label}>Name</Text>
         <TextInput testID="host-label" style={styles.input} placeholder="Mac Personal" value={label} onChangeText={setLabel} />
 
@@ -157,6 +156,5 @@ export default function HostEditScreen({ route, navigation }: Props) {
         </View>
         <View style={{ height: 40 }} />
       </ScrollView>
-    </KeyboardAvoidingView>
   )
 }

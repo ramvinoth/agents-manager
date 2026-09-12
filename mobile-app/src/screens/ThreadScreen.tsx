@@ -21,9 +21,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
-import { extractImages, fmtClock, fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, resultToText, type Block, type ThreadItem } from "../lib/thread"
+import { extractImages, fmtClock, fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, resultToText, type Block, type ThreadItem, type ToolBlock } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { splitThinking } from "../lib/thinking"
+import { planDecision, planStateLabel, planText } from "../lib/plan"
 import { ensurePermission } from "../lib/notify"
 import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
 import { useTheme } from "../lib/useTheme"
@@ -31,10 +32,12 @@ import { buildReply, quotePreview } from "../lib/quote"
 import { attachMessage, pickImage, uploadImage } from "../lib/attach"
 import MessageActions, { type MsgTarget } from "../components/MessageActions"
 import SwipeToReply from "../components/SwipeToReply"
+import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
 import type { VisibleTypes } from "../components/SessionSettings"
 import QuestionCard from "../components/QuestionCard"
 import Markdown from "../components/Markdown"
+import Collapsible from "../components/Collapsible"
 import Icon from "../components/Icon"
 import { speak, stopSpeaking } from "../lib/voice"
 import { useStyles } from "./styles"
@@ -119,6 +122,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQ, setSearchQ] = useState("")
   const [searchAt, setSearchAt] = useState(-1)
+  // RHS capabilities drawer (skills + MCP tools)
+  const [capDrawerOpen, setCapDrawerOpen] = useState(false)
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
   // WhatsApp-style floating day header: the date of the topmost visible message,
@@ -381,27 +386,30 @@ export default function ThreadScreen({ route, navigation }: Props) {
             <Icon name="phone" size={20} color={t.accent} />
           </TouchableOpacity>
           <TouchableOpacity
-            testID="thread-voice"
-            accessibilityLabel="voice-mode"
-            onPress={() => navigation.navigate("Voice", { host, label, path })}
+            testID="thread-tools"
+            accessibilityLabel="skills-and-tools"
+            onPress={() => setCapDrawerOpen((o) => !o)}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
           >
-            <Icon name="mic" size={20} color={t.accent} />
+            <Icon name="tool" size={20} color={capDrawerOpen ? t.text : t.accent} />
           </TouchableOpacity>
           <TouchableOpacity
-            testID="thread-search"
-            accessibilityLabel="thread-search"
-            onPress={() => setSearchOpen((o) => !o)}
+            testID="thread-more"
+            accessibilityLabel="more-options"
+            onPress={() => Alert.alert("", "", [
+              { text: "Search", onPress: () => setSearchOpen(true) },
+              { text: "Cancel", style: "cancel" },
+            ])}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
           >
-            <Icon name="search" size={20} color={t.accent} />
+            <Icon name="more" size={20} color={t.accent} />
           </TouchableOpacity>
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, t])
+  }, [navigation, label, busy, activity, host, path, sessionId, t, capDrawerOpen])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
@@ -779,6 +787,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   }
 
   return (
+    <>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1160,6 +1169,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }}
       />
     </KeyboardAvoidingView>
+      <CapabilitiesDrawer
+        visible={capDrawerOpen}
+        host={host}
+        onClose={() => setCapDrawerOpen(false)}
+      />
+    </>
   )
 }
 
@@ -1210,13 +1225,17 @@ function ItemView({
               iOS's native double-tap-to-select still works — a Touchable would
               claim the touch and swallow the selection gesture. */}
           {item.text ? (
-            <Text
-              selectable
-              onLongPress={() => onMessageAction?.(item.uuid, item.text, true)}
-              style={[styles.bubbleText, { color: t.text }]}
-            >
-              {item.text}
-            </Text>
+            <Collapsible text={item.text}>
+              {(shown) => (
+                <Text
+                  selectable
+                  onLongPress={() => onMessageAction?.(item.uuid, item.text, true)}
+                  style={[styles.bubbleText, { color: t.text }]}
+                >
+                  {shown}
+                </Text>
+              )}
+            </Collapsible>
           ) : null}
           {item.images?.map((img, i) => (
             <Image key={i} style={styles.bubbleImage} resizeMode="cover" source={{ uri: `data:${img.mime};base64,${img.data}` }} />
@@ -1240,7 +1259,7 @@ function ItemView({
         <ExchangeView
           finalText={item.finalText}
           steps={item.steps}
-          plan={item.plan?.input}
+          plans={item.plans}
           defaultOpen={isLatest}
           ts={item.ts}
           onLongPress={() => onMessageAction?.(item.uuid, item.finalText, false)}
@@ -1291,14 +1310,14 @@ function ReadAloudButton({ text }: { text: string }) {
 export function ExchangeView({
   finalText,
   steps,
-  plan,
+  plans,
   defaultOpen,
   ts,
   onLongPress,
 }: {
   finalText: string
   steps: Block[]
-  plan?: unknown
+  plans?: ToolBlock[]
   defaultOpen?: boolean
   ts?: string
   onLongPress?: () => void
@@ -1353,7 +1372,9 @@ export function ExchangeView({
           ) : null}
         </>
       ) : null}
-      {plan ? <PlanCard input={plan} /> : null}
+      {plans?.map((p) => (
+        <PlanCard key={p.id} input={p.input} result={p.result} />
+      ))}
       {think ? (
         <Pressable onPress={() => setThinkOpen((o) => !o)} style={{ marginTop: steps.length ? 8 : 0 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
@@ -1369,10 +1390,20 @@ export function ExchangeView({
       ) : null}
       {body ? (
         <View style={steps.length || think ? { marginTop: 8 } : undefined}>
-          <Markdown text={body} color={t.text} selectable onLongPress={onLongPress} />
+          {/* The current turn is never collapsed: its text is still growing, and a
+              bubble that folded itself shut mid-stream would hide the very output
+              the reader is watching. Older replies collapse — same rule the steps
+              toggle above already follows. */}
+          {defaultOpen ? (
+            <Markdown text={body} color={t.text} selectable onLongPress={onLongPress} />
+          ) : (
+            <Collapsible text={body}>
+              {(shown) => <Markdown text={shown} color={t.text} selectable onLongPress={onLongPress} />}
+            </Collapsible>
+          )}
         </View>
       ) : null}
-      {!finalText && !steps.length && !plan ? (
+      {!finalText && !steps.length && !plans?.length ? (
         <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
       ) : null}
       {/* Footer row: read-aloud speaker first, timestamp pushed to the end. */}
@@ -1386,37 +1417,49 @@ export function ExchangeView({
   )
 }
 
-/** Extract the plan markdown from an ExitPlanMode tool input (object or JSON string). */
-function planText(input: unknown): string {
-  let obj: any = input
-  if (typeof obj === "string") {
-    try {
-      obj = JSON.parse(obj)
-    } catch {
-      return obj // a bare string is the plan itself
-    }
-  }
-  return typeof obj?.plan === "string" ? obj.plan : ""
-}
-
 /** A proposed plan (ExitPlanMode). Rendered as a distinct card with the plan as
- *  formatted markdown, collapsible so a long plan doesn't dominate the thread.
- *  When `onDecide` is given (a live pending plan), shows Approve / Deny — deny
- *  reveals a feedback box so the agent can revise. */
-function PlanCard({ input, onDecide }: { input: unknown; onDecide?: (d: "approve" | "deny", feedback?: string) => void }) {
+ *  formatted markdown. When `onDecide` is given (a live pending plan), shows
+ *  Approve / Deny — deny reveals a feedback box so the agent can revise.
+ *  A decided plan (its tool_result has landed) folds to its header so a long
+ *  plan doesn't own the scrollback forever; tapping reopens it. */
+function PlanCard({
+  input,
+  result,
+  onDecide,
+}: {
+  input: unknown
+  result?: unknown
+  onDecide?: (d: "approve" | "deny", feedback?: string) => void
+}) {
   const t = useTheme()
   const styles = useStyles()
-  const [open, setOpen] = useState(true)
+  const state = planDecision(result)
+  const pending = state === "pending"
+  const [open, setOpen] = useState(pending)
   const [denying, setDenying] = useState(false)
   const [feedback, setFeedback] = useState("")
   const [sent, setSent] = useState(false)
+  // The card stays mounted across the decision (the poll fills in `result` on
+  // the same block), so the fold reacts to that transition, not just to the
+  // initial state. An explicit tap by the reader wins.
+  const touched = useRef(false)
+  useEffect(() => {
+    if (!touched.current) setOpen(pending)
+  }, [pending])
+  const toggle = () => {
+    touched.current = true
+    setOpen((o) => !o)
+  }
   const text = useMemo(() => planText(input), [input])
+  const label = planStateLabel(state)
   if (!text) return null
   return (
     <View testID="plan-card" style={[styles.planCard, { borderColor: t.accent, backgroundColor: t.bg }]}>
-      <TouchableOpacity style={styles.planHeader} onPress={() => setOpen((o) => !o)} activeOpacity={0.7}>
+      <TouchableOpacity style={styles.planHeader} onPress={toggle} activeOpacity={0.7}>
         <Icon name="sparkle" size={15} color={t.accent} />
-        <Text style={[styles.planTitle, { color: t.accent }]}>Proposed plan</Text>
+        <Text style={[styles.planTitle, { color: t.accent }]}>
+          Proposed plan{label ? ` · ${label}` : ""}
+        </Text>
         <Icon name={open ? "chevronDown" : "chevronRight"} size={14} color={t.accent} />
       </TouchableOpacity>
       {open ? (

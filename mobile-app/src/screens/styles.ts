@@ -78,15 +78,6 @@ function buildStyles(t: Theme) {
       paddingVertical: 16,
     },
     tabAddText: { fontSize: 15, fontWeight: "600" },
-    projectRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 12,
-      paddingHorizontal: 16,
-      paddingVertical: 15,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-    },
-    projectName: { flex: 1, fontSize: 16 },
     profileInfoRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -560,15 +551,23 @@ function buildStyles(t: Theme) {
       borderTopColor: t.border,
     },
     // Capabilities screen (skills + MCP CRUD).
-    capAddRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 18, paddingVertical: 12 },
+    capAddRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 14 },
     capAddText: { fontSize: 14, fontWeight: "600" },
-    capRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 18, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border },
-    capRowName: { fontSize: 15, fontWeight: "500" },
-    capRowDesc: { fontSize: 12, marginTop: 2 },
+    capRow: {
+      flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14,
+      marginHorizontal: 12, marginTop: 8, borderRadius: 12, backgroundColor: t.surface,
+    },
+    capRowIcon: {
+      width: 34, height: 34, borderRadius: 9, alignItems: "center" as const, justifyContent: "center" as const,
+      backgroundColor: t.chipBg,
+    },
+    capRowName: { fontSize: 15, fontWeight: "600" },
+    capRowDesc: { fontSize: 12, marginTop: 2, lineHeight: 16 },
     capBadge: { fontSize: 10, borderWidth: StyleSheet.hairlineWidth, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, overflow: "hidden" },
-    capEmpty: { fontSize: 13, color: t.textMuted, padding: 18 },
+    capEmpty: { fontSize: 13, color: t.textMuted, padding: 18, textAlign: "center" as const },
+    capTabCount: { fontSize: 12, fontWeight: "600", marginLeft: 4, opacity: 0.6 },
     capEditNameRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
-    capCodeInput: { minHeight: 220, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, textAlignVertical: "top", marginTop: 10 },
+    capCodeInput: { minHeight: 280, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, textAlignVertical: "top", marginTop: 10 },
     capErr: { color: t.danger, fontSize: 12, marginTop: 8, marginHorizontal: 14 },
     capModalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
     capModalCard: { maxHeight: "88%", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 },
@@ -657,7 +656,24 @@ function buildStyles(t: Theme) {
     ssFilterChipOn: { backgroundColor: t.accent, borderColor: t.accent },
     ssFilterText: { fontSize: 13, color: t.textMuted, fontWeight: "600" },
     ssFilterTextOn: { color: "#fff" },
-    // Loop list rows
+    // Job list rows (scheduled jobs)
+    ssJobRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginHorizontal: 18,
+      marginTop: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: t.border,
+      backgroundColor: t.bg,
+    },
+    ssJobPrompt: { fontSize: 13, color: t.text, lineHeight: 18 },
+    ssJobSchedule: { fontSize: 11, color: t.accent, fontWeight: "700" },
+    ssJobNext: { fontSize: 11, color: t.textMuted },
+    // Legacy aliases (kept for SessionProfileScreen until renamed)
     ssLoopRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -922,6 +938,12 @@ function buildStyles(t: Theme) {
       paddingVertical: 4,
     },
     stepsToggleText: { fontSize: 12, color: t.accent, fontWeight: "600" },
+    // "Show more" on an over-long message. The hairline above the label stands in
+    // for a gradient fade (no gradient dep in this app) — enough of a visual seam
+    // that the clipped text reads as continuing.
+    showMoreRow: { alignSelf: "flex-start", marginTop: 2, paddingVertical: 4 },
+    showMoreFade: { height: StyleSheet.hairlineWidth, opacity: 0.6, marginBottom: 5 },
+    showMoreText: { fontSize: 12, color: t.accent, fontWeight: "600" },
     stepsBox: { marginTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border, paddingTop: 6 },
     // Proposed-plan card (ExitPlanMode). Accent-outlined so it reads as a distinct
     // artifact, not just another paragraph of the reply.

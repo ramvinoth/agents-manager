@@ -1,5 +1,5 @@
 /**
- * Voice I/O helpers for VoiceScreen — the mechanics of recording a spoken turn
+ * Voice I/O helpers for call mode — the mechanics of recording a spoken turn
  * and speaking a reply, kept out of the screen so the component stays about UI.
  *
  * Recording produces an .m4a the server transcribes (its ffmpeg fallback decodes

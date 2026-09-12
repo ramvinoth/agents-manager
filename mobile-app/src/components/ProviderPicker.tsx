@@ -39,8 +39,8 @@ export default function ProviderPicker({
   }
 
   const rows: { id: string; label: string; sub?: string }[] = [
-    { id: "", label: "Default (Claude)", sub: "Your Claude login" },
-    ...providers.map((p) => ({ id: p.id, label: p.name, sub: p.model })),
+    { id: "", label: "Built-in (Claude)", sub: "Your Claude login" },
+    ...providers.map((p) => ({ id: p.id, label: p.name + (p.isDefault ? " ★" : ""), sub: p.model })),
   ]
 
   return (

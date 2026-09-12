@@ -46,16 +46,23 @@ export type AgentInfo = {
   docs?: string
 }
 export type PermApproval = { id: string; tool_name: string; input: unknown }
-export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string; convMode?: "chat" | "agent" }
+export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string; convMode?: "chat" | "agent"; effort?: string }
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
-export type Provider = { id: string; name: string; baseUrl: string; model: string; contextLimit?: number }
+export type Provider = { id: string; name: string; baseUrl: string; model: string; contextLimit?: number; isDefault?: boolean }
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
 export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
-export type Loop = { id: string; session: string; prompt: string; interval: number; nextRun?: number; runs?: number; enabled?: boolean }
+export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; nextRun?: number; runs?: number; enabled?: boolean }
+/** @deprecated Use Job instead */
+export type Loop = Job
+export type AgentTemplate = {
+  id: number; name: string; description: string; category: string; icon: string
+  system_prompt: string; goal: string; model?: string; cron?: string; job_prompt?: string
+  is_builtin: boolean; created_by: string; created_at: number
+}
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
@@ -66,7 +73,23 @@ export type Card = { id: number; title: string; body: string; column_id: number 
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
-export type HarmanConfig = { enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
+/** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
+ *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
+ *  viewer/actions.py execute). Any org write can return this, so writes whose
+ *  action is Red are typed `T | Queued`: the compiler then forces the call site
+ *  to decide, instead of letting a queued request read as a completed one. */
+export type Queued = { queued: true; approval: number }
+export const isQueued = (r: unknown): r is Queued =>
+  !!r && (r as Queued).queued === true
+/** `automation_enabled` is the master switch (default off): while it is off NOTHING
+ *  runs unattended — not Harman's manager tick, not scheduled loops. `enabled`
+ *  scopes only the manager tick, so it is meaningless while the master is off.
+ *
+ *  OPTIONAL on purpose: a server older than the switch omits the key entirely, and
+ *  `undefined` must not collapse to `false` there — that server has no gate at all,
+ *  so showing "off" would promise a pause that isn't happening. Callers must treat a
+ *  missing value as *unknown*, never as off. */
+export type HarmanConfig = { automation_enabled?: boolean; enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
 export type LearnedSkill = { id: number; name: string; path: string; origin_employee: number | null; origin_card: number | null; origin_session: string | null; status: string; created_at: number }
 export type ChatStatus = {
   running?: boolean
@@ -117,7 +140,11 @@ async function req<T = unknown>(method: string, path: string, body?: unknown): P
     data = { raw: text }
   }
   if (!res.ok) {
-    const msg = (data as { error?: string })?.error || `HTTP ${res.status}`
+    // The org gate refuses with `{denied, reason}` rather than `{error}` (see
+    // viewer/actions.py execute), so read both — otherwise every authority
+    // refusal reaches the UI as a bare "HTTP 403" with the reason discarded.
+    const d = data as { error?: string; reason?: string }
+    const msg = d?.error || d?.reason || `HTTP ${res.status}`
     const err = new Error(msg) as Error & { status?: number }
     err.status = res.status
     throw err
@@ -198,7 +225,16 @@ export const api = {
     host?: string
     agent?: string
     title?: string
+    systemPrompt?: string
+    goal?: string
+    effort?: string
   }) => req<{ started: boolean; session: string; path: string }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
+  // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
+  resolve: (id: string, host?: string) =>
+    req<{ found: boolean; path?: string; running?: boolean; error?: string }>(
+      "GET",
+      `/api/resolve?id=${encodeURIComponent(id)}${host && host !== "local" ? `&host=${encodeURIComponent(host)}` : ""}`
+    ),
   // Distinct working directories seen across sessions — the cwd suggestions.
   // Server returns [{cwd, modified}], newest first.
   projects: (host: string) =>
@@ -282,16 +318,18 @@ export const api = {
       `/api/session-meta?session=${encodeURIComponent(session)}` +
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
-  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; provider?: string; convMode?: "chat" | "agent"; host?: string }) =>
+  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; provider?: string; convMode?: "chat" | "agent"; effort?: string; host?: string }) =>
     req<{ ok?: boolean }>("POST", "/api/session-meta", body),
 
   // ---- custom LLM providers (OpenAI-compatible endpoints). The apiKey is sent
   //      on save but never returned; /models is fetched server-side so the key
   //      never touches the device. ----
   providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
-  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; contextLimit?: number }) =>
+  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; contextLimit?: number; isDefault?: boolean }) =>
     req<Provider & { error?: string }>("POST", "/api/providers", body),
   providerDelete: (id: string) => req<{ deleted?: boolean }>("POST", "/api/providers/delete", { id }),
+  providerDefault: () => req<{ id: string }>("GET", "/api/providers/default"),
+  providerApplyDefault: (id: string) => req<{ updated: number }>("POST", "/api/providers/apply-default", { id }),
   // Populate the model dropdown: either from a saved preset (id), or by probing a
   // baseUrl+key before the preset is saved.
   providerModels: (q: { id: string } | { baseUrl: string; key?: string }) =>
@@ -326,11 +364,19 @@ export const api = {
   mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string }) =>
     req<{ deleted?: boolean; error?: string }>("POST", "/api/mcp/delete", body),
 
-  // ---- scheduled loops (re-run a prompt on an interval), mirrors web api.loops ----
-  loops: (sessionId: string) => req<Loop[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
-  loopsCreate: (body: { session: string; prompt: string; interval: number; model?: string }) =>
+  // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
+  loops: (sessionId: string) => req<Job[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
+  loopsCreate: (body: { session: string; prompt: string; interval?: number; cron?: string; model?: string }) =>
     req<{ id?: string }>("POST", "/api/loops", body),
+  loopsEdit: (body: { id: string; prompt?: string; interval?: number; cron?: string; model?: string }) =>
+    req<{ updated?: string }>("POST", "/api/loops/edit", body),
   loopsDelete: (id: string) => req("POST", "/api/loops/delete", { id }),
+
+  // ---- agent templates (curated session presets) ----
+  agentTemplates: () => req<AgentTemplate[]>("GET", "/api/agent-templates"),
+  agentTemplateCreate: (body: Omit<AgentTemplate, "id" | "is_builtin" | "created_by" | "created_at">) =>
+    req<{ id?: number }>("POST", "/api/agent-templates", body),
+  agentTemplateDelete: (id: number) => req("POST", "/api/agent-templates/delete", { id }),
 
   // ---- agents available on a host ----
   agents: (host: string) =>
@@ -537,13 +583,16 @@ export const api = {
     req<Card>("POST", "/api/org/cards/assign", body),
   orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) =>
     req<Card>("POST", "/api/org/cards/update", body),
+  // `card_delete` and the automation resume are Red (viewer/orglogic), so these
+  // two can come back queued instead of done — the union makes the caller say so.
   orgDeleteCard: (body: { card_id: number }) =>
-    req<{ deleted?: boolean }>("POST", "/api/org/cards/delete", body),
+    req<{ deleted?: boolean } | Queued>("POST", "/api/org/cards/delete", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),
   orgAudit: (limit = 100) => req<{ audit: AuditEntry[] }>("GET", `/api/org/audit?limit=${limit}`),
   orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
-  orgSetHarman: (patch: Partial<HarmanConfig>) => req<HarmanConfig>("POST", "/api/org/harman", patch),
+  orgSetHarman: (patch: Partial<HarmanConfig>) =>
+    req<HarmanConfig | Queued>("POST", "/api/org/harman", patch),
   orgSkills: () => req<{ skills: LearnedSkill[] }>("GET", "/api/org/skills"),
 }

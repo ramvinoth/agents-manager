@@ -3,7 +3,7 @@ import { ScrollView, Switch, Text, TouchableOpacity, useColorScheme, View } from
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api } from "../api/client"
+import { api, isQueued, type HarmanConfig } from "../api/client"
 import {
   notifyEveryReply,
   serverUrl,
@@ -39,6 +39,13 @@ export default function ProfileScreen({ navigation }: Props) {
   const pref = useThemePref()
   const os = useColorScheme()
   const [notify, setNotify] = useState(notifyEveryReply())
+  // The automation master switch. Null while unknown (not yet loaded, or the
+  // server is unreachable) — the row renders disabled rather than guessing,
+  // because a switch showing "off" that never reached the server would be the
+  // one lie this control must not tell.
+  const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  const [autoBusy, setAutoBusy] = useState(false)
+  const [autoErr, setAutoErr] = useState("")
   // Server picker sheet + a reactive mirror of the active server URL so the row
   // repaints the moment the selection changes (subscribeServer pub-sub).
   const [serverOpen, setServerOpen] = useState(false)
@@ -95,8 +102,79 @@ export default function ProfileScreen({ navigation }: Props) {
     setNotifyEveryReply(v)
   }
 
+  // Re-read on every focus: the same flag is also editable from Company & board,
+  // and a safety control must show the server's state, not a stale local one.
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true
+      api.orgHarman()
+        .then((h) => alive && setHarman(h))
+        .catch(() => alive && setHarman(null))
+      return () => {
+        alive = false
+      }
+    }, [])
+  )
+
+  async function toggleAutomation(v: boolean) {
+    if (!harman || autoBusy) return
+    setAutoBusy(true)
+    setAutoErr("")
+    try {
+      // Deliberately NOT optimistic. Everywhere else a snapped-back switch is a
+      // cosmetic annoyance; here it would claim the machine is paused when the
+      // request never landed. The switch moves only once the server confirms.
+      const res = await api.orgSetHarman({ automation_enabled: v })
+      // Resuming is Red (viewer/orglogic), so a non-owner's request is QUEUED as
+      // an approval rather than applied — a 200 that changed nothing. Say so, or
+      // the switch snapping back looks like a bug instead of the gate working.
+      if (isQueued(res)) {
+        setAutoErr("Sent for approval — only the owner can turn automation on.")
+        setHarman(await api.orgHarman().catch(() => harman))
+      } else {
+        setHarman(res)
+      }
+    } catch (e) {
+      setAutoErr((e as Error).message || "Couldn't change it.")
+      setHarman(await api.orgHarman().catch(() => null))
+    } finally {
+      setAutoBusy(false)
+    }
+  }
+
+  // Three states, not two. A server older than the switch omits the key, and
+  // rendering that as "off" would tell you the machine is paused when that build
+  // has no gate at all and is still firing scheduled jobs. Unknown says so.
+  const autoKnown = harman ? typeof harman.automation_enabled === "boolean" : false
+  const autoHint = autoErr
+    ? autoErr
+    : !harman
+      ? "Can't reach the server — state unknown."
+      : !autoKnown
+        ? "This server is too old to have the switch — it still runs jobs on their own. Update it."
+        : harman.automation_enabled
+          ? "On — scheduled jobs and the autonomous manager can start work on their own."
+          : "Off — nothing runs unless you ask. Scheduled jobs and the manager are paused."
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 32 }}>
+      <Text style={styles.sheetSection}>AUTOMATION</Text>
+      <View style={styles.ssRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.ssRowLabel}>Run work on its own</Text>
+          <Text style={[styles.ssRowHint, autoErr || (harman && !autoKnown) ? { color: t.danger } : null]}>
+            {autoHint}
+          </Text>
+        </View>
+        <Switch
+          testID="profile-automation"
+          value={harman?.automation_enabled === true}
+          disabled={!autoKnown || autoBusy}
+          onValueChange={toggleAutomation}
+          trackColor={{ true: t.accent, false: t.border }}
+        />
+      </View>
+
       <Text style={styles.sheetSection}>APPEARANCE</Text>
       <View style={styles.segRow} testID="theme-switch">
         {THEME_OPTS.map((o) => {

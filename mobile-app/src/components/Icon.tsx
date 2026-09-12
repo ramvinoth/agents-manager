@@ -58,6 +58,21 @@ export type IconName =
   | "volume"
   | "phone"
   | "phoneOff"
+  | "more"
+  | "book"
+  | "school"
+  | "barbell"
+  | "airplane"
+  | "code"
+  | "build"
+  | "bug"
+  | "cloud"
+  | "brush"
+  | "eye"
+  | "megaphone"
+  | "clipboard"
+  | "shield"
+  | "calculator"
 
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
@@ -109,6 +124,21 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   volume: "volume-high-outline",
   phone: "call",
   phoneOff: "call-outline",
+  more: "ellipsis-vertical",
+  book: "book-outline",
+  school: "school-outline",
+  barbell: "barbell-outline",
+  airplane: "airplane-outline",
+  code: "code-slash-outline",
+  build: "build-outline",
+  bug: "bug-outline",
+  cloud: "cloud-outline",
+  brush: "brush-outline",
+  eye: "eye-outline",
+  megaphone: "megaphone-outline",
+  clipboard: "clipboard-outline",
+  shield: "shield-checkmark-outline",
+  calculator: "calculator-outline",
 }
 
 export default function Icon({

@@ -18,7 +18,6 @@ import LoginScreen from "./src/screens/LoginScreen"
 import HomeTabs from "./src/screens/HomeTabs"
 import NewChatScreen from "./src/screens/NewChatScreen"
 import ThreadScreen from "./src/screens/ThreadScreen"
-import VoiceScreen from "./src/screens/VoiceScreen"
 import CallScreen from "./src/screens/CallScreen"
 import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
@@ -32,9 +31,8 @@ export type RootStackParamList = {
   Server: { mode?: "initial" | "add" } | undefined
   Login: undefined
   Home: undefined
-  NewChat: undefined
+  NewChat: { template?: import("./src/api/client").AgentTemplate } | undefined
   Thread: { host: string; label: string; path?: string; jumpTo?: string }
-  Voice: { host: string; label: string; path?: string }
   Call: { host: string; label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string }
   Capabilities: undefined
@@ -173,7 +171,6 @@ export default function App() {
             <Stack.Screen name="Home" component={HomeTabs} options={{ title: "Chats" }} />
             <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: "New chat" }} />
             <Stack.Screen name="Thread" component={ThreadScreen} options={({ route }) => ({ title: route.params.label })} />
-            <Stack.Screen name="Voice" component={VoiceScreen} options={({ route }) => ({ title: `Voice — ${route.params.label}` })} />
             <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />

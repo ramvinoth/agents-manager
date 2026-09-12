@@ -161,10 +161,17 @@ export class AudioSession {
    * Play a TTS stream to completion. If a recording is active it is stopped FIRST.
    * Resolves only after playback finishes and the session is released, so a
    * following record() sees a free session.
+   *
+   * Automatically sets playsInSilentModeIOS so read-aloud works even if no
+   * Voice/Call screen has configured the session yet.
    */
   play(url: string, headers: Record<string, string>): Promise<void> {
     return this.enqueue(async () => {
       await this.dropRecorder()
+      // Ensure the audio mode is set so playback works in silent mode. This is
+      // idempotent if configure() already ran (Voice/Call). Without it, a
+      // read-aloud tap from the thread (no prior configure) would be silent.
+      await this.backend.setRecordMode()
       this.state = "playing"
       try {
         await this.backend.playToEnd(url, headers)

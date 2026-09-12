@@ -52,10 +52,12 @@ export type Turn =
 // `question` carries an UNANSWERED AskUserQuestion tool call. It must surface
 // prominently — buried in the collapsed steps the user never sees the agent is
 // waiting on them, and the conversation just stalls.
-// `plan` carries an ExitPlanMode tool call whose input.plan is the full proposed
-// plan (markdown). Surfaced as its own card so it renders as formatted text, not
-// a raw-JSON tool chip.
-export type ExchangeItem = { kind: "exchange"; id: string; uuid?: string; finalText: string; steps: Block[]; question?: ToolBlock; plan?: ToolBlock; ts?: string }
+// `plans` carries the ExitPlanMode tool calls of the exchange, whose input.plan
+// is the full proposed plan (markdown). Surfaced as their own cards so they
+// render as formatted text, not raw-JSON tool chips. Every plan is kept, not
+// just the last: when the agent re-plans, the superseded ones are still part of
+// the record, and a decided plan collapses to one line so they cost nothing.
+export type ExchangeItem = { kind: "exchange"; id: string; uuid?: string; finalText: string; steps: Block[]; question?: ToolBlock; plans: ToolBlock[]; ts?: string }
 export type ThreadItem =
   | { kind: "user"; id: string; text: string; images?: ImagePart[]; uuid?: string; ts?: string }
   | { kind: "system"; id: string; text: string; ts?: string }
@@ -89,17 +91,11 @@ export function groupThread(turns: Turn[]): ThreadItem[] {
       question = steps[qi] as ToolBlock
       steps = steps.filter((_, i) => i !== qi)
     }
-    // Pull an ExitPlanMode call out of the steps so its markdown plan renders as a
-    // formatted plan card instead of a raw-JSON tool chip. Take the last one (the
-    // final proposed plan) if the agent re-planned.
-    const pis = steps.map((b, i) => (b.kind === "tool" && b.name === "ExitPlanMode" ? i : -1)).filter((i) => i >= 0)
-    let plan: ToolBlock | undefined
-    if (pis.length) {
-      const pi = pis[pis.length - 1]
-      plan = steps[pi] as ToolBlock
-      steps = steps.filter((_, i) => i !== pi)
-    }
-    items.push({ kind: "exchange", id: accId, uuid: accUuid, finalText, steps, question, plan, ts: accTs })
+    // Pull the ExitPlanMode calls out of the steps so each markdown plan renders
+    // as a formatted plan card instead of a raw-JSON tool chip.
+    const plans = steps.filter((b) => b.kind === "tool" && b.name === "ExitPlanMode") as ToolBlock[]
+    if (plans.length) steps = steps.filter((b) => !(b.kind === "tool" && b.name === "ExitPlanMode"))
+    items.push({ kind: "exchange", id: accId, uuid: accUuid, finalText, steps, question, plans, ts: accTs })
     acc = null
     accTs = undefined
   }
@@ -133,7 +129,7 @@ export function itemUuid(it: ThreadItem): string | undefined {
 /** Short preview text for a pinned message (banner / profile list). */
 export function itemPreview(it: ThreadItem): string {
   if (it.kind === "user") return it.text
-  if (it.kind === "exchange") return it.finalText || (it.plan ? "Proposed plan" : it.question ? "Question" : "…")
+  if (it.kind === "exchange") return it.finalText || (it.plans.length ? "Proposed plan" : it.question ? "Question" : "…")
   if (it.kind === "system") return it.text
   return ""
 }

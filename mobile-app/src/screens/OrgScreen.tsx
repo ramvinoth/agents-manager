@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
+import { api, isQueued, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -114,7 +114,12 @@ export default function OrgScreen({ navigation }: Props) {
     setHarman(next) // optimistic
     try {
       const saved = await api.orgSetHarman(patch)
-      setHarman(saved)
+      // A queued response means the write became an approval, so the optimistic
+      // state is now a lie — reload rather than paint a change that didn't land.
+      // This screen never sends the master switch (that's Profile), so today only
+      // a policy change could route it here; handling it keeps that safe.
+      if (isQueued(saved)) load()
+      else setHarman(saved)
     } catch { load() }
   }
 
@@ -177,9 +182,13 @@ export default function OrgScreen({ navigation }: Props) {
               <View style={{ flex: 1 }}>
                 <Text style={{ color: t.text, fontWeight: "600" }}>Autonomous manager</Text>
                 <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                  {harman.enabled
-                    ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
-                    : "Off"}
+                  {/* `=== false` on purpose: an old server omits the key, and reading
+                      that as paused would claim a gate this server doesn't have. */}
+                  {harman.automation_enabled === false
+                    ? "Paused — automation is off in Profile"
+                    : harman.enabled
+                      ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
+                      : "Off"}
                 </Text>
               </View>
               <Switch value={harman.enabled} onValueChange={(v) => patchHarman({ enabled: v })} />

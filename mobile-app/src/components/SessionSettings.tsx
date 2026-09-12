@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react"
 import { ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
-import { api, type Loop } from "../api/client"
-import { fmtInterval, parseInterval } from "../lib/interval"
+import { api, type Job } from "../api/client"
+import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { notifyEveryReply, setNotifyEveryReply } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Icon, { type IconName } from "./Icon"
+import JobScheduler from "./JobScheduler"
 import SheetModal from "./SheetModal"
 import { useStyles } from "../screens/styles"
 
@@ -23,7 +24,7 @@ export type Opt = { v: string; label: string }
  * The chat-session settings sheet reached from the ⚙ in the thread header.
  * Brings the web UI's LHS Settings tab to mobile: the per-message permission
  * mode + model, transcript filter, per-session system prompt + goal (saved to
- * /api/session-meta), scheduled loops, plus the "notify on every reply" switch.
+ * /api/session-meta), scheduled jobs, plus the "notify on every reply" switch.
  * One clean bottom-sheet, themed for both modes.
  */
 export default function SessionSettings({
@@ -84,12 +85,10 @@ export default function SessionSettings({
   const [systemPrompt, setSystemPrompt] = useState("")
   const [goal, setGoal] = useState("")
   const [saved, setSaved] = useState<"systemPrompt" | "goal" | null>(null)
-  const [loops, setLoops] = useState<Loop[]>([])
-  const [loopPrompt, setLoopPrompt] = useState("")
-  const [loopInterval, setLoopInterval] = useState("1h")
+  const [jobs, setJobs] = useState<Job[]>([])
   const [notify, setNotify] = useState(notifyEveryReply())
 
-  // Load meta + loops each time the sheet opens (state may have changed elsewhere).
+  // Load meta + jobs each time the sheet opens (state may have changed elsewhere).
   useEffect(() => {
     if (!visible) return
     setNotify(notifyEveryReply())
@@ -100,7 +99,7 @@ export default function SessionSettings({
         setGoal(m.goal || "")
       })
       .catch(() => {})
-    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setLoops(l)).catch(() => {})
+    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setJobs(l)).catch(() => {})
   }, [visible, host, path, sessionId])
 
   function saveMeta(field: "systemPrompt" | "goal", value: string) {
@@ -109,20 +108,17 @@ export default function SessionSettings({
     setTimeout(() => setSaved((f) => (f === field ? null : f)), 1600)
   }
 
-  function addLoop() {
-    const prompt = loopPrompt.trim()
-    if (!prompt || !sessionId) return
-    const interval = parseInterval(loopInterval)
+  function addJob(prompt: string, schedule: { cron?: string; interval?: number }) {
+    if (!sessionId) return
     api
-      .loopsCreate({ session: sessionId, prompt, interval })
+      .loopsCreate({ session: path || sessionId, prompt, ...schedule })
       .then(() => api.loops(sessionId))
-      .then((l) => Array.isArray(l) && setLoops(l))
+      .then((l) => Array.isArray(l) && setJobs(l))
       .catch(() => {})
-    setLoopPrompt("")
   }
 
-  function removeLoop(id: string) {
-    setLoops((all) => all.filter((l) => l.id !== id)) // optimistic
+  function removeJob(id: string) {
+    setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
     api.loopsDelete(id).catch(() => {})
   }
 
@@ -141,8 +137,8 @@ export default function SessionSettings({
         contentContainerStyle={styles.ssScrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
-        // Keep an open keyboard from covering the System Prompt / Goal / Loop
-        // inputs: pad by the keyboard height and scroll the focused field up.
+        // Keep an open keyboard from covering the inputs: pad by the keyboard
+        // height and scroll the focused field up.
         automaticallyAdjustKeyboardInsets
       >
         {/* Permission mode + model — the per-message controls that used to
@@ -216,49 +212,25 @@ export default function SessionSettings({
           placeholderTextColor={t.textMuted}
         />
 
-        {/* Loops */}
-        <Text style={styles.sheetSection}>LOOPS</Text>
-        {loops.map((l) => (
-          <View key={l.id} style={styles.ssLoopRow}>
-            <Icon name="repeat" size={14} color={t.textMuted} />
-            <Text style={styles.ssLoopPrompt} numberOfLines={1}>
-              {l.prompt}
-            </Text>
-            <Text style={styles.ssLoopInterval}>{fmtInterval(l.interval)}</Text>
-            <TouchableOpacity testID={`ss-loop-del-${l.id}`} onPress={() => removeLoop(l.id)}>
+        {/* Scheduled jobs */}
+        <Text style={styles.sheetSection}>SCHEDULED JOBS</Text>
+        {jobs.map((j) => (
+          <View key={j.id} style={styles.ssJobRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 2 }}>
+                <Text style={styles.ssJobSchedule}>{describeSchedule(j)}</Text>
+                {j.nextRun ? (
+                  <Text style={styles.ssJobNext}>Next: {fmtNextRun(j.nextRun)}</Text>
+                ) : null}
+              </View>
+            </View>
+            <TouchableOpacity testID={`ss-job-del-${j.id}`} onPress={() => removeJob(j.id)}>
               <Icon name="trash" size={15} color={t.danger} />
             </TouchableOpacity>
           </View>
         ))}
-        <TextInput
-          testID="ss-loop-prompt"
-          style={[styles.ssInput, styles.ssMultiline]}
-          value={loopPrompt}
-          onChangeText={setLoopPrompt}
-          placeholder="Prompt to run on a schedule…"
-          placeholderTextColor={t.textMuted}
-          multiline
-        />
-        <View style={styles.ssLoopAddRow}>
-          <Text style={{ color: t.textMuted, fontSize: 12 }}>Every</Text>
-          <TextInput
-            testID="ss-loop-interval"
-            style={styles.ssLoopIntervalInput}
-            value={loopInterval}
-            onChangeText={setLoopInterval}
-            placeholder="1h"
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            testID="ss-loop-add"
-            style={[styles.ssAddBtn, { opacity: loopPrompt.trim() ? 1 : 0.5 }]}
-            disabled={!loopPrompt.trim()}
-            onPress={addLoop}
-          >
-            <Text style={styles.ssAddBtnText}>Add loop</Text>
-          </TouchableOpacity>
-        </View>
+        <JobScheduler onSubmit={addJob} styles={styles} />
       </ScrollView>
 
       <TouchableOpacity testID="ss-done" style={styles.sheetDone} onPress={onClose}>

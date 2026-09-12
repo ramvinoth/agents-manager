@@ -15,7 +15,7 @@ function test(name: string, fn: () => void) {
 
 const ITEMS: ThreadItem[] = [
   { kind: "user", id: "1", text: "fix the build error" },
-  { kind: "exchange", id: "2", finalText: "The build is green now", steps: [{ kind: "tool", name: "Bash", input: {}, id: "t", result: null }] },
+  { kind: "exchange", id: "2", finalText: "The build is green now", steps: [{ kind: "tool", name: "Bash", input: {}, id: "t", result: null }], plans: [] },
   { kind: "system", id: "3", text: "background task done" },
   { kind: "user", id: "4", text: "ship it" },
 ]

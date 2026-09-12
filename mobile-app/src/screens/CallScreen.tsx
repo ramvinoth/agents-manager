@@ -1,10 +1,9 @@
 /**
  * CallScreen — a WhatsApp-style voice CALL with the agentic assistant.
  *
- * Unlike VoiceScreen (a foreground push-to-talk screen), this is a real iOS call:
  * CallKit shows the system call UI, and the conversation keeps running with the
- * screen locked or the app backgrounded. It reuses the shared `useAssistantTurn`
- * hands-free loop verbatim — the only additions are the CallKit lifecycle (via
+ * screen locked or the app backgrounded. It uses `useAssistantTurn` for the
+ * hands-free loop — the only additions are the CallKit lifecycle (via
  * `callManager`) and a call-styled UI.
  *
  * Flow on mount: start the CallKit call → start the hands-free listen loop (forced

@@ -19,8 +19,9 @@ type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model:
  * (server-side source of truth in ~/.claude/.viewer-providers.json) — nothing is
  * cached or hardcoded on the device.
  *
- * "Default (Claude)" is not a stored provider; it's the built-in Claude login
+ * "Built-in (Claude)" is not a stored provider; it's the built-in Claude login
  * (provider = ""), shown here as a pinned, non-editable header for orientation.
+ * One provider can be marked isDefault — it auto-selects for new sessions.
  */
 export default function ProvidersScreen({ navigation }: Props) {
   const styles = useStyles()
@@ -100,7 +101,7 @@ export default function ProvidersScreen({ navigation }: Props) {
   }
 
   function deleteProvider(p: Provider) {
-    Alert.alert(p.name, "Delete this provider? Sessions using it fall back to Default (Claude).", [
+    Alert.alert(p.name, "Delete this provider? Sessions using it fall back to Built-in (Claude).", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
@@ -114,19 +115,45 @@ export default function ProvidersScreen({ navigation }: Props) {
     ])
   }
 
+  function toggleDefault(p: Provider) {
+    const newDefault = !p.isDefault
+    // Optimistic: un-default all, then set this one.
+    setProviders((all) =>
+      all.map((x) => ({ ...x, isDefault: x.id === p.id ? newDefault : false }))
+    )
+    api.providerSave({ id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model, isDefault: newDefault }).catch(() => {})
+  }
+
+  function applyDefaultToAll() {
+    const def = providers.find((p) => p.isDefault)
+    const name = def ? def.name : "Built-in (Claude)"
+    const id = def ? def.id : ""
+    Alert.alert("Apply to all sessions", `Set ${name} as the provider for ALL existing chat sessions?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Apply",
+        onPress: () => {
+          api.providerApplyDefault(id).then((r) => {
+            Alert.alert("Done", `Updated ${r.updated} sessions.`)
+          }).catch(() => {})
+        },
+      },
+    ])
+  }
+
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       <Text style={styles.sheetHint}>
         Providers route a session to your own model endpoint. Manage them here; pick one per chat in its
         settings.
       </Text>
 
-      {/* Default (Claude) — the built-in login, not a stored provider. */}
-      <Text style={styles.sheetSection}>DEFAULT</Text>
+      {/* Built-in (Claude) — the built-in login, not a stored provider. */}
+      <Text style={styles.sheetSection}>BUILT-IN</Text>
       <View style={styles.profileInfoRow}>
         <Icon name="sparkle" size={18} color={t.accent} />
         <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={{ color: t.text, fontWeight: "600" }}>Default (Claude)</Text>
+          <Text style={{ color: t.text, fontWeight: "600" }}>Built-in (Claude)</Text>
           <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Uses your Claude login. Always available.</Text>
         </View>
       </View>
@@ -141,8 +168,18 @@ export default function ProvidersScreen({ navigation }: Props) {
             style={{ flex: 1, marginLeft: 10 }}
             onPress={() => openEditor(p)}
           >
-            <Text style={{ color: t.text, fontWeight: "600" }}>{p.name}</Text>
+            <Text style={{ color: t.text, fontWeight: "600" }}>
+              {p.name}{p.isDefault ? " ★ default" : ""}
+            </Text>
             <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{p.baseUrl}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID={`provider-default-${p.id}`}
+            onPress={() => toggleDefault(p)}
+            hitSlop={8}
+            style={{ marginRight: 6 }}
+          >
+            <Icon name={p.isDefault ? "star" : "starOutline"} size={17} color={p.isDefault ? t.accent : t.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity testID={`provider-delete-${p.id}`} onPress={() => deleteProvider(p)} hitSlop={8} style={{ marginRight: 6 }}>
             <Icon name="trash" size={17} color={t.danger} />
@@ -156,9 +193,14 @@ export default function ProvidersScreen({ navigation }: Props) {
       )}
 
       {!editing ? (
-        <TouchableOpacity testID="provider-add" style={[styles.ssAddBtn, { alignSelf: "flex-start", marginHorizontal: 18, marginTop: 14 }]} onPress={() => openEditor()}>
-          <Text style={styles.ssAddBtnText}>+ Add provider</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", gap: 14, marginHorizontal: 18, marginTop: 14, flexWrap: "wrap" }}>
+          <TouchableOpacity testID="provider-add" style={styles.ssAddBtn} onPress={() => openEditor()}>
+            <Text style={styles.ssAddBtnText}>+ Add provider</Text>
+          </TouchableOpacity>
+          <TouchableOpacity testID="provider-apply-all" style={styles.ssAddBtn} onPress={applyDefaultToAll}>
+            <Text style={styles.ssAddBtnText}>Apply default to all sessions</Text>
+          </TouchableOpacity>
+        </View>
       ) : null}
 
       {/* Editor — create or edit one provider. */}

@@ -17,6 +17,7 @@ export default function ChatActions({
   onArchive,
   onFavorite,
   onDelete,
+  onSelect,
 }: {
   visible: boolean
   name: string
@@ -27,6 +28,7 @@ export default function ChatActions({
   onArchive: () => void
   onFavorite: () => void
   onDelete: () => void
+  onSelect?: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(name)
@@ -97,6 +99,18 @@ export default function ChatActions({
           >
             <Text style={styles.actionText}>{favorite ? "Unfavorite" : "Favorite"}</Text>
           </TouchableOpacity>
+          {onSelect ? (
+            <TouchableOpacity
+              testID="action-select"
+              style={styles.actionRow}
+              onPress={() => {
+                onSelect()
+                onClose()
+              }}
+            >
+              <Text style={styles.actionText}>Select</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             testID="action-archive"
             style={styles.actionRow}

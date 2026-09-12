@@ -13,7 +13,7 @@ import {
   navInit, navVisit, navBack, navForward, navCurrent, navCanBack, navCanForward,
   type NavHistory,
 } from "../lib/files"
-import { currentHost, subscribeChatFilter } from "../state/config"
+import { currentHost } from "../state/config"
 import { HostHeaderButton } from "../components/HostPicker"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
@@ -131,12 +131,13 @@ export default function FilesTab({ navigation }: Props) {
     }
   }, [host])
 
-  useEffect(() => {
-    return subscribeChatFilter(() => {
+  // Sync host when this tab gains focus (host may have changed on another tab).
+  useFocusEffect(
+    useCallback(() => {
       const h = currentHost()
       setHost((prev) => (prev === h ? prev : h))
-    })
-  }, [])
+    }, [])
+  )
 
   async function doUploadPhoto() {
     const res = await ImagePicker.launchImageLibraryAsync({ quality: 1 })

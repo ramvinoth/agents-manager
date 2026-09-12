@@ -1,19 +1,14 @@
 /**
- * useAssistantTurn — the shared voice-turn engine behind both the push-to-talk
- * Voice screen and the CallKit Call screen.
+ * useAssistantTurn — the voice-turn engine behind the CallKit Call screen.
  *
- * It owns everything that is identical between the two: the phase state machine,
- * the last-heard / last-reply / error strings, running one turn from transcribed
- * text (`runTurn`), the hands-free wake-word listen loop
- * (`startHandsFree`/`stopHandsFree`), and voice enrollment. The screens layer
- * their own UI (and, for Voice, push-to-talk) on top.
+ * It owns the phase state machine, the last-heard / last-reply / error strings,
+ * running one turn from transcribed text (`runTurn`), the hands-free wake-word
+ * listen loop (`startHandsFree`/`stopHandsFree`), and voice enrollment.
  *
- * `setPhase` is exposed because the Voice screen's push-to-talk drives the phase
- * directly; CallScreen only uses the hands-free loop.
+ * `setPhase` is exposed for external phase control if needed.
  *
- * Pass `callMode: true` (the Call screen) to drop the per-turn wake word and run the
- * full Claude harness (session's provider/model/mode) spoken via Pocket. The Voice
- * screen leaves it off and honors the persisted "Assistant voice" appliance toggle.
+ * Pass `callMode: true` to drop the per-turn wake word and run the full Claude
+ * harness (session's provider/model/mode) spoken via Pocket.
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api } from "../api/client"
@@ -83,10 +78,9 @@ export function useAssistantTurn(
   const [assistantVoice, setAssistantVoiceState] = useState(false)
 
   // Assistant appliance: answer + speak the utterance via the :8099 service (Qwen +
-  // 2 tools) in one fast stream, bypassing the chat pipeline. This is the Voice
-  // screen's "Assistant voice" toggle — a snappy Q&A path. A CALL does NOT use it:
-  // a call runs the full Claude harness (session's provider/model/mode) and speaks
-  // the reply via Pocket, so it's as capable as a normal chat turn.
+  // 2 tools) in one fast stream, bypassing the chat pipeline. This toggle is
+  // retained for future use. A CALL does NOT use it: a call runs the full Claude
+  // harness (session's provider/model/mode) and speaks the reply via Pocket.
   const assistantRef = useRef(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // The active listen-loop stopper, and a busy flag so a wake utterance that lands
@@ -162,7 +156,7 @@ export function useAssistantTurn(
    *   - stop      → halt playback, settle to waiting (no new turn).
    *   - end       → halt playback and end the CallKit call (via onEndCall).
    *   - ask(tail) → halt playback and stash the new question for runTurn to pick up.
-   * Falls back to a plain `speak()` on the Voice screen or a build without the
+   * Falls back to a plain `speak()` on a build without the
    * native module (duplexAvailable() === false), so nothing regresses there.
    */
   const speakWithBargeIn = useCallback(

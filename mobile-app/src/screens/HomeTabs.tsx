@@ -6,7 +6,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import ChatsScreen from "./ChatsScreen"
 import FilesTab from "./FilesTab"
-import ProjectsScreen from "./ProjectsScreen"
+import AgentsScreen from "./AgentsScreen"
 import ProfileScreen from "./ProfileScreen"
 import Icon, { type IconName } from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -14,7 +14,7 @@ import { useTheme } from "../lib/useTheme"
 export type HomeTabParamList = {
   Chats: undefined
   Files: undefined
-  Projects: undefined
+  Agents: undefined
   Profile: undefined
 }
 
@@ -24,7 +24,7 @@ const Tab = createMaterialTopTabNavigator<HomeTabParamList>()
 const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> = {
   Chats: { on: "chatFilled", off: "chat" },
   Files: { on: "file", off: "file" },
-  Projects: { on: "folderFilled", off: "folder" },
+  Agents: { on: "sparkle", off: "sparkle" },
   Profile: { on: "userFilled", off: "user" },
 }
 
@@ -91,7 +91,7 @@ export default function HomeTabs({ navigation }: Props) {
     >
       <Tab.Screen name="Chats">{() => <ChatsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Files">{() => <FilesTab navigation={navigation} />}</Tab.Screen>
-      <Tab.Screen name="Projects">{() => <ProjectsScreen navigation={navigation} />}</Tab.Screen>
+      <Tab.Screen name="Agents">{() => <AgentsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
   )

@@ -4,7 +4,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type BoardColumn, type Card, type Employee } from "../api/client"
+import { api, isQueued, type BoardColumn, type Card, type Employee } from "../api/client"
 import { groupByColumn, nextPosition } from "../lib/board"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
@@ -101,7 +101,12 @@ export default function KanbanScreen({ route, navigation }: Props) {
           style: "destructive" as const,
           onPress: async () => {
             setCards((cur) => cur.filter((c) => c.id !== card.id)) // optimistic
-            try { await api.orgDeleteCard({ card_id: card.id }) } catch { load() }
+            // `card_delete` is Red (viewer/orglogic): a caller who can't
+            // self-approve gets an approval back, not a deletion. Reload so the
+            // card reappears — otherwise it looks deleted while it still exists.
+            try {
+              if (isQueued(await api.orgDeleteCard({ card_id: card.id }))) load()
+            } catch { load() }
           },
         },
       ])

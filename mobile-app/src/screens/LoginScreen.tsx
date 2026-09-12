@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react"
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
@@ -56,7 +56,13 @@ export default function LoginScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.screen}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: t.bg }}
+      contentContainerStyle={{ padding: 16 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets
+    >
       <Text style={styles.label}>Username</Text>
       <TextInput
         testID="login-username"
@@ -108,6 +114,6 @@ export default function LoginScreen({ navigation }: Props) {
         </Text>
       </TouchableOpacity>
       <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />
-    </View>
+    </ScrollView>
   )
 }

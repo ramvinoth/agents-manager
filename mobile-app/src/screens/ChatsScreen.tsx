@@ -1,19 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react"
-import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
 import {
-  activeProject,
   currentHost,
-  knownProjects,
   markSeen,
   seenMap,
-  setActiveProject,
-  setKnownProjects,
   setToken,
-  subscribeChatFilter,
 } from "../state/config"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
@@ -50,31 +45,17 @@ export default function ChatsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [host, setHostState] = useState(currentHost())
-  const [project, setProjectState] = useState<string | null>(activeProject())
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<"all" | "unread" | "favorites" | "projects">("all")
   const [showArchived, setShowArchived] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [actionFor, setActionFor] = useState<Session | null>(null)
   const [seenTick, setSeenTick] = useState(0)
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const t = useTheme()
   const styles = useStyles()
   const hostLabel = host === "local" ? "This machine" : host
-
-  // Keep in sync with the Hosts/Projects tabs via the shared filter pub-sub.
-  useEffect(() => {
-    return subscribeChatFilter(() => {
-      setHostState(currentHost())
-      setProjectState(activeProject())
-    })
-  }, [])
-
-  // Publish the projects we discover so the Projects tab shows the same options.
-  useEffect(() => {
-    const set = new Set<string>()
-    for (const s of sessions) if (s.project) set.add(s.project)
-    setKnownProjects(Array.from(set).sort())
-  }, [sessions])
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
@@ -133,6 +114,48 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
+  function enterSelection(s: Session) {
+    setSelecting(true)
+    setSelected(new Set([s.path]))
+  }
+
+  function toggleSelected(path: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(path) ? next.delete(path) : next.add(path)
+      return next
+    })
+  }
+
+  function exitSelection() {
+    setSelecting(false)
+    setSelected(new Set())
+  }
+
+  function bulkDelete() {
+    const count = selected.size
+    if (!count) return
+    Alert.alert(`Delete ${count} chat${count > 1 ? "s" : ""}?`, "This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          const paths = Array.from(selected)
+          setSessions((all) => all.filter((x) => !selected.has(x.path)))
+          exitSelection()
+          for (const p of paths) {
+            try {
+              await api.deleteSession({ session: p, host, agent: "claude" })
+            } catch {
+              // best-effort; already removed optimistically
+            }
+          }
+        },
+      },
+    ])
+  }
+
   // Toggle a server-side session-meta flag (archived / favorite), optimistically.
   async function setFlag(s: Session, key: "archived" | "favorite", value: boolean) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, [key]: value } : x)))
@@ -150,8 +173,34 @@ export default function ChatsScreen({ navigation }: Props) {
   // Chats shows a "+" that starts a new session.
   useFocusEffect(
     useCallback(() => {
+      if (selecting) {
+        navigation.setOptions({
+          title: `${selected.size} selected`,
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={exitSelection}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ flexDirection: "row", alignItems: "center", marginLeft: 4 }}
+            >
+              <Icon name="close" size={22} color={t.accent} />
+            </TouchableOpacity>
+          ),
+          headerRight: () => (
+            <TouchableOpacity
+              testID="bulk-delete"
+              onPress={bulkDelete}
+              disabled={selected.size === 0}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4, opacity: selected.size === 0 ? 0.3 : 1 }}
+            >
+              <Icon name="trash" size={21} color="#e74c3c" />
+            </TouchableOpacity>
+          ),
+        })
+        return
+      }
       navigation.setOptions({
-        title: project ? shortProject(project) : "Chats",
+        title: "Chats",
         headerLeft: () => <HostHeaderButton navigation={navigation} />,
         headerRight: () => (
           <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -181,7 +230,7 @@ export default function ChatsScreen({ navigation }: Props) {
           </View>
         ),
       })
-    }, [navigation, project, t])
+    }, [navigation, t, selecting, selected])
   )
 
   const load = useCallback(
@@ -291,8 +340,7 @@ export default function ChatsScreen({ navigation }: Props) {
           ListEmptyComponent={
             error ? null : (
               <Text style={[styles.hint, { padding: 16 }]}>
-                No chats yet on {hostLabel}
-                {project ? ` in ${shortProject(project)}` : ""}.
+                No chats yet on {hostLabel}.
               </Text>
             )
           }
@@ -322,17 +370,35 @@ export default function ChatsScreen({ navigation }: Props) {
             const item = row.s
             const name = item.title || item.id.slice(0, 8)
             const unread = isUnread(seenMap(), item.path, item.modified)
+            const isSelected = selecting && selected.has(item.path)
             return (
               <TouchableOpacity
                 testID={`chat-${item.id}`}
                 style={[styles.chatRow, { borderBottomColor: t.border }]}
                 onPress={() => {
+                  if (selecting) {
+                    toggleSelected(item.path)
+                    return
+                  }
                   markSeen(item.path).then(() => setSeenTick((n) => n + 1))
                   navigation.navigate("Thread", { host, label: name, path: item.path })
                 }}
-                onLongPress={() => setActionFor(item)}
+                onLongPress={selecting ? undefined : () => setActionFor(item)}
                 delayLongPress={350}
               >
+                {selecting ? (
+                  <View
+                    style={{
+                      width: 24, height: 24, borderRadius: 12, marginRight: 10,
+                      alignItems: "center", justifyContent: "center",
+                      backgroundColor: isSelected ? t.accent : "transparent",
+                      borderWidth: isSelected ? 0 : 2,
+                      borderColor: t.textMuted,
+                    }}
+                  >
+                    {isSelected ? <Icon name="check" size={16} color="#fff" /> : null}
+                  </View>
+                ) : null}
                 <Avatar avatar={item.avatar} seed={item.id} size={46} />
                 <View style={{ flex: 1 }}>
                   <Text
@@ -382,6 +448,7 @@ export default function ChatsScreen({ navigation }: Props) {
         onArchive={() => actionFor && setFlag(actionFor, "archived", !actionFor.archived)}
         onFavorite={() => actionFor && setFlag(actionFor, "favorite", !actionFor.favorite)}
         onDelete={() => actionFor && remove(actionFor)}
+        onSelect={() => actionFor && enterSelection(actionFor)}
       />
     </View>
   )

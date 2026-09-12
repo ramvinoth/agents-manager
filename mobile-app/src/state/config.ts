@@ -82,40 +82,8 @@ async function persistServers() {
   }
 }
 
-// Shared chat-filter state (active host + project). The Hosts/Projects tabs set
-// these and the Chats tab subscribes, so switching in one tab reflects in
-// another without prop-drilling across the tab navigator. Project is
-// session-only (not persisted); host persists via HOST_KEY below.
-let _project: string | null = null
-const _filterListeners = new Set<() => void>()
-export function subscribeChatFilter(fn: () => void): () => void {
-  _filterListeners.add(fn)
-  return () => _filterListeners.delete(fn)
-}
-function notifyFilter() {
-  _filterListeners.forEach((fn) => fn())
-}
-
-/** The project filter applied to the chat list (null = all chats). */
-export function activeProject(): string | null {
-  return _project
-}
-export function setActiveProject(p: string | null): void {
-  _project = p
-  notifyFilter()
-}
-
-// The set of projects discovered on the active host. Chats derives this from
-// its session list and publishes it so the Projects tab can render the same
-// filter options without re-fetching.
-let _projects: string[] = []
-export function knownProjects(): string[] {
-  return _projects
-}
-export function setKnownProjects(p: string[]): void {
-  _projects = p
-  notifyFilter()
-}
+// Shared chat-filter state (active host). The Hosts tab sets this and the
+// Chats tab reads it. Host persists via HOST_KEY below.
 
 export async function loadConfig(): Promise<{ serverUrl: string; token: string }> {
   // Best-effort: if the secure store is unavailable, fall back to empty
@@ -182,8 +150,6 @@ export function currentHost(): string {
 
 export async function setCurrentHost(h: string): Promise<void> {
   _host = h || "local"
-  _project = null // a different host has different projects; clear the filter
-  notifyFilter()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)
   } catch {
@@ -234,7 +200,6 @@ export async function addServer(url: string, name?: string): Promise<ServerEntry
 export async function switchServer(id: string): Promise<void> {
   _servers = switchInList(_servers, id)
   _host = "local"
-  _project = null
   await persistServers()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)
@@ -242,7 +207,6 @@ export async function switchServer(id: string): Promise<void> {
     /* not persisted */
   }
   notifyServer()
-  notifyFilter()
 }
 
 /** Remove a saved server. If it was active, the active selection falls back to
@@ -251,7 +215,6 @@ export async function removeServer(id: string): Promise<void> {
   _servers = removeFromList(_servers, id)
   await persistServers()
   notifyServer()
-  notifyFilter()
 }
 
 /**

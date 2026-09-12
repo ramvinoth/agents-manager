@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { addServer, switchServer, token } from "../state/config"
@@ -43,7 +43,12 @@ export default function ServerScreen({ route, navigation }: Props) {
   }
 
   return (
-    <View style={styles.screen}>
+    <ScrollView
+      style={styles.screen}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets
+    >
       <Text style={styles.label}>Name (optional)</Text>
       <TextInput
         testID="server-name"
@@ -74,6 +79,6 @@ export default function ServerScreen({ route, navigation }: Props) {
       <TouchableOpacity testID="server-connect" accessibilityLabel="server-connect" style={styles.button} onPress={connect} disabled={busy || !url}>
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Connect</Text>}
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   )
 }

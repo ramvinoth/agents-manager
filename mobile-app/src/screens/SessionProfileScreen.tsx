@@ -10,15 +10,16 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type GitStatus, type Loop, type Provider, type SessionSummary } from "../api/client"
+import { api, type GitStatus, type Job, type Provider, type SessionSummary } from "../api/client"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
-import { fmtInterval, parseInterval } from "../lib/interval"
+import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
 import { groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { composerPrefs, notifyEveryReply, setComposerPrefs, setNotifyEveryReply } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
+import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
 import { useStyles } from "./styles"
 
@@ -41,7 +42,7 @@ const MODELS = [
  * Consolidates everything about one session in one place (WhatsApp contact
  * style): its avatar + name at the top, then the controls that used to live in
  * the composer's gear sheet (permission mode, model, system prompt, goal,
- * scheduled loops, notify) plus its read-only stats. Mode/model persist via the
+ * scheduled jobs, notify) plus its read-only stats. Mode/model persist via the
  * global composerPrefs; the rest via /api/session-meta and /api/loops.
  */
 export default function SessionProfileScreen({ route, navigation }: Props) {
@@ -60,9 +61,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [model, setModelState] = useState(
     MODELS.some((m) => m.v === composerPrefs().model) ? composerPrefs().model : "default"
   )
-  const [loops, setLoops] = useState<Loop[]>([])
-  const [loopPrompt, setLoopPrompt] = useState("")
-  const [loopInterval, setLoopInterval] = useState("1h")
+  const [jobs, setJobs] = useState<Job[]>([])
   const [notify, setNotify] = useState(notifyEveryReply())
   const [summary, setSummary] = useState<SessionSummary | null>(null)
   // Pinned messages: uuids from session meta, resolved to preview text by parsing
@@ -79,6 +78,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // (the full Claude Code harness pointed at the endpoint). Per-session, saved
   // server-side. Only meaningful when a custom provider is selected.
   const [convMode, setConvMode] = useState<"chat" | "agent">("chat")
+  const [effort, setEffort] = useState("")
   // Bottom-sheet provider picker (select-only). Provider CRUD lives in ProvidersScreen.
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   // Which collapsible cards are open. Behaviour + Model open by default (the
@@ -92,7 +92,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [syncing, setSyncing] = useState(false)
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
 
-  // Load meta + loops + stats once. A missing session (fresh chat with no path
+  // Load meta + jobs + stats once. A missing session (fresh chat with no path
   // yet) simply shows empty fields — everything still saves once it exists.
   useEffect(() => {
     if (path) {
@@ -105,12 +105,13 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           setPinned(Array.isArray(m.pinned) ? m.pinned : [])
           setProvider(m.provider || "")
           setConvMode(m.convMode === "agent" ? "agent" : "chat")
+          setEffort(m.effort || "")
           if (m.cwd) { setCwd(m.cwd); loadGit(m.cwd) }
         })
         .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
     }
-    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setLoops(l)).catch(() => {})
+    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setJobs(l)).catch(() => {})
     // Saved provider presets are host-independent (they live on the viewer box).
     api.providers().then((r) => setProviders(r.providers || [])).catch(() => {})
   }, [host, path, sessionId])
@@ -188,25 +189,38 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     if (path) api.sessionMetaSave({ session: path, convMode: m, host }).catch(() => {})
   }
 
-
-  function addLoop() {
-    const prompt = loopPrompt.trim()
-    if (!prompt || !sessionId) return
-    // Create must send the RESOLVABLE rel path (…/<id>.jsonl) as `session`: the
-    // server resolves it to a file before storing. A bare id 404s (why the loop
-    // never appeared). The GET below still lists by bare id (server keys loops by
-    // the session's stem), so refresh works.
-    api
-      .loopsCreate({ session: path || sessionId, prompt, interval: parseInterval(loopInterval) })
-      .then(() => api.loops(sessionId))
-      .then((l) => Array.isArray(l) && setLoops(l))
-      .catch(() => {})
-    setLoopPrompt("")
+  function pickEffort(e: string) {
+    setEffort(e)
+    // "high" is Claude CLI's own default — store "" so we don't explicitly pass
+    // --effort high, which breaks non-Claude backends (e.g. Qwen via vLLM).
+    if (path) api.sessionMetaSave({ session: path, effort: e === "high" ? "" : e, host }).catch(() => {})
   }
 
-  function removeLoop(id: string) {
-    setLoops((all) => all.filter((l) => l.id !== id)) // optimistic
+
+  function addJob(prompt: string, schedule: { cron?: string; interval?: number }) {
+    if (!sessionId) return
+    api
+      .loopsCreate({ session: path || sessionId, prompt, ...schedule })
+      .then(() => api.loops(sessionId))
+      .then((l) => Array.isArray(l) && setJobs(l))
+      .catch(() => {})
+  }
+
+  function removeJob(id: string) {
+    setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
+    if (editingJobId === id) setEditingJobId(null)
     api.loopsDelete(id).catch(() => {})
+  }
+
+  // Edit: update the job via API, then refresh the list.
+  const [editingJobId, setEditingJobId] = useState<string | null>(null)
+  function editJob(id: string, prompt: string, schedule: { cron?: string; interval?: number }) {
+    api
+      .loopsEdit({ id, prompt, ...schedule })
+      .then(() => sessionId ? api.loops(sessionId) : [])
+      .then((l) => { if (Array.isArray(l)) setJobs(l) })
+      .catch(() => {})
+    setEditingJobId(null)
   }
 
   function toggleNotify(v: boolean) {
@@ -304,8 +318,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   // One-line value summaries shown on each card header (read state without opening).
   const modeLabel = MODES.find((m) => m.v === mode)?.label || mode
-  const providerName = provider === "" ? "Default (Claude)" : providers.find((p) => p.id === provider)?.name || "Custom"
-  const behaviourSummary = provider === "" ? `${modeLabel} · Default` : `${modeLabel} · ${providerName} · ${convMode === "agent" ? "Agent" : "Chat"}`
+  const providerName = provider === "" ? "Built-in (Claude)" : providers.find((p) => p.id === provider)?.name || "Custom"
+  const behaviourSummary = provider === "" ? `${modeLabel} · Built-in` : `${modeLabel} · ${providerName} · ${convMode === "agent" ? "Agent" : "Chat"}`
   const modelSummary = provider === "" ? (MODELS.find((m) => m.v === model)?.label || "Default model") : providerName
 
   return (
@@ -315,7 +329,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       keyboardShouldPersistTaps="handled"
       // Pad the scroll content by the keyboard height and scroll the focused
       // TextInput into view, so an open keyboard never overlaps the System
-      // Prompt / Goal / Loop / provider inputs near the bottom of the page.
+      // Prompt / Goal / Job / provider inputs near the bottom of the page.
       automaticallyAdjustKeyboardInsets
       keyboardDismissMode="interactive"
     >
@@ -343,7 +357,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {renderPill(MODES, mode, setMode, "sp-mode")}
 
         <Text style={styles.sheetSection}>PROVIDER</Text>
-        <Text style={styles.sheetHint}>Default uses Claude. A custom provider routes this session to your own endpoint.</Text>
+        <Text style={styles.sheetHint}>Built-in uses Claude. A custom provider routes this session to your own endpoint.</Text>
         <TouchableOpacity
           testID="sp-provider-row"
           style={styles.profileInfoRow}
@@ -389,6 +403,28 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             </View>
           </>
         ) : null}
+
+        <Text style={styles.sheetSection}>EFFORT LEVEL</Text>
+        <Text style={styles.sheetHint}>Controls reasoning depth. Higher = deeper thinking, more tokens.</Text>
+        <View style={styles.sheetPills}>
+          {(["low", "medium", "high", "xhigh", "max"] as const).map((e) => {
+            const active = (effort || "high") === e
+            const labels: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra High", max: "Max" }
+            return (
+              <TouchableOpacity
+                key={e}
+                testID={`sp-effort-${e}`}
+                style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+                onPress={() => pickEffort(e)}
+              >
+                {active ? <Icon name="check" size={14} color="#fff" /> : null}
+                <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
+                  {labels[e]}
+                </Text>
+              </TouchableOpacity>
+            )
+          })}
+        </View>
 
       </>)}
 
@@ -478,47 +514,39 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         />
       </>)}
 
-      {/* ── AUTOMATION: scheduled loops (collapsed). ── */}
-      {renderCard("automation", "repeat", "Scheduled loops", loops.length ? `${loops.length} active` : "None", <>
-        {loops.map((l) => (
-          <View key={l.id} style={styles.ssLoopRow}>
-            <Icon name="repeat" size={14} color={t.textMuted} />
-            <Text style={styles.ssLoopPrompt} numberOfLines={1}>{l.prompt}</Text>
-            <Text style={styles.ssLoopInterval}>{fmtInterval(l.interval)}</Text>
-            <TouchableOpacity testID={`sp-loop-del-${l.id}`} onPress={() => removeLoop(l.id)}>
-              <Icon name="trash" size={15} color={t.danger} />
+      {/* ── AUTOMATION: scheduled jobs (collapsed). ── */}
+      {renderCard("automation", "repeat", "Scheduled jobs", jobs.length ? `${jobs.length} active` : "None", <>
+        {jobs.map((j) => (
+          <View key={j.id}>
+            <TouchableOpacity
+              style={[styles.ssJobRow, editingJobId === j.id ? { backgroundColor: t.accent + "10", borderRadius: 8 } : null]}
+              activeOpacity={0.65}
+              onPress={() => setEditingJobId(editingJobId === j.id ? null : j.id)}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 2 }}>
+                  <Text style={styles.ssJobSchedule}>{describeSchedule(j)}</Text>
+                  {j.nextRun ? (
+                    <Text style={styles.ssJobNext}>Next: {fmtNextRun(j.nextRun)}</Text>
+                  ) : null}
+                </View>
+              </View>
+              <TouchableOpacity testID={`sp-job-del-${j.id}`} onPress={() => removeJob(j.id)}>
+                <Icon name="trash" size={15} color={t.danger} />
+              </TouchableOpacity>
             </TouchableOpacity>
+            {editingJobId === j.id ? (
+              <JobScheduler
+                styles={styles}
+                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval }}
+                onCancel={() => setEditingJobId(null)}
+                onSubmit={(prompt, schedule) => editJob(j.id, prompt, schedule)}
+              />
+            ) : null}
           </View>
         ))}
-        <TextInput
-          testID="sp-loop-prompt"
-          style={[styles.ssInput, styles.ssMultiline]}
-          value={loopPrompt}
-          onChangeText={setLoopPrompt}
-          placeholder="Prompt to run on a schedule…"
-          placeholderTextColor={t.textMuted}
-          multiline
-        />
-        <View style={styles.ssLoopAddRow}>
-          <Text style={{ color: t.textMuted, fontSize: 12 }}>Every</Text>
-          <TextInput
-            testID="sp-loop-interval"
-            style={styles.ssLoopIntervalInput}
-            value={loopInterval}
-            onChangeText={setLoopInterval}
-            placeholder="1h"
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            testID="sp-loop-add"
-            style={[styles.ssAddBtn, { opacity: loopPrompt.trim() ? 1 : 0.5 }]}
-            disabled={!loopPrompt.trim()}
-            onPress={addLoop}
-          >
-            <Text style={styles.ssAddBtnText}>Add loop</Text>
-          </TouchableOpacity>
-        </View>
+        <JobScheduler onSubmit={addJob} styles={styles} />
       </>)}
 
       {/* ── PINNED messages (collapsed; only shown when present). ── */}

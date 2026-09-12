@@ -36,7 +36,12 @@ log() { printf '\033[36m==> %s\033[0m\n' "$*"; }
 [ -f "$ASC_KEY_PATH" ] || { echo "ERROR: no key at $ASC_KEY_PATH" >&2; exit 1; }
 
 BUNDLE_ID="${BUNDLE_ID:-$(node -p "require('$APP_DIR/app.json').expo.ios.bundleIdentifier")}"
-BUILD_NUMBER="${BUILD_NUMBER:-$(date +%s)}"
+# Auto-increment: read the current build number from app.json, add 1. The env
+# override still works for manual control.
+if [ -z "${BUILD_NUMBER:-}" ]; then
+  _PREV="$(node -p "require('$APP_DIR/app.json').expo.ios.buildNumber || '0'")"
+  BUILD_NUMBER=$(( _PREV + 1 ))
+fi
 # Forced on the xcodebuild command line so it applies to EVERY target, including
 # Pods that pin an older target in their podspec. app.json's expo-build-properties
 # setting only reaches the app target and the Podfile platform line, which leaves
@@ -134,6 +139,16 @@ xcrun altool --validate-app -f "$IPA" -t ios \
 log "upload to TestFlight"
 xcrun altool --upload-app -f "$IPA" -t ios \
   --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+# Persist the build number back to app.json so the next run auto-increments.
+node -e "
+  const fs = require('fs');
+  const p = '$APP_DIR/app.json';
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  j.expo.ios.buildNumber = String($BUILD_NUMBER);
+  fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\\n');
+"
+log "build number $BUILD_NUMBER written to app.json"
 
 log "uploaded — Apple processes the build for ~5-15 min, then it appears in TestFlight."
 echo "Next: App Store Connect → TestFlight → add yourself as an internal tester."

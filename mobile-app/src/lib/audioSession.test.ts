@@ -106,7 +106,7 @@ test("record → play → record → play serializes; 2nd record waits for relea
 
   // Play the reply — but DON'T let it finish yet.
   const playing = s.play("wss://tts", {})
-  await tick()
+  await tick(); await tick(); await tick()
   assert.equal(s.getState(), "playing")
   assert.ok(m.isHeld(), "playback should hold the session")
 
@@ -133,6 +133,7 @@ test("record → play → record → play serializes; 2nd record waits for relea
     "setRecordMode",
     "startRecorder",
     "stopRecorder",
+    "setRecordMode",
     "playStart",
     "playReleased",
     "setRecordMode",
@@ -149,7 +150,7 @@ test("play() while recording stops the recorder first", async () => {
   await s.record({})
   assert.equal(s.getState(), "recording")
   const playing = s.play("wss://tts", {})
-  await tick()
+  await tick(); await tick(); await tick()
   assert.equal(s.getState(), "playing")
   m.finishPlayback()
   await playing
