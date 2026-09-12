@@ -53,6 +53,9 @@ def _public(pid, rec):
         # The endpoint's real context window (engine --max-model-len). Optional; 0
         # means "unknown/unset" and no window is declared to Claude Code.
         "contextLimit": int(rec.get("contextLimit") or 0),
+        # When True this provider is auto-selected for new sessions (falls back to
+        # Built-in/Claude when no provider is marked default).
+        "isDefault": bool(rec.get("isDefault")),
     }
 
 
@@ -140,10 +143,11 @@ def anthropic_env(pid):
     return env
 
 
-def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None):
+def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, is_default=None):
     """Create or update a preset. A blank id mints a new uuid4 id. When api_key is
     None the existing key is preserved (edit without re-typing the secret). When
     context_limit is None the existing value is preserved; pass 0 to clear it.
+    When is_default is True, all OTHER presets are un-defaulted (at most one default).
     Returns the public view of the saved preset."""
     base_url = (base_url or "").strip().rstrip("/")
     if not re.match(r"https?://", base_url):
@@ -166,7 +170,13 @@ def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None):
             # (including 0 to clear) wins.
             "contextLimit": int(prev.get("contextLimit") or 0) if context_limit is None
             else max(0, int(context_limit)),
+            "isDefault": bool(prev.get("isDefault")) if is_default is None else bool(is_default),
         }
+        # At most one default: clear others when this one becomes default.
+        if rec["isDefault"]:
+            for other_pid, other_rec in data.items():
+                if isinstance(other_rec, dict) and other_pid != pid:
+                    other_rec["isDefault"] = False
         data[pid] = rec
         _save(data)
     return _public(pid, rec)
@@ -180,3 +190,13 @@ def delete_preset(pid):
         if existed:
             _save(data)
     return existed
+
+
+def get_default_id():
+    """Return the id of the preset marked isDefault, or "" if none."""
+    with _LOCK:
+        data = _load()
+    for pid, rec in data.items():
+        if isinstance(rec, dict) and rec.get("isDefault"):
+            return pid
+    return ""

@@ -64,6 +64,7 @@ def init_db():
               username   TEXT UNIQUE NOT NULL,
               pw_hash    TEXT NOT NULL,
               salt       TEXT NOT NULL,
+              role       TEXT NOT NULL DEFAULT 'viewer',
               created_at DOUBLE PRECISION NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sessions (
@@ -101,6 +102,13 @@ def init_db():
               created_at     DOUBLE PRECISION NOT NULL
             );
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'viewer';
+            -- Existing installs: the first account IS the owner (signup closes after
+            -- it, see routes/auth.py), so promote it rather than locking the only
+            -- user out of their own instance. Idempotent: only fires while no owner
+            -- exists, so a later demotion is not silently undone.
+            UPDATE users SET role = 'owner' WHERE id = (SELECT MIN(id) FROM users)
+              AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'owner');
             CREATE TABLE IF NOT EXISTS pending_plans (
               session_id  TEXT PRIMARY KEY,
               tool_use_id TEXT NOT NULL,
@@ -171,6 +179,16 @@ def init_db():
               outcome    TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS session_backups (
+              id              SERIAL PRIMARY KEY,
+              session_id      TEXT NOT NULL,
+              backup_path     TEXT NOT NULL,
+              original_bytes  BIGINT NOT NULL,
+              trimmed_bytes   BIGINT,
+              reason          TEXT NOT NULL DEFAULT 'auto_trim',
+              created_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_sb_session ON session_backups(session_id);
             CREATE TABLE IF NOT EXISTS skills_learned (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
@@ -181,8 +199,26 @@ def init_db():
               status         TEXT NOT NULL DEFAULT 'proposed',
               created_at     DOUBLE PRECISION NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS agent_templates (
+              id             SERIAL PRIMARY KEY,
+              name           TEXT NOT NULL,
+              description    TEXT NOT NULL DEFAULT '',
+              category       TEXT NOT NULL DEFAULT 'general',
+              icon           TEXT NOT NULL DEFAULT 'sparkle',
+              system_prompt  TEXT NOT NULL DEFAULT '',
+              goal           TEXT NOT NULL DEFAULT '',
+              model          TEXT NOT NULL DEFAULT '',
+              cron           TEXT,
+              job_prompt     TEXT,
+              is_builtin     BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by     TEXT NOT NULL DEFAULT 'system',
+              created_at     DOUBLE PRECISION NOT NULL DEFAULT (extract(epoch from now()))
+            );
+            -- Migration: add model column if table existed before this field.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
             """
         )
+    _seed_agent_templates()
 
 
 def close_pool():
@@ -206,8 +242,13 @@ def user_count():
 
 
 def create_user(username, password):
-    """Create a user; returns {id, username}. Raises ValueError on bad input or a
-    taken username."""
+    """Create a user; returns {id, username, role}. Raises ValueError on bad input
+    or a taken username.
+
+    The FIRST account is the owner: signup closes once a user exists
+    (routes/auth.py), so the account that bootstraps an install is by definition
+    the person who owns it. Everyone created after starts as `viewer` and is
+    promoted deliberately — authority is granted, never assumed."""
     username = (username or "").strip()
     # A username or an email address.
     if not re.fullmatch(r"[A-Za-z0-9._%+@-]{3,64}", username):
@@ -217,11 +258,18 @@ def create_user(username, password):
     salt = secrets.token_hex(16)
     try:
         with _db() as cur:
+            # Decided in SQL, in the same statement as the INSERT, so two
+            # concurrent first-signups cannot both see an empty table and both
+            # become owner.
             cur.execute(
-                "INSERT INTO users(username, pw_hash, salt, created_at) VALUES(%s,%s,%s,%s) RETURNING id",
+                "INSERT INTO users(username, pw_hash, salt, role, created_at) "
+                "VALUES(%s,%s,%s,"
+                "  CASE WHEN EXISTS(SELECT 1 FROM users) THEN 'viewer' ELSE 'owner' END,"
+                "  %s) RETURNING id, role",
                 (username, _hash(password, salt), salt, time.time()),
             )
-            return {"id": cur.fetchone()["id"], "username": username}
+            row = cur.fetchone()
+            return {"id": row["id"], "username": username, "role": row["role"]}
     except psycopg2.IntegrityError:
         raise ValueError("That username is taken")
 
@@ -234,14 +282,14 @@ def delete_user(username):
 
 
 def verify_user(username, password):
-    """{id, username} if the password matches, else None (constant-time compare)."""
+    """{id, username, role} if the password matches, else None (constant-time compare)."""
     with _db() as cur:
         cur.execute("SELECT * FROM users WHERE username = %s", ((username or "").strip(),))
         row = cur.fetchone()
     if not row:
         return None
     if hmac.compare_digest(_hash(password or "", row["salt"]), row["pw_hash"]):
-        return {"id": row["id"], "username": row["username"]}
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
     return None
 
 
@@ -256,7 +304,7 @@ def create_session(user_id):
 
 
 def user_for_session(token):
-    """{id, username} for a live session token, else None. Cached ~60s so the
+    """{id, username, role} for a live session token, else None. Cached ~60s so the
     per-request auth check isn't a DB round-trip every time."""
     if not token:
         return None
@@ -267,7 +315,7 @@ def user_for_session(token):
         return hit[0]
     with _db() as cur:
         cur.execute(
-            "SELECT u.id, u.username, s.expires_at FROM sessions s "
+            "SELECT u.id, u.username, u.role, s.expires_at FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token = %s",
             (token,),
         )
@@ -275,7 +323,8 @@ def user_for_session(token):
         if row and row["expires_at"] < now:
             cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
             row = None
-    user = {"id": row["id"], "username": row["username"]} if row else None
+    user = ({"id": row["id"], "username": row["username"], "role": row["role"]}
+            if row else None)
     with _session_cache_lock:
         # Bound the cache: on overflow drop the oldest entry (FIFO) so a stream of
         # distinct/invalid tokens can't grow it without limit.
@@ -283,6 +332,15 @@ def user_for_session(token):
             _session_cache.pop(next(iter(_session_cache)), None)
         _session_cache[token] = (user, now)
     return user
+
+
+def owner_role():
+    """The install owner's role, for requests with no logged-in human (a loop or
+    cron spawn). Returns 'owner' once an owner account exists, else '' — a fresh
+    install with no accounts confers no authority rather than assuming it."""
+    with _db() as cur:
+        cur.execute("SELECT 1 FROM users WHERE role = 'owner' LIMIT 1")
+        return "owner" if cur.fetchone() else ""
 
 
 def delete_session(token):
@@ -330,13 +388,6 @@ def remove_push_token(token):
         return
     with _db() as cur:
         cur.execute("DELETE FROM push_tokens WHERE token = %s", (token,))
-
-
-def push_tokens_for_user(user_id):
-    """All device tokens registered for a user (may be several devices)."""
-    with _db() as cur:
-        cur.execute("SELECT token FROM push_tokens WHERE user_id = %s", (user_id,))
-        return [r["token"] for r in cur.fetchall()]
 
 
 def all_push_tokens():
@@ -512,10 +563,6 @@ def employee_update(emp_id, **fields):
                     (*sets.values(), emp_id))
         row = cur.fetchone()
     return dict(row) if row else None
-
-
-def employee_set_status(emp_id, status):
-    return employee_update(emp_id, status=status)
 
 
 # Projects --------------------------------------------------------------------
@@ -722,12 +769,22 @@ def approval_list_open():
         return [dict(r) for r in cur.fetchall()]
 
 
+def approval_get(approval_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM approvals WHERE id = %s", (approval_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def approval_resolve(approval_id, resolution):
-    """Mark an approval resolved ('approved'/'denied'/free text)."""
+    """Mark an approval resolved ('approved'/'denied'/free text). Only an OPEN
+    approval resolves: the row carries an intent that EXECUTES on approval, so
+    without this an already-approved row could be re-resolved and the action run
+    a second time. Returns None if it was not open."""
     with _db() as cur:
         cur.execute(
             "UPDATE approvals SET status = 'resolved', resolution = %s, resolved_at = %s "
-            "WHERE id = %s RETURNING *",
+            "WHERE id = %s AND status = 'open' RETURNING *",
             (resolution, _now(), approval_id),
         )
         row = cur.fetchone()
@@ -788,3 +845,177 @@ def skill_learned_set_status(skill_id, status):
                     (status, skill_id))
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+# --------------------------------------------------------------------------- #
+# Session backups                                                              #
+# --------------------------------------------------------------------------- #
+
+def backup_create(session_id, backup_path, original_bytes, trimmed_bytes=None,
+                  reason="auto_trim"):
+    """Record a new session backup. Returns the row dict."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_backups(session_id, backup_path, original_bytes, "
+            "trimmed_bytes, reason) VALUES(%s,%s,%s,%s,%s) RETURNING *",
+            (session_id, backup_path, original_bytes, trimmed_bytes, reason),
+        )
+        return dict(cur.fetchone())
+
+
+def backup_list(session_id):
+    """List all backups for a session, newest first."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT * FROM session_backups WHERE session_id = %s ORDER BY created_at DESC",
+            (session_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def backup_get(backup_id):
+    """Get a single backup by id."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM session_backups WHERE id = %s", (backup_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def backup_delete(backup_id):
+    """Delete a backup row (caller is responsible for deleting the file)."""
+    with _db() as cur:
+        cur.execute("DELETE FROM session_backups WHERE id = %s RETURNING backup_path",
+                    (backup_id,))
+        row = cur.fetchone()
+        return row["backup_path"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Agent templates — curated session presets
+# ---------------------------------------------------------------------------
+
+_BUILTIN_TEMPLATES = [
+    # Personal
+    {"name": "Writing Coach", "description": "Review and improve your writing for clarity, tone, and structure.",
+     "category": "personal", "icon": "book", "model": "sonnet",
+     "system_prompt": "You are a professional writing coach. Review the user's text for clarity, grammar, tone, and structure. Provide specific, actionable suggestions. Be encouraging but honest. Focus on making the writing more effective for its intended audience.",
+     "goal": "Help the user produce clear, compelling writing."},
+    {"name": "Learning Tutor", "description": "Explain concepts using the Socratic method, adapted to your level.",
+     "category": "personal", "icon": "school", "model": "sonnet",
+     "system_prompt": "You are a patient, adaptive tutor. Use the Socratic method: ask guiding questions before giving answers. Gauge the user's level from their questions and adjust complexity. Use analogies and concrete examples. When the user is stuck, break the problem into smaller steps rather than giving the full answer.",
+     "goal": "Help the user deeply understand the topic, not just memorize answers."},
+    {"name": "Fitness Planner", "description": "Create personalized workout and nutrition plans.",
+     "category": "personal", "icon": "barbell", "model": "sonnet",
+     "cron": "0 7 * * *",
+     "job_prompt": "Good morning! Check in on yesterday's workout. Any soreness or energy changes? Adjust today's plan accordingly.",
+     "system_prompt": "You are a certified personal trainer and nutritionist. Ask about the user's fitness goals, current fitness level, available equipment, and dietary preferences before creating plans. Provide structured weekly workout routines with sets, reps, and rest periods. Include warm-up and cool-down. Offer meal prep suggestions that are practical and sustainable.",
+     "goal": "Create a realistic, sustainable fitness and nutrition plan tailored to the user's goals."},
+    {"name": "Travel Planner", "description": "Build detailed itineraries with local tips and logistics.",
+     "category": "personal", "icon": "airplane", "model": "sonnet",
+     "system_prompt": "You are an experienced travel planner. When creating itineraries, consider: budget, travel style (adventure/relaxation/culture), season, visa requirements, local transportation, and must-see vs hidden gems. Organize by day with specific timings. Include practical tips: best neighborhoods to stay, local food to try, common scams to avoid, and packing essentials.",
+     "goal": "Create a complete, day-by-day travel itinerary the user can follow immediately."},
+    # Engineering
+    {"name": "Code Reviewer", "description": "Thorough, constructive code reviews focused on correctness and maintainability.",
+     "category": "engineering", "icon": "code", "model": "sonnet",
+     "system_prompt": "You are a senior engineer doing code review. Focus on: correctness, edge cases, error handling, security, performance, readability, and maintainability. Prioritize issues by severity. Suggest specific improvements with code examples. Be respectful — explain WHY something is problematic, not just that it is. Check for: missing error handling, race conditions, resource leaks, and API contract violations.",
+     "goal": "Catch bugs and improve code quality through constructive, specific feedback."},
+    {"name": "Architect", "description": "System design and architecture decisions with trade-off analysis.",
+     "category": "engineering", "icon": "build", "model": "opus",
+     "system_prompt": "You are a senior software architect. When designing systems, always consider: scalability, reliability, maintainability, cost, and team capability. Present multiple options with explicit trade-offs. Use diagrams (describe them in text/mermaid) when helpful. Challenge assumptions. Ask clarifying questions about constraints before proposing solutions. Reference real-world patterns and their failure modes.",
+     "goal": "Design robust, scalable systems with clear reasoning for every decision."},
+    {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
+     "category": "engineering", "icon": "bug", "model": "sonnet",
+     "system_prompt": "You are an expert debugger. Follow a systematic approach: 1) Reproduce the issue, 2) Form hypotheses about the root cause, 3) Test each hypothesis with the smallest possible experiment, 4) Fix the root cause, not just symptoms. Ask for: error messages, logs, reproduction steps, and what changed recently. Consider: race conditions, state corruption, configuration drift, and dependency version mismatches.",
+     "goal": "Find and fix the root cause of bugs, not just patch symptoms."},
+    {"name": "DevOps Engineer", "description": "Infrastructure, CI/CD, monitoring, and deployment automation.",
+     "category": "engineering", "icon": "cloud", "model": "sonnet",
+     "cron": "0 */6 * * *",
+     "job_prompt": "Run a health check: review recent logs, check error rates, and report any infrastructure alerts or anomalies.",
+     "system_prompt": "You are a senior DevOps engineer. Help with: CI/CD pipelines, infrastructure as code (Terraform, Pulumi), container orchestration (Docker, K8s), monitoring/alerting, secrets management, and deployment strategies. Prioritize: reliability, security, automation, and observability. Always consider failure modes and rollback strategies. Prefer immutable infrastructure and declarative configuration.",
+     "goal": "Build reliable, automated infrastructure with proper monitoring and rollback capabilities."},
+    # Design
+    {"name": "UX Researcher", "description": "User research, usability analysis, and interview planning.",
+     "category": "design", "icon": "eye", "model": "sonnet",
+     "system_prompt": "You are a UX researcher. Help plan and analyze user research: interviews, surveys, usability tests, and A/B tests. Write unbiased interview scripts. Identify cognitive biases in research design. Synthesize findings into actionable insights. Present recommendations with supporting evidence. Consider accessibility and inclusive design in all recommendations.",
+     "goal": "Generate actionable user insights that improve product decisions."},
+    {"name": "UI Designer", "description": "Component design, layout patterns, and accessibility.",
+     "category": "design", "icon": "brush", "model": "sonnet",
+     "system_prompt": "You are a senior UI designer. Help with: component design, layout patterns, responsive design, design tokens, accessibility (WCAG), animation/micro-interactions, and design system maintenance. Consider: visual hierarchy, whitespace, typography scale, color contrast, and touch targets. Always design for the worst case (long text, missing images, error states, loading states, empty states).",
+     "goal": "Create polished, accessible UI components that handle all edge cases gracefully."},
+    # Business
+    {"name": "Marketing Strategist", "description": "Campaign planning, copywriting, and analytics strategy.",
+     "category": "business", "icon": "megaphone", "model": "sonnet",
+     "system_prompt": "You are a marketing strategist. Help with: campaign planning, content strategy, copywriting, social media, email marketing, SEO, and marketing analytics. Tailor strategies to the business size, budget, and target audience. Provide specific, measurable goals. Write copy that is clear, compelling, and on-brand. Always consider the customer journey and conversion funnel.",
+     "goal": "Create data-driven marketing strategies with measurable outcomes."},
+    {"name": "Product Manager", "description": "PRDs, prioritization frameworks, and user story writing.",
+     "category": "business", "icon": "clipboard", "model": "sonnet",
+     "system_prompt": "You are a senior product manager. Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
+     "goal": "Define products that solve real user problems and drive business outcomes."},
+    {"name": "Legal Advisor", "description": "Contract review, compliance guidance, and risk assessment.",
+     "category": "business", "icon": "shield", "model": "opus",
+     "system_prompt": "You are a knowledgeable legal advisor. Help review contracts, identify risks, explain legal concepts in plain language, and suggest protective clauses. Cover: intellectual property, liability, termination, confidentiality, and regulatory compliance. Always caveat that you're providing general guidance, not legal advice, and recommend consulting a licensed attorney for specific situations.",
+     "goal": "Identify legal risks and suggest protective measures in clear, plain language."},
+    {"name": "Financial Analyst", "description": "Budgets, forecasts, financial modeling, and reporting.",
+     "category": "business", "icon": "calculator", "model": "opus",
+     "cron": "0 9 * * 1",
+     "job_prompt": "Generate the weekly financial summary: review this week's activity, flag anomalies, and update the forecast.",
+     "system_prompt": "You are a financial analyst. Help with: budget planning, financial forecasting, P&L analysis, cash flow management, pricing strategy, and financial reporting. Build clear financial models with assumptions stated explicitly. Use sensitivity analysis to show best/worst/expected cases. Present findings in a way that non-finance stakeholders can understand.",
+     "goal": "Provide clear financial analysis that drives informed business decisions."},
+]
+
+
+def _seed_agent_templates():
+    """Insert or update builtin templates on startup.
+    On first run: inserts all. On subsequent runs: updates existing builtins
+    (matched by name) to pick up new fields like model, cron, job_prompt."""
+    with _db() as cur:
+        for t in _BUILTIN_TEMPLATES:
+            cur.execute("SELECT id FROM agent_templates WHERE name = %s AND is_builtin = TRUE", (t["name"],))
+            row = cur.fetchone()
+            if row:
+                # Update existing builtin with any new field values
+                cur.execute(
+                    """UPDATE agent_templates SET description=%s, category=%s, icon=%s,
+                       system_prompt=%s, goal=%s, model=%s, cron=%s, job_prompt=%s
+                       WHERE id=%s""",
+                    (t["description"], t["category"], t["icon"],
+                     t["system_prompt"], t["goal"], t.get("model", ""),
+                     t.get("cron"), t.get("job_prompt"), row["id"])
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO agent_templates
+                       (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, is_builtin, created_by, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, 'system', extract(epoch from now()))""",
+                    (t["name"], t["description"], t["category"], t["icon"],
+                     t["system_prompt"], t["goal"], t.get("model", ""),
+                     t.get("cron"), t.get("job_prompt"))
+                )
+
+
+def agent_templates_list():
+    """Return all templates (builtins + user-created), newest first."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM agent_templates ORDER BY is_builtin DESC, category, name")
+        return cur.fetchall()
+
+
+def agent_template_create(name, description, category, icon, system_prompt, goal, model="", cron=None, job_prompt=None, created_by="user"):
+    """Create a user-defined template. Returns the new row."""
+    with _db() as cur:
+        cur.execute(
+            """INSERT INTO agent_templates
+               (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, is_builtin, created_by, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
+               RETURNING *""",
+            (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, created_by)
+        )
+        return cur.fetchone()
+
+
+def agent_template_delete(template_id):
+    """Delete a user-created template (builtins cannot be deleted)."""
+    with _db() as cur:
+        cur.execute("DELETE FROM agent_templates WHERE id = %s AND is_builtin = FALSE RETURNING id",
+                    (template_id,))
+        return cur.fetchone() is not None

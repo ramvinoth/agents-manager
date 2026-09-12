@@ -16,6 +16,8 @@ APIs:
 """
 
 import concurrent.futures
+import logging
+
 import http.cookies
 import http.server
 import json
@@ -26,22 +28,23 @@ import subprocess
 import threading
 from urllib.parse import urlparse, parse_qs
 
-from viewer import db
+from viewer import db, orglogic
 from viewer.config import (
     CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, claude_bin,
 )
 from viewer.engine import (
-    loop_scheduler, run_loop_iteration,
+    loop_scheduler, run_loop_iteration, validate_session_credential,
 )
 
 
 class _Req:
     """Parsed request context handed to every route handler.
 
-    Bundles the parsed URL, decoded query, and the selected host so route
-    handlers share one signature — (self, req) — and never re-parse.
+    Bundles the parsed URL, decoded query, the selected host, and the resolved
+    caller so route handlers share one signature — (self, req) — and never
+    re-parse or re-authenticate.
     """
-    __slots__ = ("parsed", "path", "raw_query", "query", "host")
+    __slots__ = ("parsed", "path", "raw_query", "query", "host", "principal")
 
     def __init__(self, parsed):
         self.parsed = parsed
@@ -49,6 +52,7 @@ class _Req:
         self.raw_query = parsed.query
         self.query = parse_qs(parsed.query)
         self.host = (self.query.get("host") or ["local"])[0]
+        self.principal = None   # set once by _resolve_principal(); see Principal
 from viewer.routes.sessions import SessionsMixin
 from viewer.routes.chat import ChatMixin
 from viewer.routes.capabilities import CapabilitiesMixin
@@ -70,20 +74,19 @@ class SessionViewerHandler(
 ):
 
 
-    # ---- access control: a logged-in session (viewer.db) gates every /api call
-    # and WebSocket. These few auth endpoints are reachable logged-out so you can
-    # sign up / sign in; the drag-drop viewer is fully client-side (no /api). ----
-    # /api/chat/permission is called by the local permission MCP subprocess (no
-    # viewer session); it authenticates with a per-run token in the body instead.
-    # The /api/org/* write paths are likewise reachable by the kanban MCP subprocess,
-    # which authenticates with a per-run kanban token; those handlers do their own
-    # current_user()-else-token check (see OrchestratorMixin).
+    # ---- access control: every /api call and WebSocket resolves ONE principal
+    # before any handler runs. Two credential kinds, one resolution point:
+    #   - cookie / Bearer            → the logged-in human   (kind "app")
+    #   - X-Viewer-Session + -Token  → an agent's MCP subprocess (kind "mcp")
+    # Authority is min(human ceiling, session level) — orglogic.effective_level.
+    #
+    # PUBLIC_API is ONLY for endpoints that must work with no credential at all:
+    # signing up/in, and a device dropping its own push token on logout (which
+    # must succeed even though the session is already gone). Everything else
+    # authenticates. A handler must never re-derive the caller — read
+    # req.principal.
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
-                  "/api/chat/permission", "/api/push/unregister",
-                  "/api/org/board", "/api/org/cards", "/api/org/cards/move",
-                  "/api/org/cards/assign", "/api/org/cards/update", "/api/org/cards/done",
-                  "/api/org/cards/delete",
-                  "/api/org/employees", "/api/org/projects", "/api/org/skills/propose"}
+                  "/api/push/unregister"}
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -108,16 +111,69 @@ class SessionViewerHandler(
         return ""
 
     def current_user(self):
-        """The logged-in user for this request ({id, username}) or None."""
+        """The logged-in user for this request ({id, username, role}) or None."""
         if VIEWER_NO_AUTH:
-            return {"id": 0, "username": "local"}
+            return {"id": 0, "username": "local", "role": "owner"}
         return db.user_for_session(self._auth_token())
 
+    def _mcp_credential(self):
+        """(session_id, token) for an agent's MCP subprocess, from headers only.
+
+        Headers — not the JSON body — because the principal is resolved at the
+        gate, before any handler reads the (read-once) request stream. X-Kanban-*
+        is the pre-rename spelling, still accepted so a subprocess started before
+        an upgrade keeps working until its run ends.
+        """
+        sid = (self.headers.get("X-Viewer-Session")
+               or self.headers.get("X-Kanban-Session") or "")
+        tok = (self.headers.get("X-Viewer-Token")
+               or self.headers.get("X-Kanban-Token") or "")
+        return sid, tok
+
+    def _resolve_principal(self, req):
+        """Resolve the ONE caller for this request and attach it to req.
+
+        Returns the principal, or None when no valid credential was presented.
+        A principal is:
+          {kind, actor, human_role, session_level, level, user, session}
+        where `level` is the effective authority — min(human ceiling, session
+        level) — and is the only value a handler should gate on.
+        """
+        user = self.current_user()
+        if user:
+            # A human at the UI. No agent session is acting, so the session level
+            # does not constrain: authority is the role's ceiling.
+            req.principal = {
+                "kind": "app", "actor": f"user:{user['username']}",
+                "human_role": user.get("role", "viewer"), "session_level": "",
+                "level": orglogic.effective_level(user.get("role", "viewer"), ""),
+                "user": user, "session": "",
+            }
+            return req.principal
+        sid, tok = self._mcp_credential()
+        info = validate_session_credential(sid, tok)
+        if info:
+            emp = info.get("employee") or {}
+            level = info.get("level", "ic")
+            # An agent spawned by the loop has no logged-in human. Its ceiling is
+            # the install owner's role — never an implicit escalation, and on a
+            # fresh install with no owner it resolves to no authority at all.
+            human_role = db.owner_role()
+            req.principal = {
+                "kind": "mcp", "actor": f"employee:{emp.get('name', emp.get('id', '?'))}",
+                "human_role": human_role, "session_level": level,
+                "level": orglogic.effective_level(human_role, level),
+                "user": None, "session": sid,
+            }
+            return req.principal
+        return None
+
     def _gated(self, req):
-        """True if this request must be blocked (an /api call, not public, no session)."""
-        return (req.path.startswith("/api/")
-                and req.path not in self.PUBLIC_API
-                and not self.current_user())
+        """True if this request must be blocked. Resolves the principal as a side
+        effect, so authentication happens exactly once per request."""
+        if not req.path.startswith("/api/") or req.path in self.PUBLIC_API:
+            return False
+        return self._resolve_principal(req) is None
 
     def set_session_cookie(self, token):
         """Emit a Set-Cookie on the response (token=None clears it, for logout)."""
@@ -258,6 +314,7 @@ class SessionViewerHandler(
         "/api/auth/login/poll": "_g_auth_login_poll",
         "/api/commands": "_g_commands",
         "/api/loops": "_g_loops",
+        "/api/agent-templates": "_g_agent_templates",
         "/api/agents": "_g_agents",
         "/api/agents/login/poll": "_g_agent_login_poll",
         "/api/fs": "_g_fs",
@@ -273,6 +330,7 @@ class SessionViewerHandler(
         "/api/capabilities": "_g_capabilities",
         "/api/session-summary": "_g_session_summary",
         "/api/session-analysis": "_g_session_analysis",
+        "/api/session-backups": "_g_session_backups",
         "/api/skill": "_g_skill",
         "/api/session-meta": "_g_session_meta",
         "/api/projects": "_g_projects",
@@ -283,6 +341,7 @@ class SessionViewerHandler(
         "/api/git/clone/status": "_g_git_clone_status",
         "/api/voice/tts/stream": "_g_voice_tts_stream",
         "/api/providers": "_g_providers",
+        "/api/providers/default": "_g_providers_default",
         "/api/providers/models": "_g_providers_models",
         "/api/org/employees": "_g_org_employees",
         "/api/org/projects": "_g_org_projects",
@@ -340,14 +399,18 @@ class SessionViewerHandler(
         "/api/mcp/delete": "_p_mcp_delete",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",
+        "/api/session/backup-restore": "_p_session_backup_restore",
         "/api/session/delete": "_p_session_delete",
         "/api/session/rename": "_p_session_rename",
         "/api/loops": "_p_loops",
         "/api/loops/edit": "_p_loops_edit",
         "/api/loops/delete": "_p_loops_delete",
+        "/api/agent-templates": "_p_agent_templates",
+        "/api/agent-templates/delete": "_p_agent_templates_delete",
         "/api/session-meta": "_p_session_meta",
         "/api/providers": "_p_providers",
         "/api/providers/delete": "_p_providers_delete",
+        "/api/providers/apply-default": "_p_providers_apply_default",
         "/api/org/employees": "_p_org_employees",
         "/api/org/employees/update": "_p_org_employees_update",
         "/api/org/projects": "_p_org_projects",
@@ -464,6 +527,11 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     tailscale_ip = "N/A"
     try:
         result = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)

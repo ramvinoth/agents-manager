@@ -146,7 +146,20 @@ CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final
 
 def loop_scheduler(launch):
     """Background thread: fire due loops, and reap finished chat jobs so
-    CHAT_JOBS doesn't grow unbounded (one entry per session ever driven)."""
+    CHAT_JOBS doesn't grow unbounded (one entry per session ever driven).
+
+    This thread is the ONLY place work starts without a human asking for it, which
+    is why the master switch is enforced here and nowhere else: one `if` covers
+    both unattended paths (scheduled loops, Harman's manager tick) and covers any
+    path added to this thread later. Gating each path at its own call site would
+    make "everything is paused" a claim that decays the next time someone adds one.
+
+    Paused means paused, not queued: a due loop's `nextRun` is left untouched while
+    off, so on resume each loop fires at most ONCE rather than replaying every run
+    that came due in the meantime. Reaping still runs — it frees memory and expires
+    session tokens, and holding stale credentials open would be the opposite of
+    safe.
+    """
     while True:
         time.sleep(5)
         now = time.time()
@@ -165,6 +178,15 @@ def loop_scheduler(launch):
                     db.session_token_delete(sid)
                 except Exception:
                     pass
+        # The master switch. Read fresh each pass so a pause takes effect within
+        # 5s; if it can't be read we treat automation as OFF (see orchestrator).
+        try:
+            from viewer.orchestrator import automation_enabled
+            automation_on = automation_enabled()
+        except Exception:
+            automation_on = False
+        if not automation_on:
+            continue
         due = []
         with LOOPS_LOCK:
             for lid, lp in LOOPS.items():
@@ -173,7 +195,15 @@ def loop_scheduler(launch):
                     if job and job["running"]:
                         lp["nextRun"] = now + 30  # session busy; retry shortly
                         continue
-                    lp["nextRun"] = now + lp["interval"]
+                    # Cron-based jobs compute their next run from the cron
+                    # expression; interval-based ones just add the interval.
+                    cron_expr = lp.get("cron")
+                    if cron_expr:
+                        from viewer.loops import cron_next_run
+                        nxt = cron_next_run(cron_expr, now)
+                        lp["nextRun"] = nxt if nxt else now + 86400
+                    else:
+                        lp["nextRun"] = now + lp["interval"]
                     lp["runs"] = lp.get("runs", 0) + 1
                     lp["lastRun"] = now
                     due.append(dict(lp, id=lid))
@@ -750,18 +780,18 @@ def start_copilot_new(message, cwd, host="local"):
 
 def _write_perm_mcp_config():
     """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
-    'viewerperm' (permission_mcp.py) and 'viewerkanban' (kanban_mcp.py). Additive —
+    'viewerperm' (permission_mcp.py) and 'viewer' (viewer_mcp.py). Additive —
     the driven claude still loads the user's ambient MCP servers (Playwright etc.)
-    since we omit --strict-mcp-config. The kanban tool is only *usable* when the run
-    also sets VIEWER_KANBAN_* env (employee sessions); without it the tool's calls
-    fail auth server-side, which is harmless."""
+    since we omit --strict-mcp-config. viewer_mcp's tools are only *usable* when the
+    run also sets VIEWER_KANBAN_* env (employee sessions); without it its calls fail
+    auth server-side, which is harmless."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
     perm = str(Path(__file__).parent / "permission_mcp.py")
-    kanban = str(Path(__file__).parent / "kanban_mcp.py")
+    viewer_mcp = str(Path(__file__).parent / "viewer_mcp.py")
     py = sys.executable or "python3"
     cfg = {"mcpServers": {
         "viewerperm": {"command": py, "args": [perm]},
-        "viewerkanban": {"command": py, "args": [kanban]},
+        "viewer": {"command": py, "args": [viewer_mcp]},
     }}
     with open(path, "w") as f:
         json.dump(cfg, f)
@@ -795,23 +825,37 @@ def _emp_level(emp):
     return "ic"
 
 
-def validate_kanban_token(session_id, token):
-    """Called by the org routes for an MCP caller: confirm the per-run kanban token
-    matches this session's job, and return {'employee', 'level'} for scoping. None
-    if unknown/unauthorized — the handler then 401s. Falls back to the persisted
-    session_tokens row when CHAT_JOBS has no entry (e.g. after a server restart),
-    so a still-running session's kanban tools keep working."""
+def validate_session_credential(session_id, token):
+    """Authenticate an MCP subprocess by its per-run token. Returns
+    {'employee', 'level'} for the run, or None if unknown/unauthorized (the
+    server then 401s before any handler runs).
+
+    Either per-run token authenticates. `perm_token` and `kanban_token` are two
+    secrets for ONE principal: both are minted by the same start_claude_run, for
+    the same session, and shipped in the same env to the same child process
+    (engine.py ~1109-1199). They are not separate authority scopes — authority is
+    the employee's level, identical whichever token is presented — so treating
+    them as one credential keeps the promise that a caller is resolved exactly
+    once, and avoids two near-identical validators drifting apart.
+
+    Falls back to the persisted session_tokens row when CHAT_JOBS has no entry,
+    so a durable pending question/plan can still be answered.
+    """
+    if not session_id or not token:
+        return None
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if job:
-            if not job.get("kanban_token") or job.get("kanban_token") != token:
+            if token not in (job.get("kanban_token") or None,
+                             job.get("perm_token") or None):
                 return None
             return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
-    # No live job (restart): validate against the persisted token.
+    # No live job (restart): validate against the persisted tokens.
     try:
         from viewer import db
         row = db.session_token_get(session_id)
-        if not row or not row.get("kanban_token") or row["kanban_token"] != token:
+        if not row or token not in (row.get("kanban_token") or None,
+                                    row.get("perm_token") or None):
             return None
         emp = db.employee_get(row["employee_id"]) if row.get("employee_id") else None
         return {"employee": emp, "level": row.get("employee_level") or "ic"}
@@ -1058,7 +1102,7 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
-def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None):
+def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort=""):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
@@ -1091,6 +1135,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         cmd += ["--permission-mode", mode]
     elif mode == "default":
         cmd += ["--permission-mode", "default"]
+    if effort and effort in ("low", "medium", "high", "xhigh", "max") and not provider_env:
+        cmd += ["--effort", effort]
     # Always attach the viewer permission tool. In "default" mode it gates each
     # tool call (Allow/Deny); in every mode it is ALSO how AskUserQuestion reaches
     # the user (the CLI routes AUQ's checkPermissions "ask" to this tool, even under
@@ -1183,7 +1229,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
                 env["VIEWER_PERM_TOKEN"] = perm_token
-            if kanban_token:  # let kanban_mcp.py reach the org board for this session
+            if kanban_token:  # let viewer_mcp.py reach the viewer for this session
                 env["VIEWER_KANBAN_SESSION"] = session_id
                 env["VIEWER_KANBAN_PORT"] = str(PORT)
                 env["VIEWER_KANBAN_TOKEN"] = kanban_token

@@ -16,11 +16,15 @@ import json
 import urllib.request
 
 from viewer import providers
+from viewer.engine import SESSION_META, META_FILE, META_LOCK, save_json_file
 
 
 class ProvidersMixin:
     def _g_providers(self, req):
         self.send_json({"providers": providers.list_presets()})
+
+    def _g_providers_default(self, req):
+        self.send_json({"id": providers.get_default_id()})
 
     def _p_providers(self, req):
         body = self.read_body() or {}
@@ -34,6 +38,8 @@ class ProvidersMixin:
                 body.get("apiKey") if "apiKey" in body else None,
                 # None => keep existing context limit; 0 clears it.
                 body.get("contextLimit") if "contextLimit" in body else None,
+                # None => keep existing default flag.
+                body.get("isDefault") if "isDefault" in body else None,
             )
         except ValueError as e:
             self.send_json({"error": str(e)}, status=400)
@@ -77,3 +83,20 @@ class ProvidersMixin:
         rows = data.get("data") if isinstance(data, dict) else data
         models = [r.get("id") for r in rows if isinstance(r, dict) and r.get("id")] if isinstance(rows, list) else []
         self.send_json({"models": models})
+
+    def _p_providers_apply_default(self, req):
+        """Overwrite the provider on ALL existing sessions to the given provider id.
+        Pass id="" to reset all sessions to Built-in (Claude)."""
+        body = self.read_body() or {}
+        pid = str(body.get("id", "")).strip()
+        if pid and not providers.valid_id(pid):
+            self.send_json({"error": "Invalid provider id"}, status=400)
+            return
+        count = 0
+        with META_LOCK:
+            for sid, meta in SESSION_META.items():
+                if isinstance(meta, dict):
+                    meta["provider"] = pid
+                    count += 1
+            save_json_file(META_FILE, SESSION_META)
+        self.send_json({"updated": count})

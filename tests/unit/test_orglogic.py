@@ -163,6 +163,107 @@ def test_allowed_accepts_dict():
     assert orglogic.allowed({"action": "employee_create"}, "ic") is False
 
 
+# ── effective_level(): TWO principals, authority is the weaker ───────────────
+
+def test_effective_level_takes_the_weaker():
+    # A viewer human cannot be escalated by a manager-level agent session...
+    assert orglogic.effective_level("viewer", "manager") == "ic"
+    # ...and an owner cannot lift an ic session.
+    assert orglogic.effective_level("owner", "ic") == "ic"
+    assert orglogic.effective_level("operator", "manager") == "lead"
+    assert orglogic.effective_level("owner", "manager") == "manager"
+
+
+def test_effective_level_missing_principal_does_not_constrain():
+    # Human at the UI: no agent session is acting → the role's ceiling.
+    assert orglogic.effective_level("owner", "") == "manager"
+    assert orglogic.effective_level("viewer", "") == "ic"
+    # Unattended spawn with no logged-in human → the session level stands.
+    assert orglogic.effective_level("", "lead") == "lead"
+    assert orglogic.effective_level(None, "manager") == "manager"
+
+
+def test_effective_level_no_principal_is_no_authority():
+    assert orglogic.effective_level("", "") == ""
+    assert orglogic.effective_level(None, None) == ""
+    assert orglogic.allowed("card_create", orglogic.effective_level("", "")) is False
+
+
+def test_effective_level_unknown_values_fall_back_not_down():
+    # A typo'd role must not silently strip a valid session's authority...
+    assert orglogic.effective_level("supervisor", "lead") == "lead"
+    # ...nor a typo'd session level strip a valid role's.
+    assert orglogic.effective_level("owner", "principal") == "manager"
+    # Both unknown → nothing.
+    assert orglogic.effective_level("supervisor", "principal") == ""
+
+
+def test_effective_level_gates_a_real_action():
+    # The whole point: a viewer human driving a manager agent still can't hire.
+    lvl = orglogic.effective_level("viewer", "manager")
+    assert orglogic.allowed("employee_create", lvl) is False
+    assert orglogic.allowed("card_create", lvl) is True
+
+
+def test_every_human_role_has_a_ceiling():
+    # A role with no ceiling entry would resolve to "absent" and silently defer
+    # to the session level — an escalation. Keep the two tables in lockstep.
+    for role in orglogic.HUMAN_ROLES:
+        assert orglogic.effective_level(role, "manager") in orglogic.LEVELS
+
+
+def test_min_level_values_are_real_levels():
+    # A typo'd requirement ("leader") ranks -1 and would grant the action to
+    # everyone, including an unknown level. Deny-by-default only holds if the
+    # right-hand side of the table is valid.
+    for action, required in orglogic._MIN_LEVEL.items():
+        assert required in orglogic.LEVELS, action
+
+
+# ── self_approves(): the owner's own click IS the approval ───────────────────
+
+def test_self_approves_only_owner_acting_directly():
+    assert orglogic.self_approves("owner", "") is True
+    assert orglogic.self_approves("owner", None) is True
+
+
+def test_self_approves_denies_agents_and_lesser_humans():
+    # An agent NEVER self-approves, even under the owner's ceiling: a model chose
+    # the action, and the point of the Red gate is that a human sees it first.
+    assert orglogic.self_approves("owner", "manager") is False
+    assert orglogic.self_approves("owner", "ic") is False
+    # Non-owner humans escalate TO the owner, so there is someone to ask.
+    assert orglogic.self_approves("operator", "") is False
+    assert orglogic.self_approves("viewer", "") is False
+    assert orglogic.self_approves("", "") is False
+    assert orglogic.self_approves(None, None) is False
+
+
+# ── may_resolve(): nobody answers their own escalation ───────────────────────
+
+def test_may_resolve_refuses_the_principal_who_raised_it():
+    # The rail that keeps the Red gate from being theatre: escalate, then
+    # rubber-stamp yourself.
+    ap = {"id": 1, "created_by": "employee:bob"}
+    assert orglogic.may_resolve(ap, "employee:bob") is False
+    assert orglogic.may_resolve(ap, "user:ram") is True
+
+
+def test_may_resolve_applies_to_humans_too():
+    # An operator can resolve approvals, so without this they could queue a Red
+    # action and wave it through alone — the same hole with a person's name on it.
+    ap = {"id": 2, "created_by": "user:sam"}
+    assert orglogic.may_resolve(ap, "user:sam") is False
+    assert orglogic.may_resolve(ap, "user:ram") is True
+
+
+def test_may_resolve_allows_a_missing_or_anonymous_approval():
+    # An approval with no recorded creator cannot implicate anyone; the scope gate
+    # still bounds who may call approval_resolve at all.
+    assert orglogic.may_resolve(None, "user:ram") is True
+    assert orglogic.may_resolve({}, "user:ram") is True
+
+
 # ── Harman planning (project_columns / suitable_employee / plan_assignments) ──
 
 COLS = [

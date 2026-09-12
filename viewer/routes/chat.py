@@ -197,8 +197,12 @@ class ChatMixin:
             if pos is not None:
                 self.send_json({"queued": pos, "session": session_id})
                 return
+        # Effort level from session meta (set at creation or from session settings).
+        from viewer.engine import SESSION_META as _SM
+        effort = (_SM.get(session_id) or {}).get("effort", "")
         if not start_claude_run(session_id, ["--resume", session_id], message, mode, cwd,
-                                "" if provider_env else model, host, provider_env=provider_env):
+                                "" if provider_env else model, host, provider_env=provider_env,
+                                effort=effort):
             self.send_json({"error": "A message is already being processed for this session"}, status=409)
             return
         self.send_json({"started": True, "session": session_id})

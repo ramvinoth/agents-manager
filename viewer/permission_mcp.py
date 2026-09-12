@@ -42,7 +42,8 @@ def _decide(args):
     try:
         req = urllib.request.Request(
             BASE + "/api/chat/permission", data=payload,
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json",
+                     "X-Viewer-Session": SESSION, "X-Viewer-Token": TOKEN})
         with urllib.request.urlopen(req, timeout=3600) as r:
             res = json.loads(r.read() or b"{}")
         if res.get("behavior") == "allow":

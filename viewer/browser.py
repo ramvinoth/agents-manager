@@ -312,10 +312,6 @@ def browser_front_page(hid):
     return p["id"], path, p.get("url", "")
 
 
-def browser_page_ws_path(hid):
-    return browser_front_page(hid)[1]
-
-
 def _ordered_pages(hid, pages):
     """Pages in STABLE first-seen order. /json/list is activation order, so
     without this the tab strip reshuffles every time you click a tab (the

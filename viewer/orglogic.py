@@ -80,6 +80,17 @@ _RED_ACTIONS = {
     # irreversible data loss
     "delete_session", "delete_transcript", "git_reset_hard", "git_force_push",
     "delete_provider", "delete_file", "delete_employee", "delete_project", "card_delete",
+    # overwriting shared team knowledge: skill_propose writes a NEW skill (green);
+    # skill_promote overwrites one the team already relies on (red). The same write,
+    # different risk — which is why they are two actions over one handler.
+    "skill_promote",
+    # handing the machine permission to act unattended again. Pausing stays green
+    # and resuming is red ON PURPOSE — a kill switch must be easy to pull and hard
+    # to push. Same split as skill_propose/skill_promote: one handler, two actions,
+    # because the risk is in the DIRECTION of the change, not the write itself.
+    # Without this, a session running at manager level could restore its own
+    # supervision; now that request queues for a human.
+    "automation_resume",
     # secrets / keys
     "create_secret", "reveal_secret", "rotate_secret", "write_api_key",
     # money / leaving the perimeter
@@ -119,6 +130,23 @@ def is_red(action):
 
 LEVELS = ("ic", "lead", "manager")
 
+# ── Human authority: the account's role, independent of any session ───────────
+# The OTHER principal. A request has up to two: the human who owns the viewer
+# session (this) and the agent session acting (employee_level, above). Authority
+# is the WEAKER of the two — see effective_level.
+#
+# The owner is a ROLE, resolved from users.role at runtime; no name appears in
+# source. Ordered least→most, parallel to LEVELS.
+HUMAN_ROLES = ("viewer", "operator", "owner")
+
+# Human role -> the highest session level it may confer. An owner is unbounded
+# (manager); an operator may act but not change the org; a viewer may only read.
+_ROLE_CEILING = {
+    "viewer": "ic",
+    "operator": "lead",
+    "owner": "manager",
+}
+
 # action -> minimum level required. Unlisted actions are denied by scope (return
 # False) — deny-by-default; add here to grant.
 _MIN_LEVEL = {
@@ -131,15 +159,32 @@ _MIN_LEVEL = {
     "board_list": "ic",
     "card_list": "ic",
     "skill_propose": "ic",
+    # Proposing a skill that OVERLAPS an existing one is also an ic act — the two
+    # gates are orthogonal: scope says who may INITIATE, risk says whether it may
+    # run unattended. skill_promote is Red, so an ic's overlapping proposal always
+    # queues for the owner rather than being refused outright.
+    "skill_promote": "ic",
     # lead: shape projects + move work across people
     "project_create": "lead",
+    "project_ensure": "lead",        # find-or-create for a cwd; same authority to create
     "card_assign": "lead",           # assign to someone else
     "card_delete": "lead",           # remove a work item (also red → queued for MCP)
     "reassign_across_employees": "lead",
     "approval_resolve": "lead",
+    "column_create": "lead",         # the board's SHAPE, not an item on it
+    "column_update": "lead",
+    "column_delete": "lead",         # not red: cards survive (FK ON DELETE SET NULL)
     # manager: hire / change the org
     "employee_create": "manager",
     "employee_update": "manager",
+    "harman_config": "manager",      # who may act autonomously, and with what budget
+    # Same authority as any other Harman config write; the two differ only in RISK
+    # (automation_resume is Red, automation_pause is not), which is the orthogonal
+    # gate. Pausing is deliberately NOT restricted to manager: an ic session that
+    # notices something wrong should be able to stop the machine without a
+    # promotion. Stopping is the safe direction.
+    "automation_pause": "ic",
+    "automation_resume": "manager",
 }
 
 
@@ -160,6 +205,75 @@ def allowed(action, level):
     if required is None:
         return False
     return _level_rank(level) >= _level_rank(required)
+
+
+def effective_level(human_role, session_level):
+    """The authority for a request with TWO principals: the human who owns the
+    viewer session and the agent session acting on their behalf.
+
+    Authority is the WEAKER of the two, so neither principal can be used to
+    escalate the other:
+      - a `viewer` human cannot gain power by spawning a manager-level agent;
+      - an `owner` human cannot make an `ic` agent delete things.
+
+    Either principal may be absent, and the missing one does NOT constrain:
+      - human only (the web UI / mobile app — no agent session) → the role ceiling;
+      - session only (a loop/cron spawn with no logged-in human) → the session level.
+        The caller supplies the install owner's role as the ceiling for these, so an
+        unattended spawn is never an implicit escalation.
+    Both absent → "" (no authority; allowed() denies everything).
+
+    Unknown values are treated as absent rather than lowest, so a typo'd role
+    cannot silently strip an otherwise valid session's authority — it falls back
+    to the other principal, which is itself gated.
+    """
+    ceiling = _ROLE_CEILING.get(human_role or "")
+    floor = session_level if session_level in LEVELS else None
+    if ceiling is None:
+        return floor or ""
+    if floor is None:
+        return ceiling
+    return ceiling if _level_rank(ceiling) < _level_rank(floor) else floor
+
+
+def self_approves(human_role, session_level):
+    """True if this principal's own action IS the approval for a Red one, so the
+    caller should execute it rather than queue it.
+
+    A Red action escalates TO the owner. When the owner is the one acting — at
+    the UI, with no agent session in the loop — there is nobody left to escalate
+    to; queueing would open an approval addressed to the person who just clicked.
+    That is ceremony, not safety.
+
+    An agent never self-approves, whatever its human ceiling: a non-empty
+    `session_level` means a MODEL chose the action, and the point of the Red gate
+    is that a human sees it first.
+
+    This decides whether an action QUEUES. Whether a principal may then resolve
+    what it queued is may_resolve — the other half of the same rail.
+    """
+    return human_role == "owner" and not session_level
+
+
+def may_resolve(approval, actor):
+    """True if `actor` may resolve `approval` — the separation-of-duties rail.
+
+    Two distinct principals, always: the one who raised the escalation and the one
+    who answers it. A principal that could resolve its own queued intent would
+    escalate to Red and then rubber-stamp itself, which makes the whole Red gate
+    theatre.
+
+    It applies to humans too, not just agents. An operator has enough authority to
+    resolve approvals, so without this rail they could queue a Red action and wave
+    it through alone — the same hole, wearing a person's name. The owner is never
+    caught by it: acting at the UI they do not queue in the first place
+    (self_approves), so there is nothing of their own to approve.
+
+    This only became reachable when approvals started EXECUTING what they hold
+    (build step 2). Before that a self-resolve was inert, so the rail could not be
+    tested; now it is the difference between a gate and a formality.
+    """
+    return (approval or {}).get("created_by") != actor
 
 
 # ── Harman's autonomous planning: board state → intended actions (PURE) ───────

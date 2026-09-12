@@ -107,7 +107,8 @@ class SessionsMixin:
             return
         rel = body.get("session", "")
         prompt = (body.get("prompt") or "").strip()
-        interval = parse_interval(body.get("interval", ""))
+        cron_expr = (body.get("cron") or "").strip() or None
+        interval = parse_interval(body.get("interval", "")) if not cron_expr else None
         full = self.resolve_session_quiet(rel)
         if not full:
             self.send_json({"error": "Session not found"}, status=404)
@@ -115,22 +116,36 @@ class SessionsMixin:
         if not prompt:
             self.send_json({"error": "Empty prompt"}, status=400)
             return
-        if not interval:
-            self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
+        if not cron_expr and not interval:
+            self.send_json({"error": "Provide a cron expression or interval (e.g. 30s, 5m, 1h)"}, status=400)
             return
+        if cron_expr:
+            from viewer.loops import cron_next_run, parse_cron
+            if not parse_cron(cron_expr):
+                self.send_json({"error": "Invalid cron expression"}, status=400)
+                return
+            next_run = cron_next_run(cron_expr) or (time.time() + 86400)
+        else:
+            next_run = time.time() + interval
         model = (body.get("model") or "").strip()
         lid = uuid_mod.uuid4().hex[:12]
+        entry = {"session": full.stem, "path": rel, "prompt": prompt,
+                 "nextRun": next_run, "runs": 0, "created": time.time(),
+                 "enabled": True, "model": model}
+        if cron_expr:
+            entry["cron"] = cron_expr
+            entry["interval"] = 0
+        else:
+            entry["interval"] = interval
         with LOOPS_LOCK:
-            LOOPS[lid] = {"session": full.stem, "path": rel, "prompt": prompt,
-                          "interval": interval, "nextRun": time.time() + interval,
-                          "runs": 0, "created": time.time(), "enabled": True, "model": model}
+            LOOPS[lid] = entry
             save_json_file(LOOPS_FILE, LOOPS)
-        self.send_json({"created": lid, "interval": interval})
+        self.send_json({"created": lid, "interval": interval or 0, "cron": cron_expr})
 
     def handle_edit_loop(self):
-        """Update an existing loop in place, preserving its id, session and run
-        history. Only the fields present in the body change; the schedule
-        (`nextRun`) is recomputed only when the interval actually changes."""
+        """Update an existing loop/job in place, preserving its id, session and
+        run history. Only the fields present in the body change; the schedule
+        (`nextRun`) is recomputed when interval or cron changes."""
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -139,7 +154,7 @@ class SessionsMixin:
         with LOOPS_LOCK:
             loop = LOOPS.get(lid)
             if not loop:
-                self.send_json({"error": "Loop not found"}, status=404)
+                self.send_json({"error": "Job not found"}, status=404)
                 return
             if "prompt" in body:
                 prompt = (body.get("prompt") or "").strip()
@@ -147,7 +162,19 @@ class SessionsMixin:
                     self.send_json({"error": "Empty prompt"}, status=400)
                     return
                 loop["prompt"] = prompt
-            if "interval" in body:
+            if "cron" in body:
+                cron_expr = (body.get("cron") or "").strip() or None
+                if cron_expr:
+                    from viewer.loops import cron_next_run, parse_cron
+                    if not parse_cron(cron_expr):
+                        self.send_json({"error": "Invalid cron expression"}, status=400)
+                        return
+                    loop["cron"] = cron_expr
+                    loop["interval"] = 0
+                    loop["nextRun"] = cron_next_run(cron_expr) or (time.time() + 86400)
+                else:
+                    loop.pop("cron", None)
+            if "interval" in body and not loop.get("cron"):
                 interval = parse_interval(body.get("interval", ""))
                 if not interval:
                     self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
@@ -158,7 +185,7 @@ class SessionsMixin:
             if "model" in body:
                 loop["model"] = (body.get("model") or "").strip()
             save_json_file(LOOPS_FILE, LOOPS)
-        self.send_json({"updated": lid, "interval": loop.get("interval")})
+        self.send_json({"updated": lid, "interval": loop.get("interval"), "cron": loop.get("cron")})
 
     # ----- Slash commands / projects / session resolution -----
 
@@ -168,6 +195,43 @@ class SessionsMixin:
             loops = [dict(lp, id=lid) for lid, lp in LOOPS.items()
                      if not sid or lp["session"] == sid]
         self.send_json(sorted(loops, key=lambda l: l.get("created", 0)))
+
+    def _g_agent_templates(self, req):
+        from viewer import db
+        templates = db.agent_templates_list()
+        self.send_json([dict(t) for t in templates])
+
+    def _p_agent_templates(self, req):
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        if not name:
+            self.send_json({"error": "Name required"}, status=400)
+            return
+        from viewer import db
+        row = db.agent_template_create(
+            name=name,
+            description=(body.get("description") or "").strip(),
+            category=(body.get("category") or "general").strip(),
+            icon=(body.get("icon") or "sparkle").strip(),
+            system_prompt=(body.get("system_prompt") or "").strip(),
+            goal=(body.get("goal") or "").strip(),
+            cron=(body.get("cron") or "").strip() or None,
+            job_prompt=(body.get("job_prompt") or "").strip() or None,
+        )
+        self.send_json({"id": row["id"]} if row else {"error": "Failed"})
+
+    def _p_agent_templates_delete(self, req):
+        body = self.read_body()
+        tid = (body or {}).get("id")
+        if not tid:
+            self.send_json({"error": "id required"}, status=400)
+            return
+        from viewer import db
+        deleted = db.agent_template_delete(int(tid))
+        self.send_json({"deleted": deleted})
 
     def _g_default(self, req):
         self.send_json({"default": DEFAULT_SESSION})
@@ -218,6 +282,9 @@ class SessionsMixin:
                 # "agent" (full Claude Code harness pointed at the endpoint).
                 cm = str(body["convMode"]).strip()
                 meta["convMode"] = cm if cm in ("chat", "agent") else "chat"
+            if "effort" in body:
+                eff = str(body["effort"]).strip()
+                meta["effort"] = eff if eff in ("low", "medium", "high", "xhigh", "max", "") else ""
             save_json_file(META_FILE, SESSION_META)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
@@ -226,7 +293,8 @@ class SessionsMixin:
                         "favorite": bool(meta.get("favorite", False)),
                         "pinned": meta.get("pinned", []),
                         "provider": meta.get("provider", ""),
-                        "convMode": meta.get("convMode", "chat")})
+                        "convMode": meta.get("convMode", "chat"),
+                        "effort": meta.get("effort", "")})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -241,7 +309,8 @@ class SessionsMixin:
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
                             "systemPrompt": meta.get("systemPrompt", ""),
                             "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                            "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"), "cwd": cwd})
+                            "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
+                            "effort": meta.get("effort", ""), "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -253,6 +322,7 @@ class SessionsMixin:
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
                         "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
+                        "effort": meta.get("effort", ""),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
@@ -785,15 +855,18 @@ class SessionsMixin:
         sp = (body.get("systemPrompt") or "").strip()
         goal = (body.get("goal") or "").strip()
         provider = (body.get("provider") or "").strip()
+        effort = (body.get("effort") or "").strip()
         conv_mode = (body.get("convMode") or "chat").strip()
         if conv_mode not in ("chat", "agent"):
             conv_mode = "chat"
-        if sp or goal or provider:
+        if sp or goal or provider or effort:
             with META_LOCK:
                 SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
                 if provider:
                     SESSION_META[session_id]["provider"] = provider[:64]
                     SESSION_META[session_id]["convMode"] = conv_mode
+                if effort and effort in ("low", "medium", "high", "xhigh", "max"):
+                    SESSION_META[session_id]["effort"] = effort
                 save_json_file(META_FILE, SESSION_META)
         # A new custom-provider session (local only).
         if provider and host == "local":
@@ -806,7 +879,7 @@ class SessionsMixin:
                     self.send_json({"error": "Provider unavailable"}, status=502)
                     return
                 if not start_claude_run(session_id, ["--session-id", session_id], message,
-                                        mode, cwd, "", host, provider_env=penv):
+                                        mode, cwd, "", host, provider_env=penv, effort=effort):
                     self.send_json({"error": "Busy"}, status=409)
                     return
                 self.send_json({"started": True, "session": session_id})
@@ -818,7 +891,7 @@ class SessionsMixin:
                 return
             self.send_json({"started": True, "session": session_id})
             return
-        if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host):
+        if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host, effort=effort):
             self.send_json({"error": "Busy"}, status=409)
             return
         self.send_json({"started": True, "session": session_id})
@@ -871,4 +944,40 @@ class SessionsMixin:
                 skipped.append(os.path.basename(path))
         return {"restored": restored, "skipped": skipped,
                 "backup": str(bkdir) if restored else None}
+
+    # ------------------------------------------------------------------ #
+    # Session backup management                                           #
+    # ------------------------------------------------------------------ #
+
+    def _g_session_backups(self, req):
+        """GET /api/session-backups?session=<id> — list available backups."""
+        from viewer.sessions import list_backups
+        session_id = (req.query.get("session") or [""])[0]
+        if not session_id:
+            self.send_json({"error": "session parameter required"}, status=400)
+            return
+        self.send_json(list_backups(session_id))
+
+    def _p_session_backup_restore(self, req):
+        """POST /api/session/backup-restore — restore a session from a backup."""
+        from viewer.sessions import restore_session
+        body = self.read_body() or {}
+        session_id = body.get("session", "")
+        backup_id = body.get("backup_id")
+        if not session_id or not backup_id:
+            self.send_json({"error": "session and backup_id required"}, status=400)
+            return
+        try:
+            backup_id = int(backup_id)
+        except (TypeError, ValueError):
+            self.send_json({"error": "backup_id must be an integer"}, status=400)
+            return
+        try:
+            path = restore_session(session_id, backup_id)
+            self.send_json({"ok": True, "restored_path": path,
+                            "size": os.path.getsize(path)})
+        except (ValueError, FileNotFoundError) as e:
+            self.send_json({"error": str(e)}, status=404)
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
 

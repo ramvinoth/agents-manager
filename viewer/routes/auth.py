@@ -154,11 +154,13 @@ class AuthMixin:
         self.send_json({"ok": True})
 
     def _g_prefs(self, req):
-        u = self.current_user()
+        # Gated route: the principal is resolved. Prefs belong to a HUMAN account,
+        # so an agent's MCP principal (user None) simply has none.
+        u = req.principal.get("user")
         self.send_json(db.get_prefs(u["id"]) if u and u.get("id") else {})
 
     def _p_prefs(self, req):
-        u = self.current_user()
+        u = req.principal.get("user")
         if u and u.get("id"):
             db.set_prefs(u["id"], self.read_body() or {})
         self.send_json({"ok": True})

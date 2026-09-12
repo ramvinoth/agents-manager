@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { groupByColumn, orderColumn, nextPosition } from "@/lib/board"
+import { isQueued } from "@/lib/types"
 import type { BoardColumn, Card, Employee, OrgProject } from "@/lib/types"
 
 const UNASSIGNED = "__unassigned__"
@@ -148,7 +149,13 @@ export function KanbanDialog({
 
   async function deleteCard(id: number) {
     setCards((cs) => cs.filter((c) => c.id !== id))
-    await api.orgDeleteCard(id).catch(() => reload())
+    // `card_delete` is Red: a caller who can't self-approve gets an approval
+    // back, not a deletion. Reload so the card reappears — otherwise it looks
+    // deleted while it still exists on the board.
+    await api
+      .orgDeleteCard(id)
+      .then((r) => { if (isQueued(r)) reload() })
+      .catch(() => reload())
   }
 
   async function addColumn() {

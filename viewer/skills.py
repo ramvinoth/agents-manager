@@ -25,11 +25,6 @@ def skills_base(scope="user", cwd=None):
     return Path.home() / ".claude" / "skills"
 
 
-def skill_path(name, scope="user", cwd=None):
-    """Full path to a skill's SKILL.md (does not create anything)."""
-    return skills_base(scope, cwd) / name / "SKILL.md"
-
-
 def write_skill(name, content, scope="user", cwd=None):
     """Create/overwrite <base>/<name>/SKILL.md. Returns the written path.
     Raises ValueError on a bad name."""

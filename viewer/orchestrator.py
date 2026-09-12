@@ -6,7 +6,11 @@ viewer.orglogic.plan_assignments returns: assign unassigned Todo cards to employ
 optionally spawn that employee's agent-mode session to actually work the card,
 advance finished work, and escalate risky (red) actions to the CEO as approvals.
 
-SAFETY (auto-run + on-by-default → these are hard rails, not optional):
+SAFETY (auto-run → these are hard rails, not optional):
+  - `automation_enabled`: the master switch, default OFF. Nothing runs unattended
+    until the owner turns it on, and turning it off pauses EVERY unattended path —
+    see `automation_enabled()` below and its one enforcement point in
+    engine.loop_scheduler.
   - budget: max concurrent auto-run employee sessions (config, but bounded by HARD_CAP).
   - in-progress guard: a card already being worked is never re-spawned.
   - self-throttle: the 5s scheduler only runs Harman every `interval`s.
@@ -14,7 +18,7 @@ SAFETY (auto-run + on-by-default → these are hard rails, not optional):
 Everything Harman does is written to audit_log.
 
 Config: ~/.claude/.viewer-harman.json (beside LOOPS_FILE). Empty `projects` = manage
-nothing, so on-by-default is inert until the CEO points it at a project.
+nothing, so an enabled Harman is still inert until the CEO points it at a project.
 """
 import time
 from pathlib import Path
@@ -24,7 +28,8 @@ from viewer.config import CHAT_JOBS, CHAT_LOCK
 
 HARMAN_FILE = Path.home() / ".claude" / ".viewer-harman.json"
 HARD_CAP = 4                 # absolute ceiling on concurrent auto-run sessions
-_DEFAULT = {"enabled": True, "interval": 30, "budget": 2, "projects": [], "default_provider": ""}
+_DEFAULT = {"automation_enabled": False, "enabled": True, "interval": 30, "budget": 2,
+            "projects": [], "default_provider": ""}
 _last_run = 0.0
 
 
@@ -36,9 +41,28 @@ def _load_config():
     cfg["budget"] = max(1, min(int(cfg.get("budget", 2) or 2), HARD_CAP))
     cfg["interval"] = max(10, int(cfg.get("interval", 30) or 30))
     cfg["projects"] = [int(p) for p in (cfg.get("projects") or [])]
+    cfg["automation_enabled"] = bool(cfg.get("automation_enabled", False))
     cfg["enabled"] = bool(cfg.get("enabled", True))
     cfg["default_provider"] = str(cfg.get("default_provider") or "")
     return cfg
+
+
+def automation_enabled():
+    """The master switch: may ANYTHING run unattended right now?
+
+    Read fresh from disk on every call, deliberately — a pause has to take effect
+    within one scheduler pass, and a cached value would keep work running after the
+    owner flipped the switch. The file is small and the caller ticks every 5s.
+
+    Defaults FALSE, including for a config file written before this key existed: the
+    fail-safe direction for "is it safe to leave the machine alone" is off. An
+    unreadable or corrupt file also yields False, because `load_json_file` falls back
+    to `{}` and the default stands.
+
+    Distinct from `enabled`, which scopes only Harman's own manager tick. This one
+    covers every unattended path, so a path added later is paused by default too.
+    """
+    return _load_config()["automation_enabled"]
 
 
 def get_config():
@@ -46,15 +70,34 @@ def get_config():
     return _load_config()
 
 
-def set_config(patch):
-    """Merge a partial config and persist. Returns the effective config."""
+# Config keys `set_config` will merge. The master switch is NOT here — it has its
+# own writer below, because the two directions carry different risk and a generic
+# patch cannot express that. Keeping it out means no future caller can un-pause the
+# machine by tacking a key onto an ordinary config write.
+_PATCH_KEYS = ("enabled", "interval", "budget", "projects", "default_provider")
+
+
+def _write(patch):
     from viewer.engine import load_json_file, save_json_file
     cur = load_json_file(HARMAN_FILE, {}) or {}
-    for k in ("enabled", "interval", "budget", "projects", "default_provider"):
-        if k in patch:
-            cur[k] = patch[k]
+    cur.update(patch)
     save_json_file(HARMAN_FILE, cur)
     return _load_config()
+
+
+def set_config(patch):
+    """Merge a partial config and persist. Returns the effective config.
+
+    Cannot touch `automation_enabled` — see `_PATCH_KEYS` and `set_automation`.
+    """
+    return _write({k: patch[k] for k in _PATCH_KEYS if k in patch})
+
+
+def set_automation(on):
+    """The ONLY writer of the master switch. Separate from `set_config` so that
+    flipping it is always a distinct, individually-gated act (Red to resume, cheap
+    to pause — see orglogic) rather than one key inside a bulk config patch."""
+    return _write({"automation_enabled": bool(on)})
 
 
 def _running_card_ids():

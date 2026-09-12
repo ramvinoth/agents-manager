@@ -924,27 +924,31 @@ def remote_read_session(hid, rel, q):
 
 
 def remote_extract_cwd(hid, rel):
-    with SSH.sftp(hid) as sftp:
-        full = remote_full_path(hid, rel)
-        if not full:
-            return None
-        try:
-            f = sftp.open(full, "r")
-            try:
-                for _ in range(100):
-                    line = f.readline()
-                    if not line:
-                        break
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if o.get("cwd"):
-                        return o["cwd"]
-            finally:
-                f.close()
-        except IOError:
-            pass
+    """Extract the cwd from a remote session using the unified last-cwd strategy.
+    Ships extract_cwd_from_lines to the host via remote_run_python so the
+    algorithm is identical to local — the LAST cwd wins (correct for forks)."""
+    full = remote_full_path(hid, rel)
+    if not full:
+        return None
+    import inspect
+    from viewer.sessions import extract_cwd_from_lines
+    script = ("import json, sys\n"
+              + inspect.getsource(extract_cwd_from_lines)
+              + "P = json.loads(%r)\n" % json.dumps({"path": full})
+              + "try:\n"
+                "    with open(P['path'], errors='replace') as fh:\n"
+                "        cwd = extract_cwd_from_lines(fh)\n"
+                "except OSError:\n"
+                "    cwd = None\n"
+                "print(json.dumps(cwd))\n")
+    txt = remote_run_python(hid, script)
+    try:
+        cwd = json.loads(txt.strip().splitlines()[-1])
+    except Exception:
+        cwd = None
+    if cwd:
+        return cwd
+    with SSH.lock_for(hid):
         return SSH.get(hid)["home"]
 
 
@@ -1304,7 +1308,7 @@ def remote_setup_perm_mcp(hid, port):
     if not viewer_tailnet_base(port):
         raise RuntimeError("no tailnet address for the viewer (remote AUQ needs it)")
     helper_src = (Path(__file__).parent / "permission_mcp.py").read_text()
-    kanban_src = (Path(__file__).parent / "kanban_mcp.py").read_text()
+    viewer_mcp_src = (Path(__file__).parent / "viewer_mcp.py").read_text()
     with SSH.sftp(hid) as sftp:
         home = SSH.get(hid)["home"].rstrip("/")
         d = f"{home}/{_REMOTE_PERM_DIR}"
@@ -1317,15 +1321,15 @@ def remote_setup_perm_mcp(hid, port):
             except IOError:
                 pass
         helper_path = f"{d}/permission_mcp.py"
-        kanban_path = f"{d}/kanban_mcp.py"
+        viewer_mcp_path = f"{d}/viewer_mcp.py"
         cfg_path = f"{d}/mcp.json"
         with sftp.open(helper_path, "w") as f:
             f.write(helper_src)
-        with sftp.open(kanban_path, "w") as f:
-            f.write(kanban_src)
+        with sftp.open(viewer_mcp_path, "w") as f:
+            f.write(viewer_mcp_src)
         cfg = {"mcpServers": {
             "viewerperm": {"command": "python3", "args": [helper_path]},
-            "viewerkanban": {"command": "python3", "args": [kanban_path]},
+            "viewer": {"command": "python3", "args": [viewer_mcp_path]},
         }}
         # Merge user MCP servers from ~/.claude/mcp.json on the remote host
         try:

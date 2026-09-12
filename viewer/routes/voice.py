@@ -21,7 +21,7 @@ import json
 import urllib.request
 
 from viewer import voice
-from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT
+from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
 
 
 class VoiceMixin:
@@ -85,7 +85,7 @@ class VoiceMixin:
             # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
             from viewer.speakable import speakable
             text = speakable(text) or text
-            base = SPEECH_SERVICE_URL
+            base = TTS_STREAM_URL or SPEECH_SERVICE_URL
         if not base:
             self.send_json({"error": "voice disabled"}, status=502)
             return

@@ -68,6 +68,10 @@ SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:
 SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
                                      # (Qwen synthesizes a whole reply in one
                                      # pass — a long paragraph can take 30s+)
+# TTS streaming uses Pocket (:8097), which serves /synthesize_stream_aac.
+# The main speech service (:8095) handles STT + non-streaming TTS but NOT
+# streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
+TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "http://100.115.120.89:8097")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).

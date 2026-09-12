@@ -38,8 +38,11 @@ def _ensure_harman_config():
     if HARMAN_FILE.exists():
         return False
     HARMAN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # automation_enabled is written FALSE explicitly: a fresh install must never
+    # start running unattended work before the owner asks for it.
     HARMAN_FILE.write_text(json.dumps(
-        {"enabled": True, "interval": 30, "budget": 2, "projects": []}, indent=2))
+        {"automation_enabled": False, "enabled": True, "interval": 30, "budget": 2,
+         "projects": []}, indent=2))
     return True
 
 
