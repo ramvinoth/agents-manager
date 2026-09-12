@@ -254,6 +254,14 @@ export interface Card {
   updated_at: number
 }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
+/** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
+ *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
+ *  viewer/actions.py execute). Writes whose action is Red are typed `T | Queued`
+ *  so the compiler forces the call site to decide, instead of letting a queued
+ *  request read as a completed one. Mirrors mobile-app/src/api/client.ts. */
+export type Queued = { queued: true; approval: number }
+export const isQueued = (r: unknown): r is Queued =>
+  !!r && (r as Queued).queued === true
 
 
 export interface FileEntry {

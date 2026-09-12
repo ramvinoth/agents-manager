@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { HelpCircle, Check } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { HelpCircle, Check, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
@@ -24,6 +24,19 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
   const answered = block.result != null
   const [picks, setPicks] = useState<Record<number, string[]>>({})
   const [sent, setSent] = useState(false)
+  // Once answered, fold to the header — a stack of answered questions otherwise
+  // pushes the live conversation off screen. The card stays mounted across the
+  // answer (the poll fills in `result`), so this reacts to the transition; an
+  // explicit open/close by the reader wins.
+  const [open, setOpen] = useState(!answered)
+  const touched = useRef(false)
+  useEffect(() => {
+    if (!touched.current) setOpen(!answered)
+  }, [answered])
+  const toggle = () => {
+    touched.current = true
+    setOpen((o) => !o)
+  }
 
   const optionsOf = (q: Question): Option[] =>
     (q.options || []).map((o) => (typeof o === "string" ? { label: o } : o))
@@ -61,46 +74,56 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
 
   return (
     <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
-      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-primary">
-        <HelpCircle className="size-3.5" /> {agentLabel} asks
-        {questions[0]?.header ? ` · ${questions[0].header}` : ""}
-      </div>
-      {questions.map((q, qi) => (
-        <div key={qi} className="mb-3 last:mb-0">
-          <div className="mb-1.5 font-medium">
-            {q.question}
-            {q.multiSelect && (
-              <span className="ml-1 text-xs font-normal text-muted-foreground">(multiple allowed)</span>
-            )}
+      <button
+        type="button"
+        onClick={toggle}
+        className="mb-2 flex w-full items-center gap-1.5 text-xs font-medium text-primary"
+      >
+        <HelpCircle className="size-3.5" />
+        <span>
+          {agentLabel} asks
+          {questions[0]?.header ? ` · ${questions[0].header}` : ""}
+          {answered ? " · answered" : ""}
+        </span>
+        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+      </button>
+      {open &&
+        questions.map((q, qi) => (
+          <div key={qi} className="mb-3 last:mb-0">
+            <div className="mb-1.5 font-medium">
+              {q.question}
+              {q.multiSelect && (
+                <span className="ml-1 text-xs font-normal text-muted-foreground">(multiple allowed)</span>
+              )}
+            </div>
+            <div className="grid gap-1.5">
+              {optionsOf(q).map((o, oi) => {
+                const picked = (picks[qi] || []).includes(o.label)
+                return (
+                  <button
+                    key={oi}
+                    disabled={answered || sent}
+                    onClick={() => pick(qi, o.label, !!q.multiSelect)}
+                    className={cn(
+                      "flex flex-col rounded-md border px-3 py-2 text-left transition-colors",
+                      picked ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
+                      (answered || sent) && "opacity-60"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-medium">
+                      {picked && <Check className="size-3.5 text-primary" />}
+                      {o.label}
+                    </span>
+                    {o.description && (
+                      <span className="mt-0.5 text-xs text-muted-foreground">{o.description}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-          <div className="grid gap-1.5">
-            {optionsOf(q).map((o, oi) => {
-              const picked = (picks[qi] || []).includes(o.label)
-              return (
-                <button
-                  key={oi}
-                  disabled={answered || sent}
-                  onClick={() => pick(qi, o.label, !!q.multiSelect)}
-                  className={cn(
-                    "flex flex-col rounded-md border px-3 py-2 text-left transition-colors",
-                    picked ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
-                    (answered || sent) && "opacity-60"
-                  )}
-                >
-                  <span className="flex items-center gap-1.5 font-medium">
-                    {picked && <Check className="size-3.5 text-primary" />}
-                    {o.label}
-                  </span>
-                  {o.description && (
-                    <span className="mt-0.5 text-xs text-muted-foreground">{o.description}</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      ))}
-      {needsSubmit && (
+        ))}
+      {open && needsSubmit && (
         <Button size="sm" disabled={sent} onClick={() => send(picks)}>
           Send answer{questions.length > 1 ? "s" : ""}
         </Button>

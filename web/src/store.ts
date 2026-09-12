@@ -183,6 +183,7 @@ interface AppState {
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
   answerQuestion: (picks: string[]) => Promise<void>
+  decidePlan: (decision: "approve" | "deny", feedback?: string) => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
@@ -1152,6 +1153,25 @@ export const useStore = create<AppState>((set, get) => {
         watchChat(sid)
       } catch (e: any) {
         set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to answer: " + (e?.message || e) } })
+      }
+    },
+
+    // Approve / request changes on a live ExitPlanMode. Like answerQuestion this
+    // must hit the dedicated endpoint: the run is BLOCKED on the decision, so a
+    // normal chat message would only queue behind it. Approving continues the
+    // same turn, hence chatRunning stays true and we re-watch rather than start.
+    decidePlan: async (decision, feedback) => {
+      const { currentSessionPath } = get()
+      if (!currentSessionPath) return
+      set({ chatRunning: true, chatStatus: null })
+      try {
+        const res = await api.chatPlanDecide({ session: currentSessionPath, decision, feedback: feedback || "" })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+        await pollTick()
+        watchChat(d.session || sessionIdOf(currentSessionPath))
+      } catch (e: any) {
+        set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to decide: " + (e?.message || e) } })
       }
     },
 

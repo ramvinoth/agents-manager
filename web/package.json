@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "for f in src/lib/*.test.ts; do node --experimental-strip-types \"$f\" || exit 1; done",
+    "check": "tsc -b && npm run test",
     "preview": "vite preview"
   },
   "dependencies": {

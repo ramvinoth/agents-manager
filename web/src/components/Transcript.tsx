@@ -1,35 +1,16 @@
 import { useMemo } from "react"
 import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
-import { renderMarkdownSegments } from "@/lib/markdown"
 import { splitThinking } from "@/lib/thinking"
-import { MermaidDiagram } from "./MermaidDiagram"
+import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
 import { AuqBlock } from "./AuqBlock"
+import { PlanBlock } from "./PlanBlock"
 import { MessageActions } from "./MessageActions"
+import { Collapsible } from "./Collapsible"
 import { extractImages } from "@/lib/parser"
 import type { AssistantTurn, Block, ImagePart, Turn } from "@/lib/types"
-
-function Markdown({ text }: { text: string }) {
-  // Split into segments so ```mermaid fences render as React-owned <MermaidDiagram>
-  // components (SVG in state) instead of imperatively-injected SVG inside
-  // dangerouslySetInnerHTML — the latter was wiped by every streaming re-render /
-  // poll / scroll, causing the diagram to flicker and reset to code.
-  const dark = document.documentElement.classList.contains("dark")
-  const segments = useMemo(() => renderMarkdownSegments(text), [text])
-  return (
-    <div className="markdown-content">
-      {segments.map((seg, i) =>
-        seg.type === "mermaid" ? (
-          <MermaidDiagram key={i} source={seg.source} dark={dark} />
-        ) : (
-          <div key={i} dangerouslySetInnerHTML={{ __html: seg.html }} />
-        )
-      )}
-    </div>
-  )
-}
 
 function Images({ images }: { images: ImagePart[] }) {
   if (!images.length) return null
@@ -119,7 +100,7 @@ function blockHasImages(b: Block): boolean {
 
 // Some models (Qwen3) emit inline <think>…</think> reasoning before the answer.
 // Render it as a collapsed <details> and show only the reply body by default.
-function TextBlock({ text }: { text: string }) {
+function TextBlock({ text, live }: { text: string; live?: boolean }) {
   const { thinking, body } = useMemo(() => splitThinking(text), [text])
   return (
     <>
@@ -131,12 +112,20 @@ function TextBlock({ text }: { text: string }) {
           </div>
         </details>
       )}
-      {body && <Markdown text={body} />}
+      {/* The turn still being streamed is never collapsed: its text is still
+          growing, and a bubble that folded itself shut mid-stream would hide the
+          very output the reader is watching. */}
+      {body &&
+        (live ? (
+          <Markdown text={body} />
+        ) : (
+          <Collapsible text={body}>{(shown) => <Markdown text={shown} />}</Collapsible>
+        ))}
     </>
   )
 }
 
-function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
+function AssistantBlocks({ turn, live }: { turn: AssistantTurn; live?: boolean }) {
   const showTools = useStore((s) => s.visible.tools)
   // Even with the Tools filter off, keep tool-calls that carry images (e.g.
   // screenshots) so they don't vanish — the image renders, the details stay
@@ -148,9 +137,11 @@ function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
     <div className="space-y-2">
       {blocks.map((b, i) =>
         b.type === "text" ? (
-          <TextBlock key={i} text={b.text} />
+          <TextBlock key={i} text={b.text} live={live} />
         ) : b.name === "AskUserQuestion" ? (
           <AuqBlock key={i} block={b} />
+        ) : b.name === "ExitPlanMode" ? (
+          <PlanBlock key={i} block={b} />
         ) : (
           <ToolCall key={i} block={b} />
         )
@@ -159,7 +150,7 @@ function AssistantBlocks({ turn }: { turn: AssistantTurn }) {
   )
 }
 
-function TurnRow({ turn }: { turn: Turn }) {
+function TurnRow({ turn, live }: { turn: Turn; live?: boolean }) {
   const agentLabel = useAgentLabel()
   const currentAgent = useStore((s) => s.currentAgent)
   const currentHost = useStore((s) => s.currentHost)
@@ -174,7 +165,11 @@ function TurnRow({ turn }: { turn: Turn }) {
             <User className="size-3" /> You
             {canEdit && turn.uuid && <MessageActions uuid={turn.uuid} />}
           </div>
-          {turn.content && <Markdown text={turn.content} />}
+          {turn.content && (
+            <Collapsible text={turn.content} fadeTo="var(--card)">
+              {(shown) => <Markdown text={shown} />}
+            </Collapsible>
+          )}
           {turn.images?.length ? <Images images={turn.images} /> : null}
         </div>
       </div>
@@ -193,7 +188,7 @@ function TurnRow({ turn }: { turn: Turn }) {
               <span className="font-mono">{turn.model.replace("claude-", "")}</span>
             )}
           </div>
-          <AssistantBlocks turn={turn} />
+          <AssistantBlocks turn={turn} live={live} />
         </div>
       </div>
     )
@@ -216,6 +211,7 @@ export function Transcript({
   className?: string
 }) {
   const visible = useStore((s) => s.visible)
+  const chatRunning = useStore((s) => s.chatRunning)
   const shown = turns.filter((t) => {
     if (t.type === "user") return visible.user
     if (t.type === "system") return visible.system
@@ -236,7 +232,7 @@ export function Transcript({
   }
   return (
     <div className={cn("mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6", className)}>
-      {shown.map((t) => (
+      {shown.map((t, i) => (
         <div
           key={t.domId}
           id={`turn-${t.domId}`}
@@ -245,7 +241,9 @@ export function Transcript({
             t.domId === highlightId && "ring-2 ring-primary ring-offset-4 ring-offset-background"
           )}
         >
-          <TurnRow turn={t} />
+          {/* Only the last turn can still be growing, and only while the agent
+              is running — that one renders uncollapsed. */}
+          <TurnRow turn={t} live={chatRunning && i === shown.length - 1} />
         </div>
       ))}
       <div className="pt-2 text-center">

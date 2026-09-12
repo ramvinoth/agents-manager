@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, OrgProject, BoardColumn, Card, CardFilter } from "./types"
+import type { Provider, Employee, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -161,8 +161,10 @@ class ApiClient {
   orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) {
     return this.postJSON<Card>("/api/org/cards/update", body)
   }
+  // `card_delete` is Red (viewer/orglogic): a caller who can't self-approve gets
+  // an approval back, not a deletion — hence the union.
   orgDeleteCard(cardId: number) {
-    return this.postJSON<{ deleted?: boolean }>("/api/org/cards/delete", { card_id: cardId })
+    return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/cards/delete", { card_id: cardId })
   }
   orgCreateColumn(body: { project_id: number; name: string; position?: number }) {
     return this.postJSON<BoardColumn>("/api/org/columns", body)
@@ -212,7 +214,7 @@ class ApiClient {
   /** List an endpoint's models — from a saved preset (id) or by probing a
    *  baseUrl+key before saving. The key never leaves the server. */
   providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
-    const params =
+    const params: Record<string, string> =
       "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
     return this.getJSON<{ models: string[]; error?: string }>(
       "/api/providers/models?" + new URLSearchParams(params).toString()
@@ -277,6 +279,12 @@ class ApiClient {
   }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
+  }
+  // Approve or send changes back on a live (blocked) ExitPlanMode. Same-turn:
+  // the run is parked waiting on this, so approving resumes it rather than
+  // starting a new one.
+  chatPlanDecide(body: Body) {
+    return this.postRes("/api/chat/plan/decide", body)
   }
 
   // ---- loops ----
