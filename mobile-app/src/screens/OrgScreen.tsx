@@ -162,10 +162,14 @@ export default function OrgScreen({ navigation }: Props) {
         <View style={{ backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 14, marginBottom: 18 }}>
           <Text style={{ color: t.text, fontWeight: "700", fontSize: 15, marginBottom: 8 }}>Set up your first run</Text>
           {[
-            "Create a project — give it a name and the workspace directory Harman should work in.",
+            "Create a project — give it a name and the workspace directory the board should work in.",
             "Add an employee — pick a model (the free local one keeps Opus tokens untouched).",
             "Open the project board and add a card or two describing the work.",
-            "Point Harman at the project in the manager panel above — it assigns and runs the work.",
+            // The autonomous-manager step only exists when automation is on —
+            // with the master switch off the app is the plain task system.
+            ...(harman?.automation_enabled === false
+              ? []
+              : ["Point Harman at the project in the manager panel above — it assigns and runs the work."]),
           ].map((step, i) => (
             <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
               <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>{i + 1}.</Text>
@@ -175,20 +179,21 @@ export default function OrgScreen({ navigation }: Props) {
         </View>
       ) : null}
 
-      {harman ? (
+      {/* The manager panel is orchestration UI: hidden whenever the master
+          switch is OFF so the app reads as the plain task system. `=== false`
+          on purpose — a server predating the switch omits the key, and reading
+          that as off would hide a panel whose server still runs freely. The
+          switch itself stays visible in Profile (the one control point). */}
+      {harman && harman.automation_enabled !== false ? (
         <Section title="Harman (manager)">
           <Row>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: t.text, fontWeight: "600" }}>Autonomous manager</Text>
                 <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                  {/* `=== false` on purpose: an old server omits the key, and reading
-                      that as paused would claim a gate this server doesn't have. */}
-                  {harman.automation_enabled === false
-                    ? "Paused — automation is off in Profile"
-                    : harman.enabled
-                      ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
-                      : "Off"}
+                  {harman.enabled
+                    ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
+                    : "Off"}
                 </Text>
               </View>
               <Switch value={harman.enabled} onValueChange={(v) => patchHarman({ enabled: v })} />

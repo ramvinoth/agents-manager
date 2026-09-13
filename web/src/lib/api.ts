@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
+import type { Provider, Employee, HarmanConfig, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -131,6 +131,12 @@ class ApiClient {
   }
 
   // ---- org / Kanban (project-scoped board) ----
+  /** Harman orchestrator config — the single server-side source of truth for
+   *  the master automation switch. Web is read-only here; the control point
+   *  is the mobile Profile screen. */
+  orgHarman() {
+    return this.getJSON<HarmanConfig>("/api/org/harman")
+  }
   orgEmployees() {
     return this.getJSON<{ employees: Employee[] }>("/api/org/employees")
   }

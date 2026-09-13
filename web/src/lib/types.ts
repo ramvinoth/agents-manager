@@ -9,6 +9,19 @@ export interface SessionListItem {
   [k: string]: unknown
 }
 
+/** Harman orchestrator config — the server's master automation switch.
+ *  DUPLICATED in mobile-app/src/api/client.ts, deliberately: the two apps
+ *  share no build. Keep in sync BY HAND. */
+export interface HarmanConfig {
+  /** The master switch. Omitted by servers predating it — treat absence as on. */
+  automation_enabled?: boolean
+  enabled: boolean
+  interval: number
+  budget: number
+  projects: number[]
+  default_provider: string
+}
+
 export interface HostInfo {
   id: string
   label: string
