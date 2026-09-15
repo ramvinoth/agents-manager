@@ -236,6 +236,12 @@ def init_db():
               last_rc     INTEGER,
               created     DOUBLE PRECISION NOT NULL DEFAULT 0,
               model       TEXT NOT NULL DEFAULT '',
+              -- Custom provider preset id this loop's runs should use. '' = inherit
+              -- the resumed session's own provider (the common case). Set to pin a
+              -- loop to a specific endpoint regardless of the session's setting; the
+              -- preset carries the model, so `model` above only applies to Default
+              -- (built-in Claude) runs. Resolved at fire time in run_loop_iteration.
+              provider    TEXT NOT NULL DEFAULT '',
               enabled     BOOLEAN NOT NULL DEFAULT TRUE,
               -- WHO scheduled this loop: 'user' (a human, via the UI) or 'harman'
               -- (an agent, via the gated loop_create action). The loop_control
@@ -245,6 +251,7 @@ def init_db():
               origin      TEXT NOT NULL DEFAULT 'user'
             );
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'user';
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '';
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -345,6 +352,19 @@ Steering rules: you may create/edit loops for OTHER sessions, never your own. Au
 
 Full design: ORCHESTRATOR_MCP.md.$preamble$::text))
               ON CONFLICT (key) DO NOTHING;
+            -- Per-reader unread cursor: the last time a given reader OPENED a
+            -- session. A session is unread for that reader when it changed after
+            -- their cursor. Server-side (not per-device) so the signal is the same
+            -- on web, mobile, and to an agent asking over MCP. `reader` is the
+            -- resolved principal actor (user:<name> for a human — stable across
+            -- their devices — or employee:<name>/session for an agent), never a
+            -- device id. No FK to sessions: transcripts are files, not rows.
+            CREATE TABLE IF NOT EXISTS session_seen (
+              reader    TEXT NOT NULL,
+              session   TEXT NOT NULL,
+              last_seen DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (reader, session)
+            );
             """
         )
     _seed_agent_templates()
@@ -1164,6 +1184,7 @@ _LOOP_COLS = (
     ("interval", "interval_sec", 0), ("cron", "cron", None),
     ("nextRun", "next_run", 0), ("runs", "runs", 0), ("lastRun", "last_run", None),
     ("lastRc", "last_rc", None), ("created", "created", 0), ("model", "model", ""),
+    ("provider", "provider", ""),
     ("enabled", "enabled", True), ("origin", "origin", "user"),
 )
 
@@ -1417,6 +1438,52 @@ def session_meta_set_provider_all(pid):
             (Json({"provider": pid}), _now()),
         )
         return len(cur.fetchall())
+
+
+def session_personas():
+    """{session_id: {id, name, role, avatar}} for every session whose token is
+    linked to an employee — the join that fuses the org roster to the running
+    fleet. One query for the whole list (the third overlay batch-fetcher next to
+    `session_meta_all`/`session_seen_get`), so the list handler answers 'which
+    persona is driving this session' without a query per row. Sessions with no
+    `employee_id` are simply absent, so the overlay leaves them personaless."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT st.session_id, e.id, e.name, e.role, e.avatar "
+            "FROM session_tokens st JOIN employees e ON e.id = st.employee_id "
+            "WHERE st.employee_id IS NOT NULL"
+        )
+        return {
+            r["session_id"]: {"id": r["id"], "name": r["name"],
+                              "role": r["role"], "avatar": r["avatar"]}
+            for r in cur.fetchall()
+        }
+
+
+# Per-reader unread cursors ---------------------------------------------------
+# One row per (reader, session): when that reader last OPENED the session. Unread
+# is derived, never stored: a session is unread for a reader when its transcript
+# changed after the reader's cursor. Kept server-side so web, mobile and an agent
+# over MCP all agree, unlike the old per-device seen-map this replaced.
+
+def session_seen_get(reader):
+    """{session_id: last_seen_epoch} for one reader — empty when they've opened
+    nothing. The list handler joins this against each session's mtime to flag
+    unread, so it's a single fetch per list request, not one query per session."""
+    with _db() as cur:
+        cur.execute("SELECT session, last_seen FROM session_seen WHERE reader = %s", (reader,))
+        return {r["session"]: r["last_seen"] for r in cur.fetchall()}
+
+
+def session_seen_set(reader, session, ts=None):
+    """Advance a reader's cursor on one session to `ts` (default now). Idempotent
+    upsert; a later open always moves the cursor forward, never back."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_seen (reader, session, last_seen) VALUES (%s, %s, %s) "
+            "ON CONFLICT (reader, session) DO UPDATE SET last_seen = EXCLUDED.last_seen",
+            (reader, session, ts if ts is not None else _now()),
+        )
 
 
 # Hosts (SSH registry) --------------------------------------------------------

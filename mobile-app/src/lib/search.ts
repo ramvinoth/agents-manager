@@ -33,23 +33,3 @@ export function stepMatch(matches: number[], current: number, dir: 1 | -1): numb
   if (pos === -1) return dir === 1 ? matches[0] : matches[matches.length - 1]
   return matches[(pos + dir + matches.length) % matches.length]
 }
-
-/**
- * Unread bookkeeping for the chat list. The map is persisted as JSON in
- * SecureStore, which has small value limits — so it is trimmed to the most
- * recently seen entries rather than growing forever.
- */
-export function trimSeen(seen: Record<string, number>, max = 80): Record<string, number> {
-  const entries = Object.entries(seen)
-  if (entries.length <= max) return seen
-  entries.sort((a, b) => b[1] - a[1]) // keep the most recently seen
-  return Object.fromEntries(entries.slice(0, max))
-}
-
-/** A chat is unread when it changed after we last opened it. Never-opened chats
- *  are NOT unread — flooding a fresh install with 90 green dots is noise. */
-export function isUnread(seen: Record<string, number>, path: string, modified?: number): boolean {
-  const last = seen[path]
-  if (!last || !modified) return false
-  return modified > last
-}

@@ -115,6 +115,8 @@ function buildStyles(t: Theme) {
     chatTimeUnread: { color: t.accent, fontWeight: "700" },
     chatMetaCol: { alignItems: "flex-end", gap: 5 },
     unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.accent },
+    // Live-run dot: a run is in flight for this session (emerald, matches web).
+    runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#10b981" },
     // WhatsApp-style filter chips + archived reveal row (Chats list header).
     filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
     filterChip: {

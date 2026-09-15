@@ -16,6 +16,7 @@
 import React, { useEffect, useState } from "react"
 import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import DateTimePicker from "@react-native-community/datetimepicker"
+import { type Provider } from "../api/client"
 import {
   buildCron,
   CRON_KINDS,
@@ -35,6 +36,8 @@ export type JobInitialValues = {
   prompt: string
   cron?: string
   interval?: number
+  /** Custom provider preset id these runs use ("" = inherit the session's own). */
+  provider?: string
 }
 
 type Mode = "interval" | "cron"
@@ -44,13 +47,18 @@ export default function JobScheduler({
   styles,
   initialValues,
   onCancel,
+  providers,
 }: {
-  onSubmit: (prompt: string, schedule: { cron?: string; interval?: number }) => void
+  onSubmit: (prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) => void
   styles: ReturnType<typeof import("../screens/styles").useStyles>
   /** When set, pre-fills the form for editing. */
   initialValues?: JobInitialValues
   /** Called when the user cancels editing (only shown in edit mode). */
   onCancel?: () => void
+  /** Saved provider presets. When passed, a "Model provider" picker appears so a
+   *  job can pin its runs to a specific endpoint; omit it to hide the picker (the
+   *  job then inherits the session's own provider). */
+  providers?: Provider[]
 }) {
   const t = useTheme()
   const isEdit = !!initialValues
@@ -75,6 +83,11 @@ export default function JobScheduler({
   const [dow, setDow] = useState(parsed?.dow ?? 1)
   const [dom, setDom] = useState(parsed?.dom ?? 1)
 
+  // Provider axis: which preset ("" = inherit the session's own) these runs use.
+  // Only meaningful when `providers` is passed; otherwise the picker is hidden and
+  // this stays "" (inherit).
+  const [provider, setProvider] = useState(initialValues?.provider ?? "")
+
   // Reset form when initialValues changes (e.g. tapping a different job to edit).
   useEffect(() => {
     if (!initialValues) return
@@ -90,14 +103,19 @@ export default function JobScheduler({
     setTime(d)
     setDow(p?.dow ?? 1)
     setDom(p?.dom ?? 1)
-  }, [initialValues?.prompt, initialValues?.cron, initialValues?.interval]) // eslint-disable-line react-hooks/exhaustive-deps
+    setProvider(initialValues.provider ?? "")
+  }, [initialValues?.prompt, initialValues?.cron, initialValues?.interval, initialValues?.provider]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The schedule the current selection would produce — clamped, so the preview
   // is honest about the [30s, 24h] floor/ceiling the server enforces.
-  const schedule: { cron?: string; interval?: number } =
-    mode === "cron"
+  const schedule: { cron?: string; interval?: number; provider?: string } = {
+    ...(mode === "cron"
       ? { cron: buildCron(kind, time.getHours(), time.getMinutes(), dow, dom) }
-      : { interval: parseInterval(`${amount || "0"}${unit}`) }
+      : { interval: parseInterval(`${amount || "0"}${unit}`) }),
+    // Only carry provider when the picker is shown; NewChat jobs inherit the
+    // session's provider and must not pin "" over it.
+    ...(providers ? { provider } : {}),
+  }
 
   function submit() {
     const p = prompt.trim()
@@ -107,6 +125,7 @@ export default function JobScheduler({
       setPrompt("")
       setAmount("30")
       setUnit("m")
+      setProvider("")
     }
   }
 
@@ -271,6 +290,30 @@ export default function JobScheduler({
           ) : null}
         </>
       )}
+
+      {/* Model provider — only when a providers list is supplied. "Inherit"
+          resolves the session's own provider at fire time; pinning one overrides
+          it (the preset carries the model). */}
+      {providers ? (
+        <>
+          <Text style={[styles.sheetSection, { marginTop: 12 }]}>MODEL PROVIDER</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
+            {[{ id: "", name: "Inherit session" }, ...providers].map((p) => {
+              const active = provider === p.id
+              return (
+                <TouchableOpacity
+                  key={p.id || "__inherit__"}
+                  testID={`job-provider-${p.id || "inherit"}`}
+                  style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+                  onPress={() => setProvider(p.id)}
+                >
+                  <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{p.name}</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </ScrollView>
+        </>
+      ) : null}
 
       {/* Submit + Cancel */}
       <View style={{ marginHorizontal: 18, marginTop: 12, flexDirection: "row", gap: 8 }}>

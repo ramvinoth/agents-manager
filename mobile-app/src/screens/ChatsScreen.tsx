@@ -6,14 +6,11 @@ import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
 import {
   currentHost,
-  markSeen,
-  seenMap,
   setToken,
 } from "../state/config"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
-import { isUnread } from "../lib/search"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { HostHeaderButton } from "../components/HostPicker"
@@ -51,7 +48,6 @@ export default function ChatsScreen({ navigation }: Props) {
   const [showArchived, setShowArchived] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [actionFor, setActionFor] = useState<Session | null>(null)
-  const [seenTick, setSeenTick] = useState(0)
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // The master switch decides whether the orchestrator exists for this app at
@@ -78,7 +74,7 @@ export default function ChatsScreen({ navigation }: Props) {
 
     if (showArchived) return pool.map((s) => ({ kind: "chat", s }))
 
-    if (filter === "unread") return pool.filter((s) => isUnread(seenMap(), s.path, s.modified)).map((s) => ({ kind: "chat", s }))
+    if (filter === "unread") return pool.filter((s) => s.unread).map((s) => ({ kind: "chat", s }))
     if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
     if (filter === "projects") {
       // Group by project (chats without one fall under "No project"), each group a
@@ -97,7 +93,7 @@ export default function ChatsScreen({ navigation }: Props) {
     }
     // "all"
     return pool.map((s) => ({ kind: "chat", s }))
-  }, [sessions, query, filter, showArchived, collapsed, seenTick])
+  }, [sessions, query, filter, showArchived, collapsed])
 
   async function rename(s: Session, title: string) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, title } : x))) // optimistic; path is unique, id is not
@@ -161,6 +157,14 @@ export default function ChatsScreen({ navigation }: Props) {
     ])
   }
 
+  // Mark a session read: clear its dot locally (optimistic) and advance the
+  // server-side per-reader cursor so it stays read on the next list refresh and
+  // on every other device this same principal uses. No-op if already read.
+  function markSeen(path: string) {
+    setSessions((all) => all.map((x) => (x.path === path && x.unread ? { ...x, unread: false } : x)))
+    api.sessionSeen(path).catch(() => {})
+  }
+
   // Toggle a server-side session-meta flag (archived / favorite), optimistically.
   async function setFlag(s: Session, key: "archived" | "favorite", value: boolean) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, [key]: value } : x)))
@@ -179,7 +183,7 @@ export default function ChatsScreen({ navigation }: Props) {
     if (harmanBusy) return
     const existing = sessions.find((s) => s.title === HARMAN_TITLE)
     if (existing) {
-      markSeen(existing.path).then(() => setSeenTick((n) => n + 1))
+      markSeen(existing.path)
       navigation.navigate("Thread", { host, label: HARMAN_TITLE, path: existing.path })
       return
     }
@@ -187,7 +191,7 @@ export default function ChatsScreen({ navigation }: Props) {
     try {
       const path = await createHarman(host)
       if (path) {
-        markSeen(path).then(() => setSeenTick((n) => n + 1))
+        markSeen(path)
         navigation.navigate("Thread", { host, label: HARMAN_TITLE, path })
         load(true)
       } else {
@@ -435,7 +439,7 @@ export default function ChatsScreen({ navigation }: Props) {
             }
             const item = row.s
             const name = item.title || item.id.slice(0, 8)
-            const unread = isUnread(seenMap(), item.path, item.modified)
+            const unread = !!item.unread
             const isSelected = selecting && selected.has(item.path)
             return (
               <TouchableOpacity
@@ -446,7 +450,7 @@ export default function ChatsScreen({ navigation }: Props) {
                     toggleSelected(item.path)
                     return
                   }
-                  markSeen(item.path).then(() => setSeenTick((n) => n + 1))
+                  markSeen(item.path)
                   navigation.navigate("Thread", { host, label: name, path: item.path })
                 }}
                 onLongPress={selecting ? undefined : () => setActionFor(item)}
@@ -467,18 +471,23 @@ export default function ChatsScreen({ navigation }: Props) {
                 ) : null}
                 <Avatar avatar={item.avatar} seed={item.id} size={46} />
                 <View style={{ flex: 1 }}>
-                  <Text
-                    style={[styles.chatName, { color: t.text }, unread ? styles.chatNameUnread : null]}
-                    numberOfLines={1}
-                  >
-                    {name}
-                  </Text>
-                  {/* The WhatsApp signature line: what was last said, not metadata. */}
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    {item.running ? <View style={styles.runningDot} /> : null}
+                    <Text
+                      style={[styles.chatName, { color: t.text, flex: 1 }, unread ? styles.chatNameUnread : null]}
+                      numberOfLines={1}
+                    >
+                      {name}
+                    </Text>
+                  </View>
+                  {/* The WhatsApp signature line: what was last said, not metadata.
+                      When a persona drives the session, name it here — the org↔fleet
+                      answer to "who is this" — else fall back to host/harness. */}
                   <Text
                     style={[styles.chatSub, unread ? { color: t.text, fontWeight: "500" } : null]}
                     numberOfLines={1}
                   >
-                    {item.preview || `Claude · ${hostLabel}`}
+                    {item.preview || (item.persona ? `${item.persona.name} · ${hostLabel}` : `Claude · ${hostLabel}`)}
                   </Text>
                 </View>
                 <View style={styles.chatMetaCol}>

@@ -20,6 +20,8 @@ export type IconName =
   | "copy"
   | "fork"
   | "revert"
+  | "pause"
+  | "play"
   | "folder"
   | "file"
   | "up"
@@ -86,6 +88,8 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   copy: "copy-outline",
   fork: "git-branch-outline",
   revert: "play-back-outline",
+  pause: "pause",
+  play: "play",
   folder: "folder",
   file: "document-outline",
   up: "arrow-up-outline",

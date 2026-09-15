@@ -172,16 +172,25 @@ class CapabilitiesMixin:
         rel = (q.get("session") or [""])[0]
         host = (q.get("host") or ["local"])[0]
         agent = (q.get("agent") or ["claude"])[0]
-        # cwd from the picked new-session dir, or the session's own cwd on that
-        # host, so project-scoped skills/MCP resolve against the right folder.
         cwd = (q.get("cwd") or [""])[0].strip()
+        data, status = self.compute_capabilities(host, agent, rel, cwd)
+        self.send_json(data, status=status or 200)
+
+    def compute_capabilities(self, host, agent, rel, cwd=""):
+        """Resolve one session's skills + MCP servers -> ({skills, mcp}, status).
+
+        The single source of truth for per-session capabilities: the /api/capabilities
+        route serves this directly, and session_detail composes it in. `status` is None
+        on success or an HTTP code on failure, so a caller composing several sources can
+        decide whether a partial failure is fatal. cwd from the picked new-session dir,
+        or the session's own cwd on that host, so project-scoped skills/MCP resolve
+        against the right folder."""
         if agent == "codex" and host == "local":
             if not cwd and rel:
                 full = resolve_agent_session("codex", rel)
                 if full:
                     cwd = codex_session_meta(full)[1]
-            self.send_json(codex_capabilities(cwd))
-            return
+            return codex_capabilities(cwd), None
         if agent == "copilot":
             # Host-aware read of ~/.copilot skills + MCP (local or over SSH). cwd
             # is best-effort: local sessions resolve it, remote falls back to
@@ -191,8 +200,7 @@ class CapabilitiesMixin:
                 full = resolve_agent_session("copilot", rel)
                 if full:
                     cwd = copilot_session_meta(full)[1]
-            self.send_json(copilot_capabilities(host, cwd))
-            return
+            return copilot_capabilities(host, cwd), None
         h = get_host(host)
         if not cwd and rel:
             try:
@@ -200,9 +208,9 @@ class CapabilitiesMixin:
             except Exception:
                 cwd = ""
         try:
-            self.send_json(h.capabilities(cwd))
+            return h.capabilities(cwd), None
         except Exception as e:
-            self.send_json({"error": f"SSH: {e}", "skills": [], "mcp": []}, status=502)
+            return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""

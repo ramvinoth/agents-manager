@@ -329,6 +329,7 @@ class SessionViewerHandler(
         "/api/browser/frame": "_g_browser_frame",
         "/api/capabilities": "_g_capabilities",
         "/api/session-summary": "_g_session_summary",
+        "/api/session-detail": "_g_session_detail",
         "/api/session-analysis": "_g_session_analysis",
         "/api/session-backups": "_g_session_backups",
         "/api/skill": "_g_skill",
@@ -353,6 +354,8 @@ class SessionViewerHandler(
         "/api/org/loop-control": "_g_org_loop_control",
         "/api/org/system-preamble": "_g_org_system_preamble",
         "/api/org/skills": "_g_org_skills",
+        "/api/org/docs": "_g_org_docs",
+        "/api/org/docs/read": "_g_org_docs_read",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -404,6 +407,7 @@ class SessionViewerHandler(
         "/api/session/backup-restore": "_p_session_backup_restore",
         "/api/session/delete": "_p_session_delete",
         "/api/session/rename": "_p_session_rename",
+        "/api/session/seen": "_p_session_seen",
         "/api/loops": "_p_loops",
         "/api/loops/edit": "_p_loops_edit",
         "/api/loops/delete": "_p_loops_delete",

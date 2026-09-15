@@ -10,7 +10,7 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type GitStatus, type Job, type Provider, type SessionSummary } from "../api/client"
+import { api, type Capabilities, type GitStatus, type Job, type Provider, type SessionSummary } from "../api/client"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
@@ -89,6 +89,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // null until loaded; {repo:false} when the cwd isn't a git repo (card hidden).
   const [cwd, setCwd] = useState("")
   const [git, setGit] = useState<GitStatus | null>(null)
+  // Read-only capabilities (skills + MCP tools) for THIS session's working dir.
+  // Editing lives in the thread's CapabilitiesDrawer — the profile only mirrors,
+  // so there is one CRUD surface, not two. null until the cwd is known + loaded.
+  const [caps, setCaps] = useState<Capabilities | null>(null)
   const [syncing, setSyncing] = useState(false)
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
 
@@ -107,6 +111,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           setConvMode(m.convMode === "agent" ? "agent" : "chat")
           setEffort(m.effort || "")
           if (m.cwd) { setCwd(m.cwd); loadGit(m.cwd) }
+          // Skills + MCP tools resolve from the working dir, so load them once
+          // the cwd is known (host-aware, same endpoint the drawer/tab use).
+          api.capabilities(host, m.cwd || undefined).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
         })
         .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
@@ -197,7 +204,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   }
 
 
-  function addJob(prompt: string, schedule: { cron?: string; interval?: number }) {
+  function addJob(prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) {
     if (!sessionId) return
     api
       .loopsCreate({ session: path || sessionId, prompt, ...schedule })
@@ -214,13 +221,25 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   // Edit: update the job via API, then refresh the list.
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
-  function editJob(id: string, prompt: string, schedule: { cron?: string; interval?: number }) {
+  function editJob(id: string, prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) {
     api
       .loopsEdit({ id, prompt, ...schedule })
       .then(() => sessionId ? api.loops(sessionId) : [])
       .then((l) => { if (Array.isArray(l)) setJobs(l) })
       .catch(() => {})
     setEditingJobId(null)
+  }
+
+  // Pause/resume: flip the loop's enabled flag. Optimistic, then refresh. A
+  // paused loop stops firing (server filters enabled=TRUE); resuming leaves its
+  // nextRun untouched, so an overdue loop fires at most once, not a backlog.
+  function toggleJob(j: Job) {
+    const next = !(j.enabled ?? true)
+    setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled: next } : x)))
+    api.loopsEdit({ id: j.id, enabled: next })
+      .then(() => sessionId ? api.loops(sessionId) : [])
+      .then((l) => { if (Array.isArray(l)) setJobs(l) })
+      .catch(() => {})
   }
 
   function toggleNotify(v: boolean) {
@@ -461,6 +480,63 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           <Text style={[styles.sheetHint, { marginTop: 8 }]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
         </>) : null}
 
+      {/* ── CAPABILITIES: skills + MCP tools for this session's cwd (read-only
+          mirror; tap opens the full editor). Answers "what can THIS session
+          actually do" without leaving its home page. ── */}
+      {renderCard("capabilities", "tool", "Skills & tools",
+        caps ? `${caps.skills.length} skill${caps.skills.length === 1 ? "" : "s"} · ${caps.mcp.length} MCP` : "Loading…",
+        <>
+          {cwd ? (
+            <View style={styles.ssRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ssRowLabel}>Working dir</Text>
+                <Text style={styles.ssRowHint} numberOfLines={1}>{cwd}</Text>
+              </View>
+            </View>
+          ) : null}
+          {caps && caps.skills.length ? (
+            <>
+              <Text style={styles.sheetSection}>SKILLS</Text>
+              {caps.skills.slice(0, 8).map((s) => (
+                <View key={s.path} style={styles.ssLoopRow}>
+                  <Icon name="sparkle" size={14} color={t.accent} />
+                  <Text style={[styles.ssLoopPrompt, { color: t.text, flex: 1 }]} numberOfLines={1}>/{s.name}</Text>
+                  <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{s.source}</Text>
+                </View>
+              ))}
+              {caps.skills.length > 8 ? (
+                <Text style={styles.sheetHint}>+{caps.skills.length - 8} more</Text>
+              ) : null}
+            </>
+          ) : null}
+          {caps && caps.mcp.length ? (
+            <>
+              <Text style={styles.sheetSection}>MCP TOOLS</Text>
+              {caps.mcp.slice(0, 8).map((m) => (
+                <View key={`${m.scope}:${m.name}`} style={styles.ssLoopRow}>
+                  <Icon name="tool" size={14} color={t.textMuted} />
+                  <Text style={[styles.ssLoopPrompt, { color: t.text, flex: 1 }]} numberOfLines={1}>{m.name}</Text>
+                  <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{m.scope}</Text>
+                </View>
+              ))}
+              {caps.mcp.length > 8 ? (
+                <Text style={styles.sheetHint}>+{caps.mcp.length - 8} more</Text>
+              ) : null}
+            </>
+          ) : null}
+          {caps && !caps.skills.length && !caps.mcp.length ? (
+            <Text style={styles.sheetHint}>No skills or MCP tools resolved for this working dir.</Text>
+          ) : null}
+          <TouchableOpacity
+            testID="sp-capabilities-manage"
+            onPress={() => navigation.navigate("Capabilities", { host, cwd, title })}
+            style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12 }}
+          >
+            <Icon name="settings" size={15} color={t.accent} />
+            <Text style={{ color: t.accent, fontWeight: "600" }}>Manage skills & tools</Text>
+          </TouchableOpacity>
+        </>)}
+
       {/* ── MODEL & alerts (open by default). ── */}
       {renderCard("model", "sparkle", "Model & alerts", modelSummary, <>
         {provider === "" ? (
@@ -516,22 +592,36 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
       {/* ── AUTOMATION: scheduled jobs (collapsed). ── */}
       {renderCard("automation", "repeat", "Scheduled jobs", jobs.length ? `${jobs.length} active` : "None", <>
-        {jobs.map((j) => (
+        {jobs.map((j) => {
+          const paused = j.enabled === false
+          return (
           <View key={j.id}>
             <TouchableOpacity
               style={[styles.ssJobRow, editingJobId === j.id ? { backgroundColor: t.accent + "10", borderRadius: 8 } : null]}
               activeOpacity={0.65}
               onPress={() => setEditingJobId(editingJobId === j.id ? null : j.id)}
             >
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, opacity: paused ? 0.5 : 1 }}>
                 <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 2 }}>
                   <Text style={styles.ssJobSchedule}>{describeSchedule(j)}</Text>
-                  {j.nextRun ? (
+                  {j.provider ? (
+                    <Text style={styles.ssJobSchedule}>· {providers.find((p) => p.id === j.provider)?.name || "Custom"}</Text>
+                  ) : null}
+                  {paused ? (
+                    <Text style={styles.ssJobNext}>Paused</Text>
+                  ) : j.nextRun ? (
                     <Text style={styles.ssJobNext}>Next: {fmtNextRun(j.nextRun)}</Text>
                   ) : null}
                 </View>
               </View>
+              <TouchableOpacity
+                testID={`sp-job-toggle-${j.id}`}
+                onPress={() => toggleJob(j)}
+                hitSlop={8}
+              >
+                <Icon name={paused ? "play" : "pause"} size={15} color={paused ? t.accent : t.textMuted} />
+              </TouchableOpacity>
               <TouchableOpacity testID={`sp-job-del-${j.id}`} onPress={() => removeJob(j.id)}>
                 <Icon name="trash" size={15} color={t.danger} />
               </TouchableOpacity>
@@ -539,14 +629,16 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             {editingJobId === j.id ? (
               <JobScheduler
                 styles={styles}
-                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval }}
+                providers={providers}
+                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval, provider: j.provider }}
                 onCancel={() => setEditingJobId(null)}
                 onSubmit={(prompt, schedule) => editJob(j.id, prompt, schedule)}
               />
             ) : null}
           </View>
-        ))}
-        <JobScheduler onSubmit={addJob} styles={styles} />
+          )
+        })}
+        <JobScheduler onSubmit={addJob} styles={styles} providers={providers} />
       </>)}
 
       {/* ── PINNED messages (collapsed; only shown when present). ── */}

@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { findMatches, isUnread, itemText, stepMatch, trimSeen } from "./search.ts"
+import { findMatches, itemText, stepMatch } from "./search.ts"
 import type { ThreadItem } from "./thread.ts"
 
 let passed = 0
@@ -46,22 +46,6 @@ test("stepMatch cycles forward and back with wrap", () => {
 test("itemText flattens an exchange", () => {
   assert.ok(itemText(ITEMS[1]).includes("green"))
   assert.ok(itemText(ITEMS[1]).includes("Bash"))
-})
-
-test("trimSeen keeps the most recently seen entries", () => {
-  const big: Record<string, number> = {}
-  for (let i = 0; i < 100; i++) big[`p${i}`] = i
-  const t = trimSeen(big, 10)
-  assert.equal(Object.keys(t).length, 10)
-  assert.ok(t["p99"] && t["p90"], "newest kept")
-  assert.ok(!t["p0"], "oldest dropped")
-})
-
-test("unread: only chats seen before and changed since", () => {
-  const seen = { "a.jsonl": 100 }
-  assert.equal(isUnread(seen, "a.jsonl", 200), true)
-  assert.equal(isUnread(seen, "a.jsonl", 50), false)
-  assert.equal(isUnread(seen, "never-opened.jsonl", 200), false, "no dot-flood on fresh installs")
 })
 
 console.log(`${passed} passing`)

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import {
   ActivityIndicator,
   ScrollView,
@@ -24,11 +24,21 @@ type Props = NativeStackScreenProps<RootStackParamList, "Capabilities">
  * and offers add / edit / delete for each, mirroring the server CRUD the web UI
  * already uses (skill save/delete, mcp save/delete).
  */
-export default function CapabilitiesScreen(_props: Props) {
+export default function CapabilitiesScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
-  const host = currentHost()
-  const cwd = undefined
+  // Scope: a session passes its host + working dir (project-scoped skills/MCP);
+  // the global entry (Profile → Capabilities) passes nothing → the host default,
+  // cwd undefined, which the server reads as the user/global scope.
+  const host = route.params?.host || currentHost()
+  const cwd = route.params?.cwd
+
+  // When opened for a specific session, title the header with its name so it's
+  // clear WHICH scope you're editing (vs the global "Skills & tools").
+  const scopeTitle = route.params?.title
+  useEffect(() => {
+    if (scopeTitle) navigation.setOptions({ title: `${scopeTitle} · Skills & tools` })
+  }, [scopeTitle])
 
   const [tab, setTab] = useState<"skills" | "mcp">("skills")
   const [caps, setCaps] = useState<Capabilities | null>(null)

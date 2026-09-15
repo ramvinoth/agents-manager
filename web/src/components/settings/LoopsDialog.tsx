@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Loader2, Plus, Repeat, Trash2, Pencil, ChevronLeft } from "lucide-react"
+import { Loader2, Plus, Repeat, Trash2, Pencil, Pause, Play, ChevronLeft } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,11 +12,22 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { fmtInterval, parseInterval } from "@/lib/format"
 import { useStore } from "@/store"
 import type { Loop } from "@/lib/types"
 
-type Draft = { id: string; prompt: string; interval: string }
+type Draft = { id: string; prompt: string; interval: string; provider: string }
+
+// Radix Select forbids an empty-string item value; a loop's provider "" means
+// "inherit the session's own provider", shown under this sentinel in the dropdown.
+const INHERIT_PROVIDER = "__inherit__"
 
 /**
  * The Loops manager modal: list every scheduled loop for this session with
@@ -25,19 +36,30 @@ type Draft = { id: string; prompt: string; interval: string }
  */
 export function LoopsDialog({ onClose }: { onClose: () => void }) {
   const loops = useStore((s) => s.loops)
+  const providers = useStore((s) => s.providers)
+  const sessionProvider = useStore((s) => s.meta?.provider) || ""
   const createLoop = useStore((s) => s.createLoop)
   const editLoop = useStore((s) => s.editLoop)
+  const toggleLoop = useStore((s) => s.toggleLoop)
   const deleteLoop = useStore((s) => s.deleteLoop)
 
   const [editing, setEditing] = useState<Draft | null>(null) // null = list; Draft = form
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
+  // The label a loop's provider setting shows in the list row. "" inherits the
+  // session's own provider (resolved at fire time server-side).
+  function providerLabel(id: string): string {
+    const effective = id || sessionProvider
+    if (!effective) return "Built-in (Claude)"
+    return providers.find((p) => p.id === effective)?.name || "Custom provider"
+  }
+
   function openForm(l?: Loop) {
     setEditing(
       l
-        ? { id: l.id, prompt: l.prompt, interval: fmtInterval(l.interval) }
-        : { id: "", prompt: "", interval: "1h" }
+        ? { id: l.id, prompt: l.prompt, interval: fmtInterval(l.interval), provider: l.provider || "" }
+        : { id: "", prompt: "", interval: "1h", provider: "" }
     )
   }
 
@@ -48,8 +70,8 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
     if (!prompt || !interval) return
     setSaving(true)
     try {
-      if (editing.id) await editLoop(editing.id, prompt, interval, "")
-      else await createLoop(prompt, interval, "")
+      if (editing.id) await editLoop(editing.id, prompt, interval, editing.provider)
+      else await createLoop(prompt, interval, editing.provider)
       setEditing(null)
     } finally {
       setSaving(false)
@@ -69,16 +91,27 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
             {loops.length === 0 && (
               <p className="px-1 text-xs italic text-muted-foreground">No loops yet.</p>
             )}
-            {loops.map((l) => (
+            {loops.map((l) => {
+              const paused = l.enabled === false
+              return (
               <div key={l.id} className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
                 <Repeat className="size-4 shrink-0 text-muted-foreground" />
-                <button className="min-w-0 flex-1 text-left" onClick={() => openForm(l)} title="Edit">
+                <button className={`min-w-0 flex-1 text-left ${paused ? "opacity-50" : ""}`} onClick={() => openForm(l)} title="Edit">
                   <div className="truncate text-sm" title={l.prompt}>{l.prompt}</div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Badge variant="outline" className="px-1.5 text-[10px] font-normal tabular-nums">
                       {fmtInterval(l.interval)}
                     </Badge>
-                    <span className="tabular-nums">{l.runs || 0} run{(l.runs || 0) === 1 ? "" : "s"}</span>
+                    {l.provider && (
+                      <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
+                        {providerLabel(l.provider)}
+                      </Badge>
+                    )}
+                    {paused ? (
+                      <span className="font-medium">Paused</span>
+                    ) : (
+                      <span className="tabular-nums">{l.runs || 0} run{(l.runs || 0) === 1 ? "" : "s"}</span>
+                    )}
                   </div>
                 </button>
                 {confirmDelete === l.id ? (
@@ -92,6 +125,15 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                   </>
                 ) : (
                   <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      onClick={() => toggleLoop(l.id, paused)}
+                      title={paused ? "Resume" : "Pause"}
+                    >
+                      {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                    </Button>
                     <Button variant="ghost" size="icon" className="size-7" onClick={() => openForm(l)} title="Edit">
                       <Pencil className="size-3.5" />
                     </Button>
@@ -107,7 +149,8 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                   </>
                 )}
               </div>
-            ))}
+              )
+            })}
             <Button variant="outline" size="sm" className="mt-1 self-start gap-1" onClick={() => openForm()}>
               <Plus className="size-3.5" /> Add loop
             </Button>
@@ -145,6 +188,32 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : null} Save
               </Button>
               <Button variant="ghost" size="sm" className="h-8" onClick={() => setEditing(null)}>Cancel</Button>
+            </div>
+            {/* Provider these runs use. "Inherit" resolves the session's own
+                provider at fire time; pinning one overrides it (the preset carries
+                the model). */}
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[11px] text-muted-foreground">Model provider</span>
+              <Select
+                value={editing.provider || INHERIT_PROVIDER}
+                onValueChange={(v) =>
+                  setEditing((d) => (d ? { ...d, provider: v === INHERIT_PROVIDER ? "" : v } : d))
+                }
+              >
+                <SelectTrigger className="h-8 flex-1 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_PROVIDER}>
+                    Inherit session ({providerLabel("")})
+                  </SelectItem>
+                  {providers.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         )}

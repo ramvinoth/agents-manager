@@ -211,7 +211,8 @@ def loop_scheduler(launch):
                         pass
 
                 try:
-                    started = launch(session, lp["path"], prompt, lp.get("model", ""), _on_done)
+                    started = launch(session, lp["path"], prompt,
+                                     lp.get("model", ""), lp.get("provider", ""), _on_done)
                 except Exception as e:
                     started = False
                     if run_id is not None:
@@ -1522,12 +1523,12 @@ def steer_chat(session_id, text):
         return "queued"
 
 
-def run_loop_iteration(session_id, rel_path, prompt, model="", on_done=None):
+def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_done=None):
     """Fire one loop run against a session (used by the scheduler). Returns True if
     a run actually started. on_done(rc, detail) is called when the run finishes so
     the scheduler can record the outcome to job-run history; if the run can't start
-    (missing file / session busy) it is called here with an error rc and False is
-    returned, so no history row is left dangling."""
+    (missing file / session busy / unresolvable provider) it is called here with an
+    error rc and False is returned, so no history row is left dangling."""
     full = CLAUDE_DIR.parent / rel_path
     if not full.exists():
         if on_done:
@@ -1536,8 +1537,28 @@ def run_loop_iteration(session_id, rel_path, prompt, model="", on_done=None):
     cwd = extract_cwd(full)
     if not os.path.isdir(cwd):
         cwd = str(Path.home())
+    # Resolve the provider the run should use: the loop's OWN preset id wins, else
+    # inherit the resumed session's provider (its session-meta). This is what makes
+    # a loop resuming a custom-provider session actually hit that endpoint — an
+    # interactive chat already does this (routes/chat.py), but a loop firing
+    # start_claude_run with no provider_env silently ran on Default Claude before.
+    # A set-but-missing/incomplete preset fails the run loudly (rc=-1 into job
+    # history) rather than rerouting to Default — the unattended analogue of the
+    # interactive 400. The preset carries the model, so `model` (a built-in tier)
+    # applies only when there is no provider — mirroring chat.py's `"" if env`.
+    from viewer import providers
+    preset_id = (provider or "").strip() or \
+        (db.session_meta_get(session_id) or {}).get("provider", "")
+    provider_env = None
+    if preset_id:
+        provider_env = providers.anthropic_env(preset_id)
+        if provider_env is None:
+            if on_done:
+                on_done(-1, f"provider preset missing or incomplete: {preset_id}")
+            return False
     return start_claude_run(session_id, ["--resume", session_id], prompt,
-                            "acceptEdits", cwd, model, on_done=on_done)
+                            "acceptEdits", cwd, "" if provider_env else model,
+                            provider_env=provider_env, on_done=on_done)
 
 
 def extract_cwd(session_file):

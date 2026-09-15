@@ -187,8 +187,11 @@ interface AppState {
    *  request is queued (not applied), so this resolves to a status string for the
    *  caller to show ("" = applied cleanly). */
   setSystemPreamble: (text: string) => Promise<string>
-  createLoop: (prompt: string, interval: number, model: string) => Promise<void>
-  editLoop: (id: string, prompt: string, interval: number, model: string) => Promise<void>
+  createLoop: (prompt: string, interval: number, provider: string) => Promise<void>
+  editLoop: (id: string, prompt: string, interval: number, provider: string) => Promise<void>
+  /** Pause (enabled=false) or resume (true) a loop. A paused loop stops firing;
+   *  resuming leaves its nextRun untouched, so an overdue loop fires at most once. */
+  toggleLoop: (id: string, enabled: boolean) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
   toggleVisible: (t: keyof VisibleTypes) => void
   loadProjects: () => Promise<void>
@@ -788,6 +791,13 @@ export const useStore = create<AppState>((set, get) => {
     loadSession: async (path) => {
       stopTimers()
       analyzeBucket = null // reset auto-analysis baseline for the new session
+      // Mark read for this reader: clear the dot optimistically and advance the
+      // server-side per-reader cursor, so it stays read on the next list refresh
+      // and on every other device/principal-shared surface. No-op if already read.
+      if (get().sessions.some((s) => s.path === path && s.unread)) {
+        set({ sessions: get().sessions.map((s) => (s.path === path ? { ...s, unread: false } : s)) })
+      }
+      api.sessionSeen(path).catch(() => {})
       set({
         loading: true,
         error: null,
@@ -1090,17 +1100,23 @@ export const useStore = create<AppState>((set, get) => {
         /* ignore */
       }
     },
-    createLoop: async (prompt, interval, model) => {
+    createLoop: async (prompt, interval, provider) => {
       const { currentSessionPath } = get()
       if (!prompt.trim()) return
-      const res = await api.loopsCreate({ session: currentSessionPath, prompt, interval, model })
+      const res = await api.loopsCreate({ session: currentSessionPath, prompt, interval, provider })
       await res.json().catch(() => ({}))
       get().loadLoops()
     },
-    editLoop: async (id, prompt, interval, model) => {
+    editLoop: async (id, prompt, interval, provider) => {
       if (!prompt.trim()) return
-      const res = await api.loopsEdit({ id, prompt, interval, model })
+      const res = await api.loopsEdit({ id, prompt, interval, provider })
       await res.json().catch(() => ({}))
+      get().loadLoops()
+    },
+    toggleLoop: async (id, enabled) => {
+      // Optimistic flip, then reload for the server's canonical row.
+      set({ loops: get().loops.map((l) => (l.id === id ? { ...l, enabled } : l)) })
+      await api.loopsEdit({ id, enabled }).catch(() => {})
       get().loadLoops()
     },
     deleteLoop: async (id) => {

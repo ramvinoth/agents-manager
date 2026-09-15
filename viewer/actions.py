@@ -168,7 +168,9 @@ def _loop_create(a):
     lid = _uuid.uuid4().hex[:12]
     entry = {"session": session, "path": a.get("path", ""), "prompt": prompt,
              "runs": 0, "created": time.time(), "enabled": True,
-             "model": (a.get("model") or "").strip(), "origin": "harman", **sched}
+             "model": (a.get("model") or "").strip(),
+             "provider": (a.get("provider") or "").strip(),
+             "origin": "harman", **sched}
     db.loop_upsert(lid, entry)
     return {"created": lid, "origin": "harman",
             "interval": sched.get("interval") or 0, "cron": sched.get("cron")}
@@ -194,6 +196,8 @@ def _loop_update(a):
         fields["prompt"] = prompt
     if "model" in a:
         fields["model"] = (a.get("model") or "").strip()
+    if "provider" in a:
+        fields["provider"] = (a.get("provider") or "").strip()
     if "enabled" in a:
         fields["enabled"] = bool(a.get("enabled"))
     if "cron" in a or "interval" in a:

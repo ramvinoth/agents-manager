@@ -261,6 +261,24 @@ class OrchestratorMixin:
         self._org_send(req, "system_preamble_set",
                        {"preamble": body.get("preamble", "")})
 
+    # ── System docs (read-only; open to any resolved caller) ──────────────────
+    # The documentation surface an agent reads to understand the system it is a
+    # node in: whitelisted design docs plus one synthetic live-status doc. Read
+    # only — there is no write path — and all policy is in viewer.docs (the
+    # whitelist is the boundary), so these handlers are pure transport.
+    def _g_org_docs(self, req):
+        from viewer import docs
+        self.send_json({"docs": docs.list_docs()})
+
+    def _g_org_docs_read(self, req):
+        from viewer import docs
+        doc_id = (req.query.get("id") or [""])[0]
+        doc = docs.read_doc(doc_id)
+        if doc is None:
+            self.send_json({"error": "Doc not found"}, status=404)
+            return
+        self.send_json(doc)
+
     # ── Agent-scheduled loops (origin='harman', gated) ────────────────────────
     # The AGENT path to scheduling recurring work. The human UI keeps its own
     # ungated loop routes (routes.sessions): a person editing their own schedules
@@ -298,7 +316,8 @@ class OrchestratorMixin:
         self._org_send(req, "loop_create", {
             "session": target, "path": body.get("path", ""),
             "prompt": body.get("prompt", ""), "cron": body.get("cron"),
-            "interval": body.get("interval"), "model": body.get("model", "")})
+            "interval": body.get("interval"), "model": body.get("model", ""),
+            "provider": body.get("provider", "")})
 
     def _p_org_loops_update(self, req):
         """Edit a harman-origin loop. The rail resolves the loop's OWN session (not a

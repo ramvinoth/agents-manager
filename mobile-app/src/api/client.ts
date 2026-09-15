@@ -55,7 +55,7 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
 export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
-export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; nextRun?: number; runs?: number; enabled?: boolean }
+export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
 /** @deprecated Use Job instead */
 export type Loop = Job
 export type AgentTemplate = {
@@ -124,7 +124,20 @@ export type Session = {
   favorite?: boolean
   /** Last visible message, "You: …"-prefixed for user turns (chat-list preview). */
   preview?: string
+  /** Server-authoritative unread bit for THIS reader (principal), not per-device:
+   *  true when the transcript changed since this reader last opened it. */
+  unread?: boolean
+  /** Live run flag: a run is in flight for this session. Per-viewer-process truth
+   *  (the jobs THIS viewer started), not a cross-host guarantee. */
+  running?: boolean
+  /** The employee driving this session (org↔fleet join, attached server-side when
+   *  the session's token carries an employee_id); absent when unlinked. */
+  persona?: SessionPersona
 }
+
+/** The employee driving a session — org↔fleet join from _overlay_meta.
+ *  DUPLICATED in web/src/lib/types.ts; the two apps share no build. */
+export type SessionPersona = { id: number; name: string; role: string; avatar: string }
 
 function authHeaders(): Record<string, string> {
   const t = token()
@@ -182,6 +195,10 @@ export const api = {
   // ---- sessions ----
   sessions: (host: string) =>
     req<Session[]>("GET", `/api/sessions?host=${encodeURIComponent(host)}`),
+  // Mark a session read for this reader (advances the server-side unread cursor).
+  // Fire-and-forget from the UI; the next list refresh reflects unread=false.
+  sessionSeen: (path: string) =>
+    req<{ seen?: boolean }>("POST", "/api/session/seen", { session: path }),
   // Transcript records (last `tail` lines). Mirrors web api.sessionReadTail —
   // `path` is inserted unencoded so the server's /api/session/<path> wildcard
   // route matches, exactly as the web client does. The server responds with a
@@ -372,9 +389,9 @@ export const api = {
 
   // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
   loops: (sessionId: string) => req<Job[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
-  loopsCreate: (body: { session: string; prompt: string; interval?: number; cron?: string; model?: string }) =>
+  loopsCreate: (body: { session: string; prompt: string; interval?: number; cron?: string; model?: string; provider?: string }) =>
     req<{ id?: string }>("POST", "/api/loops", body),
-  loopsEdit: (body: { id: string; prompt?: string; interval?: number; cron?: string; model?: string }) =>
+  loopsEdit: (body: { id: string; prompt?: string; interval?: number; cron?: string; model?: string; enabled?: boolean; provider?: string }) =>
     req<{ updated?: string }>("POST", "/api/loops/edit", body),
   loopsDelete: (id: string) => req("POST", "/api/loops/delete", { id }),
 

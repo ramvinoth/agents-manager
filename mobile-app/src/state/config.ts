@@ -31,7 +31,6 @@ const SERVERS_KEY = "servers"
 const SERVER_KEY = "serverUrl" // legacy (pre-multi-server) — migration source only
 const TOKEN_KEY = "token" // legacy — migration source only
 const HOST_KEY = "currentHost"
-const SEEN_KEY = "seenMap"
 const PREFS_KEY = "composerPrefs"
 const THEME_KEY = "themePref"
 const DRAWER_KEY = "drawerSections"
@@ -45,7 +44,6 @@ export type ThemePref = "system" | "light" | "dark"
 // server's url + token are derived from this list on demand.
 let _servers: ServerState = EMPTY_STATE
 let _host = "local"
-let _seen: Record<string, number> = {}
 // Unsent composer text per session (keyed by path/id), so a draft survives
 // navigating back and app restarts. Kept small via trimDrafts.
 let _drafts: Record<string, string> = {}
@@ -91,11 +89,6 @@ export async function loadConfig(): Promise<{ serverUrl: string; token: string }
   try {
     _servers = await loadServers()
     _host = (await SecureStore.getItemAsync(HOST_KEY)) || "local"
-    try {
-      _seen = JSON.parse((await SecureStore.getItemAsync(SEEN_KEY)) || "{}")
-    } catch {
-      _seen = {}
-    }
     try {
       _prefs = { ..._prefs, ...JSON.parse((await SecureStore.getItemAsync(PREFS_KEY)) || "{}") }
     } catch {
@@ -232,22 +225,6 @@ export async function setToken(t: string | null): Promise<void> {
   _servers = setActiveToken(_servers, t || "")
   await persistServers()
   notifyServer()
-}
-
-import { trimSeen } from "../lib/search"
-
-/** When each chat (by path) was last opened — drives the unread indicators. */
-export function seenMap(): Record<string, number> {
-  return _seen
-}
-
-export async function markSeen(path: string): Promise<void> {
-  _seen = trimSeen({ ..._seen, [path]: Date.now() / 1000 })
-  try {
-    await SecureStore.setItemAsync(SEEN_KEY, JSON.stringify(_seen))
-  } catch {
-    /* best-effort; in-memory map still works this session */
-  }
 }
 
 /** Unsent composer draft for a session (empty string if none). */

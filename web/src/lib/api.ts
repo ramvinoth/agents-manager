@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardFilter, Queued, SessionDetail } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -125,6 +125,11 @@ class ApiClient {
   }
   resolve(id: string) {
     return this.getJSON(`/api/resolve?id=${id}` + this.qs())
+  }
+  // Mark a session read for this reader (advances the server-side unread cursor).
+  // Fire-and-forget from the UI; the next list refresh reflects unread=false.
+  sessionSeen(path: string) {
+    return this.postRes("/api/session/seen", this.wh({ session: path }))
   }
   projects() {
     return this.getJSON("/api/projects" + this.qs("?"))
@@ -276,6 +281,14 @@ class ApiClient {
   }
   sessionSummary(path: string) {
     return this.getJSON(`/api/session-summary?session=${encodeURIComponent(path)}` + this.qs())
+  }
+  /** One composed view of ANY session — meta + capabilities + summary + live run
+   *  flag in a single call (the same document the session_detail MCP tool wraps).
+   *  Lets the list expand a peer's skills·MCP·cwd·model in place without opening it. */
+  sessionDetail(path: string) {
+    return this.getJSON<SessionDetail>(
+      `/api/session-detail?session=${encodeURIComponent(path)}` + this.qs() + this.ag()
+    )
   }
   sessionAnalysis(path: string, refresh?: boolean) {
     return this.getJSON(

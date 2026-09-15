@@ -35,7 +35,7 @@ export type RootStackParamList = {
   Thread: { host: string; label: string; path?: string; jumpTo?: string }
   Call: { host: string; label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string }
-  Capabilities: undefined
+  Capabilities: { host?: string; cwd?: string; title?: string } | undefined
   Providers: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   Org: undefined

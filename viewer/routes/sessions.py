@@ -129,10 +129,11 @@ class SessionsMixin:
         else:
             next_run = time.time() + interval
         model = (body.get("model") or "").strip()
+        provider = (body.get("provider") or "").strip()
         lid = uuid_mod.uuid4().hex[:12]
         entry = {"session": full.stem, "path": rel, "prompt": prompt,
                  "nextRun": next_run, "runs": 0, "created": time.time(),
-                 "enabled": True, "model": model}
+                 "enabled": True, "model": model, "provider": provider}
         if cron_expr:
             entry["cron"] = cron_expr
             entry["interval"] = 0
@@ -188,8 +189,17 @@ class SessionsMixin:
                 fields["nextRun"] = time.time() + interval
         if "model" in body:
             fields["model"] = (body.get("model") or "").strip()
+        if "provider" in body:
+            fields["provider"] = (body.get("provider") or "").strip()
+        if "enabled" in body:
+            # Pause/resume. nextRun is deliberately left untouched: a resumed loop
+            # that is already overdue fires at most ONCE (loop_scheduler's "paused
+            # means paused, not queued" — engine.py), never a burst of the runs it
+            # missed while off.
+            fields["enabled"] = bool(body["enabled"])
         updated = db.loop_update(lid, fields)
-        self.send_json({"updated": lid, "interval": updated.get("interval"), "cron": updated.get("cron")})
+        self.send_json({"updated": lid, "interval": updated.get("interval"),
+                        "cron": updated.get("cron"), "enabled": updated.get("enabled")})
 
     # ----- Slash commands / projects / session resolution -----
 
@@ -444,6 +454,80 @@ class SessionsMixin:
     def _g_session_summary(self, req):
         self.serve_session_summary(req.raw_query, req.host)
 
+    def _g_session_detail(self, req):
+        """One composed view of a session for the fleet: meta + capabilities +
+        summary + live run flag, so an agent (or the UI) gets the whole picture in
+        one call. Pure composition — it DELEGATES to the same producers the
+        /api/session-meta, /api/capabilities and /api/session-summary routes use,
+        and re-derives nothing. A failure in one source degrades that section to
+        an {error} rather than failing the whole document. Unread is intentionally
+        NOT here: it is a per-reader list concern computed from the file mtime, and
+        opening the detail is itself the act that clears it.
+
+        Target selection accepts `id` OR `session`: human clients pass `session`
+        (a path, like every other session route), but the MCP transport mirrors the
+        CALLER's own id into `session` as a credential, so an agent naming its target
+        there would always get itself. `id` is untouched by that transport — the same
+        escape hatch chat_status uses — so an agent targets another session by `id`."""
+        raw = (req.query.get("id") or req.query.get("session") or [""])[0]
+        host, agent = req.host, (req.query.get("agent") or ["claude"])[0]
+        if not raw:
+            self.send_json({"error": "No session"}, status=400)
+            return
+        # Normalise to (sid, resolvable path): human clients pass a path, the MCP
+        # passes a bare id. The summary/capabilities producers address the file by
+        # PATH, so a bare id (no slash) is resolved to one first.
+        sid = self.sid_from_path(raw) or raw.rsplit("/", 1)[-1].replace(".jsonl", "")
+        rel = raw
+        if "/" not in raw:
+            try:
+                r = get_host(host).resolve(sid)
+            except Exception as e:
+                self.send_json({"error": f"SSH: {e}"}, status=502)
+                return
+            if not r.get("found"):
+                self.send_json({"error": "Session not found"}, status=404)
+                return
+            rel = r["path"]
+        meta = db.session_meta_get(sid)
+        caps, _ = self.compute_capabilities(host, agent, rel)
+        try:
+            summary = get_host(host).session_summary(rel)
+        except Exception as e:
+            summary = {"error": f"SSH: {e}"}
+        self.send_json({
+            "session": sid, "host": host, "agent": agent,
+            "running": self.session_busy(sid),
+            "meta": {"goal": meta.get("goal", ""), "systemPrompt": meta.get("systemPrompt", ""),
+                     "avatar": meta.get("avatar", ""), "provider": meta.get("provider", ""),
+                     "convMode": meta.get("convMode", "chat"), "effort": meta.get("effort", ""),
+                     "archived": bool(meta.get("archived", False)),
+                     "favorite": bool(meta.get("favorite", False))},
+            "capabilities": caps,
+            "summary": summary,
+        })
+
+    def _p_session_seen(self, req):
+        """Advance the caller's unread cursor on one session (marks it read for
+        THIS reader only). The reader is the resolved principal — stable across a
+        human's devices, distinct per agent — so unread is per-person, not
+        per-device like the seen-map it replaced.
+
+        Target accepts `id` OR `session` for the same reason as session_detail: the
+        MCP transport overwrites `session` with the caller's own id, so an agent
+        marks another session read via `id` (a bare uuid), while human clients pass
+        a `session` path. Only the sid is needed here — no path resolution — so a
+        bare id is used directly."""
+        body = self.read_body() or {}
+        reader = (req.principal or {}).get("actor", "")
+        raw = (body.get("id") or body.get("session") or "").strip()
+        sid = self.sid_from_path(raw) or raw.rsplit("/", 1)[-1].replace(".jsonl", "")
+        if not reader or not sid:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        db.session_seen_set(reader, sid)
+        self.send_json({"seen": True, "session": sid})
+
     def _p_session_restore(self, req):
         self.handle_restore()
 
@@ -676,27 +760,26 @@ class SessionsMixin:
     # ----- Fork / restore / delete -----
 
     def _g_sessions(self, req):
+        reader = (req.principal or {}).get("actor", "")
         agent = (req.query.get("agent") or ["claude"])[0]
         if agent != "claude":
             try:
                 sessions = (remote_list_sessions_agent(req.host, agent) if req.host != "local"
                             else list_sessions_local(agent))
+                # overlay viewer-set titles (rename / new-session name), then the
+                # shared meta/run/harness/unread enrichment every list carries.
                 all_meta = db.session_meta_all()
-                for s in sessions:  # overlay viewer-set titles (rename / new-session name)
-                    meta = all_meta.get(s["id"], {})
-                    t = meta.get("title")
+                for s in sessions:
+                    t = all_meta.get(s["id"], {}).get("title")
                     if t:
                         s["title"] = t
-                    if meta.get("avatar"):
-                        s["avatar"] = meta["avatar"]
-                    s["archived"] = bool(meta.get("archived", False))
-                    s["favorite"] = bool(meta.get("favorite", False))
+                self._overlay_meta(sessions, reader, agent)
                 self.send_json(sessions)
             except Exception as e:
                 self.send_json({"error": f"SSH: {e}"} if req.host != "local" else {"error": str(e)},
                                status=502 if req.host != "local" else 500)
             return
-        self.serve_session_list(req.host)
+        self.serve_session_list(req.host, reader)
 
     def _g_session_analysis(self, req):
         rel = (req.query.get("session") or [""])[0]
@@ -875,23 +958,48 @@ class SessionsMixin:
             return
         self.send_json({"started": True, "session": session_id})
 
-    def serve_session_list(self, host="local"):
+    def serve_session_list(self, host="local", reader=""):
         """List all session JSONL files with metadata, on the selected host."""
         try:
             sessions = get_host(host).list_sessions()
-            # Overlay the viewer-set avatar (chosen on the Session profile page).
-            # Kept in session_meta keyed by session id, exactly like `title`.
             if isinstance(sessions, list):
-                all_meta = db.session_meta_all()
-                for s in sessions:
-                    meta = all_meta.get(s.get("id"), {})
-                    if meta.get("avatar"):
-                        s["avatar"] = meta["avatar"]
-                    s["archived"] = bool(meta.get("archived", False))
-                    s["favorite"] = bool(meta.get("favorite", False))
+                self._overlay_meta(sessions, reader, "claude")
             self.send_json(sessions)
         except Exception as e:
             self.send_json({"error": f"SSH: {e}"}, status=502)
+
+    def _overlay_meta(self, sessions, reader, harness):
+        """Enrich a raw session list in place with the viewer-owned fields the
+        thin list carries: the meta overlay (avatar/archived/favorite/provider),
+        the live run flag, the harness tag, the reader's unread bit, and the
+        persona (the employee driving the session, if its token is linked).
+
+        One `session_meta_all`, one `session_seen_get`, and one
+        `session_personas` per list request, joined in memory — not a query per
+        session. `running` reflects THIS viewer process's CHAT_JOBS (jobs it
+        started); it is not a cross-host truth, which is why it is honestly named
+        per-process rather than global. `unread` is empty when `reader` is
+        unknown, so a listing with no principal is silent rather than lying that
+        everything is unread. `persona` is the org↔fleet join: a session whose
+        token carries an `employee_id` shows WHO is driving it; unlinked sessions
+        simply have no persona."""
+        all_meta = db.session_meta_all()
+        seen = db.session_seen_get(reader) if reader else {}
+        personas = db.session_personas()
+        for s in sessions:
+            meta = all_meta.get(s.get("id"), {})
+            if meta.get("avatar"):
+                s["avatar"] = meta["avatar"]
+            s["archived"] = bool(meta.get("archived", False))
+            s["favorite"] = bool(meta.get("favorite", False))
+            s["provider"] = meta.get("provider", "")
+            s["running"] = self.session_busy(s.get("id"))
+            s["harness"] = harness
+            last = seen.get(s.get("id"))
+            s["unread"] = bool(last and s.get("modified") and s["modified"] > last)
+            persona = personas.get(s.get("id"))
+            if persona:
+                s["persona"] = persona
 
     def apply_code_restore(self, sid, state):
         """Overwrite each tracked file with its checkpoint content, backing up

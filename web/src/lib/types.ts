@@ -1,11 +1,34 @@
 // Domain types shared across the app — ported from the vanilla SessionParser.
 
+/** The employee driving a session — the org↔fleet join attached by
+ *  _overlay_meta when a session's token carries an employee_id. Absent on
+ *  sessions with no linked persona. */
+export interface SessionPersona {
+  id: number
+  name: string
+  role: string
+  avatar: string
+}
+
 export interface SessionListItem {
   path: string
   title: string
   project: string
   modified: number
   size: number
+  /** Server-authoritative unread bit for THIS reader (principal), not per-device:
+   *  true when the transcript changed since this reader last opened it. */
+  unread?: boolean
+  /** Live run flag from _overlay_meta. NOTE: per-viewer-process truth — reflects
+   *  jobs THIS viewer started, not a cross-host guarantee. */
+  running?: boolean
+  /** Custom-provider preset id ("" = the harness default). Resolve to a name via
+   *  the store's `providers` library. */
+  provider?: string
+  /** Harness tag: claude | codex | copilot | pi. */
+  harness?: string
+  /** The employee driving this session (org↔fleet join); absent when unlinked. */
+  persona?: SessionPersona
   [k: string]: unknown
 }
 
@@ -139,6 +162,29 @@ export interface Capabilities {
   models?: { v: string; label: string }[] // Copilot: dynamic per-plan model picker list
 }
 
+/** The composed per-session document from /api/session-detail: meta + caps +
+ *  summary + live run flag, in one call. Sections degrade to {error} on failure,
+ *  so every field is optional. Used by the chat list's inline expander to reveal
+ *  a peer session's skills·MCP·cwd·model without opening it. */
+export interface SessionDetail {
+  session: string
+  host: string
+  agent: string
+  running: boolean
+  meta: {
+    goal?: string
+    systemPrompt?: string
+    avatar?: string
+    provider?: string
+    convMode?: string
+    effort?: string
+    archived?: boolean
+    favorite?: boolean
+  }
+  capabilities: Capabilities
+  summary: SessionSummary & { error?: string }
+}
+
 export interface AgentInfo {
   id: string
   label: string
@@ -232,6 +278,8 @@ export interface Loop {
   nextRun?: number
   runs?: number
   enabled?: boolean
+  /** Custom provider preset id these runs use ("" = inherit the session's own). */
+  provider?: string
 }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
