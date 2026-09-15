@@ -12,8 +12,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from viewer.config import (
-    HOSTS, MAX_POLL_BYTES, read_back_f, split_lines,
+    MAX_POLL_BYTES, read_back_f, split_lines,
 )
+from viewer import db
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local
 from viewer.adapters import normalize_lines
 
@@ -57,7 +58,7 @@ class SSHManager:
         self.chan_gates = {}   # hid -> BoundedSemaphore(MAX_CHANNELS): concurrent short ops/host
 
     def config(self, hid):
-        return HOSTS.get(hid)
+        return db.hosts_load().get(hid)
 
     @contextmanager
     def lock_for(self, hid):

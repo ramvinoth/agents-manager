@@ -206,8 +206,8 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="")
             # reject a separate "system" role and require strictly alternating
             # user/assistant turns, so we FOLD the system text into the first user
             # message instead of adding a system message.
-            from viewer.engine import SESSION_META
-            meta = SESSION_META.get(session_id) or {}
+            from viewer import db
+            meta = db.session_meta_get(session_id) or {}
             system = []
             if meta.get("systemPrompt"):
                 system.append(meta["systemPrompt"])

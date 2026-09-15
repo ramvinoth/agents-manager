@@ -3,6 +3,7 @@ session summary/analysis, skill scans, and the Host local/remote seam."""
 import json
 import os
 import posixpath
+import queue
 import re
 import secrets
 import shlex
@@ -15,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -33,50 +34,14 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
+from viewer import db
+
+
 # ===== Loops (recurring prompts per session) and session meta =====
-LOOPS_FILE = Path.home() / ".claude" / ".viewer-loops.json"
-META_FILE = Path.home() / ".claude" / ".viewer-meta.json"
-LOOPS_LOCK = threading.Lock()
-# Guards SESSION_META across its scattered read-modify-write + save sites. Without
-# it, a setdefault/pop in one worker thread races a json.dumps snapshot in another
-# ("dict changed size during iteration") and drops updates. Hold it around the whole
-# mutate-then-save so writes are atomic w.r.t. each other.
-META_LOCK = threading.Lock()
-
-
-def load_json_file(path, default):
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return default
-
-
-def save_json_file(path, data):
-    # SESSION_META/HOSTS/LOOPS aren't lock-guarded across their scattered mutation
-    # sites; a concurrent add/remove of a key while we dump raises "dict changed
-    # size during iteration". Retry the snapshot, then write atomically (temp +
-    # os.replace) so a crash mid-write can't corrupt or drop the file.
-    text = None
-    for _ in range(5):
-        try:
-            text = json.dumps(data, indent=1)
-            break
-        except RuntimeError:
-            time.sleep(0.005)
-    if text is None:
-        return
-    try:
-        tmp = path.parent / (path.name + ".tmp")
-        tmp.write_text(text)
-        os.replace(tmp, path)
-    except Exception as e:
-        # A write failure here is real data loss (session meta / loops not persisted),
-        # so surface it instead of swallowing silently.
-        print(f"[engine] save_json_file failed for {path}: {e}", flush=True)
-
-
-LOOPS = load_json_file(LOOPS_FILE, {})     # id -> {session, path, prompt, interval, nextRun, runs, lastRc, enabled}
-SESSION_META = load_json_file(META_FILE, {})  # session_id -> {goal, systemPrompt}
+# Both stores live in Postgres now (viewer.db) — the single source of truth. Call
+# sites read/write per row through db.loop_* / db.session_meta_* instead of mutating
+# a shared in-memory dict and rewriting a whole JSON file. Postgres gives the
+# atomicity the old module-level locks used to provide.
 
 
 def _session_title(session_id):
@@ -120,7 +85,7 @@ def _push_label(session_id, cwd=""):
     name = _session_title(session_id)
     if name:
         return name
-    meta = SESSION_META.get(session_id) or {}
+    meta = db.session_meta_get(session_id) or {}
     goal = (meta.get("goal") or "").strip()
     if goal:
         return goal[:60]
@@ -142,11 +107,13 @@ def parse_interval(text):
 
 
 CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final status
+_PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_tick's self-throttle idiom)
+_last_purge = 0.0
 
 
 def loop_scheduler(launch):
-    """Background thread: fire due loops, and reap finished chat jobs so
-    CHAT_JOBS doesn't grow unbounded (one entry per session ever driven).
+    """Background thread: fire due loops, reap finished chat jobs so CHAT_JOBS
+    doesn't grow unbounded, and hourly purge old job-run history.
 
     This thread is the ONLY place work starts without a human asking for it, which
     is why the master switch is enforced here and nowhere else: one `if` covers
@@ -160,6 +127,7 @@ def loop_scheduler(launch):
     session tokens, and holding stale credentials open would be the opposite of
     safe.
     """
+    global _last_purge
     while True:
         time.sleep(5)
         now = time.time()
@@ -174,51 +142,96 @@ def loop_scheduler(launch):
                 # stale credential can't authorize an MCP call after the session
                 # ends (preserves the "only live sessions" guarantee).
                 try:
-                    from viewer import db
                     db.session_token_delete(sid)
                 except Exception:
                     pass
-        # The master switch. Read fresh each pass so a pause takes effect within
-        # 5s; if it can't be read we treat automation as OFF (see orchestrator).
-        try:
-            from viewer.orchestrator import automation_enabled
-            automation_on = automation_enabled()
-        except Exception:
-            automation_on = False
-        if not automation_on:
-            continue
-        due = []
-        with LOOPS_LOCK:
-            for lid, lp in LOOPS.items():
-                if lp.get("enabled", True) and now >= lp.get("nextRun", 0):
-                    job = CHAT_JOBS.get(lp["session"])
-                    if job and job["running"]:
-                        lp["nextRun"] = now + 30  # session busy; retry shortly
-                        continue
-                    # Cron-based jobs compute their next run from the cron
-                    # expression; interval-based ones just add the interval.
-                    cron_expr = lp.get("cron")
-                    if cron_expr:
-                        from viewer.loops import cron_next_run
-                        nxt = cron_next_run(cron_expr, now)
-                        lp["nextRun"] = nxt if nxt else now + 86400
-                    else:
-                        lp["nextRun"] = now + lp["interval"]
-                    lp["runs"] = lp.get("runs", 0) + 1
-                    lp["lastRun"] = now
-                    due.append(dict(lp, id=lid))
-            if due:
-                save_json_file(LOOPS_FILE, LOOPS)
-        for lp in due:
+        # Retention: bound job-run history so it can never overflow. Runs on THIS
+        # thread (no second timer) and self-throttles to hourly. Caps come from the
+        # settings table so a SaaS-admin portal can tune them per plan without a
+        # deploy. Independent of the master switch — pruning old audit rows is
+        # housekeeping, not unattended WORK, and must keep the table bounded even
+        # while automation is paused.
+        if now - _last_purge >= _PURGE_INTERVAL:
+            _last_purge = now
             try:
-                launch(lp["session"], lp["path"], lp["prompt"], lp.get("model", ""))
+                rc = db.retention_config()
+                db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
             except Exception:
                 pass
-        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
-        # thread). Self-throttles to its own interval; exception-safe internally.
+        # Loop firing is gated by the loop_control mode (which ORIGINS may run),
+        # read fresh each pass — deliberately INDEPENDENT of the automation master
+        # switch below. The owner can pause Harman's autonomy while their own
+        # scheduled loops keep running, and vice-versa. A failed read falls back to
+        # 'user' (run the owner's own loops, not agent-made ones) — the same safe
+        # default the setting seeds to. An empty origin set ('none' mode) skips the
+        # query entirely: nothing fires.
         try:
-            from viewer.orchestrator import harman_tick
-            harman_tick()
+            from viewer.orchestrator import loop_mode
+            from viewer.loops import allowed_origins
+            origins = allowed_origins(loop_mode())
+        except Exception:
+            origins = allowed_origins("user")
+        if origins:
+            # Fire due loops. Per-tick bumps (nextRun/runs/lastRun) are written to
+            # the loop's row atomically; job_runs records each firing for the audit
+            # trail.
+            due = []
+            for lp in db.loops_due(now, origins):
+                job = CHAT_JOBS.get(lp["session"])
+                if job and job["running"]:
+                    db.loop_update(lp["id"], {"nextRun": now + 30})  # session busy; retry shortly
+                    continue
+                # Cron-based jobs compute their next run from the cron expression;
+                # interval-based ones just add the interval.
+                cron_expr = lp.get("cron")
+                if cron_expr:
+                    from viewer.loops import cron_next_run
+                    nxt = cron_next_run(cron_expr, now)
+                    next_run = nxt if nxt else now + 86400
+                else:
+                    next_run = now + (lp.get("interval") or 0)
+                db.loop_update(lp["id"], {
+                    "nextRun": next_run, "runs": (lp.get("runs") or 0) + 1, "lastRun": now})
+                due.append(lp)
+            for lp in due:
+                lid, session, prompt = lp["id"], lp["session"], lp["prompt"]
+                # Open a history row now; the run thread closes it via on_done. A run
+                # that never starts (session busy/missing) is finalized here as an
+                # error so no row is left dangling "running" forever.
+                try:
+                    run_id = db.job_run_start(lid, session, prompt)
+                except Exception:
+                    run_id = None
+
+                def _on_done(rc, detail="", lid=lid, run_id=run_id):
+                    try:
+                        db.job_run_finish(run_id, rc, detail)
+                        db.loop_update(lid, {"lastRc": rc})
+                    except Exception:
+                        pass
+
+                try:
+                    started = launch(session, lp["path"], prompt, lp.get("model", ""), _on_done)
+                except Exception as e:
+                    started = False
+                    if run_id is not None:
+                        try:
+                            db.job_run_finish(run_id, -1, str(e)[:2000])
+                        except Exception:
+                            pass
+                if not started and run_id is not None:
+                    try:
+                        db.job_run_finish(run_id, -1, "did not start (session busy or missing)")
+                    except Exception:
+                        pass
+        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
+        # thread). Gated by the automation master switch (read fresh so a pause
+        # takes effect within 5s; unreadable → treated as OFF). Self-throttles to
+        # its own interval; exception-safe internally.
+        try:
+            from viewer.orchestrator import automation_enabled, harman_tick
+            if automation_enabled():
+                harman_tick()
         except Exception:
             pass
 
@@ -274,6 +287,46 @@ def stream_user_message(proc, text):
     msg = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
     proc.stdin.write(json.dumps(msg) + "\n")
     proc.stdin.flush()
+
+
+_STDOUT_EOF = object()
+
+
+def iter_stdout_until(proc, idle_timeout):
+    """Yield stdout lines, killing the turn only after `idle_timeout` of SILENCE.
+
+    `for line in proc.stdout` blocks in readline() until the child writes, so a
+    total-wall-clock deadline can only be checked when a line arrives; a child
+    that goes silent mid-turn (a hung claude -p) parks the reader forever and
+    the turn never ends. We drain stdout on a helper thread and pull lines
+    through a queue with a per-wait timeout that RE-ARMS on every line, so the
+    window measures the gap since the last output, not total run time. A
+    genuinely-working agent (streaming assistant text / tool calls / results)
+    runs indefinitely; only true silence longer than `idle_timeout` raises
+    TimeoutError. Returns on clean EOF. Uniform for local pipes and the
+    paramiko RemoteProc stream.
+
+    Note: a long-running tool call is silent on the stream until it returns, so
+    `idle_timeout` must exceed the longest legitimate quiet gap (see
+    CHAT_IDLE_TIMEOUT)."""
+    q = queue.Queue()
+
+    def _pump():
+        try:
+            for line in proc.stdout:
+                q.put(line)
+        finally:
+            q.put(_STDOUT_EOF)
+
+    threading.Thread(target=_pump, daemon=True).start()
+    while True:
+        try:
+            item = q.get(timeout=idle_timeout)
+        except queue.Empty:
+            raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+        if item is _STDOUT_EOF:
+            return
+        yield item
 
 
 class RemoteProc:
@@ -803,11 +856,10 @@ def _resolve_employee(session_id):
     is linked to an employee via its session-meta provider preset id (the employee's
     provider). No link → (None, 'ic') — least authority, the safe default."""
     try:
-        meta = SESSION_META.get(session_id) or {}
+        meta = db.session_meta_get(session_id) or {}
         provider_id = meta.get("provider")
         if not provider_id:
             return None, "ic"
-        from viewer import db
         for emp in db.employee_list():
             if emp.get("provider") == provider_id:
                 return emp, emp.get("level") or _emp_level(emp)
@@ -1102,7 +1154,7 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
-def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort=""):
+def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
@@ -1112,6 +1164,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     ANTHROPIC_MODEL} dict that points the harness at a custom Anthropic-compatible
     endpoint (our llama-server). None = the normal Anthropic-cloud Claude run,
     byte-identical to before.
+
+    on_done(rc, detail): optional callback fired once when the run thread finishes
+    (used by the loop scheduler to record the outcome to job-run history). Not
+    called when the run never starts because a job is already running — the caller
+    sees the False return and records that itself.
     Returns False if the session already has a running job."""
     remote = bool(host) and host != "local"
     with CHAT_LOCK:
@@ -1196,9 +1253,15 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         except Exception as e:
             print(f"[engine] provider settings write failed: {e}", flush=True)
 
-    # Per-session system prompt and goal, managed from the viewer's panel.
-    meta = SESSION_META.get(session_id) or {}
+    # System prompt = a global Harman system-awareness preamble (so every session
+    # knows it is a node in the orchestration system and how its mcp__viewer__*
+    # power is gated), then the per-session prompt and goal from the viewer's panel.
+    # The preamble lives in settings (db, runtime-editable) — empty string disables it.
+    meta = db.session_meta_get(session_id) or {}
     extra = []
+    preamble = db.setting_get("system_preamble", "") or ""
+    if preamble.strip():
+        extra.append(preamble)
     if meta.get("systemPrompt"):
         extra.append(meta["systemPrompt"])
     if meta.get("goal"):
@@ -1303,10 +1366,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             threading.Thread(target=_drain_stderr, daemon=True).start()
             stream_user_message(proc, message)
 
-            deadline = time.time() + CHAT_TIMEOUT
-            for line in proc.stdout:
-                if time.time() > deadline:
-                    raise TimeoutError(f"Timed out after {CHAT_TIMEOUT}s")
+            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
@@ -1389,6 +1449,16 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                         notify_all(label, body, data={"session": session_id, "host": phost})
                 except Exception:
                     pass
+            # Loop-run history hook: record the outcome exactly once, when this
+            # run's process exits. Fired on every finish (independent of the push
+            # notification's leftovers/interrupt gating) so a job_runs row is never
+            # left dangling "running": this run() thread finalizes once, and a
+            # leftovers follow-up is a separate start_claude_run without on_done.
+            if on_done:
+                try:
+                    on_done(rc if rc is not None else -1, job.get("stderr", ""))
+                except Exception:
+                    pass
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -1451,15 +1521,22 @@ def steer_chat(session_id, text):
         return "queued"
 
 
-def run_loop_iteration(session_id, rel_path, prompt, model=""):
-    """Fire one loop run against a session (used by the scheduler)."""
+def run_loop_iteration(session_id, rel_path, prompt, model="", on_done=None):
+    """Fire one loop run against a session (used by the scheduler). Returns True if
+    a run actually started. on_done(rc, detail) is called when the run finishes so
+    the scheduler can record the outcome to job-run history; if the run can't start
+    (missing file / session busy) it is called here with an error rc and False is
+    returned, so no history row is left dangling."""
     full = CLAUDE_DIR.parent / rel_path
     if not full.exists():
-        return
+        if on_done:
+            on_done(-1, f"session file missing: {rel_path}")
+        return False
     cwd = extract_cwd(full)
     if not os.path.isdir(cwd):
         cwd = str(Path.home())
-    start_claude_run(session_id, ["--resume", session_id], prompt, "acceptEdits", cwd, model)
+    return start_claude_run(session_id, ["--resume", session_id], prompt,
+                            "acceptEdits", cwd, model, on_done=on_done)
 
 
 def extract_cwd(session_file):

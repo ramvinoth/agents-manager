@@ -5,38 +5,17 @@ A "provider" is a reusable, named connection to an OpenAI-compatible endpoint:
 storing the preset id in its session-meta ("provider"); the custom runner then
 proxies that session's turns to {baseUrl}/v1/chat/completions.
 
-Stored in ~/.claude/.viewer-providers.json (chmod 600). Mirrors hostenv.py's
-keys-vs-reveal contract: the LIST view never returns apiKey; a separate reveal
-path (get_api_key) returns it only for the runner / the server-side /v1/models
-fetch. The key never leaves the box.
+Stored in the Postgres `providers` table. Mirrors hostenv.py's keys-vs-reveal
+contract: the LIST view never returns apiKey; a separate reveal path
+(get_api_key) returns it only for the runner / the server-side /v1/models fetch.
+The key never leaves the box.
 """
-import json
-import os
 import re
-import threading
 import uuid as _uuid
-from pathlib import Path
 
-PROVIDERS_FILE = Path.home() / ".claude" / ".viewer-providers.json"
-_LOCK = threading.Lock()
+from viewer import db
+
 _ID_RE = re.compile(r"[A-Za-z0-9_-]+$")
-
-
-def _load():
-    try:
-        return json.loads(PROVIDERS_FILE.read_text()) if PROVIDERS_FILE.exists() else {}
-    except Exception:
-        return {}
-
-
-def _save(data):
-    tmp = PROVIDERS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.replace(tmp, PROVIDERS_FILE)
-    try:
-        os.chmod(PROVIDERS_FILE, 0o600)
-    except OSError:
-        pass
 
 
 def valid_id(pid):
@@ -87,8 +66,7 @@ def _declared_context(context_limit):
 
 def list_presets():
     """All presets as public dicts (no apiKey), sorted by name then id."""
-    with _LOCK:
-        data = _load()
+    data = db.providers_load()
     out = [_public(pid, rec) for pid, rec in data.items() if isinstance(rec, dict)]
     out.sort(key=lambda p: (p["name"].lower(), p["id"]))
     return out
@@ -98,8 +76,7 @@ def get_preset(pid):
     """Full preset record INCLUDING apiKey (reveal path) — for the runner only."""
     if not pid:
         return None
-    with _LOCK:
-        rec = _load().get(pid)
+    rec = db.providers_load().get(pid)
     return dict(rec) if isinstance(rec, dict) else None
 
 
@@ -155,47 +132,35 @@ def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, 
     pid = (pid or "").strip()
     if pid and not valid_id(pid):
         raise ValueError("Provider id may contain only letters, digits, _ and -")
-    with _LOCK:
-        data = _load()
-        if not pid:
-            pid = _uuid.uuid4().hex[:12]
-        prev = data.get(pid) if isinstance(data.get(pid), dict) else {}
-        rec = {
-            "name": (name or "").strip() or base_url,
-            "baseUrl": base_url,
-            "model": (model or "").strip(),
-            # Preserve the existing key when the caller didn't supply a new one.
-            "apiKey": prev.get("apiKey", "") if api_key is None else str(api_key),
-            # Preserve the existing context limit when unspecified; a supplied value
-            # (including 0 to clear) wins.
-            "contextLimit": int(prev.get("contextLimit") or 0) if context_limit is None
-            else max(0, int(context_limit)),
-            "isDefault": bool(prev.get("isDefault")) if is_default is None else bool(is_default),
-        }
-        # At most one default: clear others when this one becomes default.
-        if rec["isDefault"]:
-            for other_pid, other_rec in data.items():
-                if isinstance(other_rec, dict) and other_pid != pid:
-                    other_rec["isDefault"] = False
-        data[pid] = rec
-        _save(data)
+    if not pid:
+        pid = _uuid.uuid4().hex[:12]
+    prev = get_preset(pid) or {}
+    rec = {
+        "name": (name or "").strip() or base_url,
+        "baseUrl": base_url,
+        "model": (model or "").strip(),
+        # Preserve the existing key when the caller didn't supply a new one.
+        "apiKey": prev.get("apiKey", "") if api_key is None else str(api_key),
+        # Preserve the existing context limit when unspecified; a supplied value
+        # (including 0 to clear) wins.
+        "contextLimit": int(prev.get("contextLimit") or 0) if context_limit is None
+        else max(0, int(context_limit)),
+        "isDefault": bool(prev.get("isDefault")) if is_default is None else bool(is_default),
+    }
+    # provider_upsert clears every other preset's default in the same transaction
+    # when this one is the default, so at most one default survives.
+    db.provider_upsert(pid, rec)
     return _public(pid, rec)
 
 
 
 def delete_preset(pid):
-    with _LOCK:
-        data = _load()
-        existed = data.pop(pid, None) is not None
-        if existed:
-            _save(data)
-    return existed
+    return db.provider_delete(pid)
 
 
 def get_default_id():
     """Return the id of the preset marked isDefault, or "" if none."""
-    with _LOCK:
-        data = _load()
+    data = db.providers_load()
     for pid, rec in data.items():
         if isinstance(rec, dict) and rec.get("isDefault"):
             return pid

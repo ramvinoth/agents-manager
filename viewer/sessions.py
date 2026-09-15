@@ -12,11 +12,9 @@ import glob as _glob_mod
 import gzip
 import json
 import logging
-import os
 import shutil
 import subprocess
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 

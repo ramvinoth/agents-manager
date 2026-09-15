@@ -4,10 +4,9 @@ no network, no database."""
 import json
 import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from viewer.sessions import (
     StatCache,
@@ -16,7 +15,6 @@ from viewer.sessions import (
     create_backup,
     extract_cwd,
     extract_cwd_from_lines,
-    list_backups,
     restore_session,
     session_digest_from_lines,
     _compress,

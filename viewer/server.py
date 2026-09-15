@@ -350,6 +350,7 @@ class SessionViewerHandler(
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
         "/api/org/harman": "_g_org_harman",
+        "/api/org/loop-control": "_g_org_loop_control",
         "/api/org/skills": "_g_org_skills",
     }
     GET_PREFIX = [
@@ -426,6 +427,10 @@ class SessionViewerHandler(
         "/api/org/cards/delete": "_p_org_cards_delete",
         "/api/org/approvals/resolve": "_p_org_approvals_resolve",
         "/api/org/harman": "_p_org_harman",
+        "/api/org/loop-control": "_p_org_loop_control",
+        "/api/org/loops": "_p_org_loops",
+        "/api/org/loops/update": "_p_org_loops_update",
+        "/api/org/loops/delete": "_p_org_loops_delete",
         "/api/org/skills/propose": "_p_org_skills_propose",
     }
     POST_PREFIX = [

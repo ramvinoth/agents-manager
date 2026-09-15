@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardFilter, Queued } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -132,10 +132,24 @@ class ApiClient {
 
   // ---- org / Kanban (project-scoped board) ----
   /** Harman orchestrator config — the single server-side source of truth for
-   *  the master automation switch. Web is read-only here; the control point
-   *  is the mobile Profile screen. */
+   *  the master automation switch. Read on both apps; writable from the web
+   *  Profile tab and the mobile Profile screen (they mirror each other). */
   orgHarman() {
     return this.getJSON<HarmanConfig>("/api/org/harman")
+  }
+  /** Patch the Harman config. Turning automation ON is a Red action (manager
+   *  scope) — a caller who can't self-approve gets an approval back, not the
+   *  config — hence the `| Queued` union. Other keys apply green. */
+  orgSetHarman(patch: Partial<HarmanConfig>) {
+    return this.postJSON<HarmanConfig | Queued>("/api/org/harman", patch)
+  }
+  /** Loop-firing mode — which loop origins may run, orthogonal to automation.
+   *  Green (manager scope, never queues): the write returns the applied config. */
+  orgLoopControl() {
+    return this.getJSON<LoopControl>("/api/org/loop-control")
+  }
+  orgSetLoopControl(mode: LoopMode) {
+    return this.postJSON<LoopControl>("/api/org/loop-control", { mode })
   }
   orgEmployees() {
     return this.getJSON<{ employees: Employee[] }>("/api/org/employees")

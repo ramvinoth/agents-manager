@@ -14,7 +14,7 @@ Jobs support TWO scheduling modes:
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Optional, Set, Tuple
+from typing import Optional, Set
 
 
 def parse_interval(text):
@@ -25,6 +25,60 @@ def parse_interval(text):
         return None
     val = float(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
     return int(min(max(val, 30), 86400))
+
+
+# Loop-firing control. WHO may run scheduled loops right now, keyed off the
+# loop_control setting's `mode`. Deliberately SEPARATE from the automation master
+# switch (which gates only Harman's manager tick): the owner can pause Harman's
+# autonomy while their own scheduled loops keep running, and vice-versa.
+#
+#   user   → only human-scheduled loops fire (the default; a fresh install runs
+#            the owner's own loops but nothing an agent created)
+#   harman → only agent-scheduled loops fire
+#   both   → every loop fires
+#   none   → nothing fires
+#
+# Pure (no db) so it unit-tests standalone and there is ONE definition of the
+# mapping. An unknown/missing mode falls back to 'user' — the safe default that
+# still honours the human's own schedules without licensing agent-made ones.
+LOOP_MODES = ("user", "harman", "both", "none")
+_MODE_ORIGINS = {
+    "user": frozenset({"user"}),
+    "harman": frozenset({"harman"}),
+    "both": frozenset({"user", "harman"}),
+    "none": frozenset(),
+}
+
+
+def allowed_origins(mode):
+    """The set of loop origins permitted to fire under `mode`. Returns a frozenset
+    (possibly empty, for 'none'). Unknown modes map to the 'user' default."""
+    return _MODE_ORIGINS.get(mode, _MODE_ORIGINS["user"])
+
+
+def build_schedule(cron_raw, interval_raw, now=None):
+    """Validate a loop's schedule inputs → the storable schedule fields, or an error.
+
+    Returns (fields, error): on success `fields` is {"cron", "interval", "nextRun"}
+    ready to merge into a loop record and `error` is None; on bad input `fields` is
+    None and `error` is a human-readable string. Shared by the human loop route and
+    the gated agent loop action so the two can never drift on what a valid schedule
+    is, or when it next fires.
+
+    Cron wins over interval (matching the scheduler). `now` is injectable for tests
+    and defaults to the wall clock. PURE apart from that clock read — no db, no I/O.
+    """
+    now = time.time() if now is None else now
+    cron_expr = str(cron_raw or "").strip() or None
+    if cron_expr:
+        if not parse_cron(cron_expr):
+            return None, "Invalid cron expression"
+        return {"cron": cron_expr, "interval": 0,
+                "nextRun": cron_next_run(cron_expr, now) or (now + 86400)}, None
+    interval = parse_interval(interval_raw or "")
+    if not interval:
+        return None, "Provide a cron expression or interval (e.g. 30s, 5m, 1h)"
+    return {"cron": None, "interval": interval, "nextRun": now + interval}, None
 
 
 # ---------------------------------------------------------------------------

@@ -2,16 +2,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SessionList } from "./SessionList"
 import { SettingsPanel } from "./SettingsPanel"
 import { StatsPanel } from "./StatsPanel"
+import { ProfilePanel } from "./ProfilePanel"
 import { useStore } from "@/store"
 
-// The LHS tab set (Sessions | Settings | Stats). Reused by the desktop sidebar
-// and the mobile drawer.
+// The LHS tab set (Sessions | Settings | Stats | Profile). Reused by the desktop
+// sidebar and the mobile drawer. Profile is the web's orchestration control
+// point (automation switch + loop mode), mirroring the mobile Profile screen.
 export function LeftPanel() {
   const lhsTab = useStore((s) => s.lhsTab)
   const setLhsTab = useStore((s) => s.setLhsTab)
   return (
     <Tabs
-      value={["settings", "stats"].includes(lhsTab) ? lhsTab : "sessions"}
+      value={["settings", "stats", "profile"].includes(lhsTab) ? lhsTab : "sessions"}
       onValueChange={setLhsTab}
       className="flex h-full min-h-0 flex-col gap-0"
     >
@@ -19,6 +21,7 @@ export function LeftPanel() {
         <TabsTrigger value="sessions">Sessions</TabsTrigger>
         <TabsTrigger value="settings">Settings</TabsTrigger>
         <TabsTrigger value="stats">Stats</TabsTrigger>
+        <TabsTrigger value="profile">Profile</TabsTrigger>
       </TabsList>
       <TabsContent value="sessions" className="min-h-0 flex-1">
         <SessionList />
@@ -28,6 +31,9 @@ export function LeftPanel() {
       </TabsContent>
       <TabsContent value="stats" className="min-h-0 flex-1">
         <StatsPanel />
+      </TabsContent>
+      <TabsContent value="profile" className="min-h-0 flex-1">
+        <ProfilePanel />
       </TabsContent>
     </Tabs>
   )

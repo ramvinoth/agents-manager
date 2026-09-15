@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ArrowLeft, ClipboardList } from "lucide-react"
+import { Folder, ChevronRight, ArrowLeft, ClipboardList, Sparkles } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
+import { HarmanDialog } from "@/components/HarmanDialog"
 import { KanbanDialog } from "@/components/kanban/KanbanDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
@@ -35,13 +36,24 @@ export function SessionList() {
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const currentHost = useStore((s) => s.currentHost)
   const loadSession = useStore((s) => s.loadSession)
+  // The master switch decides whether the orchestrator exists for this app at
+  // all: OFF → no pinned Harman entry, the plain chat-session system it is.
+  const automationOn = useStore((s) => s.automationOn)
   const [dir, setDir] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
+  const [harmanOpen, setHarmanOpen] = useState(false)
 
   const groups = useMemo(() => groupSessions(sessions), [sessions])
   const active = dir ? groups.find((g) => g.dir === dir) : null
   const filter = q.toLowerCase()
+
+  // Harman: open the existing orchestrator session if one exists, else set one up.
+  const openHarman = () => {
+    const existing = sessions.find((s) => s.title === "Harman")
+    if (existing) loadSession(existing.path)
+    else setHarmanOpen(true)
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -57,26 +69,44 @@ export function SessionList() {
       <div className="flex-1 overflow-y-auto">
         <div className="space-y-0.5 p-2 pt-0">
           {!active
-            ? groups
-                .filter((g) => !filter || g.project.toLowerCase().includes(filter))
-                .map((g) => (
-                  <button
-                    key={g.dir}
-                    onClick={() => setDir(g.dir)}
-                    title={g.project}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-                  >
-                    <Folder className="size-4 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{projectName(g.project)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {g.sessions.length} session{g.sessions.length === 1 ? "" : "s"} ·{" "}
-                        {fmtAgo(g.modified)}
+            ? [
+                // Pinned Harman entry — the orchestrator's home, above the project
+                // groups. Only when automation is on; otherwise it doesn't exist here.
+                ...(automationOn && (!filter || "harman".includes(filter))
+                  ? [
+                      <button
+                        key="harman"
+                        onClick={openHarman}
+                        title="Harman — Harness Manager orchestrator"
+                        className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      >
+                        <Sparkles className="size-4 shrink-0 text-primary" />
+                        <span className="flex-1 font-medium">Harman</span>
+                        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                      </button>,
+                    ]
+                  : []),
+                ...groups
+                  .filter((g) => !filter || g.project.toLowerCase().includes(filter))
+                  .map((g) => (
+                    <button
+                      key={g.dir}
+                      onClick={() => setDir(g.dir)}
+                      title={g.project}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    >
+                      <Folder className="size-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{projectName(g.project)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {g.sessions.length} session{g.sessions.length === 1 ? "" : "s"} ·{" "}
+                          {fmtAgo(g.modified)}
+                        </div>
                       </div>
-                    </div>
-                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                  </button>
-                ))
+                      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  )),
+              ]
             : [
                 <button
                   key="back"
@@ -122,6 +152,7 @@ export function SessionList() {
           onClose={() => setTasksFor(null)}
         />
       )}
+      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
   )
 }

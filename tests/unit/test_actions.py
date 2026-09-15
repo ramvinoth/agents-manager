@@ -18,6 +18,7 @@ class FakeDB:
         self.audit = []          # (actor, action, target, outcome)
         self.approvals = []      # rows opened
         self.cards_moved = []    # proof a handler actually ran
+        self.loops = {}          # id -> loop row (agent-loop handler surface)
 
     def audit_append(self, actor, action, target=None, outcome=""):
         self.audit.append((actor, action, target, outcome))
@@ -43,6 +44,27 @@ class FakeDB:
 
     def board_columns_list(self, project_id):
         return [{"id": 70, "name": "Todo"}, {"id": 77, "name": "Done"}]
+
+    # -- loop handler surface --------------------------------------------------
+    # Enough of the loops table for the agent-loop actions to run against. Rows are
+    # kept as dicts so a test can seed a 'user'-origin loop and prove the origin
+    # guard refuses to touch it.
+    def loop_upsert(self, lid, entry):
+        self.loops[lid] = dict(entry, id=lid)
+        return self.loops[lid]
+
+    def loop_get(self, lid):
+        return self.loops.get(lid)
+
+    def loop_update(self, lid, fields):
+        row = self.loops.get(lid)
+        if not row:
+            return None
+        row.update(fields)
+        return row
+
+    def loop_delete(self, lid):
+        return bool(self.loops.pop(lid, None))
 
     @property
     def outcomes(self):
@@ -180,3 +202,68 @@ def test_queued_red_intent_carries_no_token(fdb):
     actions.execute(it, "owner", "manager")
     assert "tok-secret" not in repr(fdb.approvals)
     assert "tok-secret" not in repr(fdb.audit)
+
+
+# ── agent loops: origin is server-forced, and the origin guard is real ───────
+
+def test_loop_create_forces_harman_origin(fdb):
+    """origin is stamped by the handler, never taken from args: an intent is
+    persisted and replayed, so a caller-supplied 'user' origin could forge a loop
+    that dodges the loop-control dropdown. Even asking for 'user' yields 'harman'."""
+    it = actions.intent("loop_create",
+                        {"session": "worker", "prompt": "go", "interval": "5m",
+                         "origin": "user"}, "employee:bob")
+    resp, status = actions.execute(it, "owner", "lead")
+    assert status == 200 and resp["origin"] == "harman"
+    lid = resp["created"]
+    assert fdb.loops[lid]["origin"] == "harman"
+
+
+def test_loop_create_rejects_an_empty_prompt(fdb):
+    resp, status = actions.execute(
+        actions.intent("loop_create", {"session": "worker", "prompt": "  "}, "employee:bob"),
+        "owner", "lead")
+    assert status == 200 and "error" in resp
+    assert fdb.loops == {}
+
+
+def test_loop_update_refuses_a_user_origin_loop(fdb):
+    """The agent path owns only the loops it authored. A human's own schedule
+    (origin defaults to 'user') is off-limits even to a manager-level agent."""
+    fdb.loops["u1"] = {"id": "u1", "session": "s", "prompt": "go", "origin": "user"}
+    resp, status = actions.execute(
+        actions.intent("loop_update", {"id": "u1", "prompt": "changed"}, "employee:bob"),
+        "owner", "lead")
+    assert status == 200 and resp == {"error": "not an agent loop"}
+    assert fdb.loops["u1"]["prompt"] == "go", "the human's loop must be untouched"
+
+
+def test_loop_update_edits_a_harman_loop(fdb):
+    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "harman"}
+    resp, status = actions.execute(
+        actions.intent("loop_update", {"id": "h1", "prompt": "changed"}, "employee:bob"),
+        "owner", "lead")
+    assert status == 200 and resp["updated"] == "h1"
+    assert fdb.loops["h1"]["prompt"] == "changed"
+
+
+def test_loop_delete_by_an_agent_queues_and_does_not_remove(fdb):
+    """loop_delete is red, so an agent's call queues the intent rather than running.
+    The loop must still be present until the owner approves."""
+    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "harman"}
+    resp, status = actions.execute(
+        actions.intent("loop_delete", {"id": "h1"}, "employee:bob"), "owner", "manager")
+    assert status == 200 and resp["queued"] is True
+    assert "h1" in fdb.loops, "a queued delete must not have removed the loop"
+    assert fdb.outcomes == ["queued:red"]
+
+
+def test_loop_delete_refuses_a_user_origin_loop_on_approval(fdb):
+    """Even when the owner approves at the UI (runs immediately), the origin guard
+    still refuses to delete a human's loop — the guard is in the handler, so it
+    holds on the replayed intent too, not just at queue time."""
+    fdb.loops["u1"] = {"id": "u1", "session": "s", "prompt": "go", "origin": "user"}
+    resp, status = actions.execute(
+        actions.intent("loop_delete", {"id": "u1"}, "user:ram"), "owner", "")
+    assert status == 200 and resp == {"error": "not an agent loop"}
+    assert "u1" in fdb.loops

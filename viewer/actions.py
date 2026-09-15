@@ -17,6 +17,8 @@ can be stale or deleted by then. Late binding is why intents beat closures.
 Policy lives in orglogic (pure, no db). This module composes policy with the db
 and writes the audit trail; it is the only place that does.
 """
+import time
+
 from viewer import db, orglogic
 
 
@@ -94,7 +96,16 @@ def _employee_create(a):
 def _employee_update(a):
     fields = {k: v for k, v in a.items()
               if k in ("name", "role", "provider", "model", "conv_mode", "avatar", "status")}
-    return db.employee_update(a.get("id"), **fields) or {"error": "not found"}
+    updated = db.employee_update(a.get("id"), **fields)
+    if not updated:
+        return {"error": "not found"}
+    # Deactivating an employee (status → anything but active, e.g. archived) stops
+    # its scheduled work: disable every loop whose session runs AS this employee,
+    # linked by the employee's provider preset id. Reversible — restoring the
+    # employee leaves the (disabled) loops in place to be re-enabled.
+    if "status" in fields and (fields["status"] or "active") != "active":
+        db.loops_disable_for_employee(updated.get("provider") or "")
+    return updated
 
 
 def _harman_config(a):
@@ -126,6 +137,91 @@ def _automation_resume(a):
 def _approval_resolve(a):
     return db.approval_resolve(a.get("id"), a.get("resolution", "approved")) \
         or {"error": "not found"}
+
+
+# ── Agent-scheduled loops (origin='harman') ──────────────────────────────────
+# The human UI writes loops through routes.sessions (origin='user', ungated — a
+# person editing their own schedules). These three are the AGENT path: an employee
+# session asks Harman's org gate to schedule recurring work, so they run through
+# execute() like every other org action and carry origin='harman'.
+#
+# Origin is stamped HERE, server-side, never taken from args: an intent is
+# persisted and replayed, so a caller-supplied origin could forge a 'user' loop to
+# dodge the loop_control dropdown. WHICH path built the loop is the fact that
+# decides its origin, exactly like the automation pause/resume direction.
+#
+# The session a loop drives must exist (its transcript is what --resume replays);
+# validation of the session + the self-mutation rail live at the route, which has
+# the acting principal. Here we assume a resolved, non-self session.
+def _loop_create(a):
+    from viewer.loops import build_schedule
+    import uuid as _uuid
+    prompt = (a.get("prompt") or "").strip()
+    session = (a.get("session") or "").strip()
+    if not prompt:
+        return {"error": "Empty prompt"}
+    if not session:
+        return {"error": "session required"}
+    sched, err = build_schedule(a.get("cron"), a.get("interval"))
+    if err:
+        return {"error": err}
+    lid = _uuid.uuid4().hex[:12]
+    entry = {"session": session, "path": a.get("path", ""), "prompt": prompt,
+             "runs": 0, "created": time.time(), "enabled": True,
+             "model": (a.get("model") or "").strip(), "origin": "harman", **sched}
+    db.loop_upsert(lid, entry)
+    return {"created": lid, "origin": "harman",
+            "interval": sched.get("interval") or 0, "cron": sched.get("cron")}
+
+
+def _loop_update(a):
+    """Patch a harman-origin loop's prompt/schedule/model/enabled. Refuses to touch
+    a user-origin loop: the two paths own disjoint sets, so an agent can never edit
+    a schedule a human authored (and vice-versa the human route ignores origin
+    because a person may edit anything they can see)."""
+    from viewer.loops import build_schedule
+    lid = a.get("id", "")
+    loop = db.loop_get(lid)
+    if not loop:
+        return {"error": "not found"}
+    if (loop.get("origin") or "user") != "harman":
+        return {"error": "not an agent loop"}
+    fields = {}
+    if "prompt" in a:
+        prompt = (a.get("prompt") or "").strip()
+        if not prompt:
+            return {"error": "Empty prompt"}
+        fields["prompt"] = prompt
+    if "model" in a:
+        fields["model"] = (a.get("model") or "").strip()
+    if "enabled" in a:
+        fields["enabled"] = bool(a.get("enabled"))
+    if "cron" in a or "interval" in a:
+        sched, err = build_schedule(a.get("cron", loop.get("cron")),
+                                    a.get("interval", loop.get("interval")))
+        if err:
+            return {"error": err}
+        fields.update(sched)
+    updated = db.loop_update(lid, fields)
+    return {"updated": lid, "interval": updated.get("interval"),
+            "cron": updated.get("cron")} if updated else {"error": "not found"}
+
+
+def _loop_delete(a):
+    """Delete a harman-origin loop (Red → queued for the owner). Same origin guard
+    as _loop_update: the agent path cannot remove a human's schedule."""
+    lid = a.get("id", "")
+    loop = db.loop_get(lid)
+    if not loop:
+        return {"error": "not found"}
+    if (loop.get("origin") or "user") != "harman":
+        return {"error": "not an agent loop"}
+    return {"deleted": bool(db.loop_delete(lid))}
+
+
+def _loop_mode_set(a):
+    from viewer.orchestrator import set_loop_mode
+    return set_loop_mode((a.get("mode") or "").strip())
 
 
 def _skill_write(a):
@@ -173,6 +269,10 @@ ACTIONS = {
     "automation_pause": _automation_pause,
     "automation_resume": _automation_resume,
     "approval_resolve": _approval_resolve,
+    "loop_create": _loop_create,
+    "loop_update": _loop_update,
+    "loop_delete": _loop_delete,
+    "loop_mode_set": _loop_mode_set,
     "skill_propose": _skill_write,
     "skill_promote": _skill_write,
 }

@@ -264,6 +264,57 @@ def test_may_resolve_allows_a_missing_or_anonymous_approval():
     assert orglogic.may_resolve({}, "user:ram") is True
 
 
+# ── the agent loop-control tier: scope + risk of scheduling recurring work ────
+
+def test_scheduling_loops_needs_lead_authority():
+    # Authoring a recurring prompt shapes the board's future work, so it sits at the
+    # same tier as project_create — an ic may work cards but not schedule them.
+    for a in ("loop_create", "loop_update", "loop_delete"):
+        assert orglogic.allowed(a, "ic") is False, a
+        assert orglogic.allowed(a, "lead") is True, a
+        assert orglogic.allowed(a, "manager") is True, a
+
+
+def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
+    # Create/update stay green: a harman loop cannot FIRE until the owner licenses
+    # its origin via the loop-control mode, so authoring one is not itself risky.
+    # Delete is irreversible (takes its run history with it) → red → queued.
+    assert orglogic.is_red("loop_create") is False
+    assert orglogic.is_red("loop_update") is False
+    assert orglogic.is_red("loop_delete") is True
+
+
+def test_setting_the_loop_mode_is_manager_scoped_and_green():
+    # The loop-control dropdown is an org-wide panel — manager tier, same as
+    # harman_config. Green in both directions: de-escalating ('none'/'user') must
+    # be cheap, and licensing already-authored loops only decides WHETHER they run.
+    assert orglogic.allowed("loop_mode_set", "lead") is False
+    assert orglogic.allowed("loop_mode_set", "manager") is True
+    assert orglogic.is_red("loop_mode_set") is False
+
+
+# ── mutates_own_session(): a session may not reschedule its own supervision ────
+
+def test_a_session_may_not_mutate_its_own_loop():
+    # The self-mutation rail: the acting session id equals the target it would
+    # change, so the request is refused upstream (the route sends 403).
+    assert orglogic.mutates_own_session("sX", "sX") is True
+
+
+def test_a_session_may_mutate_another_sessions_loop():
+    # Managing OTHER workers' schedules is the whole point of the tier.
+    assert orglogic.mutates_own_session("sX", "sY") is False
+
+
+def test_a_human_at_the_ui_is_never_caught_by_the_rail():
+    # A human carries no acting session (empty), so the rail never fires on them —
+    # only an MCP agent request carries a non-empty acting session id.
+    assert orglogic.mutates_own_session("", "sX") is False
+    assert orglogic.mutates_own_session("", "") is False
+    # And a target that failed to resolve cannot accidentally match an agent caller.
+    assert orglogic.mutates_own_session("sX", "") is False
+
+
 # ── Harman planning (project_columns / suitable_employee / plan_assignments) ──
 
 COLS = [

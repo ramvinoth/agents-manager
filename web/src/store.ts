@@ -2,12 +2,16 @@ import { create } from "zustand"
 import { api } from "./lib/api"
 import { describeHost } from "./lib/host"
 import { SessionParser } from "./lib/parser"
+import { isQueued } from "./lib/types"
 import type {
   AgentInfo,
   Capabilities,
   GitStatus,
+  HarmanConfig,
   HostInfo,
   Loop,
+  LoopControl,
+  LoopMode,
   Provider,
   SessionAnalysis,
   SessionListItem,
@@ -113,6 +117,14 @@ interface AppState {
   loops: Loop[]
   /** Global custom-provider library (from /api/providers). Session-independent. */
   providers: Provider[]
+  // Orchestration control state — ONE shared cache so the header/session-list
+  // pinned Harman entry and the Profile tab never drift. null = not-yet-loaded
+  // or server unreachable (rendered as "unknown", never guessed as off).
+  harman: HarmanConfig | null
+  loopControl: LoopControl | null
+  /** True only when the server explicitly says automation is on — the pinned
+   *  Harman entry and Harman controls are gated on this. Absence → off. */
+  automationOn: boolean
   visible: VisibleTypes
   searchOpen: boolean
   searchQuery: string
@@ -157,6 +169,16 @@ interface AppState {
   loadGitStatus: () => Promise<void>
   loadProviders: () => Promise<void>
   loadLoops: () => Promise<void>
+  // Orchestration control — loaded once at boot, refreshed after any write so
+  // all three surfaces (header, session-list pin, Profile tab) stay in sync.
+  loadOrchestration: () => Promise<void>
+  /** Flip the master automation switch. Turning ON is Red: a non-owner's request
+   *  is queued (not applied), so this resolves to a status string for the caller
+   *  to show ("" = applied cleanly). */
+  setAutomation: (on: boolean) => Promise<string>
+  /** Set the loop-firing mode. Green + manager-scoped: applied or refused (403),
+   *  never queued. Resolves to "" on success or an error string. */
+  setLoopMode: (mode: LoopMode) => Promise<string>
   createLoop: (prompt: string, interval: number, model: string) => Promise<void>
   editLoop: (id: string, prompt: string, interval: number, model: string) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
@@ -239,6 +261,7 @@ export const useStore = create<AppState>((set, get) => {
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
     get().loadAgents()
     get().loadProviders() // global provider library — session-independent
+    get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
     api.getPrefs().then((p: any) => {
       if (p && p.theme) {
         localStorage.setItem("theme", p.theme)
@@ -507,6 +530,9 @@ export const useStore = create<AppState>((set, get) => {
     git: null,
     loops: [],
     providers: [],
+    harman: null,
+    loopControl: null,
+    automationOn: false,
     visible: { user: true, assistant: true, system: true, tools: true },
     searchOpen: false,
     searchQuery: "",
@@ -571,6 +597,7 @@ export const useStore = create<AppState>((set, get) => {
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
         sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
         meta: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
+        harman: null, loopControl: null, automationOn: false,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,
         panel: null, fsOpen: false, searchOpen: false,
       })
@@ -975,6 +1002,52 @@ export const useStore = create<AppState>((set, get) => {
         set({ providers: r.providers || [] })
       } catch {
         /* ignore — keep last known list */
+      }
+    },
+    // Orchestration control state (master switch + loop mode). One cache, loaded
+    // at boot and after every write, so the header, the session-list pinned
+    // Harman entry and the Profile tab all read the same server truth. On any
+    // failure we clear to "unknown/off" — a switch that never reached the server
+    // must not be shown as running unattended work.
+    loadOrchestration: async () => {
+      const [h, l] = await Promise.all([
+        api.orgHarman().catch(() => null),
+        api.orgLoopControl().catch(() => null),
+      ])
+      set({ harman: h, loopControl: l, automationOn: h?.automation_enabled === true })
+    },
+    setAutomation: async (on) => {
+      try {
+        const res = await api.orgSetHarman({ automation_enabled: on })
+        // Resuming is Red: a non-owner's request is QUEUED (200, nothing changed),
+        // not applied. Report it so the unchanged switch reads as the gate working
+        // rather than a bug, and re-sync from the server.
+        if (isQueued(res)) {
+          await get().loadOrchestration()
+          return "Sent for approval — only the owner can turn automation on."
+        }
+        set({ harman: res, automationOn: res.automation_enabled === true })
+        return ""
+      } catch (e: any) {
+        await get().loadOrchestration()
+        return e?.message || "Couldn't change it."
+      }
+    },
+    setLoopMode: async (mode) => {
+      try {
+        // Green + manager-scoped: the server returns the applied config directly;
+        // a non-manager caller is refused (403) — postJSON resolves that body, so
+        // guard on the shape rather than expecting a throw.
+        const res: any = await api.orgSetLoopControl(mode)
+        if (res?.denied) {
+          await get().loadOrchestration()
+          return res.reason || "Not allowed."
+        }
+        set({ loopControl: res })
+        return ""
+      } catch (e: any) {
+        await get().loadOrchestration()
+        return e?.message || "Couldn't change it."
       }
     },
     loadLoops: async () => {

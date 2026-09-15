@@ -1,18 +1,16 @@
 """viewer.bootstrap — idempotent fresh-install for the empire.
 
 `make bootstrap` (or `python3 -m viewer.bootstrap`) makes a clean checkout work:
-creates the DB tables (+ seeds the board columns), seeds the CEO (Ram) and the
-manager (Harman) as employees, ensures the shared skills dir exists, and writes a
-default Harman config. Every step is a no-op if already done — safe to re-run.
+creates the DB tables (+ seeds the board columns and Harman's default config) and
+seeds the CEO (Ram) and the manager (Harman) as employees, and ensures the shared
+skills dir exists. Every step is a no-op if already done — safe to re-run.
 
 Runs BEFORE the server is up (it is setup), so it imports db directly.
 """
-import json
 from pathlib import Path
 
 from viewer import db
 
-HARMAN_FILE = Path.home() / ".claude" / ".viewer-harman.json"
 SKILLS_DIR = Path.home() / ".claude" / "skills"
 
 _SEED_EMPLOYEES = [
@@ -34,21 +32,10 @@ def _ensure_employees():
     return created, present
 
 
-def _ensure_harman_config():
-    if HARMAN_FILE.exists():
-        return False
-    HARMAN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # automation_enabled is written FALSE explicitly: a fresh install must never
-    # start running unattended work before the owner asks for it.
-    HARMAN_FILE.write_text(json.dumps(
-        {"automation_enabled": False, "enabled": True, "interval": 30, "budget": 2,
-         "projects": []}, indent=2))
-    return True
-
-
 def bootstrap():
     report = []
-    # 1. Tables. Board columns are created per-project on demand (no global board).
+    # 1. Tables (+ Harman's default config, seeded in init_db). Board columns are
+    #    created per-project on demand (no global board).
     db.init_db()
     report.append("DB ready")
     # 2. CEO + Harman.
@@ -60,8 +47,6 @@ def bootstrap():
     # 3. Shared skills dir.
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     report.append(f"skills dir: {SKILLS_DIR}")
-    # 4. Harman config.
-    report.append("harman config: created" if _ensure_harman_config() else "harman config: present")
     return report
 
 

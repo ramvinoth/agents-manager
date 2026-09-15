@@ -167,9 +167,9 @@ export default function OrgScreen({ navigation }: Props) {
             "Open the project board and add a card or two describing the work.",
             // The autonomous-manager step only exists when automation is on —
             // with the master switch off the app is the plain task system.
-            ...(harman?.automation_enabled === false
-              ? []
-              : ["Point Harman at the project in the manager panel above — it assigns and runs the work."]),
+            ...(harman?.automation_enabled === true
+              ? ["Point Harman at the project in the manager panel above — it assigns and runs the work."]
+              : []),
           ].map((step, i) => (
             <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
               <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>{i + 1}.</Text>
@@ -180,11 +180,11 @@ export default function OrgScreen({ navigation }: Props) {
       ) : null}
 
       {/* The manager panel is orchestration UI: hidden whenever the master
-          switch is OFF so the app reads as the plain task system. `=== false`
-          on purpose — a server predating the switch omits the key, and reading
-          that as off would hide a panel whose server still runs freely. The
-          switch itself stays visible in Profile (the one control point). */}
-      {harman && harman.automation_enabled !== false ? (
+          switch is OFF so the app reads as the plain task system. `=== true`
+          on purpose — the server always returns the switch (missing → OFF), so
+          anything but an explicit true keeps the panel hidden. The switch
+          itself stays visible in Profile (the one control point). */}
+      {harman && harman.automation_enabled === true ? (
         <Section title="Harman (manager)">
           <Row>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>

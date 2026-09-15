@@ -90,6 +90,12 @@ export const isQueued = (r: unknown): r is Queued =>
  *  so showing "off" would promise a pause that isn't happening. Callers must treat a
  *  missing value as *unknown*, never as off. */
 export type HarmanConfig = { automation_enabled?: boolean; enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
+/** WHICH loop origins may fire, orthogonal to the automation master switch:
+ *  user = the owner's own scheduled loops only (the default), harman = agent-created
+ *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
+ *  NOT start Harman's manager tick (that is `automation_enabled`). */
+export type LoopMode = "user" | "harman" | "both" | "none"
+export type LoopControl = { mode: LoopMode }
 export type LearnedSkill = { id: number; name: string; path: string; origin_employee: number | null; origin_card: number | null; origin_session: string | null; status: string; created_at: number }
 export type ChatStatus = {
   running?: boolean
@@ -594,5 +600,10 @@ export const api = {
   orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
   orgSetHarman: (patch: Partial<HarmanConfig>) =>
     req<HarmanConfig | Queued>("POST", "/api/org/harman", patch),
+  // Loop-firing mode. Manager-scoped and green (setting it never queues), so the
+  // response is always the applied config — no Queued union, unlike the Red resume.
+  orgLoopControl: () => req<LoopControl>("GET", "/api/org/loop-control"),
+  orgSetLoopControl: (mode: LoopMode) =>
+    req<LoopControl>("POST", "/api/org/loop-control", { mode }),
   orgSkills: () => req<{ skills: LearnedSkill[] }>("GET", "/api/org/skills"),
 }

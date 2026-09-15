@@ -235,3 +235,74 @@ class OrchestratorMixin:
                                           status="proposed")
             resp = {**resp, "skill": rec["id"]}
         self.send_json(resp, status=status)
+
+    # ── Loop control: WHICH origins may fire (owner control panel) ────────────
+    def _g_org_loop_control(self, req):
+        from viewer.orchestrator import get_loop_control
+        self.send_json(get_loop_control())
+
+    def _p_org_loop_control(self, req):
+        """Set the loop-firing mode (user/harman/both/none). Manager-scoped,
+        green — a de-escalation ('none'/'user') must always be cheap, and licensing
+        agent loops only decides WHETHER already-authored loops run."""
+        body = self.read_body() or {}
+        self._org_send(req, "loop_mode_set", {"mode": body.get("mode", "")})
+
+    # ── Agent-scheduled loops (origin='harman', gated) ────────────────────────
+    # The AGENT path to scheduling recurring work. The human UI keeps its own
+    # ungated loop routes (routes.sessions): a person editing their own schedules
+    # is not an org action. These run through the org gate and stamp origin='harman'
+    # server-side, and every one is guarded by the self-mutation rail below.
+    def _self_mutation_denied(self, req, target_session):
+        """True (and responds 403) if this request would change the loop that drives
+        the very session making it. A worker may reschedule OTHER work, never its
+        own supervision — orglogic.mutates_own_session is the pure test; the acting
+        session id comes from the resolved principal, so a human at the UI (empty
+        acting session) is never caught."""
+        acting = req.principal.get("session") or ""
+        if orglogic.mutates_own_session(acting, target_session or ""):
+            db.audit_append(req.principal["actor"], "loop_self_mutation",
+                            {"session": target_session}, "denied:self_mutation")
+            self.send_json({"denied": True,
+                            "reason": "a session may not schedule or edit its own loop"},
+                           status=403)
+            return True
+        return False
+
+    def _p_org_loops(self, req):
+        """Create a harman-origin loop for a session OTHER than the caller's own.
+
+        The target session travels as `for_session`, NOT `session`: the MCP transport
+        mirrors the CALLER's own session id into the body's `session` field as a
+        credential, so a target named `session` would always equal the acting session
+        and the self-mutation rail would refuse every create. `for_session` is
+        untouched by that transport, so the rail compares real values.
+        """
+        body = self.read_body() or {}
+        target = (body.get("for_session") or "").strip()
+        if self._self_mutation_denied(req, target):
+            return
+        self._org_send(req, "loop_create", {
+            "session": target, "path": body.get("path", ""),
+            "prompt": body.get("prompt", ""), "cron": body.get("cron"),
+            "interval": body.get("interval"), "model": body.get("model", "")})
+
+    def _p_org_loops_update(self, req):
+        """Edit a harman-origin loop. The rail resolves the loop's OWN session (not a
+        body field) so a caller cannot dodge it by omitting/spoofing the session."""
+        body = self.read_body() or {}
+        loop = db.loop_get(body.get("id", ""))
+        if not loop:
+            self.send_json({"error": "not found"}, status=404); return
+        if self._self_mutation_denied(req, loop.get("session")):
+            return
+        self._org_send(req, "loop_update", body)
+
+    def _p_org_loops_delete(self, req):
+        body = self.read_body() or {}
+        loop = db.loop_get(body.get("id", ""))
+        if not loop:
+            self.send_json({"error": "not found"}, status=404); return
+        if self._self_mutation_denied(req, loop.get("session")):
+            return
+        self._org_send(req, "loop_delete", {"id": body.get("id", "")})

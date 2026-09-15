@@ -17,6 +17,7 @@ import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
 import { describeSchedule } from "../lib/interval"
+import { resolveSessionPath } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "./styles"
 
@@ -54,21 +55,6 @@ const CATEGORY_COLOR: Record<string, string> = {
   engineering: "#7a8eb5",
   design: "#b07aad",
   business: "#c2884a",
-}
-
-/**
- * Poll /api/resolve until the session JSONL appears (Claude creates it
- * asynchronously after /api/new-session returns). Retries up to ~20s.
- */
-async function waitForPath(sessionId: string, host: string): Promise<string | null> {
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 1000))
-    try {
-      const res = await api.resolve(sessionId, host)
-      if (res.found && res.path) return res.path
-    } catch { /* retry */ }
-  }
-  return null
 }
 
 export default function NewChatScreen({ navigation, route }: Props) {
@@ -165,7 +151,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
       let sessionPath: string | undefined = res.path
       if (!sessionPath) {
         setBusyText("Waiting for session…")
-        const resolved = await waitForPath(res.session, host)
+        const resolved = await resolveSessionPath(res.session, host)
         if (resolved) sessionPath = resolved
       }
       if (!sessionPath) {

@@ -15,8 +15,7 @@ the app manage presets and populate the model dropdown WITHOUT ever holding the 
 import json
 import urllib.request
 
-from viewer import providers
-from viewer.engine import SESSION_META, META_FILE, META_LOCK, save_json_file
+from viewer import db, providers
 
 
 class ProvidersMixin:
@@ -92,11 +91,5 @@ class ProvidersMixin:
         if pid and not providers.valid_id(pid):
             self.send_json({"error": "Invalid provider id"}, status=400)
             return
-        count = 0
-        with META_LOCK:
-            for sid, meta in SESSION_META.items():
-                if isinstance(meta, dict):
-                    meta["provider"] = pid
-                    count += 1
-            save_json_file(META_FILE, SESSION_META)
+        count = db.session_meta_set_provider_all(pid)
         self.send_json({"updated": count})

@@ -55,7 +55,15 @@ UI_DIR = REACT_DIR
 DEFAULT_SESSION = os.environ.get("VIEWER_DEFAULT_SESSION", "")
 
 MAX_POLL_BYTES = 8 * 1024 * 1024  # cap a single ?from= read
-CHAT_TIMEOUT = 3600               # seconds for one claude -p run
+CHAT_TIMEOUT = 3600               # seconds for one claude -p run (one-shot paths:
+                                  # a hard wall-clock cap on communicate())
+# Streaming chat is capped on SILENCE, not total wall-clock: a genuinely-working
+# agent (emitting assistant text / tool calls / results as stream-json lines)
+# may run for hours, but a hung claude -p that goes quiet mid-turn is killed
+# after this many seconds of NO output. Must exceed the longest legitimate
+# silent gap — a long-running tool call (build/test suite) emits nothing on the
+# stream until it returns — so keep this generous. Env-overridable for tuning.
+CHAT_IDLE_TIMEOUT = int(os.environ.get("VIEWER_CHAT_IDLE_TIMEOUT", "1800"))
 PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decision
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a
                                   # human may take a while; the CLI holds the turn)
@@ -198,13 +206,5 @@ VIEWER_TOKEN_FILE = Path.home() / ".claude" / ".viewer-oauth-token"
 # ===== Remote hosts (SSH) =====
 # Full remote parity: switch to a host and view/tail its sessions, chat (runs
 # claude ON the remote), browse its filesystem. Requires claude installed and
-# logged in on the remote. Credentials are stored 0600 under ~/.claude.
-HOSTS_FILE = Path.home() / ".claude" / ".viewer-hosts.json"
-
-# Configured SSH hosts, loaded once at import. Mutated in place by the hosts
-# save/delete handlers (never rebound), so every module shares this one dict.
-try:
-    HOSTS = json.loads(HOSTS_FILE.read_text()) if HOSTS_FILE.exists() else {}
-except Exception:
-    HOSTS = {}
-HOSTS_LOCK = threading.Lock()  # guard HOSTS mutate/iterate (save/delete vs /api/hosts)
+# logged in on the remote. The host registry (labels, users, credentials) lives
+# in Postgres — see viewer.db.hosts_load / host_upsert / host_delete.

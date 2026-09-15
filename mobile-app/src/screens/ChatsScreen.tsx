@@ -12,6 +12,7 @@ import {
 } from "../state/config"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
+import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import { isUnread } from "../lib/search"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -53,6 +54,10 @@ export default function ChatsScreen({ navigation }: Props) {
   const [seenTick, setSeenTick] = useState(0)
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // The master switch decides whether the orchestrator exists for this app at
+  // all: OFF → no pinned Harman entry, the plain chat-session list it is.
+  const [automationOn, setAutomationOn] = useState(false)
+  const [harmanBusy, setHarmanBusy] = useState(false)
   const t = useTheme()
   const styles = useStyles()
   const hostLabel = host === "local" ? "This machine" : host
@@ -167,6 +172,34 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
+  // Open the orchestrator: jump to the existing Harman session if one is already
+  // running on this host, otherwise bootstrap one and then open it. Guarded so a
+  // double-tap during the ~seconds-long create doesn't spawn a second Harman.
+  async function openHarman() {
+    if (harmanBusy) return
+    const existing = sessions.find((s) => s.title === HARMAN_TITLE)
+    if (existing) {
+      markSeen(existing.path).then(() => setSeenTick((n) => n + 1))
+      navigation.navigate("Thread", { host, label: HARMAN_TITLE, path: existing.path })
+      return
+    }
+    setHarmanBusy(true)
+    try {
+      const path = await createHarman(host)
+      if (path) {
+        markSeen(path).then(() => setSeenTick((n) => n + 1))
+        navigation.navigate("Thread", { host, label: HARMAN_TITLE, path })
+        load(true)
+      } else {
+        setError("Harman started but its transcript wasn't found. Check back shortly.")
+      }
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setHarmanBusy(false)
+    }
+  }
+
   // These are swipeable tabs that all share ONE parent-stack header and stay
   // mounted together, so the header must be re-asserted on FOCUS (not just on
   // mount) — otherwise it keeps whatever the previously-focused tab last set.
@@ -268,7 +301,16 @@ export default function ChatsScreen({ navigation }: Props) {
     useCallback(() => {
       load(true) // silent refresh on return — no spinner, no visible reload
       const id = setInterval(() => load(true), 4000)
-      return () => clearInterval(id)
+      // The master switch is editable from Profile / Company; re-read it on focus
+      // so the pinned Harman row appears/disappears in step with the server.
+      let alive = true
+      api.orgHarman()
+        .then((h) => alive && setAutomationOn(h.automation_enabled === true))
+        .catch(() => alive && setAutomationOn(false))
+      return () => {
+        alive = false
+        clearInterval(id)
+      }
     }, [load])
   )
   useEffect(() => {
@@ -332,6 +374,30 @@ export default function ChatsScreen({ navigation }: Props) {
                   <Icon name="archive" size={18} color={t.textMuted} />
                   <Text style={styles.archivedRowText}>Archived</Text>
                   <Text style={[styles.archivedRowText, { marginLeft: "auto", color: t.textMuted }]}>{archivedCount}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {/* Pinned Harman — the orchestrator's home, above the project groups.
+                  Only when the master switch is on, in the main (non-archived) view,
+                  and matching the search. Off → it doesn't exist in this app. */}
+              {automationOn && !showArchived && (!query.trim() || "harman".includes(query.trim().toLowerCase())) ? (
+                <TouchableOpacity
+                  testID="pinned-harman"
+                  style={[styles.chatRow, { borderBottomColor: t.border }]}
+                  onPress={openHarman}
+                  disabled={harmanBusy}
+                >
+                  <View style={[styles.avatar, { backgroundColor: t.chipBg }]}>
+                    {harmanBusy ? <ActivityIndicator color={t.accent} /> : <Icon name="sparkle" size={24} color={t.accent} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.chatName, { color: t.text }]} numberOfLines={1}>
+                      {HARMAN_TITLE}
+                    </Text>
+                    <Text style={styles.chatSub} numberOfLines={1}>
+                      {harmanBusy ? "Starting…" : "Orchestrator · every project"}
+                    </Text>
+                  </View>
+                  <Icon name="chevronRight" size={18} color={t.textMuted} />
                 </TouchableOpacity>
               ) : null}
               {error ? <Text style={[styles.error, { paddingHorizontal: 16 }]}>{error}</Text> : null}

@@ -17,16 +17,15 @@ SAFETY (auto-run → these are hard rails, not optional):
   - red never executes — it becomes a db approval for the human.
 Everything Harman does is written to audit_log.
 
-Config: ~/.claude/.viewer-harman.json (beside LOOPS_FILE). Empty `projects` = manage
-nothing, so an enabled Harman is still inert until the CEO points it at a project.
+Config: the `harman` row of the Postgres `settings` table (seeded by init_db).
+Empty `projects` = manage nothing, so an enabled Harman is still inert until the
+CEO points it at a project.
 """
 import time
-from pathlib import Path
 
 from viewer import db, orglogic
 from viewer.config import CHAT_JOBS, CHAT_LOCK
 
-HARMAN_FILE = Path.home() / ".claude" / ".viewer-harman.json"
 HARD_CAP = 4                 # absolute ceiling on concurrent auto-run sessions
 _DEFAULT = {"automation_enabled": False, "enabled": True, "interval": 30, "budget": 2,
             "projects": [], "default_provider": ""}
@@ -34,10 +33,14 @@ _last_run = 0.0
 
 
 def _load_config():
-    from viewer.engine import load_json_file
     cfg = dict(_DEFAULT)
-    cfg.update(load_json_file(HARMAN_FILE, {}) or {})
-    # Enforce the hard rails regardless of what the file says.
+    stored = db.setting_get("harman", {})
+    # Defensive: only a dict row may override the defaults. A malformed value
+    # (wrong shape, or a read that returns something other than a dict) leaves the
+    # fail-safe defaults intact — automation stays OFF rather than crashing here.
+    if isinstance(stored, dict):
+        cfg.update(stored)
+    # Enforce the hard rails regardless of what the stored row says.
     cfg["budget"] = max(1, min(int(cfg.get("budget", 2) or 2), HARD_CAP))
     cfg["interval"] = max(10, int(cfg.get("interval", 30) or 30))
     cfg["projects"] = [int(p) for p in (cfg.get("projects") or [])]
@@ -50,14 +53,13 @@ def _load_config():
 def automation_enabled():
     """The master switch: may ANYTHING run unattended right now?
 
-    Read fresh from disk on every call, deliberately — a pause has to take effect
+    Read fresh from the DB on every call, deliberately — a pause has to take effect
     within one scheduler pass, and a cached value would keep work running after the
-    owner flipped the switch. The file is small and the caller ticks every 5s.
+    owner flipped the switch. The read is one indexed row and the caller ticks every 5s.
 
-    Defaults FALSE, including for a config file written before this key existed: the
-    fail-safe direction for "is it safe to leave the machine alone" is off. An
-    unreadable or corrupt file also yields False, because `load_json_file` falls back
-    to `{}` and the default stands.
+    Defaults FALSE. A missing row or a value that can't be read yields False,
+    because `setting_get` falls back to `{}` and the default stands — the fail-safe
+    direction for "is it safe to leave the machine alone" is off.
 
     Distinct from `enabled`, which scopes only Harman's own manager tick. This one
     covers every unattended path, so a path added later is paused by default too.
@@ -78,10 +80,9 @@ _PATCH_KEYS = ("enabled", "interval", "budget", "projects", "default_provider")
 
 
 def _write(patch):
-    from viewer.engine import load_json_file, save_json_file
-    cur = load_json_file(HARMAN_FILE, {}) or {}
+    cur = db.setting_get("harman", {}) or {}
     cur.update(patch)
-    save_json_file(HARMAN_FILE, cur)
+    db.setting_set("harman", cur)
     return _load_config()
 
 
@@ -98,6 +99,41 @@ def set_automation(on):
     flipping it is always a distinct, individually-gated act (Red to resume, cheap
     to pause — see orglogic) rather than one key inside a bulk config patch."""
     return _write({"automation_enabled": bool(on)})
+
+
+# ── Loop control ────────────────────────────────────────────────────────────
+# WHICH loop origins may fire, kept in its own `loop_control` settings row —
+# deliberately NOT part of Harman's config, because it is orthogonal to the
+# automation master switch: the owner can pause Harman's autonomy while their own
+# loops keep running (mode='user'), or license only agent loops (mode='harman').
+# The scheduler reads loop_mode() fresh each pass at ONE point (engine.py).
+from viewer import loops as _loops  # pure LOOP_MODES / allowed_origins mapping
+
+_LOOP_CONTROL_DEFAULT = {"mode": "user"}
+
+
+def loop_mode():
+    """The effective loop-firing mode: one of loops.LOOP_MODES. Read fresh from the
+    DB each call (a change must take effect within one scheduler pass). A missing
+    row or an unrecognised value yields the 'user' default — the safe fallback that
+    still runs the owner's own loops but not agent-created ones."""
+    row = db.setting_get("loop_control", {})
+    mode = row.get("mode") if isinstance(row, dict) else None
+    return mode if mode in _loops.LOOP_MODES else _LOOP_CONTROL_DEFAULT["mode"]
+
+
+def get_loop_control():
+    """Public: the effective loop-control config (for the /api/org/loop-control route)."""
+    return {"mode": loop_mode()}
+
+
+def set_loop_mode(mode):
+    """Persist the loop-firing mode. Rejects anything not in loops.LOOP_MODES,
+    falling back to the current effective mode so a bad value is inert rather than
+    silently disabling every loop."""
+    mode = mode if mode in _loops.LOOP_MODES else loop_mode()
+    db.setting_set("loop_control", {"mode": mode})
+    return get_loop_control()
 
 
 def _running_card_ids():
@@ -128,8 +164,9 @@ def _spawn_employee_session(employee, card, project, default_provider=""):
     (e.g. the free local Qwen preset) so we never touch a paid model by default.
     Returns the new session id, or None if no usable Anthropic provider resolves."""
     import uuid as _uuid
+    from pathlib import Path
     from viewer import providers
-    from viewer.engine import SESSION_META, META_LOCK, save_json_file, META_FILE, start_claude_run
+    from viewer.engine import start_claude_run
 
     preset_id = employee.get("provider") or default_provider
     penv = providers.anthropic_env(preset_id) if preset_id else None
@@ -145,10 +182,8 @@ def _spawn_employee_session(employee, card, project, default_provider=""):
     card_title = (card.get("title") or "Task").strip()
     title = (f"{emp_name} · {proj_name} · {card_title}" if proj_name
              else f"{emp_name} · {card_title}")[:200]
-    with META_LOCK:
-        SESSION_META[sid] = {"provider": preset_id, "convMode": "agent",
-                             "goal": goal, "title": title}
-        save_json_file(META_FILE, SESSION_META)
+    db.session_meta_set(sid, {"provider": preset_id, "convMode": "agent",
+                              "goal": goal, "title": title})
     task = (card.get("body") or card.get("title") or "").strip()
     ok = start_claude_run(sid, ["--session-id", sid], task, "acceptEdits", cwd,
                           employee.get("model", ""), provider_env=penv)

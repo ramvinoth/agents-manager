@@ -8,13 +8,7 @@ import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
 from viewer import db, hostenv
-from viewer.config import (
-    HOSTS, HOSTS_FILE, HOSTS_LOCK,
-)
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
-from viewer.engine import (
-    save_json_file,
-)
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
 )
@@ -194,10 +188,8 @@ class AuthMixin:
 
     def _g_hosts(self, req):
         # auth + keyFile (a path, not a secret) let the edit modal prefill; the
-        # password/passphrase are never sent to the client. Snapshot under the
-        # lock so a concurrent save/delete can't 500 the iteration.
-        with HOSTS_LOCK:
-            items = list(HOSTS.items())
+        # password/passphrase are never sent to the client.
+        items = db.hosts_load().items()
         self.send_json([{"id": hid, "label": c.get("label", hid), "host": c["host"],
                          "user": c["user"], "port": c.get("port", 22),
                          "auth": "key" if c.get("keyFile") else "password",
@@ -229,7 +221,7 @@ class AuthMixin:
                 self.send_json({"error": f"{f} is required"}, status=400)
                 return
         hid = body.get("id") or uuid_mod.uuid4().hex[:12]
-        prev = HOSTS.get(hid, {})
+        prev = db.hosts_load().get(hid, {})
         editing = bool(body.get("id"))
         method = body.get("authMethod") or ("key" if body.get("keyFile") else "password")
         # Store exactly ONE auth method (password | key | agent-default). A blank
@@ -245,13 +237,7 @@ class AuthMixin:
         else:
             pw = body.get("password", "")
             entry["password"] = pw or (prev.get("password", "") if editing else "")
-        with HOSTS_LOCK:
-            HOSTS[hid] = entry
-            save_json_file(HOSTS_FILE, HOSTS)
-        try:
-            os.chmod(HOSTS_FILE, 0o600)
-        except OSError:
-            pass
+        db.host_upsert(hid, entry)
         self.send_json({"saved": hid})
 
     def _p_auth_login_code(self, req):
@@ -309,10 +295,7 @@ class AuthMixin:
         body = self.read_body() or {}
         hid = body.get("id")
         SSH.close(hid)
-        with HOSTS_LOCK:
-            removed = HOSTS.pop(hid, None) is not None
-            if removed:
-                save_json_file(HOSTS_FILE, HOSTS)
+        db.host_delete(hid)
         hostenv.unset_host(hid)   # drop this host's env vars too
         self.send_json({"deleted": True})
 

@@ -162,9 +162,8 @@ class ChatMixin:
         # full Claude Code harness pointed at the custom endpoint). Local only.
         provider_env = None
         if host == "local":
-            from viewer.engine import SESSION_META
-            from viewer import providers
-            meta = SESSION_META.get(session_id) or {}
+            from viewer import db, providers
+            meta = db.session_meta_get(session_id) or {}
             preset_id = meta.get("provider", "")
             if preset_id:
                 # A provider is SET but must actually resolve. A deleted/renamed
@@ -198,8 +197,8 @@ class ChatMixin:
                 self.send_json({"queued": pos, "session": session_id})
                 return
         # Effort level from session meta (set at creation or from session settings).
-        from viewer.engine import SESSION_META as _SM
-        effort = (_SM.get(session_id) or {}).get("effort", "")
+        from viewer import db
+        effort = (db.session_meta_get(session_id) or {}).get("effort", "")
         if not start_claude_run(session_id, ["--resume", session_id], message, mode, cwd,
                                 "" if provider_env else model, host, provider_env=provider_env,
                                 effort=effort):

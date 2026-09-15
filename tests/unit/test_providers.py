@@ -11,10 +11,32 @@ import pytest
 from viewer import providers, customrun
 
 
+class _FakeProviderDB:
+    """In-memory stand-in for the providers table: the three accessors
+    viewer.providers calls, with the "at most one default" invariant provider_upsert
+    enforces in one SQL transaction reproduced here."""
+
+    def __init__(self):
+        self.rows = {}   # pid -> full record (incl. apiKey), the reveal-path store
+
+    def providers_load(self):
+        return {pid: dict(rec) for pid, rec in self.rows.items()}
+
+    def provider_upsert(self, pid, rec):
+        if rec.get("isDefault"):
+            for other, r in self.rows.items():
+                if other != pid:
+                    r["isDefault"] = False
+        self.rows[pid] = dict(rec)
+
+    def provider_delete(self, pid):
+        return self.rows.pop(pid, None) is not None
+
+
 @pytest.fixture()
-def store(tmp_path, monkeypatch):
-    """Point the preset store at a throwaway file."""
-    monkeypatch.setattr(providers, "PROVIDERS_FILE", tmp_path / "providers.json")
+def store(monkeypatch):
+    """Back the preset store with an in-memory fake db (no Postgres)."""
+    monkeypatch.setattr(providers, "db", _FakeProviderDB())
     return providers
 
 

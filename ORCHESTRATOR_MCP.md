@@ -1,6 +1,9 @@
 # ORCHESTRATOR_MCP — the internal MCP, layered RBAC, and skill distillation
 
-Design doc. No code until this shape is agreed (ORCHESTRATOR.md §6).
+Design + build tracker. Build steps 1-3 are SHIPPED and live (see §9 — struck-through
+items); steps 4-10 remain design-only, pending sequencing, audit data, and Ram's §14
+decisions. The original "no code until agreed" gate applied to the whole shape; the agreed
+foundation (principal resolution, `execute()`, the read-only MCP tier) is now code.
 
 Goal, in Ram's words: *a system that can see everything, all chat sessions with roles
 and RBAC, which can control and orchestrate other agents, and can always distill and

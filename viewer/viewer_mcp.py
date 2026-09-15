@@ -55,6 +55,8 @@ _TOOLS = {
     "audit_tail":       ("GET", "/api/org/audit"),
     "board_list":       ("GET", "/api/org/board"),
     "card_list":        ("GET", "/api/org/cards"),
+    "loop_list":        ("GET", "/api/loops"),
+    "loop_control_get": ("GET", "/api/org/loop-control"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
@@ -62,6 +64,11 @@ _TOOLS = {
     "card_update":   ("POST", "/api/org/cards/update"),
     "task_done":     ("POST", "/api/org/cards/done"),
     "skill_propose": ("POST", "/api/org/skills/propose"),
+    # ── Schedule recurring work (writes; gated + self-mutation rail server-side)
+    "loop_create":   ("POST", "/api/org/loops"),
+    "loop_update":   ("POST", "/api/org/loops/update"),
+    "loop_delete":   ("POST", "/api/org/loops/delete"),
+    "loop_control_set": ("POST", "/api/org/loop-control"),
 }
 
 # Tools whose URL is completed at call time from an argument rather than being a
@@ -125,6 +132,13 @@ _TOOL_LIST = [
     {"name": "card_list", "description": "List cards in your project, optionally filtered by session/assignee.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"}, "assignee": {"type": "integer"}}}},
+    {"name": "loop_list",
+     "description": "List scheduled loops (recurring prompts), optionally for one session. Start here to find a loop's id before updating or deleting it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "session": {"type": "string", "description": "Session id to filter by; omit for all."}}}},
+    {"name": "loop_control_get",
+     "description": "The current loop-firing mode (user/harman/both/none): WHICH loop origins may fire right now.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Act on the board ────────────────────────────────────────────────────
     {"name": "card_create", "description": "Create a card on the board (title required).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
@@ -148,6 +162,31 @@ _TOOL_LIST = [
          "trigger": {"type": "string", "description": "when to use this skill (its description)"},
          "body": {"type": "string", "description": "the procedure/lesson"},
          "from_card": {"type": "integer"}}}},
+    # ── Schedule recurring work ─────────────────────────────────────────────
+    {"name": "loop_create",
+     "description": "Schedule a recurring prompt for ANOTHER session (a worker you manage). Provide a cron expression OR an interval like 30s/5m/1h. You cannot schedule your OWN session. Whether harman-scheduled loops actually FIRE is governed separately by the loop-control mode.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "prompt"], "properties": {
+         "for_session": {"type": "string", "description": "Target session id to run the prompt in (must not be your own)."},
+         "prompt": {"type": "string", "description": "The prompt to run each time."},
+         "cron": {"type": "string", "description": "5-field cron expression (wins over interval)."},
+         "interval": {"type": "string", "description": "e.g. 30s, 5m, 1h."},
+         "path": {"type": "string", "description": "Session path/id for --resume; optional."},
+         "model": {"type": "string"}}}},
+    {"name": "loop_update",
+     "description": "Edit a harman-scheduled loop (prompt/cron/interval/model/enabled). Only loops you (agents) scheduled can be edited; a human's own loops are off-limits, as is the loop driving your OWN session.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string", "description": "Loop id from loop_list."},
+         "prompt": {"type": "string"}, "cron": {"type": "string"},
+         "interval": {"type": "string"}, "model": {"type": "string"},
+         "enabled": {"type": "boolean"}}}},
+    {"name": "loop_delete",
+     "description": "Delete a harman-scheduled loop. Irreversible (takes its run history with it), so it queues for the owner's approval. Only agent-scheduled loops, never the one driving your own session.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string", "description": "Loop id from loop_list."}}}},
+    {"name": "loop_control_set",
+     "description": "Set WHICH loop origins may fire: user (human-scheduled only), harman (agent-scheduled only), both, or none. Manager-scoped; setting it does not touch the automation master switch.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["mode"], "properties": {
+         "mode": {"type": "string", "enum": ["user", "harman", "both", "none"]}}}},
 ]
 
 

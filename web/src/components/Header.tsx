@@ -15,11 +15,9 @@ import {
   Pencil,
   User,
   LogOut,
-  Sparkles,
   KeyRound,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
-import { HarmanDialog } from "./HarmanDialog"
 import { HostDialog } from "./HostDialog"
 import { EnvDialog } from "./EnvDialog"
 import { SessionActions } from "./SessionActions"
@@ -35,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
-import { api } from "@/lib/api"
 import { describeHost } from "@/lib/host"
 import type { HostInfo } from "@/lib/types"
 
@@ -51,18 +48,12 @@ function useTheme() {
 export function Header() {
   const { dark, toggle } = useTheme()
   const [nsOpen, setNsOpen] = useState(false)
-  const [harmanOpen, setHarmanOpen] = useState(false)
-  // Master automation switch: mobile Profile is the control point, web is
-  // read-only awareness. When it is OFF the orchestrator must not be visible
-  // at all — the app behaves as the plain chat-session system it is.
-  const [automationOn, setAutomationOn] = useState(true)
   const [envOpen, setEnvOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
   const currentHost = useStore((s) => s.currentHost)
   const setHost = useStore((s) => s.setHost)
   const sessions = useStore((s) => s.sessions)
-  const loadSession = useStore((s) => s.loadSession)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const auth = useStore((s) => s.auth)
   const openPanel = useStore((s) => s.openPanel)
@@ -72,18 +63,6 @@ export function Header() {
   const authUser = useStore((s) => s.authUser)
   const signout = useStore((s) => s.signout)
   const needsAuth = useStore((s) => s.needsAuth)
-
-  // Refresh on mount and whenever login state changes. `=== false` on purpose:
-  // a server that predates the switch omits the key, and reading that as off
-  // would hide the orchestrator from users whose server still runs it freely.
-  useEffect(() => {
-    if (needsAuth) return
-    let alive = true
-    api.orgHarman()
-      .then((h) => alive && setAutomationOn(h.automation_enabled !== false))
-      .catch(() => alive && setAutomationOn(true))
-    return () => { alive = false }
-  }, [needsAuth, auth])
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
@@ -114,13 +93,6 @@ export function Header() {
 
   const current = sessions.find((x) => x.path === currentSessionPath)
   const hostLabel = describeHost(currentHost, hosts)
-
-  // Harman: open the existing orchestrator session if one exists, else set one up.
-  const openHarman = () => {
-    const existing = sessions.find((s) => s.title === "Harman")
-    if (existing) loadSession(existing.path)
-    else setHarmanOpen(true)
-  }
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
@@ -203,18 +175,6 @@ export function Header() {
         <Plus className="size-3.5" /> New
       </Button>
 
-      {automationOn && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs"
-          onClick={openHarman}
-          title="Harman — Harness Manager orchestrator"
-        >
-          <Sparkles className="size-3.5" /> <span className="hidden sm:inline">Harman</span>
-        </Button>
-      )}
-
       <div className="flex min-w-0 flex-1 items-center gap-1">
         {droppedFile && (
           <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
@@ -283,7 +243,6 @@ export function Header() {
       </Button>
 
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
-      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>

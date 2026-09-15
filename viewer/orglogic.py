@@ -91,6 +91,11 @@ _RED_ACTIONS = {
     # Without this, a session running at manager level could restore its own
     # supervision; now that request queues for a human.
     "automation_resume",
+    # destroying a scheduled loop takes its run history with it — same
+    # irreversible-removal class as card_delete. Creating/editing a loop stays
+    # green: a harman-origin loop cannot FIRE until the owner licenses that origin
+    # via the loop_control dropdown, so creation alone is contained and reversible.
+    "loop_delete",
     # secrets / keys
     "create_secret", "reveal_secret", "rotate_secret", "write_api_key",
     # money / leaving the perimeter
@@ -174,10 +179,22 @@ _MIN_LEVEL = {
     "column_create": "lead",         # the board's SHAPE, not an item on it
     "column_update": "lead",
     "column_delete": "lead",         # not red: cards survive (FK ON DELETE SET NULL)
+    # lead: schedule recurring work. A loop re-runs a prompt on a cadence, so it is
+    # board-shaping authority (like assigning work), not an ic act on one's own
+    # card. loop_delete is ALSO red → an agent's delete queues for the owner.
+    "loop_create": "lead",
+    "loop_update": "lead",
+    "loop_delete": "lead",
     # manager: hire / change the org
     "employee_create": "manager",
     "employee_update": "manager",
     "harman_config": "manager",      # who may act autonomously, and with what budget
+    # WHICH loop origins may fire (the loop_control dropdown) is an org-wide control
+    # panel, same authority tier as harman_config. Not risk-split like the master
+    # switch: setting it to 'none' or 'user' is a de-escalation, and licensing agent
+    # loops ('harman'/'both') only decides WHETHER already-authored loops run — the
+    # authoring of a harman loop was itself gated (loop_create, lead+).
+    "loop_mode_set": "manager",
     # Same authority as any other Harman config write; the two differ only in RISK
     # (automation_resume is Red, automation_pause is not), which is the orthogonal
     # gate. Pausing is deliberately NOT restricted to manager: an ic session that
@@ -274,6 +291,27 @@ def may_resolve(approval, actor):
     tested; now it is the difference between a gate and a formality.
     """
     return (approval or {}).get("created_by") != actor
+
+
+def mutates_own_session(acting_session, target_session):
+    """True if a request would change the settings of the very session that is
+    making it — the self-mutation rail for the agent execution-control tier.
+
+    The charter's shape is "Workers only; Harman plan-only", and a worker session
+    may reschedule/retune OTHER work under RBAC — but never its OWN. A session that
+    could edit or delete the loop that drives it (or retarget it at itself) would
+    be rewriting its own supervision from inside the loop: exactly the escalation
+    the tier exists to prevent. Keyed on the acting session id (principal.session),
+    which only an agent request carries — a human at the UI has an empty acting
+    session, so this never fires for the owner.
+
+    Pure and string-only so it unit-tests without a db: the caller resolves a
+    loop/target to its session id and passes both in. An empty `acting_session`
+    (no agent in the loop) or empty `target_session` (nothing to compare) is not a
+    self-mutation.
+    """
+    return bool(acting_session) and bool(target_session) \
+        and acting_session == target_session
 
 
 # ── Harman's autonomous planning: board state → intended actions (PURE) ───────

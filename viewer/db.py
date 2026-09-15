@@ -10,12 +10,14 @@ The base is single-owner: the first signup claims the instance, after which
 signup is closed and it's login-only. The schema is deliberately plain."""
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import psycopg2
 import psycopg2.pool
@@ -216,9 +218,137 @@ def init_db():
             );
             -- Migration: add model column if table existed before this field.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
+            -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
+            -- The JSON files used to be the second persistence layer; this closes
+            -- that split so Postgres is the single source of truth (and the only
+            -- thing a SaaS deployment needs to carry). migrate_legacy_files()
+            -- backfills them once, on first run.
+            CREATE TABLE IF NOT EXISTS loops (
+              id          TEXT PRIMARY KEY,
+              session     TEXT NOT NULL DEFAULT '',
+              path        TEXT NOT NULL DEFAULT '',
+              prompt      TEXT NOT NULL DEFAULT '',
+              interval_sec INTEGER NOT NULL DEFAULT 0,
+              cron        TEXT,
+              next_run    DOUBLE PRECISION NOT NULL DEFAULT 0,
+              runs        INTEGER NOT NULL DEFAULT 0,
+              last_run    DOUBLE PRECISION,
+              last_rc     INTEGER,
+              created     DOUBLE PRECISION NOT NULL DEFAULT 0,
+              model       TEXT NOT NULL DEFAULT '',
+              enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+              -- WHO scheduled this loop: 'user' (a human, via the UI) or 'harman'
+              -- (an agent, via the gated loop_create action). The loop_control
+              -- setting gates firing per-origin, INDEPENDENT of the automation
+              -- master switch. Existing rows backfill to 'user' (the ALTER below),
+              -- so a human's own schedules keep running after the upgrade.
+              origin      TEXT NOT NULL DEFAULT 'user'
+            );
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'user';
+            -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
+            -- convMode/effort/favorite/pinned/avatar/archived). The payload is
+            -- free-form JSONB on purpose: the app adds keys over time and a typed
+            -- schema would silently drop any it does not know yet.
+            CREATE TABLE IF NOT EXISTS session_meta (
+              session_id  TEXT PRIMARY KEY,
+              data        JSONB NOT NULL DEFAULT '{}'::jsonb,
+              updated_at  DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS hosts (
+              id             TEXT PRIMARY KEY,
+              label          TEXT NOT NULL DEFAULT '',
+              host           TEXT NOT NULL,
+              "user"         TEXT NOT NULL,
+              port           INTEGER NOT NULL DEFAULT 22,
+              claude_home    TEXT NOT NULL DEFAULT '.claude',
+              password       TEXT NOT NULL DEFAULT '',
+              key_file       TEXT NOT NULL DEFAULT '',
+              key_passphrase TEXT NOT NULL DEFAULT '',
+              created_at     DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS host_env (
+              host  TEXT NOT NULL,
+              key   TEXT NOT NULL,
+              value TEXT NOT NULL,
+              PRIMARY KEY (host, key)
+            );
+            CREATE TABLE IF NOT EXISTS providers (
+              id            TEXT PRIMARY KEY,
+              name          TEXT NOT NULL DEFAULT '',
+              base_url      TEXT NOT NULL DEFAULT '',
+              model         TEXT NOT NULL DEFAULT '',
+              api_key       TEXT NOT NULL DEFAULT '',
+              context_limit INTEGER NOT NULL DEFAULT 0,
+              is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at    DOUBLE PRECISION NOT NULL
+            );
+            -- Append-only history: one row per loop firing, for auditability.
+            -- loop_id is SET NULL (not CASCADE) on delete so a run's audit trail
+            -- OUTLIVES the schedule it came from — a deleted/edited loop must not
+            -- erase the record that it once ran. Bounded purely by retention
+            -- (age + per-loop count, see job_runs_purge), never by unbounded growth.
+            CREATE TABLE IF NOT EXISTS job_runs (
+              id          SERIAL PRIMARY KEY,
+              loop_id     TEXT REFERENCES loops(id) ON DELETE SET NULL,
+              session_id  TEXT NOT NULL DEFAULT '',
+              prompt      TEXT NOT NULL DEFAULT '',
+              status      TEXT NOT NULL DEFAULT 'running',
+              rc          INTEGER,
+              detail      TEXT NOT NULL DEFAULT '',
+              started_at  DOUBLE PRECISION NOT NULL,
+              finished_at DOUBLE PRECISION
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_runs_loop ON job_runs(loop_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_job_runs_started ON job_runs(started_at);
+            -- Singleton key/value store; holds the Harman config and the retention
+            -- policy (job-run history caps — tunable at runtime for SaaS plan tiers).
+            CREATE TABLE IF NOT EXISTS settings (
+              key   TEXT PRIMARY KEY,
+              value JSONB NOT NULL
+            );
+            -- Job-run retention defaults. Kept in settings (not code constants) so a
+            -- future SaaS-admin portal can set per-plan caps without a deploy. DO
+            -- NOTHING so an operator/admin edit always wins over the seed.
+            INSERT INTO settings (key, value) VALUES ('retention',
+              $${"job_runs_days": 90, "job_runs_per_loop": 500}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- Fresh installs get Harman's config seeded (master switch OFF: an
+            -- unattended machine must never start running on its own). DO NOTHING
+            -- so the legacy-file backfill and any later user edit always win.
+            INSERT INTO settings (key, value) VALUES ('harman',
+              $${"automation_enabled": false, "enabled": true, "interval": 30,
+                 "budget": 2, "projects": [], "default_provider": ""}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- Loop-firing control, SEPARATE from the automation master switch.
+            -- 'mode' is one of user|harman|both|none: which loop origins may fire.
+            -- Default 'user' — a human's own scheduled loops run out of the box;
+            -- harman-created loops stay off until the owner opts in. DO NOTHING so
+            -- a later user edit always wins over the seed.
+            INSERT INTO settings (key, value) VALUES ('loop_control',
+              $${"mode": "user"}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- System-awareness preamble prepended to EVERY session's system prompt
+            -- (engine.append_system_prompt). Without it a session sees the raw
+            -- mcp__viewer__* tool list but is never told it is a node in the Harman
+            -- orchestration system or how the steering rules gate its power. Stored
+            -- here (not a code constant) so it is editable at runtime with no deploy;
+            -- to_jsonb(...::text) makes it a JSON string without escaping the body.
+            -- DO NOTHING so any operator edit always wins over this seed.
+            INSERT INTO settings (key, value) VALUES ('system_preamble',
+              to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
+
+Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose.
+
+Authority: your power equals your employee level (ic < lead < manager), the weaker of the human's role and this session's level. A session not linked to an employee can see these tools but calls fail auth — use them only if you are employee-linked.
+
+Steering rules: you may create/edit loops for OTHER sessions, never your own. Autonomous loop firing requires BOTH the loop-control mode (user|harman|both|none) to permit the origin AND the automation master switch (harman.automation_enabled) to be ON; it defaults OFF, and when off nothing fires on its own. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
+
+Full design: ORCHESTRATOR_MCP.md.$preamble$::text))
+              ON CONFLICT (key) DO NOTHING;
             """
         )
     _seed_agent_templates()
+    migrate_legacy_files()
 
 
 def close_pool():
@@ -1019,3 +1149,516 @@ def agent_template_delete(template_id):
         cur.execute("DELETE FROM agent_templates WHERE id = %s AND is_builtin = FALSE RETURNING id",
                     (template_id,))
         return cur.fetchone() is not None
+
+
+# Loops (recurring prompts) ---------------------------------------------------
+# Moved out of ~/.claude/.viewer-loops.json into Postgres. Per-row CRUD: each
+# scheduler edit touches ONE loop, so nothing rewrites the whole set. Rows come
+# back in the historical JSON shape (camelCase keys like nextRun) so the routes
+# and clients are unchanged.
+
+# JSON key -> SQL column -> default. Explicit (not **row) so a stray client key
+# can't inject a column and the name mapping lives in exactly one place.
+_LOOP_COLS = (
+    ("session", "session", ""), ("path", "path", ""), ("prompt", "prompt", ""),
+    ("interval", "interval_sec", 0), ("cron", "cron", None),
+    ("nextRun", "next_run", 0), ("runs", "runs", 0), ("lastRun", "last_run", None),
+    ("lastRc", "last_rc", None), ("created", "created", 0), ("model", "model", ""),
+    ("enabled", "enabled", True), ("origin", "origin", "user"),
+)
+
+
+def _loop_row(r):
+    """A DB row -> the historical loop dict shape (without the id, which callers
+    attach as needed)."""
+    return {jk: r[col] for jk, col, _ in _LOOP_COLS}
+
+
+def loop_list(session=None):
+    """All loops (optionally only those for one session) as {id: {...}}, ordered
+    by creation so the UI list is stable."""
+    with _db() as cur:
+        if session:
+            cur.execute("SELECT * FROM loops WHERE session = %s ORDER BY created", (session,))
+        else:
+            cur.execute("SELECT * FROM loops ORDER BY created")
+        return {r["id"]: _loop_row(r) for r in cur.fetchall()}
+
+
+def loop_get(lid):
+    with _db() as cur:
+        cur.execute("SELECT * FROM loops WHERE id = %s", (lid,))
+        row = cur.fetchone()
+    return _loop_row(row) if row else None
+
+
+def loop_upsert(lid, entry):
+    """Create or fully replace one loop from an entry dict (historical JSON keys).
+    Missing keys fall back to their column default."""
+    cols = [col for _, col, _ in _LOOP_COLS]
+    vals = [entry.get(jk, dflt) for jk, _, dflt in _LOOP_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        cur.execute(
+            f"INSERT INTO loops (id, {', '.join(cols)}) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            (lid, *vals),
+        )
+
+
+def loop_update(lid, fields):
+    """Patch only the given JSON keys of one loop. Returns the updated row (or None
+    if the id is gone). Used by the scheduler's per-tick nextRun/runs bumps and the
+    edit-loop route, so a concurrent edit to a different field isn't clobbered."""
+    jk_to_col = {jk: col for jk, col, _ in _LOOP_COLS}
+    sets, vals = [], []
+    for jk, v in fields.items():
+        col = jk_to_col.get(jk)
+        if col:
+            sets.append(f"{col} = %s")
+            vals.append(v)
+    if not sets:
+        return loop_get(lid)
+    with _db() as cur:
+        cur.execute(f"UPDATE loops SET {', '.join(sets)} WHERE id = %s RETURNING *",
+                    (*vals, lid))
+        row = cur.fetchone()
+    return _loop_row(row) if row else None
+
+
+def loop_delete(lid):
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE id = %s RETURNING id", (lid,))
+        return cur.fetchone() is not None
+
+
+def loop_delete_for_session(session):
+    """Drop every loop tied to a session (called when the session is deleted).
+    Returns how many were removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE session = %s RETURNING id", (session,))
+        return len(cur.fetchall())
+
+
+def loops_due(now, origins=None):
+    """Enabled loops whose nextRun has arrived, each as a dict with its id — the
+    scheduler's read side. Ordered by nextRun so the earliest-due fire first.
+
+    `origins` gates by WHO scheduled the loop (see the loop_control setting and
+    loops.allowed_origins): a collection of allowed origin strings restricts the
+    result to those; None means no origin filter (every origin). An EMPTY
+    collection returns nothing — 'none' mode fires no loops at all."""
+    with _db() as cur:
+        if origins is None:
+            cur.execute(
+                "SELECT * FROM loops WHERE enabled = TRUE AND next_run <= %s "
+                "ORDER BY next_run", (now,))
+        else:
+            cur.execute(
+                "SELECT * FROM loops WHERE enabled = TRUE AND next_run <= %s "
+                "AND origin = ANY(%s) ORDER BY next_run", (now, list(origins)))
+        return [dict(_loop_row(r), id=r["id"]) for r in cur.fetchall()]
+
+
+def loops_disable_for_employee(provider_id):
+    """Disable every loop whose session runs AS a given employee, identified by
+    that employee's provider preset id (the session↔employee link, see
+    engine._resolve_employee). Called when an agent is fired/deactivated so its
+    scheduled work stops. enabled=FALSE (not delete) — reversible on rehire, and
+    the schedules + their history are preserved. Returns how many were disabled.
+
+    A blank provider_id matches nothing: an employee with no provider link owns no
+    agent sessions, so firing them must not disable UNrelated loops."""
+    if not provider_id:
+        return 0
+    with _db() as cur:
+        cur.execute(
+            "UPDATE loops SET enabled = FALSE WHERE enabled = TRUE AND session IN "
+            "(SELECT session_id FROM session_meta WHERE data->>'provider' = %s) "
+            "RETURNING id",
+            (provider_id,))
+        return len(cur.fetchall())
+
+
+# Job runs (append-only history) ----------------------------------------------
+# One row per loop firing. Distinct from `loops` (the schedule definition): a
+# schedule is one row that fires forever; each firing is one job_runs row. This
+# is the audit trail — retention-bounded, never unbounded.
+
+def job_run_start(loop_id, session_id, prompt):
+    """Record that a loop just fired. Returns the new run's id, which the caller
+    hands to job_run_finish when the run completes. Best-effort at the call site:
+    a failure to log history must never stop the actual run."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO job_runs (loop_id, session_id, prompt, status, started_at) "
+            "VALUES (%s, %s, %s, 'running', %s) RETURNING id",
+            (loop_id, session_id, prompt, _now()))
+        return cur.fetchone()["id"]
+
+
+def job_run_finish(run_id, rc, detail=""):
+    """Finalize a run row: status from the return code (ok/error), rc, a bounded
+    detail (stderr tail), and the finish time."""
+    if run_id is None:
+        return
+    status = "ok" if rc == 0 else "error"
+    with _db() as cur:
+        cur.execute(
+            "UPDATE job_runs SET status = %s, rc = %s, detail = %s, finished_at = %s "
+            "WHERE id = %s",
+            (status, rc, (detail or "")[:2000], _now(), run_id))
+
+
+def job_runs_list(loop_id, limit=100):
+    """A loop's run history, newest first (the audit view for one schedule)."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT id, loop_id, session_id, prompt, status, rc, detail, started_at, "
+            "finished_at FROM job_runs WHERE loop_id = %s ORDER BY started_at DESC LIMIT %s",
+            (loop_id, limit))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def job_runs_purge(max_age_days, max_per_loop):
+    """Enforce the retention policy on job_runs so history can't overflow. Two
+    independent caps, whichever removes a row first:
+      • age: drop runs finished more than max_age_days ago (tidiness).
+      • count: keep only the newest max_per_loop runs per loop (the real overflow
+        guard — a 30s loop is ~2,880 runs/day, so age alone wouldn't bound it).
+    Detached runs (loop_id NULL, from a deleted schedule) are aged out by the age
+    cap only — they have no loop to count against. Returns the rows removed."""
+    removed = 0
+    with _db() as cur:
+        if max_age_days and max_age_days > 0:
+            cutoff = _now() - float(max_age_days) * 86400
+            # started_at is always set; finished_at may be NULL for a wedged run,
+            # so age off the start time (a run older than the window is stale
+            # regardless of whether it recorded a finish).
+            cur.execute("DELETE FROM job_runs WHERE started_at < %s RETURNING id", (cutoff,))
+            removed += len(cur.fetchall())
+        if max_per_loop and max_per_loop > 0:
+            # Per loop, rank newest-first and delete beyond the cap. Only non-NULL
+            # loop_ids: detached runs aren't grouped under a live schedule.
+            cur.execute(
+                "DELETE FROM job_runs WHERE id IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, row_number() OVER "
+                "      (PARTITION BY loop_id ORDER BY started_at DESC) AS rn"
+                "    FROM job_runs WHERE loop_id IS NOT NULL"
+                "  ) ranked WHERE rn > %s) RETURNING id",
+                (max_per_loop,))
+            removed += len(cur.fetchall())
+    return removed
+
+
+# Session meta ----------------------------------------------------------------
+# Per-session extras (title/goal/systemPrompt/provider/convMode/effort/favorite/
+# pinned/avatar/archived). Moved out of ~/.claude/.viewer-meta.json. The payload
+# is JSONB so keys the app adds later survive without a schema change. Per-row
+# CRUD with a JSONB merge for patches, so two concurrent field edits on the same
+# session don't clobber each other.
+
+def session_meta_get(sid):
+    """One session's meta dict (empty dict if none)."""
+    with _db() as cur:
+        cur.execute("SELECT data FROM session_meta WHERE session_id = %s", (sid,))
+        row = cur.fetchone()
+    return (row["data"] or {}) if row else {}
+
+
+def session_meta_all():
+    """All session meta as {session_id: {...}} — for the list overlay and the
+    apply-provider-to-all route."""
+    with _db() as cur:
+        cur.execute("SELECT session_id, data FROM session_meta")
+        return {r["session_id"]: (r["data"] or {}) for r in cur.fetchall()}
+
+
+def session_meta_patch(sid, fields):
+    """Merge `fields` into one session's meta (JSONB concat, so untouched keys
+    survive a concurrent writer) and return the full merged dict. `fields` values
+    of None are stored as-is; callers that mean 'remove' should handle that
+    explicitly — no current caller does."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, %s, %s) "
+            "ON CONFLICT (session_id) DO UPDATE SET data = session_meta.data || EXCLUDED.data, "
+            "updated_at = EXCLUDED.updated_at RETURNING data",
+            (sid, Json(fields), _now()),
+        )
+        return cur.fetchone()["data"]
+
+
+def session_meta_set(sid, data):
+    """Replace one session's meta wholesale (used where the caller builds the full
+    dict, e.g. a fresh spawn)."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, %s, %s) "
+            "ON CONFLICT (session_id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+            (sid, Json(data or {}), _now()),
+        )
+
+
+def session_meta_delete(sid):
+    with _db() as cur:
+        cur.execute("DELETE FROM session_meta WHERE session_id = %s RETURNING session_id", (sid,))
+        return cur.fetchone() is not None
+
+
+def session_meta_set_provider_all(pid):
+    """Set the provider on EVERY session's meta (the apply-default route). Returns
+    how many rows were touched. A row with no `provider` key yet gets one."""
+    with _db() as cur:
+        cur.execute(
+            "UPDATE session_meta SET data = data || %s, updated_at = %s RETURNING session_id",
+            (Json({"provider": pid}), _now()),
+        )
+        return len(cur.fetchall())
+
+
+# Hosts (SSH registry) --------------------------------------------------------
+# The hosts store keeps the same {id: {label, host, user, port, claudeHome,
+# password, keyFile, keyPassphrase}} shape the config file had, so remote.py /
+# routes/auth.py read it unchanged. Secrets live in these columns; the list
+# route already strips them before returning to a client. `user` is a reserved
+# word in Postgres, so it's double-quoted wherever it's named in DDL/DML.
+_HOST_COLS = (
+    ("label", "label", ""), ("host", "host", ""), ("user", '"user"', ""),
+    ("port", "port", 22), ("claudeHome", "claude_home", ".claude"),
+    ("password", "password", ""), ("keyFile", "key_file", ""),
+    ("keyPassphrase", "key_passphrase", ""),
+)
+
+
+def hosts_load():
+    with _db() as cur:
+        cur.execute("SELECT * FROM hosts")
+        # The `user` column comes back under its plain name in the row dict.
+        cols_by_json = {jk: (col.strip('"')) for jk, col, _ in _HOST_COLS}
+        out = {}
+        for r in cur.fetchall():
+            out[r["id"]] = {jk: r[col] for jk, col in cols_by_json.items()}
+    return out
+
+
+def host_upsert(hid, entry):
+    cols = [col for _, col, _ in _HOST_COLS]  # already quoted where needed
+    vals = [entry.get(jk, dflt) for jk, _, dflt in _HOST_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        cur.execute(
+            f"INSERT INTO hosts (id, {', '.join(cols)}, created_at) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}, %s) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            (hid, *vals, _now()),
+        )
+
+
+def host_delete(hid):
+    with _db() as cur:
+        cur.execute("DELETE FROM hosts WHERE id = %s RETURNING id", (hid,))
+        return cur.fetchone() is not None
+
+
+# Per-host env vars -----------------------------------------------------------
+
+def host_env_load(hid):
+    """The {KEY: VALUE} map for a host id."""
+    with _db() as cur:
+        cur.execute("SELECT key, value FROM host_env WHERE host = %s", (hid,))
+        return {r["key"]: r["value"] for r in cur.fetchall()}
+
+
+def host_env_set(hid, key, value):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO host_env (host, key, value) VALUES (%s, %s, %s) "
+            "ON CONFLICT (host, key) DO UPDATE SET value = EXCLUDED.value",
+            (hid, key, str(value)),
+        )
+
+
+def host_env_unset(hid, key):
+    with _db() as cur:
+        cur.execute("DELETE FROM host_env WHERE host = %s AND key = %s", (hid, key))
+
+
+def host_env_unset_all(hid):
+    with _db() as cur:
+        cur.execute("DELETE FROM host_env WHERE host = %s", (hid,))
+
+
+# Provider presets ------------------------------------------------------------
+# Same {id: {name, baseUrl, model, apiKey, contextLimit, isDefault}} shape the
+# providers file held, so providers.py's public API is untouched.
+_PROVIDER_COLS = (
+    ("name", "name", ""), ("baseUrl", "base_url", ""), ("model", "model", ""),
+    ("apiKey", "api_key", ""), ("contextLimit", "context_limit", 0),
+    ("isDefault", "is_default", False),
+)
+
+
+def providers_load():
+    with _db() as cur:
+        cur.execute("SELECT * FROM providers")
+        out = {}
+        for r in cur.fetchall():
+            out[r["id"]] = {jk: r[col] for jk, col, _ in _PROVIDER_COLS}
+    return out
+
+
+def provider_upsert(pid, rec):
+    cols = [col for _, col, _ in _PROVIDER_COLS]
+    vals = [rec.get(jk, dflt) for jk, _, dflt in _PROVIDER_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        # At most one default: clearing others and the upsert must be one
+        # transaction, else a crash between them could leave two defaults.
+        if rec.get("isDefault"):
+            cur.execute("UPDATE providers SET is_default = FALSE WHERE id <> %s", (pid,))
+        cur.execute(
+            f"INSERT INTO providers (id, {', '.join(cols)}, created_at) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}, %s) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            (pid, *vals, _now()),
+        )
+
+
+def provider_delete(pid):
+    with _db() as cur:
+        cur.execute("DELETE FROM providers WHERE id = %s RETURNING id", (pid,))
+        return cur.fetchone() is not None
+
+
+# Settings (singleton key/value) ----------------------------------------------
+
+def setting_get(key, default=None):
+    with _db() as cur:
+        cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+    return row["value"] if row else default
+
+
+def setting_set(key, value):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (key, Json(value)),
+        )
+
+
+# Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
+# per plan/license without a deploy; falls back to the seeded defaults when the
+# row is missing or a value is malformed (never returns junk the purge can't use).
+_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500}
+
+
+def retention_config():
+    cfg = setting_get("retention", {}) or {}
+    out = {}
+    for k, dflt in _RETENTION_DEFAULTS.items():
+        try:
+            out[k] = int(cfg.get(k, dflt))
+        except (TypeError, ValueError):
+            out[k] = dflt
+    return out
+
+
+# One-time backfill -----------------------------------------------------------
+
+# The legacy files. After a successful backfill each is moved aside (not deleted)
+# so a first Postgres run is reversible and nothing is lost if the migration is
+# wrong. Keyed name -> (path, migrate_fn).
+_LEGACY_DIR = Path.home() / ".claude"
+_TRASH_DIR = _LEGACY_DIR / ".viewer-migrated"
+
+
+def _read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _table_empty(table):
+    with _db() as cur:
+        cur.execute(f"SELECT 1 FROM {table} LIMIT 1")
+        return cur.fetchone() is None
+
+
+def migrate_legacy_files():
+    """Backfill the six ~/.claude/*.json stores into Postgres ONCE, then move each
+    file into ~/.claude/.viewer-migrated/ so the old second-source is gone but
+    recoverable. Idempotent: a file already moved (or absent) is skipped, and each
+    table is only seeded when EMPTY so a later user edit is never clobbered by a
+    stale file that somehow reappears."""
+    _TRASH_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _retire(path):
+        try:
+            path.replace(_TRASH_DIR / path.name)
+        except Exception:
+            pass
+
+    # loops
+    p = _LEGACY_DIR / ".viewer-loops.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("loops"):
+            for lid, entry in data.items():
+                loop_upsert(lid, entry)
+        _retire(p)
+
+    # session meta
+    p = _LEGACY_DIR / ".viewer-meta.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("session_meta"):
+            for sid, meta in data.items():
+                session_meta_set(sid, meta)
+        _retire(p)
+
+    # hosts
+    p = _LEGACY_DIR / ".viewer-hosts.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("hosts"):
+            for hid, entry in data.items():
+                host_upsert(hid, entry)
+        _retire(p)
+
+    # per-host env
+    p = _LEGACY_DIR / ".viewer-env.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("host_env"):
+            for hid, kv in (data or {}).items():
+                for k, v in (kv or {}).items():
+                    host_env_set(hid, k, v)
+        _retire(p)
+
+    # providers
+    p = _LEGACY_DIR / ".viewer-providers.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("providers"):
+            for pid, rec in data.items():
+                provider_upsert(pid, rec)
+        _retire(p)
+
+    # harman config -> settings['harman']
+    p = _LEGACY_DIR / ".viewer-harman.json"
+    data = _read_json(p)
+    if data is not None:
+        # Seed only if the row is still the untouched default (no automation flip
+        # since install). setting_get returns the seeded default on a fresh DB.
+        cur_cfg = setting_get("harman", {}) or {}
+        if not cur_cfg.get("automation_enabled"):
+            merged = dict(cur_cfg)
+            merged.update(data)
+            setting_set("harman", merged)
+        _retire(p)

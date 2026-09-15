@@ -13,13 +13,22 @@ export interface SessionListItem {
  *  DUPLICATED in mobile-app/src/api/client.ts, deliberately: the two apps
  *  share no build. Keep in sync BY HAND. */
 export interface HarmanConfig {
-  /** The master switch. Omitted by servers predating it — treat absence as on. */
+  /** The master switch. Omitted by servers predating it — treat absence as OFF
+   *  (a server with no gate must not be shown as running unattended work). */
   automation_enabled?: boolean
   enabled: boolean
   interval: number
   budget: number
   projects: number[]
   default_provider: string
+}
+
+/** WHICH loop origins may fire — orthogonal to the automation master switch.
+ *  user→your loops only (default), harman→agent loops only, both, none→paused.
+ *  DUPLICATED in mobile-app/src/api/client.ts — keep in sync BY HAND. */
+export type LoopMode = "user" | "harman" | "both" | "none"
+export interface LoopControl {
+  mode: LoopMode
 }
 
 export interface HostInfo {

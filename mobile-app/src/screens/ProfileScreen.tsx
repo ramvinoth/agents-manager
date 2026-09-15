@@ -3,7 +3,7 @@ import { ScrollView, Switch, Text, TouchableOpacity, useColorScheme, View } from
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type HarmanConfig } from "../api/client"
+import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode } from "../api/client"
 import {
   notifyEveryReply,
   serverUrl,
@@ -29,6 +29,16 @@ const THEME_OPTS: { v: ThemePref; label: string }[] = [
   { v: "dark", label: "Dark" },
 ]
 
+// Loop-firing modes, in escalating order of what's licensed to run. Labels are
+// the plain-language version of loops.LOOP_MODES: "None" pauses every loop,
+// "Both" licenses every origin. The value is what the server stores.
+const LOOP_OPTS: { v: LoopMode; label: string }[] = [
+  { v: "none", label: "None" },
+  { v: "user", label: "Yours" },
+  { v: "harman", label: "Agent" },
+  { v: "both", label: "Both" },
+]
+
 /**
  * Profile tab: appearance (theme), notifications, account info, and sign out.
  * Consolidates settings that used to live at the top and bottom of the drawer.
@@ -46,6 +56,12 @@ export default function ProfileScreen({ navigation }: Props) {
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
+  // The loop-firing mode — WHICH loop origins may run, independent of the master
+  // switch above. Null while unknown (same reasoning as `harman`): a mode picker
+  // that guessed would misstate which of the owner's schedules are live.
+  const [loop, setLoop] = useState<LoopControl | null>(null)
+  const [loopBusy, setLoopBusy] = useState(false)
+  const [loopErr, setLoopErr] = useState("")
   // Server picker sheet + a reactive mirror of the active server URL so the row
   // repaints the moment the selection changes (subscribeServer pub-sub).
   const [serverOpen, setServerOpen] = useState(false)
@@ -110,6 +126,9 @@ export default function ProfileScreen({ navigation }: Props) {
       api.orgHarman()
         .then((h) => alive && setHarman(h))
         .catch(() => alive && setHarman(null))
+      api.orgLoopControl()
+        .then((l) => alive && setLoop(l))
+        .catch(() => alive && setLoop(null))
       return () => {
         alive = false
       }
@@ -142,6 +161,22 @@ export default function ProfileScreen({ navigation }: Props) {
     }
   }
 
+  async function chooseLoopMode(mode: LoopMode) {
+    if (loopBusy || (loop && loop.mode === mode)) return
+    setLoopBusy(true)
+    setLoopErr("")
+    try {
+      // Green + manager-scoped, so the server returns the applied config directly;
+      // a non-manager session is refused (403) and lands in catch, never queued.
+      setLoop(await api.orgSetLoopControl(mode))
+    } catch (e) {
+      setLoopErr((e as Error).message || "Couldn't change it.")
+      setLoop(await api.orgLoopControl().catch(() => null))
+    } finally {
+      setLoopBusy(false)
+    }
+  }
+
   // Three states, not two. A server older than the switch omits the key, and
   // rendering that as "off" would tell you the machine is paused when that build
   // has no gate at all and is still firing scheduled jobs. Unknown says so.
@@ -155,6 +190,20 @@ export default function ProfileScreen({ navigation }: Props) {
         : harman.automation_enabled
           ? "On — scheduled jobs and the autonomous manager can start work on their own."
           : "Off — nothing runs unless you ask. Scheduled jobs and the manager are paused."
+
+  // The loop picker's own hint. Its meaning is independent of the master switch:
+  // "Yours" keeps the owner's schedules firing even while automation is paused.
+  const loopHint = loopErr
+    ? loopErr
+    : !loop
+      ? "Can't reach the server — loop state unknown."
+      : loop.mode === "none"
+        ? "Paused — no scheduled loops fire, yours or the agents'."
+        : loop.mode === "user"
+          ? "Only your own scheduled loops fire. Agent-created loops stay paused."
+          : loop.mode === "harman"
+            ? "Only agent-created loops fire. Your own scheduled loops stay paused."
+            : "Every scheduled loop fires — yours and the agents'."
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 32 }}>
@@ -174,6 +223,27 @@ export default function ProfileScreen({ navigation }: Props) {
           trackColor={{ true: t.accent, false: t.border }}
         />
       </View>
+
+      <Text style={styles.sheetSection}>SCHEDULED LOOPS</Text>
+      <View style={styles.segRow} testID="loop-mode-switch">
+        {LOOP_OPTS.map((o) => {
+          const active = loop?.mode === o.v
+          return (
+            <TouchableOpacity
+              key={o.v}
+              testID={`loop-mode-${o.v}`}
+              style={[styles.seg, active ? styles.segActive : null]}
+              disabled={!loop || loopBusy}
+              onPress={() => chooseLoopMode(o.v)}
+            >
+              <Text style={[styles.segText, active ? styles.segTextActive : null]}>{o.label}</Text>
+            </TouchableOpacity>
+          )
+        })}
+      </View>
+      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 6, maxWidth: undefined }, loopErr ? { color: t.danger } : null]}>
+        {loopHint}
+      </Text>
 
       <Text style={styles.sheetSection}>APPEARANCE</Text>
       <View style={styles.segRow} testID="theme-switch">

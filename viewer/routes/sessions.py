@@ -7,13 +7,14 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
+from viewer import db
 from viewer.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, read_back, split_lines,
 )
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    LOOPS, LOOPS_FILE, LOOPS_LOCK, META_FILE, META_LOCK, SESSION_META, extract_cwd, get_host, parse_interval, save_json_file, session_analysis, start_claude_run, start_copilot_new,
+    extract_cwd, get_host, parse_interval, session_analysis, start_claude_run, start_copilot_new,
 )
 from viewer.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
@@ -137,9 +138,7 @@ class SessionsMixin:
             entry["interval"] = 0
         else:
             entry["interval"] = interval
-        with LOOPS_LOCK:
-            LOOPS[lid] = entry
-            save_json_file(LOOPS_FILE, LOOPS)
+        db.loop_upsert(lid, entry)
         self.send_json({"created": lid, "interval": interval or 0, "cron": cron_expr})
 
     def handle_edit_loop(self):
@@ -151,53 +150,55 @@ class SessionsMixin:
             self.send_json({"error": "Invalid JSON body"}, status=400)
             return
         lid = body.get("id", "")
-        with LOOPS_LOCK:
-            loop = LOOPS.get(lid)
-            if not loop:
-                self.send_json({"error": "Job not found"}, status=404)
+        loop = db.loop_get(lid)
+        if not loop:
+            self.send_json({"error": "Job not found"}, status=404)
+            return
+        fields = {}
+        # Track cron through this edit so the interval branch below sees the
+        # just-applied value (setting cron ignores interval; clearing it allows one).
+        cur_cron = loop.get("cron")
+        if "prompt" in body:
+            prompt = (body.get("prompt") or "").strip()
+            if not prompt:
+                self.send_json({"error": "Empty prompt"}, status=400)
                 return
-            if "prompt" in body:
-                prompt = (body.get("prompt") or "").strip()
-                if not prompt:
-                    self.send_json({"error": "Empty prompt"}, status=400)
+            fields["prompt"] = prompt
+        if "cron" in body:
+            cron_expr = (body.get("cron") or "").strip() or None
+            if cron_expr:
+                from viewer.loops import cron_next_run, parse_cron
+                if not parse_cron(cron_expr):
+                    self.send_json({"error": "Invalid cron expression"}, status=400)
                     return
-                loop["prompt"] = prompt
-            if "cron" in body:
-                cron_expr = (body.get("cron") or "").strip() or None
-                if cron_expr:
-                    from viewer.loops import cron_next_run, parse_cron
-                    if not parse_cron(cron_expr):
-                        self.send_json({"error": "Invalid cron expression"}, status=400)
-                        return
-                    loop["cron"] = cron_expr
-                    loop["interval"] = 0
-                    loop["nextRun"] = cron_next_run(cron_expr) or (time.time() + 86400)
-                else:
-                    loop.pop("cron", None)
-            if "interval" in body and not loop.get("cron"):
-                interval = parse_interval(body.get("interval", ""))
-                if not interval:
-                    self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
-                    return
-                if interval != loop.get("interval"):
-                    loop["interval"] = interval
-                    loop["nextRun"] = time.time() + interval
-            if "model" in body:
-                loop["model"] = (body.get("model") or "").strip()
-            save_json_file(LOOPS_FILE, LOOPS)
-        self.send_json({"updated": lid, "interval": loop.get("interval"), "cron": loop.get("cron")})
+                fields["cron"] = cron_expr
+                fields["interval"] = 0
+                fields["nextRun"] = cron_next_run(cron_expr) or (time.time() + 86400)
+                cur_cron = cron_expr
+            else:
+                fields["cron"] = None
+                cur_cron = None
+        if "interval" in body and not cur_cron:
+            interval = parse_interval(body.get("interval", ""))
+            if not interval:
+                self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
+                return
+            if interval != loop.get("interval"):
+                fields["interval"] = interval
+                fields["nextRun"] = time.time() + interval
+        if "model" in body:
+            fields["model"] = (body.get("model") or "").strip()
+        updated = db.loop_update(lid, fields)
+        self.send_json({"updated": lid, "interval": updated.get("interval"), "cron": updated.get("cron")})
 
     # ----- Slash commands / projects / session resolution -----
 
     def _g_loops(self, req):
         sid = (req.query.get("session") or [""])[0]
-        with LOOPS_LOCK:
-            loops = [dict(lp, id=lid) for lid, lp in LOOPS.items()
-                     if not sid or lp["session"] == sid]
+        loops = [dict(lp, id=lid) for lid, lp in db.loop_list(sid or None).items()]
         self.send_json(sorted(loops, key=lambda l: l.get("created", 0)))
 
     def _g_agent_templates(self, req):
-        from viewer import db
         templates = db.agent_templates_list()
         self.send_json([dict(t) for t in templates])
 
@@ -210,7 +211,6 @@ class SessionsMixin:
         if not name:
             self.send_json({"error": "Name required"}, status=400)
             return
-        from viewer import db
         row = db.agent_template_create(
             name=name,
             description=(body.get("description") or "").strip(),
@@ -229,7 +229,6 @@ class SessionsMixin:
         if not tid:
             self.send_json({"error": "id required"}, status=400)
             return
-        from viewer import db
         deleted = db.agent_template_delete(int(tid))
         self.send_json({"deleted": deleted})
 
@@ -255,37 +254,36 @@ class SessionsMixin:
             self.send_json({"error": "Session not found"}, status=404)
             return
         sid = full.stem
-        with META_LOCK:
-            meta = SESSION_META.setdefault(sid, {})
-            if "goal" in body:
-                meta["goal"] = str(body["goal"]).strip()
-            if "systemPrompt" in body:
-                meta["systemPrompt"] = str(body["systemPrompt"]).strip()
-            if "avatar" in body:
-                # A short emoji/token chosen on the Session profile page. Cap length
-                # so a stray payload can't bloat the persisted meta file.
-                meta["avatar"] = str(body["avatar"]).strip()[:16]
-            if "archived" in body:
-                meta["archived"] = bool(body["archived"])
-            if "favorite" in body:
-                meta["favorite"] = bool(body["favorite"])
-            if "pinned" in body:
-                # A list of pinned message uuids. Cap count + id length so a stray
-                # payload can't bloat the persisted meta file.
-                meta["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
-            if "provider" in body:
-                # Custom LLM provider preset id ("" = Default/Claude). Runs for this
-                # session are proxied to that endpoint instead of the claude CLI.
-                meta["provider"] = str(body["provider"]).strip()[:64]
-            if "convMode" in body:
-                # Conversation mode for a custom provider: "chat" (plain proxy) or
-                # "agent" (full Claude Code harness pointed at the endpoint).
-                cm = str(body["convMode"]).strip()
-                meta["convMode"] = cm if cm in ("chat", "agent") else "chat"
-            if "effort" in body:
-                eff = str(body["effort"]).strip()
-                meta["effort"] = eff if eff in ("low", "medium", "high", "xhigh", "max", "") else ""
-            save_json_file(META_FILE, SESSION_META)
+        fields = {}
+        if "goal" in body:
+            fields["goal"] = str(body["goal"]).strip()
+        if "systemPrompt" in body:
+            fields["systemPrompt"] = str(body["systemPrompt"]).strip()
+        if "avatar" in body:
+            # A short emoji/token chosen on the Session profile page. Cap length
+            # so a stray payload can't bloat the persisted meta.
+            fields["avatar"] = str(body["avatar"]).strip()[:16]
+        if "archived" in body:
+            fields["archived"] = bool(body["archived"])
+        if "favorite" in body:
+            fields["favorite"] = bool(body["favorite"])
+        if "pinned" in body:
+            # A list of pinned message uuids. Cap count + id length so a stray
+            # payload can't bloat the persisted meta.
+            fields["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
+        if "provider" in body:
+            # Custom LLM provider preset id ("" = Default/Claude). Runs for this
+            # session are proxied to that endpoint instead of the claude CLI.
+            fields["provider"] = str(body["provider"]).strip()[:64]
+        if "convMode" in body:
+            # Conversation mode for a custom provider: "chat" (plain proxy) or
+            # "agent" (full Claude Code harness pointed at the endpoint).
+            cm = str(body["convMode"]).strip()
+            fields["convMode"] = cm if cm in ("chat", "agent") else "chat"
+        if "effort" in body:
+            eff = str(body["effort"]).strip()
+            fields["effort"] = eff if eff in ("low", "medium", "high", "xhigh", "max", "") else ""
+        meta = db.session_meta_patch(sid, fields) if fields else db.session_meta_get(sid)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
@@ -301,7 +299,7 @@ class SessionsMixin:
         rel = (req.query.get("session") or [""])[0]
         if req.host != "local":
             sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "")
-            meta = SESSION_META.get(sid) or {}
+            meta = db.session_meta_get(sid)
             try:
                 cwd = remote_extract_cwd(req.host, rel)
             except Exception:
@@ -317,7 +315,7 @@ class SessionsMixin:
             self.send_json({"error": "Session not found"}, status=404)
             return
         sid = full.stem
-        meta = SESSION_META.get(sid) or {}
+        meta = db.session_meta_get(sid)
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
@@ -345,9 +343,7 @@ class SessionsMixin:
     def _p_loops_delete(self, req):
         body = self.read_body()
         lid = (body or {}).get("id", "")
-        with LOOPS_LOCK:
-            existed = LOOPS.pop(lid, None)
-            save_json_file(LOOPS_FILE, LOOPS)
+        existed = db.loop_delete(lid)
         self.send_json({"deleted": bool(existed)})
 
     def serve_raw_file(self, full_path):
@@ -471,9 +467,7 @@ class SessionsMixin:
             except Exception as e:
                 self.send_json({"error": str(e)}, status=500)
                 return
-            with META_LOCK:
-                if SESSION_META.pop(full.stem, None) is not None:
-                    save_json_file(META_FILE, SESSION_META)
+            db.session_meta_delete(full.stem)
             from viewer import questions
             questions.clear(full.stem)
             questions.clear_plan(full.stem)
@@ -485,12 +479,8 @@ class SessionsMixin:
         if host != "local":
             r = remote_session_edit(host, "delete", sid)
             if not r.get("error"):
-                with LOOPS_LOCK:
-                    for lid in [lid for lid, lp in LOOPS.items() if lp["session"] == sid]:
-                        LOOPS.pop(lid, None)
-                    save_json_file(LOOPS_FILE, LOOPS)
-                with META_LOCK:
-                    SESSION_META.pop(sid, None) and save_json_file(META_FILE, SESSION_META)
+                db.loop_delete_for_session(sid)
+                db.session_meta_delete(sid)
             self.send_json(r)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
@@ -505,15 +495,12 @@ class SessionsMixin:
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
             return
-        with LOOPS_LOCK:
-            stale = [lid for lid, lp in LOOPS.items() if lp["session"] == sid]
-            for lid in stale:
-                LOOPS.pop(lid, None)
-            if stale:
-                save_json_file(LOOPS_FILE, LOOPS)
-        with META_LOCK:
-            if SESSION_META.pop(sid, None) is not None:
-                save_json_file(META_FILE, SESSION_META)
+        # Drop the session's schedules and meta. job_runs rows are detached
+        # (loop_id -> NULL) by the FK, so the audit history outlives the delete
+        # and is aged out by retention. A running loop can't reach here: the
+        # session_busy guard above 409s while a run is in progress.
+        db.loop_delete_for_session(sid)
+        db.session_meta_delete(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
     def split_at_uuid(self, full_path, cut_uuid):
@@ -545,14 +532,12 @@ class SessionsMixin:
         agent = body.get("agent", "claude")
         if agent == "codex" and body.get("host", "local") == "local":
             # Codex rollouts have no title record; keep it in the viewer's own
-            # SESSION_META and overlay it onto the list (see _g_sessions).
+            # session_meta and overlay it onto the list (see _g_sessions).
             full = resolve_agent_session("codex", body.get("session", ""))
             if not full:
                 self.send_json({"error": "Session not found"}, status=404)
                 return
-            with META_LOCK:
-                SESSION_META.setdefault(full.stem, {})["title"] = title
-                save_json_file(META_FILE, SESSION_META)
+            db.session_meta_patch(full.stem, {"title": title})
             self.send_json({"renamed": True, "title": title})
             return
         if body.get("host", "local") != "local":
@@ -696,8 +681,9 @@ class SessionsMixin:
             try:
                 sessions = (remote_list_sessions_agent(req.host, agent) if req.host != "local"
                             else list_sessions_local(agent))
+                all_meta = db.session_meta_all()
                 for s in sessions:  # overlay viewer-set titles (rename / new-session name)
-                    meta = SESSION_META.get(s["id"], {})
+                    meta = all_meta.get(s["id"], {})
                     t = meta.get("title")
                     if t:
                         s["title"] = t
@@ -740,9 +726,7 @@ class SessionsMixin:
             title = (body.get("title") or "").strip()[:200]
             res = codex_fork(body.get("session", ""), cut_uuid, title)
             if title and res.get("session"):
-                with META_LOCK:
-                    SESSION_META.setdefault(res["session"], {})["title"] = title
-                    save_json_file(META_FILE, SESSION_META)
+                db.session_meta_patch(res["session"], {"title": title})
             self.send_host_result(res)
             return
         if host != "local":
@@ -830,9 +814,7 @@ class SessionsMixin:
             new_id, rel = res
             title = (body.get("title") or "").strip()[:200]
             if title:
-                with META_LOCK:
-                    SESSION_META.setdefault(new_id, {})["title"] = title
-                    save_json_file(META_FILE, SESSION_META)
+                db.session_meta_patch(new_id, {"title": title})
             self.send_json({"started": True, "session": new_id, "path": rel})
             return
 
@@ -844,9 +826,7 @@ class SessionsMixin:
             new_id, rel = res
             title = (body.get("title") or "").strip()[:200]
             if title:  # Copilot has no rename convention → store the name in the viewer's meta
-                with META_LOCK:
-                    SESSION_META.setdefault(new_id, {})["title"] = title
-                    save_json_file(META_FILE, SESSION_META)
+                db.session_meta_patch(new_id, {"title": title})
             self.send_json({"started": True, "session": new_id, "path": rel})
             return
 
@@ -860,14 +840,13 @@ class SessionsMixin:
         if conv_mode not in ("chat", "agent"):
             conv_mode = "chat"
         if sp or goal or provider or effort:
-            with META_LOCK:
-                SESSION_META[session_id] = {"systemPrompt": sp, "goal": goal}
-                if provider:
-                    SESSION_META[session_id]["provider"] = provider[:64]
-                    SESSION_META[session_id]["convMode"] = conv_mode
-                if effort and effort in ("low", "medium", "high", "xhigh", "max"):
-                    SESSION_META[session_id]["effort"] = effort
-                save_json_file(META_FILE, SESSION_META)
+            meta = {"systemPrompt": sp, "goal": goal}
+            if provider:
+                meta["provider"] = provider[:64]
+                meta["convMode"] = conv_mode
+            if effort and effort in ("low", "medium", "high", "xhigh", "max"):
+                meta["effort"] = effort
+            db.session_meta_set(session_id, meta)
         # A new custom-provider session (local only).
         if provider and host == "local":
             if conv_mode == "agent":
@@ -901,10 +880,11 @@ class SessionsMixin:
         try:
             sessions = get_host(host).list_sessions()
             # Overlay the viewer-set avatar (chosen on the Session profile page).
-            # Kept in SESSION_META keyed by session id, exactly like `title`.
+            # Kept in session_meta keyed by session id, exactly like `title`.
             if isinstance(sessions, list):
+                all_meta = db.session_meta_all()
                 for s in sessions:
-                    meta = SESSION_META.get(s.get("id"), {})
+                    meta = all_meta.get(s.get("id"), {})
                     if meta.get("avatar"):
                         s["avatar"] = meta["avatar"]
                     s["archived"] = bool(meta.get("archived", False))
