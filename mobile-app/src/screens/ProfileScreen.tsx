@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ScrollView, Switch, Text, TouchableOpacity, useColorScheme, View } from "react-native"
+import { ScrollView, Switch, Text, TextInput, TouchableOpacity, useColorScheme, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -62,6 +62,14 @@ export default function ProfileScreen({ navigation }: Props) {
   const [loop, setLoop] = useState<LoopControl | null>(null)
   const [loopBusy, setLoopBusy] = useState(false)
   const [loopErr, setLoopErr] = useState("")
+  // The global system-awareness preamble prepended to every session's system
+  // prompt. `preamble` is the server's value (null while unknown, same reasoning
+  // as harman/loop above); `draft` is the local edit buffer so typing doesn't
+  // fight the fetched value. preMsg carries the save result ("Saved." or an error).
+  const [preamble, setPreamble] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+  const [preBusy, setPreBusy] = useState(false)
+  const [preMsg, setPreMsg] = useState("")
   // Server picker sheet + a reactive mirror of the active server URL so the row
   // repaints the moment the selection changes (subscribeServer pub-sub).
   const [serverOpen, setServerOpen] = useState(false)
@@ -129,11 +137,21 @@ export default function ProfileScreen({ navigation }: Props) {
       api.orgLoopControl()
         .then((l) => alive && setLoop(l))
         .catch(() => alive && setLoop(null))
+      api.orgSystemPreamble()
+        .then((p) => alive && setPreamble(p.preamble))
+        .catch(() => alive && setPreamble(null))
       return () => {
         alive = false
       }
     }, [])
   )
+
+  // Seed the edit buffer once the server value arrives, and re-seed whenever it
+  // changes (e.g. an approval applied someone else's edit). Mirrors the web
+  // ProfilePanel: server is the source of truth, the draft tracks it until edited.
+  useEffect(() => {
+    if (preamble !== null) setDraft(preamble)
+  }, [preamble])
 
   async function toggleAutomation(v: boolean) {
     if (!harman || autoBusy) return
@@ -174,6 +192,29 @@ export default function ProfileScreen({ navigation }: Props) {
       setLoop(await api.orgLoopControl().catch(() => null))
     } finally {
       setLoopBusy(false)
+    }
+  }
+
+  async function savePreamble() {
+    if (preBusy || preamble === null || draft === preamble) return
+    setPreBusy(true)
+    setPreMsg("")
+    try {
+      // Manager-scoped AND Red (viewer/orglogic): a non-owner's edit is QUEUED as
+      // an approval rather than applied, so say so instead of claiming it saved.
+      const res = await api.orgSetSystemPreamble(draft)
+      if (isQueued(res)) {
+        setPreMsg("Sent for approval — only the owner can change the system preamble.")
+        setPreamble(await api.orgSystemPreamble().then((p) => p.preamble).catch(() => preamble))
+      } else {
+        setPreamble(res.preamble)
+        setPreMsg("Saved.")
+      }
+    } catch (e) {
+      setPreMsg((e as Error).message || "Couldn't save it.")
+      setPreamble(await api.orgSystemPreamble().then((p) => p.preamble).catch(() => null))
+    } finally {
+      setPreBusy(false)
     }
   }
 
@@ -244,6 +285,41 @@ export default function ProfileScreen({ navigation }: Props) {
       <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 6, maxWidth: undefined }, loopErr ? { color: t.danger } : null]}>
         {loopHint}
       </Text>
+
+      <Text style={styles.sheetSection}>SYSTEM PREAMBLE</Text>
+      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
+        Prepended to every session's system prompt, so each one knows it is a node in the
+        system and how its tools are gated. Empty disables it. Applies to sessions started
+        after you save.
+      </Text>
+      <TextInput
+        testID="system-preamble"
+        style={[styles.input, { marginHorizontal: 18, marginTop: 8, minHeight: 140, textAlignVertical: "top", fontSize: 13 }]}
+        value={draft}
+        editable={preamble !== null && !preBusy}
+        onChangeText={(v) => {
+          setDraft(v)
+          if (preMsg) setPreMsg("")
+        }}
+        multiline
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder={preamble === null ? "Loading…" : "No preamble — sessions get no system-awareness text."}
+        placeholderTextColor={t.textMuted}
+      />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 18, marginTop: 8 }}>
+        <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }, preMsg && preMsg !== "Saved." ? { color: t.danger } : null]}>
+          {preMsg}
+        </Text>
+        <TouchableOpacity
+          testID="save-preamble"
+          style={[styles.button, { marginTop: 0, paddingVertical: 10, paddingHorizontal: 20, opacity: preamble === null || preBusy || draft === preamble ? 0.5 : 1 }]}
+          disabled={preamble === null || preBusy || draft === preamble}
+          onPress={savePreamble}
+        >
+          <Text style={styles.buttonText}>Save</Text>
+        </TouchableOpacity>
+      </View>
 
       <Text style={styles.sheetSection}>APPEARANCE</Text>
       <View style={styles.segRow} testID="theme-switch">

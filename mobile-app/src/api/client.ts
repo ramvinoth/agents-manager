@@ -605,5 +605,11 @@ export const api = {
   orgLoopControl: () => req<LoopControl>("GET", "/api/org/loop-control"),
   orgSetLoopControl: (mode: LoopMode) =>
     req<LoopControl>("POST", "/api/org/loop-control", { mode }),
+  // The global system-awareness preamble prepended to every session's system
+  // prompt. Read is open; the write is manager-scoped AND Red — a non-owner
+  // caller gets an approval back, not the value, hence the `| Queued` union.
+  orgSystemPreamble: () => req<{ preamble: string }>("GET", "/api/org/system-preamble"),
+  orgSetSystemPreamble: (preamble: string) =>
+    req<{ preamble: string } | Queued>("POST", "/api/org/system-preamble", { preamble }),
   orgSkills: () => req<{ skills: LearnedSkill[] }>("GET", "/api/org/skills"),
 }

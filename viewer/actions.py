@@ -224,6 +224,20 @@ def _loop_mode_set(a):
     return set_loop_mode((a.get("mode") or "").strip())
 
 
+def _system_preamble_set(a):
+    """Set the global system-awareness preamble prepended to EVERY session's
+    system prompt (engine.append_system_prompt). Empty string disables it.
+
+    Red + manager (orglogic): rewriting this injects instructions fleet-wide into
+    every future session, so an agent's attempt queues for the owner — the same
+    rail as skill_promote overwriting shared knowledge. The owner editing at the
+    UI self-approves and it applies now. Stored as a plain JSON string."""
+    text = a.get("preamble", "")
+    text = text if isinstance(text, str) else str(text or "")
+    db.setting_set("system_preamble", text)
+    return {"preamble": text}
+
+
 def _skill_write(a):
     """Write a skill into the shared library and mark it active in the ledger.
 
@@ -273,6 +287,7 @@ ACTIONS = {
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,
     "loop_mode_set": _loop_mode_set,
+    "system_preamble_set": _system_preamble_set,
     "skill_propose": _skill_write,
     "skill_promote": _skill_write,
 }

@@ -125,6 +125,10 @@ interface AppState {
   /** True only when the server explicitly says automation is on — the pinned
    *  Harman entry and Harman controls are gated on this. Absence → off. */
   automationOn: boolean
+  /** The global system-awareness preamble (prepended to every session's system
+   *  prompt). null = not-yet-loaded or server unreachable; "" = explicitly empty
+   *  (the feature is off). Loaded with the other orchestration state. */
+  systemPreamble: string | null
   visible: VisibleTypes
   searchOpen: boolean
   searchQuery: string
@@ -179,6 +183,10 @@ interface AppState {
   /** Set the loop-firing mode. Green + manager-scoped: applied or refused (403),
    *  never queued. Resolves to "" on success or an error string. */
   setLoopMode: (mode: LoopMode) => Promise<string>
+  /** Rewrite the global system preamble. Manager-scoped AND Red: a non-owner's
+   *  request is queued (not applied), so this resolves to a status string for the
+   *  caller to show ("" = applied cleanly). */
+  setSystemPreamble: (text: string) => Promise<string>
   createLoop: (prompt: string, interval: number, model: string) => Promise<void>
   editLoop: (id: string, prompt: string, interval: number, model: string) => Promise<void>
   deleteLoop: (id: string) => Promise<void>
@@ -533,6 +541,7 @@ export const useStore = create<AppState>((set, get) => {
     harman: null,
     loopControl: null,
     automationOn: false,
+    systemPreamble: null,
     visible: { user: true, assistant: true, system: true, tools: true },
     searchOpen: false,
     searchQuery: "",
@@ -597,7 +606,7 @@ export const useStore = create<AppState>((set, get) => {
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
         sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
         meta: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
-        harman: null, loopControl: null, automationOn: false,
+        harman: null, loopControl: null, automationOn: false, systemPreamble: null,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,
         panel: null, fsOpen: false, searchOpen: false,
       })
@@ -1010,11 +1019,15 @@ export const useStore = create<AppState>((set, get) => {
     // failure we clear to "unknown/off" — a switch that never reached the server
     // must not be shown as running unattended work.
     loadOrchestration: async () => {
-      const [h, l] = await Promise.all([
+      const [h, l, p] = await Promise.all([
         api.orgHarman().catch(() => null),
         api.orgLoopControl().catch(() => null),
+        api.orgSystemPreamble().catch(() => null),
       ])
-      set({ harman: h, loopControl: l, automationOn: h?.automation_enabled === true })
+      set({
+        harman: h, loopControl: l, automationOn: h?.automation_enabled === true,
+        systemPreamble: p ? p.preamble : null,
+      })
     },
     setAutomation: async (on) => {
       try {
@@ -1044,6 +1057,23 @@ export const useStore = create<AppState>((set, get) => {
           return res.reason || "Not allowed."
         }
         set({ loopControl: res })
+        return ""
+      } catch (e: any) {
+        await get().loadOrchestration()
+        return e?.message || "Couldn't change it."
+      }
+    },
+    setSystemPreamble: async (text) => {
+      try {
+        const res = await api.orgSetSystemPreamble(text)
+        // Manager + Red: a non-owner's write is QUEUED (nothing changed yet), not
+        // applied. Report it so the unchanged text reads as the gate working, and
+        // re-sync from the server (the applied value is authoritative).
+        if (isQueued(res)) {
+          await get().loadOrchestration()
+          return "Sent for approval — only the owner can change the system preamble."
+        }
+        set({ systemPreamble: res.preamble })
         return ""
       } catch (e: any) {
         await get().loadOrchestration()

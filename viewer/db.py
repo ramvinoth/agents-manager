@@ -339,7 +339,7 @@ def init_db():
 
 Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose.
 
-Authority: your power equals your employee level (ic < lead < manager), the weaker of the human's role and this session's level. A session not linked to an employee can see these tools but calls fail auth — use them only if you are employee-linked.
+Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
 
 Steering rules: you may create/edit loops for OTHER sessions, never your own. Autonomous loop firing requires BOTH the loop-control mode (user|harman|both|none) to permit the origin AND the automation master switch (harman.automation_enabled) to be ON; it defaults OFF, and when off nothing fires on its own. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
 

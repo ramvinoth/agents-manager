@@ -248,6 +248,19 @@ class OrchestratorMixin:
         body = self.read_body() or {}
         self._org_send(req, "loop_mode_set", {"mode": body.get("mode", "")})
 
+    # ── System-awareness preamble (owner surface; manager + Red) ──────────────
+    # The global preamble prepended to EVERY session's system prompt. Read is open
+    # to any resolved caller (a session may want to see how it is being steered);
+    # the write is manager-scoped and Red, because rewriting it injects instructions
+    # fleet-wide — an agent's edit queues for the owner, the owner's applies now.
+    def _g_org_system_preamble(self, req):
+        self.send_json({"preamble": db.setting_get("system_preamble", "") or ""})
+
+    def _p_org_system_preamble(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "system_preamble_set",
+                       {"preamble": body.get("preamble", "")})
+
     # ── Agent-scheduled loops (origin='harman', gated) ────────────────────────
     # The AGENT path to scheduling recurring work. The human UI keeps its own
     # ungated loop routes (routes.sessions): a person editing their own schedules

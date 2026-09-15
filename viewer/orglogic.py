@@ -91,6 +91,11 @@ _RED_ACTIONS = {
     # Without this, a session running at manager level could restore its own
     # supervision; now that request queues for a human.
     "automation_resume",
+    # rewriting the global system preamble injects instructions into EVERY future
+    # session's system prompt (engine.append_system_prompt) — fleet-wide reach, the
+    # same "overwrites what the whole team relies on" class as skill_promote. An
+    # agent's attempt queues for the owner; the owner at the UI self-approves.
+    "system_preamble_set",
     # destroying a scheduled loop takes its run history with it — same
     # irreversible-removal class as card_delete. Creating/editing a loop stays
     # green: a harman-origin loop cannot FIRE until the owner licenses that origin
@@ -195,6 +200,10 @@ _MIN_LEVEL = {
     # loops ('harman'/'both') only decides WHETHER already-authored loops run — the
     # authoring of a harman loop was itself gated (loop_create, lead+).
     "loop_mode_set": "manager",
+    # The global system-awareness preamble is org-wide config (it shapes every
+    # session), so it is manager scope like harman_config. It is ALSO Red (above):
+    # scope says who may initiate, risk says whether it runs unattended.
+    "system_preamble_set": "manager",
     # Same authority as any other Harman config write; the two differ only in RISK
     # (automation_resume is Red, automation_pause is not), which is the orthogonal
     # gate. Pausing is deliberately NOT restricted to manager: an ic session that

@@ -835,9 +835,10 @@ def _write_perm_mcp_config():
     """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
     'viewerperm' (permission_mcp.py) and 'viewer' (viewer_mcp.py). Additive —
     the driven claude still loads the user's ambient MCP servers (Playwright etc.)
-    since we omit --strict-mcp-config. viewer_mcp's tools are only *usable* when the
-    run also sets VIEWER_KANBAN_* env (employee sessions); without it its calls fail
-    auth server-side, which is harmless."""
+    since we omit --strict-mcp-config. Every run sets VIEWER_KANBAN_* env (the token
+    is minted unconditionally, see start_claude_run), so viewer_mcp's tools are always
+    reachable; the server resolves the caller to at least 'ic' and scopes each write by
+    the session's responsibility level — it does not fail auth for a non-employee run."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
     perm = str(Path(__file__).parent / "permission_mcp.py")
     viewer_mcp = str(Path(__file__).parent / "viewer_mcp.py")

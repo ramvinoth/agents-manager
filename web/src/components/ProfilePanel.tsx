@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { Power, Repeat } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Power, Repeat, ScrollText } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useStore } from "@/store"
 import type { LoopMode } from "@/lib/types"
@@ -65,11 +65,22 @@ export function ProfilePanel() {
   const loopControl = useStore((s) => s.loopControl)
   const setAutomation = useStore((s) => s.setAutomation)
   const setLoopMode = useStore((s) => s.setLoopMode)
+  const systemPreamble = useStore((s) => s.systemPreamble)
+  const setSystemPreamble = useStore((s) => s.setSystemPreamble)
 
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
   const [loopBusy, setLoopBusy] = useState(false)
   const [loopErr, setLoopErr] = useState("")
+  // Local draft of the preamble so typing doesn't fight the shared cache; seeded
+  // from the server value once it loads and re-seeded whenever the server value
+  // changes (e.g. after an approval applied someone else's edit).
+  const [draft, setDraft] = useState("")
+  const [preBusy, setPreBusy] = useState(false)
+  const [preMsg, setPreMsg] = useState("")
+  useEffect(() => {
+    if (systemPreamble !== null) setDraft(systemPreamble)
+  }, [systemPreamble])
 
   // Three states, not two. A server older than the switch omits the key, and
   // rendering that as "off" would claim the machine is paused when that build
@@ -92,6 +103,15 @@ export function ProfilePanel() {
     const msg = await setLoopMode(mode)
     setLoopErr(msg)
     setLoopBusy(false)
+  }
+
+  async function savePreamble() {
+    if (preBusy || systemPreamble === null || draft === systemPreamble) return
+    setPreBusy(true)
+    setPreMsg("")
+    const msg = await setSystemPreamble(draft)
+    setPreMsg(msg || "Saved.")
+    setPreBusy(false)
   }
 
   const autoHint = autoErr
@@ -159,6 +179,39 @@ export function ProfilePanel() {
             })}
           </div>
           <div className={cn("mt-2 text-[11px]", loopErr ? "text-destructive" : "text-muted-foreground")}>{loopHint}</div>
+        </section>
+
+        <section className="py-4">
+          <SectionHeader icon={ScrollText} title="System preamble" />
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            Prepended to every session's system prompt, so each one knows it is a node in
+            the system and how its tools are gated. Empty disables it. Applies to sessions
+            started after you save.
+          </p>
+          <textarea
+            value={draft}
+            disabled={systemPreamble === null || preBusy}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              if (preMsg) setPreMsg("")
+            }}
+            spellCheck={false}
+            rows={10}
+            placeholder={systemPreamble === null ? "Loading…" : "No preamble — sessions get no system-awareness text."}
+            className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 font-mono text-[11px] leading-relaxed outline-none focus:border-primary/40 disabled:opacity-50"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className={cn("text-[11px]", preMsg && preMsg !== "Saved." ? "text-destructive" : "text-muted-foreground")}>
+              {preMsg}
+            </span>
+            <button
+              disabled={systemPreamble === null || preBusy || draft === systemPreamble}
+              onClick={savePreamble}
+              className="rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
         </section>
       </div>
     </div>

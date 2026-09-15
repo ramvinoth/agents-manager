@@ -151,6 +151,15 @@ class ApiClient {
   orgSetLoopControl(mode: LoopMode) {
     return this.postJSON<LoopControl>("/api/org/loop-control", { mode })
   }
+  /** The global system-awareness preamble prepended to every session's system
+   *  prompt. Read is open; the write is manager-scoped AND Red — a non-owner
+   *  caller gets an approval back, not the value, hence the `| Queued` union. */
+  orgSystemPreamble() {
+    return this.getJSON<{ preamble: string }>("/api/org/system-preamble")
+  }
+  orgSetSystemPreamble(preamble: string) {
+    return this.postJSON<{ preamble: string } | Queued>("/api/org/system-preamble", { preamble })
+  }
   orgEmployees() {
     return this.getJSON<{ employees: Employee[] }>("/api/org/employees")
   }

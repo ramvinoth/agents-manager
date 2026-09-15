@@ -293,6 +293,15 @@ def test_setting_the_loop_mode_is_manager_scoped_and_green():
     assert orglogic.is_red("loop_mode_set") is False
 
 
+def test_setting_the_system_preamble_is_manager_scoped_and_red():
+    # Rewriting the global preamble injects instructions into every future
+    # session's system prompt — org-wide config (manager tier) AND Red, so an
+    # agent's attempt queues for the owner while the owner's own edit applies.
+    assert orglogic.allowed("system_preamble_set", "lead") is False
+    assert orglogic.allowed("system_preamble_set", "manager") is True
+    assert orglogic.is_red("system_preamble_set") is True
+
+
 # ── mutates_own_session(): a session may not reschedule its own supervision ────
 
 def test_a_session_may_not_mutate_its_own_loop():
