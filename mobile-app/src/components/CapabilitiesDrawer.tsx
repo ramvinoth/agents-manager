@@ -118,16 +118,14 @@ export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Prop
           {
             width: DRAWER_W,
             backgroundColor: t.bg,
-            paddingTop: insets.top,
             paddingBottom: insets.bottom,
             transform: [{ translateX: slideAnim }],
           },
         ]}
       >
-        {/* Header — flush to top; safe-area padding is on the drawer itself */}
-        <View style={{ alignItems: "center", paddingTop: 8, paddingBottom: 4 }}>
-          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: t.textMuted + "40" }} />
-        </View>
+        {/* The drawer fills the content area below the native nav header, which
+            already occupies the top safe-area — so the header row sits flush to
+            the top with no extra inset padding. */}
         <View style={localStyles.header}>
           <Text style={[localStyles.headerTitle, { color: t.text }]}>Skills & tools</Text>
           <TouchableOpacity onPress={onClose} hitSlop={8}>
