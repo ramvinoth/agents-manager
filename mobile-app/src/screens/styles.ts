@@ -574,8 +574,11 @@ function buildStyles(t: Theme) {
     capModalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
     capModalCard: { maxHeight: "88%", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 },
     capModalTitle: { fontSize: 17, fontWeight: "700", marginBottom: 10 },
-    capModalActions: { flexDirection: "row", alignItems: "center", gap: 20, paddingTop: 12 },
-    capModalBtn: { fontSize: 15 },
+    capModalActions: { flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: t.border },
+    // Real 44pt tap targets (HIG minimum) so the action row isn't a row of
+    // pixel-thin glyphs; padding also visually separates Delete / Close / Save.
+    capModalBtnHit: { minHeight: 44, paddingHorizontal: 14, justifyContent: "center" },
+    capModalBtn: { fontSize: 16 },
     sheetPills: { paddingHorizontal: 18, paddingVertical: 10, gap: 8 },
     // Bordered + bg one step darker than the sheet so each pill reads as a
     // distinct, tappable element (previously chipBg on surface was near-invisible

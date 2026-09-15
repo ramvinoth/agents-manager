@@ -6,13 +6,17 @@
  */
 import React, { useEffect, useState } from "react"
 import {
+  Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { api, type McpServer, type Skill } from "../api/client"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
@@ -27,38 +31,54 @@ export function EditorModal({
   onClose,
   onSave,
   onDelete,
+  deleteLabel,
 }: {
   title: string
   children: React.ReactNode
   onClose: () => void
   onSave?: () => void
   onDelete?: () => void
+  deleteLabel?: string
 }) {
   const styles = useStyles()
   const t = useTheme()
+  const insets = useSafeAreaInsets()
+  // Every other destructive action in the app confirms first (ChatActions,
+  // ProvidersScreen, KanbanScreen…). Route delete through the same Alert so a
+  // single mis-tap can't erase a skill/MCP server with no undo.
+  const confirmDelete = onDelete
+    ? () =>
+        Alert.alert(deleteLabel ? `Delete ${deleteLabel}?` : "Delete?", "This can't be undone.", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: onDelete },
+        ])
+    : undefined
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.capModalBackdrop}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.capModalBackdrop}
+      >
         <View style={[styles.capModalCard, { backgroundColor: t.bg }]}>
           <Text style={[styles.capModalTitle, { color: t.text }]}>{title}</Text>
           <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
-          <View style={styles.capModalActions}>
-            {onDelete ? (
-              <TouchableOpacity testID="cap-delete" onPress={onDelete} style={{ marginRight: "auto" }}>
+          <View style={[styles.capModalActions, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {confirmDelete ? (
+              <TouchableOpacity testID="cap-delete" onPress={confirmDelete} style={styles.capModalBtnHit}>
                 <Text style={[styles.capModalBtn, { color: t.danger }]}>Delete</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity testID="cap-close" onPress={onClose}>
+            <TouchableOpacity testID="cap-close" onPress={onClose} style={[styles.capModalBtnHit, { marginLeft: "auto" }]}>
               <Text style={[styles.capModalBtn, { color: t.textMuted }]}>Close</Text>
             </TouchableOpacity>
             {onSave ? (
-              <TouchableOpacity testID="cap-save" onPress={onSave}>
+              <TouchableOpacity testID="cap-save" onPress={onSave} style={styles.capModalBtnHit}>
                 <Text style={[styles.capModalBtn, { color: t.accent, fontWeight: "700" }]}>Save</Text>
               </TouchableOpacity>
             ) : null}
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   )
 }
@@ -140,6 +160,7 @@ export function SkillEditor({
       onClose={onClose}
       onSave={readonly ? undefined : save}
       onDelete={skill?.editable ? del : undefined}
+      deleteLabel={skill ? `/${skill.name}` : undefined}
     >
       <Text style={{ fontSize: 12, fontWeight: "600", color: t.textMuted, marginBottom: 4 }}>
         {skill ? "NAME" : "SKILL NAME"}
@@ -233,6 +254,7 @@ export function McpEditor({
       onClose={onClose}
       onSave={readonly ? undefined : save}
       onDelete={server?.editable ? del : undefined}
+      deleteLabel={server?.name}
     >
       <Text style={{ fontSize: 12, fontWeight: "600", color: t.textMuted, marginBottom: 4 }}>
         {server ? "SERVER NAME" : "NAME"}
