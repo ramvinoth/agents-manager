@@ -792,6 +792,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
+      // While the capabilities drawer (and its editor modal) is open, THIS
+      // screen has nothing focused — but the keyboard notification is global,
+      // so without this the chat + composer behind the transparent modal would
+      // slide up too. Only the editor's own KAV should react then.
+      enabled={!capDrawerOpen}
     >
       {/* WhatsApp-style in-thread search: chevrons step through matches. */}
       {searchOpen ? (
