@@ -146,7 +146,7 @@ _TOOL_LIST = [
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},
-    {"name": "card_list", "description": "List cards in your project, optionally filtered by session/assignee.",
+    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Optionally filtered by session/assignee.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"}, "assignee": {"type": "integer"}}}},
     {"name": "loop_list",
@@ -157,7 +157,7 @@ _TOOL_LIST = [
      "description": "The current loop-firing mode (user/harman/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Act on the board ────────────────────────────────────────────────────
-    {"name": "card_create", "description": "Create a card on the board (title required).",
+    {"name": "card_create", "description": "Create a card on the board (title required). Board cards are the durable work ledger: park deferred, handed-off, or follow-up work here so it survives this session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"},
          "column_id": {"type": "integer"}, "project_id": {"type": "integer"}}}},
