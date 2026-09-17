@@ -1306,6 +1306,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     proj = _db.project_ensure(host, cwd, os.path.basename(cwd.rstrip("/")) or cwd)
                     kanban_project = str(proj["id"])
                     env["VIEWER_KANBAN_PROJECT"] = kanban_project
+                    # Persist session -> project so read-only consumers (the
+                    # board route's ?session= resolution) can find it without
+                    # re-deriving the session's cwd. Meta dies with the session.
+                    _db.session_meta_patch(session_id, {"kanbanProject": kanban_project})
                 except Exception:
                     kanban_project = ""
             # Fall back to a setup-token captured by the viewer's login flow

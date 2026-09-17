@@ -66,6 +66,13 @@ class OrchestratorMixin:
     def _g_org_board(self, req):
         project = (req.query.get("project") or [None])[0]
         if not project:
+            # A board (its columns) is per-project. When no project is given,
+            # resolve the session's own project — the one the engine bound to
+            # it at spawn (persisted in session_meta).
+            session = (req.query.get("session") or [None])[0]
+            if session:
+                project = (db.session_meta_get(session) or {}).get("kanbanProject")
+        if not project:
             self.send_json({"error": "project required"}, status=400); return
         self.send_json({"columns": db.board_columns_list(int(project))})
 

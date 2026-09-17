@@ -589,7 +589,15 @@ export const api = {
   orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
   orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
     req<OrgProject>("POST", "/api/org/projects", body),
-  orgBoard: () => req<{ columns: BoardColumn[] }>("GET", "/api/org/board"),
+  // A board's columns are per-project. Pass the project directly, or the
+  // session and the server resolves that session's own project (bound at spawn).
+  orgBoard: (filter: CardFilter = {}) => {
+    const p = new URLSearchParams()
+    if (filter.project !== undefined) p.set("project", String(filter.project))
+    else if (filter.session !== undefined) p.set("session", filter.session)
+    const q = p.toString()
+    return req<{ columns: BoardColumn[] }>("GET", `/api/org/board${q ? "?" + q : ""}`)
+  },
   orgCards: (filter: CardFilter = {}) => {
     const p = new URLSearchParams()
     if (filter.session !== undefined) p.set("session", filter.session)

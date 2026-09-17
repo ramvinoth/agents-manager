@@ -45,7 +45,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
     setError("")
     try {
       const [b, c, e] = await Promise.all([
-        api.orgBoard(),
+        api.orgBoard({ project: filter.project, session: filter.session }),
         api.orgCards(filter),
         api.orgEmployees().catch(() => ({ employees: [] as Employee[] })),
       ])

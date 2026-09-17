@@ -11,10 +11,10 @@ import { useTheme } from "../lib/useTheme"
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
 /**
- * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects,
- * the open Approvals queue Harman feeds (Approve/Deny), and a read-only audit
- * timeline. The full unfiltered board is one tap away. Read-heavy; mutations are
- * limited to approving/denying and creating employees/projects (manager authority,
+ * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects
+ * (each opens its board), the open Approvals queue Harman feeds (Approve/Deny),
+ * and a read-only audit timeline. Read-heavy; mutations are limited to
+ * approving/denying and creating employees/projects (manager authority,
  * enforced server-side).
  */
 export default function OrgScreen({ navigation }: Props) {
@@ -63,17 +63,6 @@ export default function OrgScreen({ navigation }: Props) {
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
   }, [load])
-
-  useEffect(() => {
-    navigation.setOptions({
-      title: "Company",
-      headerRight: () => (
-        <TouchableOpacity testID="org-open-board" onPress={() => navigation.navigate("Kanban", { title: "Board" })} hitSlop={8} style={{ marginRight: 4 }}>
-          <Icon name="folder" size={22} color={t.accent} />
-        </TouchableOpacity>
-      ),
-    })
-  }, [navigation, t])
 
   // Create employee / project via a cross-platform sheet (Alert.prompt is iOS-only,
   // so the old inline prompt silently no-opped on Android). A project needs a real
