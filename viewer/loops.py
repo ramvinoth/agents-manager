@@ -4,12 +4,18 @@ The actual loop_scheduler and run_loop_iteration live in engine.py.
 This module exists so pure functions (parse_interval, cron_next_run)
 can be unit-tested without importing the full engine.
 
-Jobs support TWO scheduling modes:
+Jobs support THREE scheduling modes:
   1. **interval** (legacy): run every N seconds, nextRun = now + interval.
   2. **cron**: a 5-field cron expression (minute hour dom month dow) evaluated
      in the server's local timezone. When `cron` is set it takes precedence;
      `interval` is ignored. The scheduler computes `nextRun` from the cron
      expression, so "daily at 09:00" stays locked to 09:00 — no drift.
+  3. **once**: a one-shot task that fires at a single `at` time (a relative
+     offset like "30m"/"2h"/"1d", or an absolute local time like
+     "2026-09-17 21:00") and is deleted when it fires. The scheduler's
+     fire-once branch drops the row; the job_runs history row (loop_id SET
+     NULL on delete) keeps the full audit. This is the "plan ahead" primitive:
+     a run ends by creating the next one-shot to wake itself or a peer.
 """
 import re
 import time
@@ -56,29 +62,65 @@ def allowed_origins(mode):
     return _MODE_ORIGINS.get(mode, _MODE_ORIGINS["user"])
 
 
-def build_schedule(cron_raw, interval_raw, now=None):
+def parse_when(text, now=None):
+    """An `at` input for a one-shot schedule → epoch seconds, or None.
+
+    Two forms, tried in order:
+      relative: "30s" / "5m" / "2h" / "1d" (or plain seconds) → now + that.
+      absolute: ISO 8601 interpreted in the server's local timezone —
+                "2026-09-17 21:00", "2026-09-17T21:00:00", date-only
+                "2026-09-17" (midnight local).
+    Relative offsets clamp to [10s, 7d] so a typo can't fire in an instant or
+    schedule a month out; longer deferrals should use an absolute date.
+    Past absolute times are accepted (they fire on the next scheduler tick).
+    `now` is injectable for tests.
+    """
+    now = time.time() if now is None else now
+    text = str(text or "").strip()
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smhd]?)", text)
+    if m:
+        val = float(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+        return now + int(min(max(val, 10), 604800))
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def build_schedule(cron_raw, interval_raw, when_raw=None, now=None):
     """Validate a loop's schedule inputs → the storable schedule fields, or an error.
 
-    Returns (fields, error): on success `fields` is {"cron", "interval", "nextRun"}
-    ready to merge into a loop record and `error` is None; on bad input `fields` is
-    None and `error` is a human-readable string. Shared by the human loop route and
-    the gated agent loop action so the two can never drift on what a valid schedule
-    is, or when it next fires.
+    Returns (fields, error): on success `fields` is {"cron", "interval", "kind",
+    "nextRun"} ready to merge into a loop record and `error` is None; on bad
+    input `fields` is None and `error` is a human-readable string. Shared by
+    the human loop route and the gated agent loop action so the two can never
+    drift on what a valid schedule is, or when it next fires.
 
-    Cron wins over interval (matching the scheduler). `now` is injectable for tests
-    and defaults to the wall clock. PURE apart from that clock read — no db, no I/O.
+    Precedence: cron > `at` (one-shot) > interval, matching the scheduler.
+    `kind` is "recurring" for cron/interval and "once" for an `at` schedule.
+    `now` is injectable for tests and defaults to the wall clock. PURE apart
+    from that clock read — no db, no I/O.
     """
     now = time.time() if now is None else now
     cron_expr = str(cron_raw or "").strip() or None
     if cron_expr:
         if not parse_cron(cron_expr):
             return None, "Invalid cron expression"
-        return {"cron": cron_expr, "interval": 0,
+        return {"cron": cron_expr, "interval": 0, "kind": "recurring",
                 "nextRun": cron_next_run(cron_expr, now) or (now + 86400)}, None
+    if when_raw is not None and str(when_raw).strip():
+        when = parse_when(when_raw, now)
+        if when is None:
+            return None, ("Bad 'at' time — use a relative offset (30m, 2h, 1d) "
+                          "or a local time (e.g. '2026-09-17 21:00')")
+        return {"cron": None, "interval": 0, "kind": "once", "nextRun": when}, None
     interval = parse_interval(interval_raw or "")
     if not interval:
-        return None, "Provide a cron expression or interval (e.g. 30s, 5m, 1h)"
-    return {"cron": None, "interval": interval, "nextRun": now + interval}, None
+        return None, ("Provide a cron expression, an 'at' time "
+                      "(e.g. 30m, 2h, 1d or '2026-09-17 21:00'), "
+                      "or an interval (e.g. 30s, 5m, 1h)")
+    return {"cron": None, "interval": interval, "kind": "recurring",
+            "nextRun": now + interval}, None
 
 
 # ---------------------------------------------------------------------------

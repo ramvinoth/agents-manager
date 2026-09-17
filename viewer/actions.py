@@ -162,7 +162,10 @@ def _loop_create(a):
         return {"error": "Empty prompt"}
     if not session:
         return {"error": "session required"}
-    sched, err = build_schedule(a.get("cron"), a.get("interval"))
+    # `at` makes this a one-shot (kind='once'): fires once at that time, then
+    # the scheduler deletes the row. A run can schedule its own next wake by
+    # calling this again at the end of itself.
+    sched, err = build_schedule(a.get("cron"), a.get("interval"), a.get("at"))
     if err:
         return {"error": err}
     lid = _uuid.uuid4().hex[:12]
@@ -173,7 +176,9 @@ def _loop_create(a):
              "origin": "harman", **sched}
     db.loop_upsert(lid, entry)
     return {"created": lid, "origin": "harman",
-            "interval": sched.get("interval") or 0, "cron": sched.get("cron")}
+            "kind": sched.get("kind", "recurring"),
+            "interval": sched.get("interval") or 0, "cron": sched.get("cron"),
+            "nextRun": sched.get("nextRun")}
 
 
 def _loop_update(a):
@@ -200,15 +205,26 @@ def _loop_update(a):
         fields["provider"] = (a.get("provider") or "").strip()
     if "enabled" in a:
         fields["enabled"] = bool(a.get("enabled"))
-    if "cron" in a or "interval" in a:
+    if "at" in a:
+        # An explicit `at` REPLACES the schedule with a one-shot — the loop's
+        # existing cron/interval must not shadow it (build_schedule's cron-wins
+        # precedence would otherwise swallow the `at` silently).
+        sched, err = build_schedule(None, None, a.get("at"))
+    elif "cron" in a or "interval" in a:
+        # A cron or interval converts the loop back to recurring (kind comes
+        # from build_schedule).
         sched, err = build_schedule(a.get("cron", loop.get("cron")),
                                     a.get("interval", loop.get("interval")))
+    else:
+        sched = None
+    if sched is not None:
         if err:
             return {"error": err}
         fields.update(sched)
     updated = db.loop_update(lid, fields)
-    return {"updated": lid, "interval": updated.get("interval"),
-            "cron": updated.get("cron")} if updated else {"error": "not found"}
+    return {"updated": lid, "kind": updated.get("kind", "recurring"),
+            "interval": updated.get("interval"), "cron": updated.get("cron")} \
+        if updated else {"error": "not found"}
 
 
 def _loop_delete(a):

@@ -323,7 +323,8 @@ class OrchestratorMixin:
         self._org_send(req, "loop_create", {
             "session": target, "path": body.get("path", ""),
             "prompt": body.get("prompt", ""), "cron": body.get("cron"),
-            "interval": body.get("interval"), "model": body.get("model", ""),
+            "interval": body.get("interval"), "at": body.get("at"),
+            "model": body.get("model", ""),
             "provider": body.get("provider", "")})
 
     def _p_org_loops_update(self, req):

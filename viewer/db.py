@@ -248,10 +248,16 @@ def init_db():
               -- setting gates firing per-origin, INDEPENDENT of the automation
               -- master switch. Existing rows backfill to 'user' (the ALTER below),
               -- so a human's own schedules keep running after the upgrade.
-              origin      TEXT NOT NULL DEFAULT 'user'
+              origin      TEXT NOT NULL DEFAULT 'user',
+              -- 'recurring' (the default: cron or interval, re-advances every
+              -- fire) or 'once' (a one-shot `at` task: the scheduler deletes the
+              -- row when it fires — job_runs keeps the audit, so the loops table
+              -- never accumulates spent one-shots).
+              kind        TEXT NOT NULL DEFAULT 'recurring'
             );
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'user';
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '';
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'recurring';
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -1186,6 +1192,7 @@ _LOOP_COLS = (
     ("lastRc", "last_rc", None), ("created", "created", 0), ("model", "model", ""),
     ("provider", "provider", ""),
     ("enabled", "enabled", True), ("origin", "origin", "user"),
+    ("kind", "kind", "recurring"),
 )
 
 

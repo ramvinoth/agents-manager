@@ -181,6 +181,17 @@ def loop_scheduler(launch):
                 if job and job["running"]:
                     db.loop_update(lp["id"], {"nextRun": now + 30})  # session busy; retry shortly
                     continue
+                # One-shot ("at") tasks: they die on this fire. The job_runs row
+                # (loop_id is SET NULL, not CASCADE, on delete) keeps the full
+                # audit, so dropping the schedule loses nothing — and spent
+                # one-shots can never accumulate in the loops table. The row is
+                # deleted BEFORE launch: a one-shot that then fails to start
+                # (session busy/missing) is recorded in job_runs and done,
+                # never retried tick after tick.
+                if lp.get("kind") == "once":
+                    db.loop_delete(lp["id"])
+                    due.append(lp)
+                    continue
                 # Cron-based jobs compute their next run from the cron expression;
                 # interval-based ones just add the interval.
                 cron_expr = lp.get("cron")
