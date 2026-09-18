@@ -211,15 +211,19 @@ before?" is a query over data already being written.
 `delegation_enabled` above scopes one behaviour: whether Harman may *approve* on Ram's
 behalf. Ram asked for something broader — *"pass the full system with a single switch and
 keep it off"* — so there is one flag above every rail here: **`automation_enabled` in
-Harman config, default off**. While it is off, nothing starts without a person asking:
-not Harman's manager tick, not scheduled loops or cron jobs. It is the switch you flip
-before leaving the machine alone, and the state a fresh install ships in.
+Harman config, default off**. While it is off, nothing starts *without a person asking*:
+not Harman's manager tick, not any agent-scheduled loop or one-shot. The owner's own
+scheduled loops ARE a person asking — they follow the loop-control `mode` alone, so the
+switch pauses the machine's autonomy, not the human's calendar. It is the switch you
+flip before leaving the machine alone, and the state a fresh install ships in.
 
 **Enforced at one point, not one per path.** `engine.loop_scheduler` is the only thread
-that starts work nobody asked for, so the check lives there — above both the loop launcher
-and `harman_tick`. Gating each path at its own call site would make "everything is paused"
-a claim that decays the first time somebody adds a path, which is exactly the failure the
-switch exists to prevent. Anything added to that thread later is paused by default.
+that starts work nobody asked for, so both unattended paths are gated inside it: the loop
+launcher (`fire_due_loops`) intersects the origins licensed by `mode` with the switch —
+the agent side of the set is halted when it is off — and `harman_tick` is skipped outright.
+Gating each path at its own call site would make "everything is paused" a claim that
+decays the first time somebody adds a path, which is exactly the failure the switch
+exists to prevent. Anything added to that thread later is paused by default.
 
 Four properties are load-bearing:
 

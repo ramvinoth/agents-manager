@@ -117,20 +117,31 @@ def fire_due_loops(launch, now):
     testable without a live thread. All state changes go through the db and the
     `launch` callback (run_loop_iteration); returns nothing.
 
-    Firing is gated by the loop_control mode (which ORIGINS may run), read fresh
-    each pass — deliberately INDEPENDENT of the automation master switch, which
-    governs only Harman's manager tick. The owner can pause Harman's autonomy
-    while their own scheduled loops keep running, and vice-versa. A failed read
-    falls back to 'user' (run the owner's own loops, not agent-made ones) — the
-    same safe default the setting seeds to. An empty origin set ('none' mode)
-    skips the query entirely: nothing fires.
+    Firing is gated by TWO facts, both read fresh each pass:
+      1. the loop_control mode — which ORIGINS are licensed to run;
+      2. the automation master switch — a runtime halt on the autonomous side.
+         With it off, agent-origin (harman) loops do not fire; the owner's own
+         (user) loops follow the mode alone, because they are a human's asking —
+         the machine being unattended does not pause them. Off, then, means
+         exactly "nothing starts without a person asking": no Harman tick, no
+         agent-scheduled work — the switch's documented contract.
+    A failed read falls back to 'user' with the switch treated as off — the
+    same fail-safe direction the settings seed to. An empty origin set ('none'
+    mode, or an agent-only mode while the switch is off) skips the query
+    entirely: nothing fires, and nothing is bumped — paused, not skipped.
     """
+    from viewer.orchestrator import automation_enabled, loop_mode
+    from viewer.loops import AGENT_ORIGIN, allowed_origins
     try:
-        from viewer.orchestrator import loop_mode
-        from viewer.loops import allowed_origins
         origins = allowed_origins(loop_mode())
+        autonomous = automation_enabled()
     except Exception:
-        origins = allowed_origins("user")
+        origins, autonomous = allowed_origins("user"), False
+    # The master switch halts the autonomous side of the licensed set. Loops
+    # left out here keep their schedule untouched (below) — a resume fires each
+    # once, on its own cadence, instead of replaying the whole pause window.
+    if not autonomous:
+        origins = origins - {AGENT_ORIGIN}
     if not origins:
         return
 

@@ -332,11 +332,13 @@ def init_db():
               $${"automation_enabled": false, "enabled": true, "interval": 30,
                  "budget": 2, "projects": [], "default_provider": ""}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
-            -- Loop-firing control, SEPARATE from the automation master switch.
-            -- 'mode' is one of user|harman|both|none: which loop origins may fire.
+            -- Loop-firing control. 'mode' is one of user|harman|both|none: which
+            -- loop ORIGINS are licensed to fire. It is a different fact from the
+            -- automation master switch (a runtime halt on the agent side of the
+            -- same set — they intersect at fire time in engine.fire_due_loops).
             -- Default 'user' — a human's own scheduled loops run out of the box;
-            -- harman-created loops stay off until the owner opts in. DO NOTHING so
-            -- a later user edit always wins over the seed.
+            -- harman-created loops additionally need the master switch on.
+            -- DO NOTHING so a later user edit always wins over the seed.
             INSERT INTO settings (key, value) VALUES ('loop_control',
               $${"mode": "user"}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
@@ -354,7 +356,7 @@ Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, hos
 
 Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
 
-Steering rules: you may create/edit loops for OTHER sessions, never your own. Autonomous loop firing requires BOTH the loop-control mode (user|harman|both|none) to permit the origin AND the automation master switch (harman.automation_enabled) to be ON; it defaults OFF, and when off nothing fires on its own. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
+Steering rules: you may create/edit loops for OTHER sessions, never your own. Agent-scheduled (harman) loops fire only when the loop-control mode (user|harman|both|none) licenses that origin AND the automation master switch (harman.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
 
 Full design: ORCHESTRATOR_MCP.md.$preamble$::text))
               ON CONFLICT (key) DO NOTHING;

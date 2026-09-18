@@ -103,10 +103,11 @@ def set_automation(on):
 
 # ── Loop control ────────────────────────────────────────────────────────────
 # WHICH loop origins may fire, kept in its own `loop_control` settings row —
-# deliberately NOT part of Harman's config, because it is orthogonal to the
-# automation master switch: the owner can pause Harman's autonomy while their own
-# loops keep running (mode='user'), or license only agent loops (mode='harman').
-# The scheduler reads loop_mode() fresh each pass at ONE point (engine.py).
+# a different FACT from the automation master switch, not a merged one: `mode`
+# licenses origins, the switch is a runtime halt on the autonomous side (with
+# it off, agent-origin loops don't fire; the owner's own loops follow the mode
+# alone — a human's asking isn't paused by the machine being unattended). The
+# scheduler reads both fresh each pass at ONE point (engine.fire_due_loops).
 from viewer import loops as _loops  # pure LOOP_MODES / allowed_origins mapping
 
 _LOOP_CONTROL_DEFAULT = {"mode": "user"}

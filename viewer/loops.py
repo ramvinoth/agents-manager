@@ -33,10 +33,18 @@ def parse_interval(text):
     return int(min(max(val, 30), 86400))
 
 
+# Loop origins — who authored the schedule:
+#   user   → a human scheduled it (their explicit consent; a person asking)
+#   harman → an agent session scheduled it (autonomous, plan-ahead work)
+USER_ORIGIN = "user"
+AGENT_ORIGIN = "harman"
+
 # Loop-firing control. WHO may run scheduled loops right now, keyed off the
-# loop_control setting's `mode`. Deliberately SEPARATE from the automation master
-# switch (which gates only Harman's manager tick): the owner can pause Harman's
-# autonomy while their own scheduled loops keep running, and vice-versa.
+# loop_control setting's `mode`. `mode` LICENSES origins; the automation master
+# switch is a separate runtime HALT on the autonomous side, enforced at fire
+# time (engine.fire_due_loops): with it off, agent-origin loops do not fire
+# while the owner's own loops follow the mode alone — a human's asking is not
+# paused by the machine being unattended.
 #
 #   user   → only human-scheduled loops fire (the default; a fresh install runs
 #            the owner's own loops but nothing an agent created)
@@ -49,9 +57,9 @@ def parse_interval(text):
 # still honours the human's own schedules without licensing agent-made ones.
 LOOP_MODES = ("user", "harman", "both", "none")
 _MODE_ORIGINS = {
-    "user": frozenset({"user"}),
-    "harman": frozenset({"harman"}),
-    "both": frozenset({"user", "harman"}),
+    "user": frozenset({USER_ORIGIN}),
+    "harman": frozenset({AGENT_ORIGIN}),
+    "both": frozenset({USER_ORIGIN, AGENT_ORIGIN}),
     "none": frozenset(),
 }
 

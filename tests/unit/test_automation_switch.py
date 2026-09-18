@@ -1,14 +1,17 @@
 """Unit tests for the automation master switch AND the loop-control mode.
 
-The scheduler has TWO unattended paths and — after the execution-control split — two
-independent gates over them, both enforced in `engine.loop_scheduler`:
+The scheduler has TWO unattended paths and TWO facts gated inside it, both enforced in
+`engine.loop_scheduler` at one point:
 
-- the **master switch** (`orchestrator.automation_enabled`) governs Harman's manager
-  tick and ONLY that. Off means Harman starts no work of its own.
-- the **loop-control mode** (`orchestrator.loop_mode` → `loops.allowed_origins`) governs
-  which loop ORIGINS may fire. It is orthogonal to the switch: the owner can pause
-  Harman's autonomy while their own scheduled loops keep running, or license only agent
-  loops. This is the property the user asked for, so it is pinned here beside the switch.
+- the **master switch** (`orchestrator.automation_enabled`) is the runtime halt on
+  everything autonomous: off, Harman's manager tick does not run and no agent-origin
+  (harman) loop fires.
+- the **loop-control mode** (`orchestrator.loop_mode` → `loops.allowed_origins`)
+  licenses which loop ORIGINS may fire. The two INTERSECT at fire time: a loop fires
+  only if its origin is licensed by the mode AND (for the agent origin) the switch is
+  on. The owner's own (user) loops follow the mode alone — a human's asking is not
+  paused by the machine being unattended. This is the property the user asked for
+  ("tied to the automation enable system"), so it is pinned here beside the switch.
 
 Both gates live in one thread, so they are tested together against one driver rather
 than split across two files where neither would assert the thing the user relies on.
@@ -198,9 +201,10 @@ class TestResumingIsHarderThanPausing:
 # ── the scheduler, gate 1: the master switch covers ONLY Harman's tick ───────
 
 class TestMasterSwitchGatesHarmanTick:
-    """After the execution-control split the master switch governs Harman's manager
-    tick and nothing else. Loop firing has its own gate (below), so these tests pin
-    that the switch neither runs the tick while off nor strands the loop path."""
+    """The master switch is the halt on everything autonomous: Harman's manager
+    tick and (below) the agent side of loop firing. These tests pin that off
+    neither runs the tick nor strands the owner's own loops — a human's asking
+    keeps running while the machine's autonomy is paused."""
 
     def test_off_suppresses_harman_tick_but_not_the_owners_loop(self, monkeypatch, due_loop):
         """The property the user asked for: pausing Harman's autonomy must NOT stop
@@ -238,10 +242,9 @@ class TestMasterSwitchGatesHarmanTick:
 # ── the scheduler, gate 2: loop-control mode covers WHICH origins fire ────────
 
 class TestLoopModeGatesLoopFiring:
-    """The loop-control mode is the SOLE authority over loop firing, independent of
-    the master switch. Each mode licenses a set of origins; a due loop fires only if
-    its origin is licensed. `harman_tick` is stubbed out so these tests isolate the
-    loop path."""
+    """Each mode licenses a set of origins; a due loop fires only if its origin is
+    licensed — and the agent origin additionally needs the master switch on.
+    `harman_tick` is stubbed out so these tests isolate the loop path."""
 
     def _no_tick(self, monkeypatch):
         monkeypatch.setattr(orchestrator, "harman_tick", lambda *a, **k: None)
@@ -277,7 +280,9 @@ class TestLoopModeGatesLoopFiring:
 
     def test_harman_mode_fires_an_agent_loop_only(self, monkeypatch, due_loop):
         """'harman' licenses agent loops and NOT the human's — the mirror of the
-        default, so the two origins can be controlled separately."""
+        default, so the two origins can be controlled separately. The switch is ON:
+        it licenses nothing, it only halts, so agent firing needs mode + switch."""
+        due_loop.settings["harman"] = {"automation_enabled": True}
         due_loop.settings["loop_control"] = {"mode": "harman"}
         due_loop.loops = [
             {"id": "u", "session": "us", "path": "p", "prompt": "go", "interval": 60,
@@ -291,6 +296,7 @@ class TestLoopModeGatesLoopFiring:
         assert [a[0] for a in launched] == ["hs"]   # only the agent loop
 
     def test_both_mode_fires_every_origin(self, monkeypatch, due_loop):
+        due_loop.settings["harman"] = {"automation_enabled": True}
         due_loop.settings["loop_control"] = {"mode": "both"}
         due_loop.loops = [
             {"id": "u", "session": "us", "path": "p", "prompt": "go", "interval": 60,
@@ -304,15 +310,72 @@ class TestLoopModeGatesLoopFiring:
         assert sorted(a[0] for a in launched) == ["hs", "us"]
 
     def test_the_master_switch_does_not_license_loops(self, monkeypatch, due_loop):
-        """The two gates are orthogonal: turning automation ON must not fire a loop
-        that the mode ('none') forbids. If the switch leaked into loop firing, this
-        agent could resume its own scheduled work by flipping automation."""
+        """The switch HALTS, it does not LICENSE: turning automation ON must not
+        fire a loop that the mode ('none') forbids. If the switch could license,
+        this agent could resume its own scheduled work by flipping automation."""
         due_loop.settings["harman"] = {"automation_enabled": True}
         due_loop.settings["loop_control"] = {"mode": "none"}
         self._no_tick(monkeypatch)
         launched = []
         _one_pass(monkeypatch, launched)
         assert launched == []
+
+    def test_switch_off_halts_only_the_agent_side(self, monkeypatch, due_loop):
+        """The property the user asked for, in one assertion: with the switch OFF
+        and mode 'both', the owner's own loop still fires while the agent's is
+        PAUSED — its row keeps its schedule untouched (paused, not skipped), so a
+        resume fires it once on its own cadence instead of replaying the pause."""
+        due_loop.loops = [
+            {"id": "u", "session": "us", "path": "p", "prompt": "go", "interval": 60,
+             "nextRun": 0, "enabled": True, "origin": "user"},
+            {"id": "h", "session": "hs", "path": "p", "prompt": "go", "interval": 60,
+             "nextRun": 0, "enabled": True, "origin": "harman"},
+        ]
+        due_loop.settings["loop_control"] = {"mode": "both"}
+        self._no_tick(monkeypatch)
+        launched = []
+        _one_pass(monkeypatch, launched)
+        assert [a[0] for a in launched] == ["us"]
+        # The paused agent row must be untouched: no nextRun bump, no run
+        # recorded — only the fired user loop may appear in the update log.
+        by_id = {lp["id"]: lp for lp in due_loop.loops}
+        assert by_id["h"]["nextRun"] == 0
+        assert all(lid != "h" for lid, _ in due_loop.loop_updates)
+
+    def test_harman_mode_with_switch_off_fires_nothing(self, monkeypatch, due_loop):
+        """Mode 'harman' licenses ONLY the agent origin, and the switch halts it:
+        nothing may fire, and the row stays paused (schedule untouched)."""
+        due_loop.loops = [
+            {"id": "h", "session": "hs", "path": "p", "prompt": "go", "interval": 60,
+             "nextRun": 0, "enabled": True, "origin": "harman"},
+        ]
+        due_loop.settings["loop_control"] = {"mode": "harman"}
+        self._no_tick(monkeypatch)
+        launched = []
+        _one_pass(monkeypatch, launched)
+        assert launched == []
+        assert due_loop.loop_updates == []
+        assert due_loop.loops[0]["nextRun"] == 0
+
+    def test_unreadable_switch_halts_the_agent_side(self, monkeypatch, due_loop):
+        """If reading the switch raises, it is treated as OFF — the fail-safe
+        direction. The owner's loop still fires; the agent's does not. Failing
+        open here would let a DB fault silently un-pause the machine's autonomy."""
+        def boom():
+            raise RuntimeError("cannot read config")
+
+        monkeypatch.setattr(orchestrator, "automation_enabled", boom)
+        due_loop.loops = [
+            {"id": "u", "session": "us", "path": "p", "prompt": "go", "interval": 60,
+             "nextRun": 0, "enabled": True, "origin": "user"},
+            {"id": "h", "session": "hs", "path": "p", "prompt": "go", "interval": 60,
+             "nextRun": 0, "enabled": True, "origin": "harman"},
+        ]
+        due_loop.settings["loop_control"] = {"mode": "both"}
+        self._no_tick(monkeypatch)
+        launched = []
+        _one_pass(monkeypatch, launched)
+        assert [a[0] for a in launched] == ["us"]
 
 
 # ── housekeeping runs regardless of either gate ──────────────────────────────
