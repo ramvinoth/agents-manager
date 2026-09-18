@@ -111,21 +111,118 @@ _PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_t
 _last_purge = 0.0
 
 
+def fire_due_loops(launch, now):
+    """One pass of the loop-firing section of loop_scheduler, extracted so its
+    invariants (busy-defer, one-shot fire-once, audit-row ordering) are unit
+    testable without a live thread. All state changes go through the db and the
+    `launch` callback (run_loop_iteration); returns nothing.
+
+    Firing is gated by the loop_control mode (which ORIGINS may run), read fresh
+    each pass — deliberately INDEPENDENT of the automation master switch, which
+    governs only Harman's manager tick. The owner can pause Harman's autonomy
+    while their own scheduled loops keep running, and vice-versa. A failed read
+    falls back to 'user' (run the owner's own loops, not agent-made ones) — the
+    same safe default the setting seeds to. An empty origin set ('none' mode)
+    skips the query entirely: nothing fires.
+    """
+    try:
+        from viewer.orchestrator import loop_mode
+        from viewer.loops import allowed_origins
+        origins = allowed_origins(loop_mode())
+    except Exception:
+        origins = allowed_origins("user")
+    if not origins:
+        return
+
+    # Fire due loops. Per-tick bumps (nextRun/runs/lastRun) are written to the
+    # loop's row atomically; job_runs records each firing for the audit trail.
+    due = []
+    for lp in db.loops_due(now, origins):
+        job = CHAT_JOBS.get(lp["session"])
+        if job and job["running"]:
+            db.loop_update(lp["id"], {"nextRun": now + 30})  # session busy; retry shortly
+            continue
+        # One-shot ("at") tasks die on this fire, but the row is NOT deleted here:
+        # the job_runs audit row is opened in the launch loop below and its loop_id
+        # foreign key points at this loops row — deleting first makes that insert
+        # violate the FK (the best-effort except swallows it) and the audit row is
+        # lost. The launch loop deletes the row right after the audit row exists;
+        # the FK's ON DELETE SET NULL then detaches the audit record instead of
+        # destroying it, so the full history survives. A one-shot that then fails
+        # to start (session busy/missing) is recorded in job_runs and done — never
+        # retried tick after tick.
+        if lp.get("kind") == "once":
+            due.append(lp)
+            continue
+        # Cron-based jobs compute their next run from the cron expression;
+        # interval-based ones just add the interval.
+        cron_expr = lp.get("cron")
+        if cron_expr:
+            from viewer.loops import cron_next_run
+            nxt = cron_next_run(cron_expr, now)
+            next_run = nxt if nxt else now + 86400
+        else:
+            next_run = now + (lp.get("interval") or 0)
+        db.loop_update(lp["id"], {
+            "nextRun": next_run, "runs": (lp.get("runs") or 0) + 1, "lastRun": now})
+        due.append(lp)
+    for lp in due:
+        lid, session, prompt = lp["id"], lp["session"], lp["prompt"]
+        # Open a history row now; the run thread closes it via on_done. A run
+        # that never starts (session busy/missing) is finalized here as an
+        # error so no row is left dangling "running" forever.
+        try:
+            run_id = db.job_run_start(lid, session, prompt)
+        except Exception:
+            run_id = None
+        # One-shot: the audit row exists now (its loop_id still points at the
+        # live loops row), so retire the schedule — the FK's ON DELETE SET NULL
+        # detaches the audit record instead of destroying it.
+        if lp.get("kind") == "once":
+            db.loop_delete(lid)
+
+        def _on_done(rc, detail="", lid=lid, run_id=run_id):
+            try:
+                db.job_run_finish(run_id, rc, detail)
+                db.loop_update(lid, {"lastRc": rc})
+            except Exception:
+                pass
+
+        try:
+            started = launch(session, lp["path"], prompt,
+                             lp.get("model", ""), lp.get("provider", ""), _on_done)
+        except Exception as e:
+            started = False
+            if run_id is not None:
+                try:
+                    db.job_run_finish(run_id, -1, str(e)[:2000])
+                except Exception:
+                    pass
+        if not started and run_id is not None:
+            try:
+                db.job_run_finish(run_id, -1, "did not start (session busy or missing)")
+            except Exception:
+                pass
+
+
 def loop_scheduler(launch):
     """Background thread: fire due loops, reap finished chat jobs so CHAT_JOBS
     doesn't grow unbounded, and hourly purge old job-run history.
 
-    This thread is the ONLY place work starts without a human asking for it, which
-    is why the master switch is enforced here and nowhere else: one `if` covers
-    both unattended paths (scheduled loops, Harman's manager tick) and covers any
-    path added to this thread later. Gating each path at its own call site would
-    make "everything is paused" a claim that decays the next time someone adds one.
+    This thread is the ONLY place work starts without a human asking for it, and it
+    carries two INDEPENDENT gates that must not be conflated:
 
-    Paused means paused, not queued: a due loop's `nextRun` is left untouched while
-    off, so on resume each loop fires at most ONCE rather than replaying every run
-    that came due in the meantime. Reaping still runs — it frees memory and expires
-    session tokens, and holding stale credentials open would be the opposite of
-    safe.
+    - scheduled-loop firing is gated by the loop_control mode (user|harman|both|none)
+      — which origins' loops may run (fire_due_loops). The master switch plays no part.
+    - Harman's manager tick is gated ONLY by the automation master switch (read fresh
+      each pass; unreadable → treated as OFF).
+
+    The owner can thus pause Harman's autonomy while their own scheduled loops keep
+    running, and vice-versa. Paused means paused, not queued: a loop whose origin is
+    disallowed keeps its nextRun untouched, so on resume it fires at most ONCE rather
+    than replaying every run that came due in the meantime. Reaping and the retention
+    purge still run regardless — they free memory, expire session tokens and bound the
+    audit table, and holding stale credentials open would be the opposite of safe.
     """
     global _last_purge
     while True:
@@ -158,84 +255,7 @@ def loop_scheduler(launch):
                 db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
             except Exception:
                 pass
-        # Loop firing is gated by the loop_control mode (which ORIGINS may run),
-        # read fresh each pass — deliberately INDEPENDENT of the automation master
-        # switch below. The owner can pause Harman's autonomy while their own
-        # scheduled loops keep running, and vice-versa. A failed read falls back to
-        # 'user' (run the owner's own loops, not agent-made ones) — the same safe
-        # default the setting seeds to. An empty origin set ('none' mode) skips the
-        # query entirely: nothing fires.
-        try:
-            from viewer.orchestrator import loop_mode
-            from viewer.loops import allowed_origins
-            origins = allowed_origins(loop_mode())
-        except Exception:
-            origins = allowed_origins("user")
-        if origins:
-            # Fire due loops. Per-tick bumps (nextRun/runs/lastRun) are written to
-            # the loop's row atomically; job_runs records each firing for the audit
-            # trail.
-            due = []
-            for lp in db.loops_due(now, origins):
-                job = CHAT_JOBS.get(lp["session"])
-                if job and job["running"]:
-                    db.loop_update(lp["id"], {"nextRun": now + 30})  # session busy; retry shortly
-                    continue
-                # One-shot ("at") tasks: they die on this fire. The job_runs row
-                # (loop_id is SET NULL, not CASCADE, on delete) keeps the full
-                # audit, so dropping the schedule loses nothing — and spent
-                # one-shots can never accumulate in the loops table. The row is
-                # deleted BEFORE launch: a one-shot that then fails to start
-                # (session busy/missing) is recorded in job_runs and done,
-                # never retried tick after tick.
-                if lp.get("kind") == "once":
-                    db.loop_delete(lp["id"])
-                    due.append(lp)
-                    continue
-                # Cron-based jobs compute their next run from the cron expression;
-                # interval-based ones just add the interval.
-                cron_expr = lp.get("cron")
-                if cron_expr:
-                    from viewer.loops import cron_next_run
-                    nxt = cron_next_run(cron_expr, now)
-                    next_run = nxt if nxt else now + 86400
-                else:
-                    next_run = now + (lp.get("interval") or 0)
-                db.loop_update(lp["id"], {
-                    "nextRun": next_run, "runs": (lp.get("runs") or 0) + 1, "lastRun": now})
-                due.append(lp)
-            for lp in due:
-                lid, session, prompt = lp["id"], lp["session"], lp["prompt"]
-                # Open a history row now; the run thread closes it via on_done. A run
-                # that never starts (session busy/missing) is finalized here as an
-                # error so no row is left dangling "running" forever.
-                try:
-                    run_id = db.job_run_start(lid, session, prompt)
-                except Exception:
-                    run_id = None
-
-                def _on_done(rc, detail="", lid=lid, run_id=run_id):
-                    try:
-                        db.job_run_finish(run_id, rc, detail)
-                        db.loop_update(lid, {"lastRc": rc})
-                    except Exception:
-                        pass
-
-                try:
-                    started = launch(session, lp["path"], prompt,
-                                     lp.get("model", ""), lp.get("provider", ""), _on_done)
-                except Exception as e:
-                    started = False
-                    if run_id is not None:
-                        try:
-                            db.job_run_finish(run_id, -1, str(e)[:2000])
-                        except Exception:
-                            pass
-                if not started and run_id is not None:
-                    try:
-                        db.job_run_finish(run_id, -1, "did not start (session busy or missing)")
-                    except Exception:
-                        pass
+        fire_due_loops(launch, now)
         # Harman's autonomous manager tick — hooks into THIS scheduler (no second
         # thread). Gated by the automation master switch (read fresh so a pause
         # takes effect within 5s; unreadable → treated as OFF). Self-throttles to
@@ -1544,8 +1564,21 @@ def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_d
     the scheduler can record the outcome to job-run history; if the run can't start
     (missing file / session busy / unresolvable provider) it is called here with an
     error rc and False is returned, so no history row is left dangling."""
+    if not rel_path:
+        # The loop row carries no path (the MCP `path` field is optional): resolve
+        # the transcript by session id — it is <project-dir>/<id>.jsonl under the
+        # projects root (the same one-level glob the session-list code uses). The
+        # claude CLI can't resume from a bare id in an arbitrary cwd, so an
+        # unresolvable one-shot fails here, loudly, instead of resuming into a
+        # foreign working directory and dying without a trace.
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            if on_done:
+                on_done(-1, f"session not found: {session_id} (loop has no path and no transcript)")
+            return False
+        rel_path = str(matches[0].relative_to(CLAUDE_DIR.parent))
     full = CLAUDE_DIR.parent / rel_path
-    if not full.exists():
+    if not full.is_file():
         if on_done:
             on_done(-1, f"session file missing: {rel_path}")
         return False
