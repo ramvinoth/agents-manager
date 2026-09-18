@@ -157,7 +157,9 @@ export function SettingsPanel() {
             <button className="min-w-0 flex-1 text-left" onClick={() => setModal("provider")}>
               <div className="text-sm font-medium">{providerName}</div>
               <div className="truncate text-[11px] text-muted-foreground">
-                {meta?.provider ? `${meta.convMode || "chat"} mode` : "Uses your Claude login"}
+                {meta?.provider
+                  ? `${meta.convMode || "chat"} mode · ${providers.find((p) => p.id === meta.provider)?.model || "model set on the provider"}`
+                  : "Uses your Claude login"}
               </div>
             </button>
             <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("provider")} title="Choose provider">

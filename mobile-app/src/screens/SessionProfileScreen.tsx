@@ -42,8 +42,11 @@ const MODELS = [
  * Consolidates everything about one session in one place (WhatsApp contact
  * style): its avatar + name at the top, then the controls that used to live in
  * the composer's gear sheet (permission mode, model, system prompt, goal,
- * scheduled jobs, notify) plus its read-only stats. Mode/model persist via the
- * global composerPrefs; the rest via /api/session-meta and /api/loops.
+ * scheduled jobs, notify) plus its read-only stats. With NO provider, the
+ * model pick here is the DEVICE-WIDE composer default (it drives every
+ * provider-less session); WITH a provider, the model is the preset's own
+ * model — shown read-only, because the provider is the editing surface. The
+ * rest persists via /api/session-meta and /api/loops.
  */
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
@@ -337,9 +340,15 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   // One-line value summaries shown on each card header (read state without opening).
   const modeLabel = MODES.find((m) => m.v === mode)?.label || mode
-  const providerName = provider === "" ? "Built-in (Claude)" : providers.find((p) => p.id === provider)?.name || "Custom"
+  const preset = providers.find((p) => p.id === provider)
+  const providerName = provider === "" ? "Built-in (Claude)" : preset?.name || "Custom"
   const behaviourSummary = provider === "" ? `${modeLabel} · Built-in` : `${modeLabel} · ${providerName} · ${convMode === "agent" ? "Agent" : "Chat"}`
-  const modelSummary = provider === "" ? (MODELS.find((m) => m.v === model)?.label || "Default model") : providerName
+  // The model a run will ACTUALLY use: the preset's own model when one is set
+  // (exactly what the runner injects), else the device-wide composer default.
+  // Never the provider's name — that was the old punting label.
+  const modelSummary = provider === ""
+    ? (MODELS.find((m) => m.v === model)?.label || "Default model")
+    : (preset?.model || "Set on the provider")
 
   return (
     <ScrollView
@@ -541,11 +550,14 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {renderCard("model", "sparkle", "Model & alerts", modelSummary, <>
         {provider === "" ? (
           <>
-            <Text style={styles.sheetSection}>MODEL</Text>
+            <Text style={styles.sheetSection}>DEFAULT MODEL</Text>
+            <Text style={styles.sheetHint}>No provider on this session — it runs on your Claude login. The pick below is the device-wide default used by all sessions without a provider.</Text>
             {renderPill(MODELS, model, setModel, "sp-model")}
           </>
         ) : (
-          <Text style={[styles.sheetHint, { marginTop: 12 }]}>This session uses {providerName} ({convMode === "agent" ? "Agent" : "Chat"} mode). Its model is set on the provider.</Text>
+          <Text style={[styles.sheetHint, { marginTop: 12 }]}>
+            {convMode === "agent" ? "Agent" : "Chat"} mode on {providerName}. This session runs model {preset?.model || "(set on the provider)"} — change it by editing the provider.
+          </Text>
         )}
         <View style={styles.ssRow}>
           <View style={{ flex: 1 }}>
