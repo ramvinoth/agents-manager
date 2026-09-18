@@ -346,8 +346,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   // WhatsApp-style header: the session name (tap it to open the session's
   // profile/settings page) with a live "typing…" subtitle while the agent
-  // works. The only header action is search — mode/model/system-prompt/goal/
-  // loops/stats all moved to the SessionProfile screen behind the name.
+  // works. Header actions: search and this session's board (three-dot menu) —
+  // mode/model/system-prompt/goal/loops/stats all moved to the SessionProfile
+  // screen behind the name.
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: () => (
@@ -397,10 +398,22 @@ export default function ThreadScreen({ route, navigation }: Props) {
           <TouchableOpacity
             testID="thread-more"
             accessibilityLabel="more-options"
-            onPress={() => Alert.alert("", "", [
-              { text: "Search", onPress: () => setSearchOpen(true) },
-              { text: "Cancel", style: "cancel" },
-            ])}
+            onPress={() => {
+              // The session id rides along so the board opens as THIS session's
+              // filtered view (the one canonical Kanban, same entry the chat
+              // list's folder icon uses). A brand-new unsent chat has neither,
+              // so it opens the unfiltered board instead of an empty filter.
+              const sid = sessionId || (path?.split("/").pop() || "").replace(/\.jsonl$/, "")
+              Alert.alert("", "", [
+                { text: "Search", onPress: () => setSearchOpen(true) },
+                {
+                  text: "Board",
+                  onPress: () =>
+                    navigation.navigate("Kanban", sid ? { session: sid, title: label } : { title: label }),
+                },
+                { text: "Cancel", style: "cancel" },
+              ])
+            }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
           >
