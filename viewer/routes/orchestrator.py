@@ -353,19 +353,24 @@ class OrchestratorMixin:
     # ungated loop routes (routes.sessions): a person editing their own schedules
     # is not an org action. These run through the org gate and stamp origin='harman'
     # server-side, and every one is guarded by the self-mutation rail below.
-    def _self_mutation_denied(self, req, target_session):
-        """True (and responds 403) if this request would change the loop that drives
-        the very session making it. A worker may reschedule OTHER work, never its
-        own supervision — orglogic.mutates_own_session is the pure test; the acting
-        session id comes from the resolved principal, so a human at the UI (empty
-        acting session) is never caught."""
+    def _self_mutation_denied(self, req, target_session,
+                              what="its own loop",
+                              reason="a session may not schedule or edit its own loop"):
+        """True (and responds 403) if this request would mutate the very session
+        making it. A worker may change OTHER sessions' supervision, never its
+        own — the loop that drives it (its schedule) and its permission mode
+        (whether its tools are gated): a model asking for its own trust is a
+        temptation to a hurried owner-tap, so the request is refused outright;
+        the owner grants it himself at the UI. orglogic.mutates_own_session is
+        the pure test; the acting session id comes from the resolved principal,
+        so a human at the UI (empty acting session) is never caught. `what`/
+        `reason` name the object for the audit row and the 403 body."""
         acting = req.principal.get("session") or ""
         if orglogic.mutates_own_session(acting, target_session or ""):
-            db.audit_append(req.principal["actor"], "loop_self_mutation",
-                            {"session": target_session}, "denied:self_mutation")
-            self.send_json({"denied": True,
-                            "reason": "a session may not schedule or edit its own loop"},
-                           status=403)
+            db.audit_append(req.principal["actor"], "self_mutation",
+                            {"session": target_session, "what": what},
+                            "denied:self_mutation")
+            self.send_json({"denied": True, "reason": reason}, status=403)
             return True
         return False
 

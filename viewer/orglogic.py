@@ -71,6 +71,14 @@ def next_position(cards_in_column, index):
     return (_pos(ordered[index - 1]) + _pos(ordered[index])) / 2.0
 
 
+# The claude CLI permission modes a session's runs may start in. One vocabulary,
+# referenced from three places: engine (applies it to the spawned run),
+# actions (validates a session_mode_set write) and the route/MCP schema
+# (documents it). 'bypass' is the escalation direction — the run goes up with
+# --dangerously-skip-permissions, no tool gated.
+PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
+
+
 # ── Approval gate: classify an action Green (auto) vs Red (needs Ram) ─────────
 # The charter's rule: escalate only what can irreversibly destroy work, spend money
 # or leak a secret, or hit a shared service. Everything else Harman does and logs.
@@ -96,6 +104,13 @@ _RED_ACTIONS = {
     # same "overwrites what the whole team relies on" class as skill_promote. An
     # agent's attempt queues for the owner; the owner at the UI self-approves.
     "system_preamble_set",
+    # delegation of authority: sets the permission mode a session's runs start in.
+    # 'bypass' hands ONE session full unattended machine access (the next run goes
+    # up with --dangerously-skip-permissions), the same "hands the machine
+    # permission" class as automation_resume — only narrower (one session, not the
+    # whole loop fleet). An agent's request therefore always queues for the owner;
+    # the owner at the UI self-approves (he is the one delegating).
+    "session_mode_set",
     # destroying a scheduled loop takes its run history with it — same
     # irreversible-removal class as card_delete. Creating/editing a loop stays
     # green: a harman-origin loop cannot FIRE until the owner licenses that origin
@@ -214,6 +229,11 @@ _MIN_LEVEL = {
     # promotion. Stopping is the safe direction.
     "automation_pause": "ic",
     "automation_resume": "manager",
+    # Any session may REQUEST a change to a session's permission mode (ic scope,
+    # like asking for a loop) — but the action is Red, so the request ALWAYS
+    # queues for the owner and a model can never grant itself trust: the scope
+    # gate decides who may initiate, the risk gate decides who must consent.
+    "session_mode_set": "ic",
 }
 
 

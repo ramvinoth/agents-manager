@@ -74,6 +74,7 @@ _TOOLS = {
     "task_done":     ("POST", "/api/org/cards/done"),
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
+    "session_mode_set": ("POST", "/api/session/mode"),
     # ── Schedule recurring work (writes; gated + self-mutation rail server-side)
     "loop_create":   ("POST", "/api/org/loops"),
     "loop_update":   ("POST", "/api/org/loops/update"),
@@ -238,6 +239,13 @@ _TOOL_LIST = [
      "description": "Set WHICH loop origins may fire: user (human-scheduled only), harman (agent-scheduled only), both, or none. Manager-scoped; setting it does not touch the automation master switch.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["mode"], "properties": {
          "mode": {"type": "string", "enum": ["user", "harman", "both", "none"]}}}},
+    # ── Delegate trust to a session (Red: queues for the owner) ─────────────
+    {"name": "session_mode_set",
+     "description": "Set the permission mode a session's runs start in: default (every tool gated), acceptEdits (file edits auto-approve, commands still gated), plan, or bypass (no gating at all — runs start with --dangerously-skip-permissions). It applies to EVERY later run of that session (loop-fired AND chat) — the way a trusted agent runs its loops without a command-approval push per Bash. Red: the request queues for the owner's approval and runs once he approves; a model can never set its OWN session (the server refuses it — trust is granted by the person, not requested by the agent).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "mode"], "properties": {
+         "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},
+         "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan", "bypass"],
+                 "description": "The permission mode for that session's runs."}}}},
 ]
 
 

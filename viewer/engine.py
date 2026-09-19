@@ -34,7 +34,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import db
+from viewer import db, orglogic
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -1131,7 +1131,7 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
     try:
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
-                   f"Approve {tool_name}? The agent needs your permission to continue.",
+                   _perm_push_body(tool_name, tinput, host),
                    data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
@@ -1210,6 +1210,46 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
+def effective_permission_mode(session_id, requested):
+    """The permission mode a run of `session_id` actually starts with.
+
+    The session's STORED mode (set by the owner via the session-mode route — the
+    way a trusted agent runs its loop without a Bash approval per command)
+    OVERRIDES the per-request mode: a loop run requests "acceptEdits", a chat
+    requests whatever the composer picked, but the owner's stored call wins at
+    this single point, so both run kinds behave the same. Best-effort: an
+    unknown/stale value or a DB hiccup leaves `requested` untouched, so a
+    storage failure can never change a run's security posture on its own.
+    """
+    if not session_id:
+        return requested
+    try:
+        stored = (db.session_meta_get(session_id) or {}).get("permission_mode")
+        if stored in orglogic.PERMISSION_MODES:
+            return stored
+    except Exception:
+        pass
+    return requested
+
+
+def _perm_push_body(tool_name, tinput, host):
+    """The push body for a gated tool call: WHAT is being asked. The old body
+    was 'Approve Bash? The agent needs your permission to continue.' — no way
+    for the owner to judge from the notification alone. Now it carries a
+    one-line preview of the command (or the tool's args), and the host when the
+    run is remote (a local machine's label is noise)."""
+    if tool_name == "Bash":
+        preview = re.sub(r"\s+", " ", str((tinput or {}).get("command") or "")).strip()
+    else:
+        preview = re.sub(r"\s+", " ", json.dumps(tinput or {})).strip()
+    body = f"Approve {tool_name}?"
+    if preview:
+        body += f" — {preview[:79]}…" if len(preview) > 80 else f" — {preview}"
+    if host and host != "local":
+        body += f" (on {host})"
+    return body
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -1226,6 +1266,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     called when the run never starts because a job is already running — the caller
     sees the False return and records that itself.
     Returns False if the session already has a running job."""
+    mode = effective_permission_mode(session_id, mode)
     remote = bool(host) and host != "local"
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)

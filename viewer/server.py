@@ -411,6 +411,7 @@ class SessionViewerHandler(
         "/api/session/delete": "_p_session_delete",
         "/api/session/rename": "_p_session_rename",
         "/api/session/seen": "_p_session_seen",
+        "/api/session/mode": "_p_session_mode",
         "/api/loops": "_p_loops",
         "/api/loops/edit": "_p_loops_edit",
         "/api/loops/delete": "_p_loops_delete",

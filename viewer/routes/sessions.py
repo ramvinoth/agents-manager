@@ -501,6 +501,7 @@ class SessionsMixin:
             "meta": {"goal": meta.get("goal", ""), "systemPrompt": meta.get("systemPrompt", ""),
                      "avatar": meta.get("avatar", ""), "provider": meta.get("provider", ""),
                      "convMode": meta.get("convMode", "chat"), "effort": meta.get("effort", ""),
+                     "permission_mode": meta.get("permission_mode", ""),
                      "archived": bool(meta.get("archived", False)),
                      "favorite": bool(meta.get("favorite", False))},
             "capabilities": caps,
@@ -527,6 +528,39 @@ class SessionsMixin:
             return
         db.session_seen_set(reader, sid)
         self.send_json({"seen": True, "session": sid})
+
+    def _p_session_mode(self, req):
+        """Set the permission mode a session's runs start in.
+
+        The stored mode (session_meta.permission_mode) is applied by
+        engine.effective_permission_mode at the start of EVERY run — loop-fired
+        and chat runs alike — overriding what the caller requested. This is how
+        a trusted agent runs its loops without a Bash approval per command.
+
+        Red action: a model's request QUEUES for the owner's approval — an
+        agent never grants itself trust, and the self-mutation rail below
+        refuses even the request when the target is the caller's own session
+        (the owner grants it himself at the UI). The owner at the UI
+        self-approves: he is the one delegating.
+
+        The target travels as `for_session` for the same reason as loop_create:
+        the MCP transport overwrites the body's `session` with the caller's own
+        id, so a target named `session` would always equal the acting session.
+        Human clients pass `session` directly (the transport only mirrors for
+        agent credentials) — and an agent that names no target falls onto the
+        mirrored `session` = itself, which the rail refuses."""
+        body = self.read_body() or {}
+        target = (body.get("for_session") or body.get("session") or "").strip()
+        if not target:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        if self._self_mutation_denied(
+                req, target,
+                what="its own permission mode",
+                reason="a session may not change its own permission mode — ask the owner to set it"):
+            return
+        self._org_send(req, "session_mode_set",
+                       {"session": target, "mode": (body.get("mode") or "").strip()})
 
     def _p_session_restore(self, req):
         self.handle_restore()

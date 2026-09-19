@@ -281,6 +281,28 @@ def _loop_mode_set(a):
     return set_loop_mode((a.get("mode") or "").strip())
 
 
+def _session_mode_set(a):
+    """Set the permission mode a session's runs start in.
+
+    Stored in the session's meta; engine.effective_permission_mode applies it at
+    run start (loops AND chat runs), overriding whatever the caller requested.
+    The value is validated against orglogic.PERMISSION_MODES — the CLI's own
+    vocabulary ('bypass' is what the run becomes --dangerously-skip-permissions
+    for).
+
+    Red (orglogic): a model may REQUEST a session's trust level change, never
+    grant it — the request queues for the owner, who approves in the UI. The
+    owner at the UI self-approves (he is the one delegating)."""
+    session = (a.get("session") or "").strip()
+    mode = (a.get("mode") or "").strip()
+    if not session:
+        return {"error": "session required"}
+    if mode not in orglogic.PERMISSION_MODES:
+        return {"error": f"mode must be one of {', '.join(orglogic.PERMISSION_MODES)}"}
+    db.session_meta_patch(session, {"permission_mode": mode})
+    return {"session": session, "permission_mode": mode}
+
+
 def _system_preamble_set(a):
     """Set the global system-awareness preamble prepended to EVERY session's
     system prompt (engine.append_system_prompt). Empty string disables it.
@@ -347,6 +369,7 @@ ACTIONS = {
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,
     "loop_mode_set": _loop_mode_set,
+    "session_mode_set": _session_mode_set,
     "system_preamble_set": _system_preamble_set,
     "skill_propose": _skill_write,
     "skill_promote": _skill_write,
