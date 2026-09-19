@@ -17,6 +17,7 @@ can be stale or deleted by then. Late binding is why intents beat closures.
 Policy lives in orglogic (pure, no db). This module composes policy with the db
 and writes the audit trail; it is the only place that does.
 """
+import sys
 import time
 
 from viewer import db, orglogic
@@ -53,13 +54,49 @@ def _task_done(a):
     WHICH column is Done is resolved HERE, not by the caller: this action can be
     queued as Red and approved later, by which time a column may have been added,
     reordered or removed. Storing a column id in the intent would freeze a fact
-    that is only true at queue time.
+    that is only true at queue time. Name-first (orglogic.project_columns): the
+    default pipeline puts decision columns (Review/Approved/…) BETWEEN Doing and
+    Done, so "the last column" is no longer a safe rule on its own.
     """
     card = db.card_get(a.get("card_id"))
     cols = db.board_columns_list(card["project_id"]) if card and card.get("project_id") else []
-    done_id = cols[-1]["id"] if cols else None
+    done_id = orglogic.project_columns(cols).get("done") or (cols[-1]["id"] if cols else None)
     return db.card_move(a.get("card_id"), done_id,
                         a.get("position", 1.0)) or {"error": "not found"}
+
+
+def _card_comment(a):
+    """Post a comment on a card's discussion thread (db.card_comments).
+    The author is stamped by the route from the resolved principal — never
+    trusted from the body — so a forged author cannot talk in someone else's
+    voice on the board."""
+    card = db.card_get(a.get("card_id"))
+    if not card:
+        return {"error": "not found"}
+    body = (a.get("body") or "").strip()
+    if not body:
+        return {"error": "empty comment"}
+    return db.card_comment_add(card["id"], a.get("author", ""), body)
+
+
+def _card_dep_add(a):
+    """Add a card→card dependency edge: `card_id` cannot move forward until
+    `depends_on` reaches a Done column. Both endpoints must exist; a self-edge
+    is rejected by db.card_dep_add. Adding a blocker is work-shaping, so the
+    follow-up wakes the card's session with the blocking state."""
+    card = db.card_get(a.get("card_id"))
+    if not card:
+        return {"error": "not found"}
+    dep = db.card_get(a.get("depends_on"))
+    if not dep:
+        return {"error": "dependency not found"}
+    return db.card_dep_add(card["id"], dep["id"], a.get("created_by", ""))
+
+
+def _card_dep_remove(a):
+    """Remove a dependency edge. The removal can unblock a card, so the
+    follow-up wakes the card's session."""
+    return {"removed": db.card_dep_remove(a.get("card_id"), a.get("depends_on"))}
 
 
 def _column_create(a):
@@ -291,6 +328,9 @@ ACTIONS = {
     "card_move": _card_move,
     "card_assign": _card_assign,
     "card_delete": _card_delete,
+    "card_comment": _card_comment,
+    "card_dep_add": _card_dep_add,
+    "card_dep_remove": _card_dep_remove,
     "task_done": _task_done,
     "column_create": _column_create,
     "column_update": _column_update,
@@ -333,7 +373,79 @@ def intent(action, args, actor):
                      if k not in _CREDENTIAL_FIELDS}}
 
 
-def execute(it, human_role, session_level):
+# Board actions whose success means the card's OWN session (or the owner) must
+# find out — the board is the conversation between them (see boardwatch).
+_BOARD_ACTIONS = ("card_move", "card_update", "card_comment",
+                  "card_dep_add", "card_dep_remove", "task_done")
+
+
+def _board_followup(action, args, actor, session_level, acting_session):
+    """After a successful board event, wake the card's own session (boardwatch)
+    and — when an AGENT comments — push the owner. Never fails the action: the
+    mutation has already committed, so a wake failure is logged, not raised.
+
+    The two follow-ups have different audiences, and that decides when each
+    fires:
+
+    - the WAKE goes to the card's session, so it fires only when the event
+      came from OUTSIDE that session (a human, or another session). The
+      card's own session acting on its own card already knows; a self-wake
+      would be a loop. Origin mirrors the cause (boardwatch's contract):
+      a human made it → 'user', a foreign agent made it → 'harman'.
+    - the PUSH goes to the owner (a person), so it fires even when the
+      card's own session comments — that is exactly how a worker reports
+      status ("stuck on X") without a self-wake.
+    """
+    if action not in _BOARD_ACTIONS:
+        return
+    try:
+        from viewer import boardwatch
+        from viewer.loops import AGENT_ORIGIN, USER_ORIGIN
+
+        card = db.card_get(args.get("card_id"))
+        if not card or not card.get("session_id"):
+            return
+        agent = bool(session_level)
+        if action == "card_comment":
+            body = (args.get("body") or "").strip()
+            excerpt = body[:200] + ("…" if len(body) > 200 else "")
+        else:
+            excerpt = ""
+        if agent and action == "card_comment":
+            from viewer import push
+            push.notify_all(f"Board · {card.get('title', '')}",
+                            f"{actor}: {excerpt}"[:300])
+        if agent and card.get("session_id") == (acting_session or ""):
+            return
+        if action == "card_move":
+            cols = db.board_columns_list(card["project_id"]) \
+                if card.get("project_id") else []
+            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
+            event = f"moved to '{(col or {}).get('name') or card.get('column_id')}' by {actor}"
+        elif action == "task_done":
+            event = f"marked done by {actor}"
+        elif action == "card_update":
+            event = f"updated by {actor}"
+        elif action == "card_comment":
+            event = f"new comment by {actor}: \"{excerpt}\""
+        elif action in ("card_dep_add", "card_dep_remove"):
+            dep = db.card_get(args.get("depends_on"))
+            title = f'card {dep["id"]} "{dep.get("title", "")}"' if dep else "the referenced card"
+            if action == "card_dep_add":
+                event = (f"new dependency: {title} is not done — you are blocked "
+                         f"until it reaches Done (added by {actor}); comment why the "
+                         f"card cannot advance")
+            else:
+                event = (f"dependency on {title} removed by {actor} — you may be "
+                         f"able to proceed; comment your next step")
+        boardwatch.schedule_wake(card, event,
+                                 USER_ORIGIN if not agent else AGENT_ORIGIN)
+    except Exception as e:
+        print(f"[boardwatch] wake for card {args.get('card_id')} failed: {e}",
+              file=sys.stderr)
+
+
+def execute(it, human_role, session_level, acting_session=""):
     """Run an intent through both gates, then audit. Returns (payload, status).
 
     - scope: orglogic.allowed(action, level) — within this authority? → 403
@@ -343,6 +455,11 @@ def execute(it, human_role, session_level):
 
     Approving that stored intent calls execute() again with the approver's role
     and no session level, so it takes the same path — one policy, not two.
+
+    `acting_session` is the session whose request built this intent (an agent's
+    own id, or '' for a human at the UI / an approval re-dispatch). Only the
+    board follow-up needs it: to know the event came from OUTSIDE the card's
+    session (a foreign agent) rather than the card's own session.
     """
     action = it.get("action", "")
     args, actor = it.get("args") or {}, it.get("actor", "")
@@ -364,4 +481,6 @@ def execute(it, human_role, session_level):
         return {"queued": True, "approval": ap["id"]}, 200
     payload = handler(args)
     db.audit_append(actor, action, it, "done")
+    if not (payload or {}).get("error"):
+        _board_followup(action, args, actor, session_level, acting_session)
     return payload, 200

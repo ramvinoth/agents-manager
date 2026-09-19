@@ -23,6 +23,10 @@ import psycopg2
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor
 
+# orglogic is pure (no viewer imports) — importing it here cannot cycle, and the
+# default pipeline shape lives ONCE there (orglogic.PIPELINE_COLUMNS).
+from viewer import orglogic
+
 DATABASE_URL = os.environ.get("DATABASE_URL") or "dbname=viewer"
 SESSION_COOKIE = "viewer_session"
 SESSION_TTL = 30 * 86400          # 30 days
@@ -161,6 +165,31 @@ def init_db():
               created_by TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL,
               updated_at DOUBLE PRECISION NOT NULL
+            );
+            -- The discussion thread on a card: where the owner and the card's
+            -- session talk about the work (decisions, questions, status). `author`
+            -- is the resolved principal actor, same string audit_log carries
+            -- (user:<name> / an employee or session id) — no FK, because an
+            -- agent's identity is a name, not a row.
+            CREATE TABLE IF NOT EXISTS card_comments (
+              id         SERIAL PRIMARY KEY,
+              card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              author     TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL,
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            -- Task dependencies: an edge A -> B means "A cannot move forward
+            -- until B is done". Both endpoints cascade with their cards. The
+            -- self-edge guard lives in card_dep_add (an SQL check could express
+            -- it too, but the rejection message belongs with the code that
+            -- receives the intent).
+            CREATE TABLE IF NOT EXISTS card_deps (
+              id         SERIAL PRIMARY KEY,
+              card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              depends_on INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              UNIQUE (card_id, depends_on)
             );
             CREATE TABLE IF NOT EXISTS approvals (
               id          SERIAL PRIMARY KEY,
@@ -352,13 +381,19 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose.
+Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update/comment, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose.
 
 Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
 
 Steering rules: you may create/edit loops for OTHER sessions, never your own. Agent-scheduled (harman) loops fire only when the loop-control mode (user|harman|both|none) licenses that origin AND the automation master switch (harman.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
 
-Full design: ORCHESTRATOR_MCP.md.$preamble$::text))
+## The board pipeline (decisions live on the board)
+Every project's board is the default pipeline: Todo → Doing → Review → Approved → Declined → Blocked → Needs-info → Done. "Review" is the holding state for work that needs the owner's decision — when you are done but a call is required, move your card to Review and comment with the question. The owner decides by moving the card to Approved or Declined, or by commenting; that move or comment reaches you as a [board-watch] wake. On a wake, read the card and its comments (card_comments) and act: Approved means proceed with that work (move it to Done when it is complete), Declined means stop it. If your work is stuck on a dependency, move the card to Blocked and comment on what is stuck; if you need a fact or a decision from the owner, move it to Needs-info and comment with the question — your comment pushes to the owner. A fresh comment on your card is a message for you — answer on the card. Comment on your card to report status: the owner gets a push when an agent comments. Never decide for the owner: a card in Review waits for their call, and a decision in Approved/Declined is theirs to make, not yours.
+
+Full design: ORCHESTRATOR_MCP.md.
+
+## Work discipline (board = the durable ledger)
+In-conversation todos are scratch for the current task only. Work that outlives this conversation — parked or deferred items, follow-ups, work handed to another session or employee — becomes a board card via card_create before the session ends. When asked what work is pending, answer from the board (card_list), not from memory. The owner sees the same board; nothing should live only in a session's head.$preamble$::text))
               ON CONFLICT (key) DO NOTHING;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
@@ -377,6 +412,15 @@ Full design: ORCHESTRATOR_MCP.md.$preamble$::text))
         )
     _seed_agent_templates()
     migrate_legacy_files()
+    # The decision pipeline is a board SHAPE, like the four defaults above:
+    # every project carries it, so every start runs the idempotent ensure
+    # (no-op on an install that already converged). One bad project must not
+    # wedge the server's boot, so each is guarded.
+    for proj in project_list():
+        try:
+            board_columns_ensure(proj["id"])
+        except Exception:
+            pass
 
 
 def close_pool():
@@ -725,8 +769,13 @@ def employee_update(emp_id, **fields):
 
 # Projects --------------------------------------------------------------------
 
-# Every project gets this column layout the moment it's created.
-_DEFAULT_COLUMNS = ("Todo", "Doing", "Review", "Done")
+# Every project gets this column layout the moment it's created. The decision
+# pipeline (Review = needs the owner's call, then Approved / Declined) sits
+# between Doing and Done; Done stays last (task_done and the position fallbacks
+# key on the final column). New projects get the full tuple here; projects
+# created before the decision columns existed are fixed up by
+# board_columns_ensure at every server start (idempotent no-op once done).
+_DEFAULT_COLUMNS = orglogic.PIPELINE_COLUMNS
 
 
 def project_create(name, description="", host="local", cwd="", created_by=""):
@@ -837,6 +886,31 @@ def board_column_delete(column_id):
         return cur.rowcount > 0
 
 
+def board_columns_ensure(project_id):
+    """Guarantee the default pipeline is present on this project's board.
+
+    Applies the pure orglogic.ensure_pipeline_columns plan: a pipeline-named
+    column missing gets created at its canonical position; one present out of
+    place gets its position canonicalised (the name is the contract — see
+    orglogic.project_columns, which resolves the same way). Custom columns are
+    never touched. Idempotent, and called at every server start (init_db) so
+    projects created before the decision columns existed converge on the same
+    shape as new ones — the pipeline is default everywhere, not opt-in.
+    Returns the plan it applied (for tests/inspection)."""
+    cols = board_columns_list(project_id)
+    plan = orglogic.ensure_pipeline_columns(cols)
+    current = {c["id"]: c["position"] for c in cols}
+    applied = 0
+    for item in plan:
+        if item["id"] is None:
+            board_column_create(project_id, item["name"], item["position"])
+            applied += 1
+        elif current.get(item["id"]) != item["position"]:
+            board_column_update(item["id"], position=item["position"])
+            applied += 1
+    return plan
+
+
 
 # Cards (the ONLY card store) -------------------------------------------------
 
@@ -907,6 +981,114 @@ def card_delete(card_id):
     with _db() as cur:
         cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
         return cur.rowcount > 0
+
+
+# Card comments (the discussion thread on a card) ----------------------------
+
+def card_comment_add(card_id, author, body):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO card_comments(card_id, author, body, created_at) "
+            "VALUES(%s,%s,%s,%s) RETURNING *",
+            (card_id, author or "", body, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def card_comment_list(card_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM card_comments WHERE card_id = %s ORDER BY created_at, id",
+                    (card_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def card_comment_counts():
+    """{card_id: n} over every card that has at least one comment — the badge
+    the board lists render without N+1 per-card queries."""
+    with _db() as cur:
+        cur.execute("SELECT card_id, COUNT(*) AS n FROM card_comments GROUP BY card_id")
+        return {r["card_id"]: r["n"] for r in cur.fetchall()}
+
+
+# Card dependencies (A cannot move forward until B is done) ------------------
+
+def card_dep_add(card_id, depends_on, created_by=""):
+    """Record the edge `card_id` -> `depends_on`. A card may not depend on
+    itself (that blocks itself forever); an existing edge is a no-op (the
+    UNIQUE constraint, not a duplicate row). Returns the stored row, or
+    {"exists": True} when the edge was already there."""
+    if card_id == depends_on:
+        return {"error": "a card cannot depend on itself"}
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO card_deps(card_id, depends_on, created_by, created_at) "
+            "VALUES(%s,%s,%s,%s) ON CONFLICT (card_id, depends_on) DO NOTHING "
+            "RETURNING *",
+            (card_id, depends_on, created_by or "", _now()),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else {"exists": True}
+
+
+def card_dep_remove(card_id, depends_on):
+    """Remove the edge; True if a row was deleted."""
+    with _db() as cur:
+        cur.execute("DELETE FROM card_deps WHERE card_id=%s AND depends_on=%s",
+                    (card_id, depends_on))
+        return cur.rowcount > 0
+
+
+def card_deps_batch(card_ids):
+    """{card_id: [dep, ...]} where dep = {id, title, column_name, done}.
+    `done` follows the board's name contract: the dep's column named (case
+    insensitive) "Done" — the same rule project_columns resolves by, so the
+    web board, a woken session, and the owner's view all agree on what is done."""
+    if not card_ids:
+        return {}
+    with _db() as cur:
+        cur.execute(
+            "SELECT d.card_id, d.depends_on AS id, c.title, bc.name AS column_name "
+            "FROM card_deps d "
+            "JOIN cards c ON c.id = d.depends_on "
+            "LEFT JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE d.card_id = ANY(%s) ORDER BY d.card_id, d.id",
+            (list(card_ids),),
+        )
+        out = {}
+        for r in cur.fetchall():
+            col = (r.get("column_name") or "").lower()
+            out.setdefault(r["card_id"], []).append(
+                {"id": r["id"], "title": r.get("title", ""),
+                 "column_name": r.get("column_name") or "",
+                 "done": col == "done"})
+        return out
+
+
+def board_changed_since(since):
+    """Did the board change after `since` (epoch seconds)? Cards (updated_at),
+    comments (created_at) and dependency edges (created_at) all store epoch
+    doubles, so the check is a plain numeric comparison. Returns
+    (changed, summary) — the summary is a one-line data string for wake
+    prompts, never instructions."""
+    with _db() as cur:
+        cur.execute("SELECT count(*) AS n FROM cards WHERE updated_at > %s", (since,))
+        n_cards = cur.fetchone()["n"]
+        cur.execute("SELECT count(*) AS n FROM card_comments WHERE created_at > %s",
+                    (since,))
+        n_comments = cur.fetchone()["n"]
+        cur.execute("SELECT count(*) AS n FROM card_deps WHERE created_at > %s",
+                    (since,))
+        n_deps = cur.fetchone()["n"]
+    if not (n_cards or n_comments or n_deps):
+        return False, ""
+    bits = []
+    if n_cards:
+        bits.append(f"{n_cards} card(s) changed")
+    if n_comments:
+        bits.append(f"{n_comments} new comment(s)")
+    if n_deps:
+        bits.append(f"{n_deps} dependency change(s)")
+    return True, ", ".join(bits)
 
 
 # Approvals -------------------------------------------------------------------

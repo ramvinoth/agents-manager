@@ -77,6 +77,20 @@ def record(session_id, pending, host="local"):
                          "questions": len(pending["questions"] or [])}, "asked")
     except Exception:
         pass
+    # A question became durable for the owner: the sessions that own OPEN cards
+    # are the ones that can surface it to the owner (the source is the one
+    # waiting). Harman-origin wake, so it obeys the mode + the master switch.
+    try:
+        from viewer.orchestrator import loop_mode, automation_enabled
+        if automation_enabled() and loop_mode() in ("harman", "both"):
+            from viewer import board_wake
+            qs = pending.get("questions") or []
+            summary = "; ".join((q.get("question") or q.get("header") or "")
+                                for q in qs[:3]).replace("\n", " ")
+            if summary:
+                board_wake.wake_on_open_question(session_id, summary)
+    except Exception:
+        pass
 
 
 def get_open(session_id):
@@ -95,6 +109,18 @@ def clear(session_id):
 
 def record_plan(session_id, pending, host="local"):
     db.pending_plan_set(session_id, pending["tool_use_id"], pending["plan"], host)
+    # Same cross-session surfacing as record(): an open plan is an open request
+    # on the owner, and the open-card sessions are the ones that can surface it.
+    try:
+        from viewer.orchestrator import loop_mode, automation_enabled
+        if automation_enabled() and loop_mode() in ("harman", "both"):
+            from viewer import board_wake
+            plan = (pending.get("plan") or "").replace("\n", " ")
+            if plan:
+                board_wake.wake_on_open_question(session_id,
+                                                f"plan awaiting approval: {plan[:260]}")
+    except Exception:
+        pass
 
 
 def get_open_plan(session_id):

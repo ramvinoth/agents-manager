@@ -69,7 +69,8 @@ export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 export type Employee = { id: number; name: string; role: string; provider: string; model: string; conv_mode: string; avatar: string; status: string; created_at: number }
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number }
 export type BoardColumn = { id: number; name: string; position: number }
-export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number }
+export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
+export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
@@ -618,6 +619,12 @@ export const api = {
   // two can come back queued instead of done — the union makes the caller say so.
   orgDeleteCard: (body: { card_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/cards/delete", body),
+  // The card's detail read: the card itself plus its full comment thread —
+  // the discussion between the owner and the card's session.
+  orgCard: (id: number) =>
+    req<{ card: Card; comments: CardComment[] }>("GET", `/api/org/card?id=${id}`),
+  orgAddCardComment: (body: { card_id: number; body: string }) =>
+    req<CardComment>("POST", "/api/org/card_comment", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),

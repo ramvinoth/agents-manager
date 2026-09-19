@@ -23,6 +23,7 @@ import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import ProvidersScreen from "./src/screens/ProvidersScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
+import CardDetailScreen from "./src/screens/CardDetailScreen"
 import OrgScreen from "./src/screens/OrgScreen"
 import HostEditScreen from "./src/screens/HostEditScreen"
 import TerminalScreen from "./src/screens/TerminalScreen"
@@ -38,6 +39,7 @@ export type RootStackParamList = {
   Capabilities: { host?: string; cwd?: string; title?: string } | undefined
   Providers: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
+  CardDetail: { id: number }
   Org: undefined
   HostEdit: { host?: HostConfig } | undefined
   Terminal: { host: string; label: string }
@@ -176,6 +178,7 @@ export default function App() {
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
             <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
+            <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
             <Stack.Screen

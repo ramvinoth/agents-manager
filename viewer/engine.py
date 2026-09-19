@@ -277,6 +277,18 @@ def loop_scheduler(launch):
                 harman_tick()
         except Exception:
             pass
+        # The 30-minute board sweep — a safety net for event wakes the action
+        # path missed. Its wakes are harman-origin, so it only runs when the
+        # autonomous side may act (master switch ON and the loop mode licenses
+        # harman) — otherwise it would stamp the interval and drop the event
+        # the wakes could never fire. Idle board = zero cost either way.
+        try:
+            from viewer import board_wake
+            from viewer.orchestrator import automation_enabled, loop_mode
+            if automation_enabled() and loop_mode() in ("harman", "both"):
+                board_wake.sweep()
+        except Exception:
+            pass
 
 
 def frontmatter_description(path):

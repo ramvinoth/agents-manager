@@ -36,7 +36,8 @@ class OrchestratorMixin:
         """
         p = req.principal
         return actions.execute(actions.intent(action, args, p["actor"]),
-                               p["human_role"], p["session_level"])
+                               p["human_role"], p["session_level"],
+                               acting_session=p["session"])
 
     def _org_send(self, req, action, args):
         """_org_run + send_json — the two-line body most write routes reduce to."""
@@ -111,12 +112,73 @@ class OrchestratorMixin:
         cards = db.card_list(session_id=session,
                              project_id=int(project) if project else None,
                              assignee=int(assignee) if assignee else None)
+        counts = db.card_comment_counts()
+        deps = db.card_deps_batch([c["id"] for c in cards])
+        for c in cards:  # the badge + its dependency state (dual control: the
+            c["comment_count"] = counts.get(c["id"], 0)    # same rows the agents
+            c["dependencies"] = deps.get(c["id"], [])      # read via MCP)
         self.send_json({"cards": orglogic.order_column(cards)})
 
     def _p_org_cards(self, req):
         body = self.read_body() or {}
         self._org_send(req, "card_create",
                        {**body, "created_by": req.principal["actor"]})
+
+    def _g_org_card(self, req):
+        """One card with its full comment thread — the read the card's detail
+        screen (mobile) and editor (web) load before letting anyone talk on it."""
+        cid = (req.query.get("id") or [None])[0]
+        if not cid:
+            self.send_json({"error": "id required"}, status=400); return
+        card = db.card_get(int(cid))
+        if not card:
+            self.send_json({"error": "not found"}, status=404); return
+        self.send_json({"card": card, "comments": db.card_comment_list(card["id"]),
+                        "dependencies": db.card_deps_batch([card["id"]]).get(card["id"], [])})
+
+    def _g_org_card_deps(self, req):
+        """One card's dependency edges — the read side of the dual control: the
+        owner's UI and the agents' MCP read the same rows through the same gate."""
+        cid = (req.query.get("card_id") or [None])[0]
+        if not cid:
+            self.send_json({"error": "card_id required"}, status=400); return
+        self.send_json({"dependencies": db.card_deps_batch([int(cid)]).get(int(cid), [])})
+
+    def _g_org_card_comments(self, req):
+        """A card's comment thread alone — the agent-side read (MCP card_comments):
+        on a [board-watch] wake the session reads its card's thread and answers."""
+        cid = (req.query.get("card_id") or [None])[0]
+        if not cid:
+            self.send_json({"error": "card_id required"}, status=400); return
+        self.send_json({"comments": db.card_comment_list(int(cid))})
+
+    def _p_org_card_comment(self, req):
+        """Post a comment on a card's thread. The author is stamped from the
+        resolved principal, never from the body: an MCP subprocess can write any
+        string it likes into its own JSON, and a thread that can be
+        impersonated is a poisoned record, not a discussion."""
+        body = self.read_body() or {}
+        self._org_send(req, "card_comment",
+                       {"card_id": body.get("card_id"),
+                        "body": body.get("body", ""),
+                        "author": req.principal["actor"]})
+
+    def _p_org_card_dep_add(self, req):
+        """Add a card→card dependency: the card cannot move forward until its
+        dependency reaches a Done column. A blocker is also a statement of why
+        the card is stuck — the wake tells the card's session so."""
+        body = self.read_body() or {}
+        self._org_send(req, "card_dep_add",
+                       {"card_id": body.get("card_id"),
+                        "depends_on": body.get("depends_on"),
+                        "created_by": req.principal["actor"]})
+
+    def _p_org_card_dep_remove(self, req):
+        """Remove a dependency edge — can unblock a card; the wake follows."""
+        body = self.read_body() or {}
+        self._org_send(req, "card_dep_remove",
+                       {"card_id": body.get("card_id"),
+                        "depends_on": body.get("depends_on")})
 
     def _p_org_cards_move(self, req):
         self._org_send(req, "card_move", self.read_body() or {})

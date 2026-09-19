@@ -58,6 +58,9 @@ _TOOLS = {
     "audit_tail":       ("GET", "/api/org/audit"),
     "board_list":       ("GET", "/api/org/board"),
     "card_list":        ("GET", "/api/org/cards"),
+    "card":             ("GET", "/api/org/card"),
+    "card_comments":    ("GET", "/api/org/card_comments"),
+    "card_deps":        ("GET", "/api/org/card_deps"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
@@ -65,6 +68,9 @@ _TOOLS = {
     "card_move":     ("POST", "/api/org/cards/move"),
     "card_assign":   ("POST", "/api/org/cards/assign"),
     "card_update":   ("POST", "/api/org/cards/update"),
+    "card_comment":  ("POST", "/api/org/card_comment"),
+    "card_dep_add":  ("POST", "/api/org/card_dep_add"),
+    "card_dep_remove": ("POST", "/api/org/card_dep_remove"),
     "task_done":     ("POST", "/api/org/cards/done"),
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
@@ -146,9 +152,18 @@ _TOOL_LIST = [
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},
-    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Optionally filtered by session/assignee.",
+    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries comment_count (how many messages are in its thread) and its current column. Optionally filtered by session/assignee.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"}, "assignee": {"type": "integer"}}}},
+    {"name": "card", "description": "Read one card in full with its comment thread. On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "integer"}}}},
+    {"name": "card_comments", "description": "Read a card's comment thread (who said what, in order).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
+         "card_id": {"type": "integer"}}}},
+    {"name": "card_deps", "description": "Read a card's dependency edges (card_deps): which other cards it cannot move forward until, each with its column and a done flag. The owner sees and edits the same rows in the UI (dual control) — if a dep is not done, say so in a card comment instead of stalling silently.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
+         "card_id": {"type": "integer"}}}},
     {"name": "loop_list",
      "description": "List scheduled loops — recurring prompts (cron/interval) and pending one-shots (kind='once'), optionally for one session. Start here to find a loop's id before updating or deleting it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
@@ -170,6 +185,16 @@ _TOOL_LIST = [
     {"name": "card_update", "description": "Update a card's fields.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
+    {"name": "card_comment", "description": "Post a message on a card's thread — how you talk to the owner about that work (status, questions, your read of their decision). The owner gets a push when an agent comments. Your own column moves do not notify you back.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "body"], "properties": {
+         "card_id": {"type": "integer"}, "body": {"type": "string"}}}},
+    {"name": "card_dep_add", "description": "Add a dependency: this card cannot move forward until the other card reaches Done. Use it when your work is blocked on someone else's card — the other card's session is woken with the edge.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "depends_on"], "properties": {
+         "card_id": {"type": "integer", "description": "The card that is blocked."},
+         "depends_on": {"type": "integer", "description": "The card it must wait for."}}}},
+    {"name": "card_dep_remove", "description": "Remove a dependency edge (the work is no longer blocked, or the edge was wrong). The blocked card's session is woken.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "depends_on"], "properties": {
+         "card_id": {"type": "integer"}, "depends_on": {"type": "integer"}}}},
     {"name": "task_done", "description": "Mark a card done (move to the Done column).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},

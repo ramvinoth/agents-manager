@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardFilter, Queued, SessionDetail } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -199,6 +199,23 @@ class ApiClient {
   // an approval back, not a deletion — hence the union.
   orgDeleteCard(cardId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/cards/delete", { card_id: cardId })
+  }
+  // A card with its full comment thread and dependency edges — the discussion
+  // and the dual-control blocker state between the owner and the card's session.
+  orgCard(id: number) {
+    return this.getJSON<{ card: Card; comments: CardComment[]; dependencies: CardDep[] }>(`/api/org/card?id=${id}`)
+  }
+  orgAddCardComment(body: { card_id: number; body: string }) {
+    return this.postJSON<CardComment>("/api/org/card_comment", body)
+  }
+  orgCardDeps(cardId: number) {
+    return this.getJSON<{ dependencies: CardDep[] }>(`/api/org/card_deps?card_id=${cardId}`)
+  }
+  orgAddCardDep(body: { card_id: number; depends_on: number }) {
+    return this.postJSON<CardDep>("/api/org/card_dep_add", body)
+  }
+  orgRemoveCardDep(body: { card_id: number; depends_on: number }) {
+    return this.postJSON<{ removed?: boolean }>("/api/org/card_dep_remove", body)
   }
   orgCreateColumn(body: { project_id: number; name: string; position?: number }) {
     return this.postJSON<BoardColumn>("/api/org/columns", body)

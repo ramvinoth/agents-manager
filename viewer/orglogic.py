@@ -164,6 +164,9 @@ _MIN_LEVEL = {
     "card_create": "ic",
     "card_move": "ic",
     "card_update": "ic",
+    "card_comment": "ic",          # discussion on one's own board — green, never red
+    "card_dep_add": "ic",          # dependency edges are work-shaping on one's own
+    "card_dep_remove": "ic",       # cards (add+remove are both reversible) — green
     "card_assign_self": "ic",
     "task_done": "ic",
     "board_list": "ic",
@@ -343,6 +346,62 @@ def project_columns(columns):
         "review": by_name.get("review", ids[2] if len(ids) > 2 else None),
         "done": by_name.get("done", ids[-1] if ids else None),
     }
+
+
+# The default pipeline every project's board is seeded with (db.project_create)
+# and guaranteed present by ensure_pipeline_columns. "Review" is the holding
+# state for work that needs the owner's decision; "Approved"/"Declined" are the
+# owner's DECISION states — the human drags the card between them and the card's
+# session is woken to act (boardwatch). "Blocked" (a dependency is not done) and
+# "Needs-info" (waiting on the owner for a fact or a decision) are the states a
+# WORKER moves its own card into and comments on the card about — the comment
+# pushes to the owner, the worker's own move never wakes itself. "Done" stays
+# LAST: _task_done and the position fallbacks in project_columns both key on
+# the last column.
+PIPELINE_COLUMNS = ("Todo", "Doing", "Review", "Approved", "Declined",
+                    "Blocked", "Needs-info", "Done")
+
+
+def ensure_pipeline_columns(columns):
+    """What must exist so a project's board carries the default pipeline.
+
+    PURE. Input: the project's current columns (db.board_columns_list rows).
+    Output: a list of {"id", "name", "position"} — one entry per pipeline slot,
+    in canonical order, where `id` is the existing column's id (rename to this
+    name already matched; position may change) or None (column to create) — plus
+    one untouched passthrough entry per CUSTOM column (a name that matches no
+    pipeline slot), in original order.
+
+    Name is the contract, exactly like project_columns: a column whose name
+    (case-insensitive) is a pipeline name TAKES the pipeline's canonical
+    position, even if the owner placed it elsewhere — the UI and the
+    name-resolvers see one board shape. Custom columns keep whatever position
+    the owner gave them; an entry absent from the returned list is one this
+    function does not touch (e.g. a duplicate of a pipeline name). Idempotent:
+    feeding the output back in returns the same list.
+    """
+    by_name = {}
+    for c in columns:
+        key = (c.get("name") or "").strip().lower()
+        if key:
+            by_name.setdefault(key, c)
+    out = []
+    matched = set()
+    for i, name in enumerate(PIPELINE_COLUMNS):
+        key = name.lower()
+        existing = by_name.get(key)
+        if existing is None:
+            out.append({"id": None, "name": name, "position": i})
+        else:
+            matched.add(key)
+            out.append({"id": existing.get("id"), "name": existing.get("name"),
+                        "position": i})
+    for c in columns:
+        key = (c.get("name") or "").strip().lower()
+        if key and key not in matched:
+            out.append({"id": c.get("id"), "name": c.get("name"),
+                        "position": c.get("position", 0)})
+    return out
 
 
 def _emp_level(emp):

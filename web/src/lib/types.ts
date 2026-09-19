@@ -310,6 +310,13 @@ export interface BoardColumn {
   name: string
   position: number
 }
+/** A card→card dependency edge: the card is blocked until this card reaches a Done column. */
+export interface CardDep {
+  id: number
+  title: string
+  column_name: string
+  done: boolean
+}
 export interface Card {
   id: number
   title: string
@@ -322,6 +329,17 @@ export interface Card {
   created_by: string
   created_at: number
   updated_at: number
+  /** How many messages are in the card's thread (the badge on the board). */
+  comment_count?: number
+  /** Dependency edges (dual control: the owner and the card's session see the same rows). */
+  dependencies?: CardDep[]
+}
+export interface CardComment {
+  id: number
+  card_id: number
+  author: string
+  body: string
+  created_at: number
 }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN

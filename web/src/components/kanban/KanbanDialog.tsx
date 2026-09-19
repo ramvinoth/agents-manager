@@ -11,7 +11,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
-import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User } from "lucide-react"
+import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { groupByColumn, orderColumn, nextPosition } from "@/lib/board"
 import { isQueued } from "@/lib/types"
-import type { BoardColumn, Card, Employee, OrgProject } from "@/lib/types"
+import type { BoardColumn, Card, CardComment, CardDep, Employee, OrgProject } from "@/lib/types"
 
 const UNASSIGNED = "__unassigned__"
 
@@ -252,6 +252,7 @@ export function KanbanDialog({
         <CardEditor
           card={editing}
           employees={employees}
+          allCards={cards}
           onSave={saveCardEdit}
           onClose={() => setEditing(null)}
         />
@@ -386,34 +387,85 @@ function CardFace({
           </button>
         )}
       </div>
-      {emp && (
-        <div className="mt-1.5 flex items-center gap-1 pl-5 text-[10px] text-muted-foreground">
-          <User className="size-3" /> {emp.name}
+      {(emp || (card.comment_count ?? 0) > 0) && (
+        <div className="mt-1.5 flex items-center gap-2 pl-5 text-[10px] text-muted-foreground">
+          {emp && (
+            <span className="flex items-center gap-1">
+              <User className="size-3" /> {emp.name}
+            </span>
+          )}
+          {(card.comment_count ?? 0) > 0 && (
+            <span className="flex items-center gap-1">
+              <MessageSquare className="size-3" /> {card.comment_count}
+            </span>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-// ── Card editor modal (title / body / assignee) ──────────────────────────────
+// ── Card editor modal (title / body / assignee / the discussion thread) ──────
+// The thread is the card's decision surface: the owner and the card's session
+// talk here. A move to Review/Approved/Declined (this dialog, a drag, or the
+// phone) wakes the card's session server-side (boardwatch); a comment from an
+// agent pushes the owner. Posting a comment here is what reaches the session.
 function CardEditor({
   card,
   employees,
+  allCards,
   onSave,
   onClose,
 }: {
   card: Card
   employees: Employee[]
+  allCards: Card[]
   onSave: (patch: { title: string; body: string; assignee: number | null }) => void
   onClose: () => void
 }) {
   const [title, setTitle] = useState(card.title)
   const [body, setBody] = useState(card.body)
   const [assignee, setAssignee] = useState<string>(card.assignee != null ? String(card.assignee) : UNASSIGNED)
+  const [comments, setComments] = useState<CardComment[]>([])
+  const [deps, setDeps] = useState<CardDep[]>(card.dependencies ?? [])
+  const [draft, setDraft] = useState("")
+  const [addDep, setAddDep] = useState("")
+
+  useEffect(() => {
+    // The card's live thread + dependency state, not a snapshot: fetch as the dialog opens.
+    api.orgCard(card.id).then((r) => {
+      setComments(r.comments || [])
+      setDeps(r.dependencies || [])
+    }).catch(() => {})
+  }, [card.id])
+
+  // Dependency edges: dual control — the owner edits here, the card's session
+  // reads the same rows through its MCP and gets woken when an edge changes.
+  async function addDepNow() {
+    if (!addDep) return
+    await api.orgAddCardDep({ card_id: card.id, depends_on: Number(addDep) }).catch(() => {})
+    const r = await api.orgCard(card.id).catch(() => null)
+    if (r) setDeps(r.dependencies || [])
+    setAddDep("")
+  }
+  async function removeDep(depId: number) {
+    await api.orgRemoveCardDep({ card_id: card.id, depends_on: depId }).catch(() => {})
+    const r = await api.orgCard(card.id).catch(() => null)
+    if (r) setDeps(r.dependencies || [])
+  }
+  const depChoices = allCards.filter((c) => c.project_id === card.project_id && c.id !== card.id)
+
+  async function post() {
+    const text = draft.trim()
+    if (!text) return
+    setDraft("")
+    const c = await api.orgAddCardComment({ card_id: card.id, body: text }).catch(() => null)
+    if (c) setComments((cs) => [...cs, c])
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit task</DialogTitle>
         </DialogHeader>
@@ -431,6 +483,62 @@ function CardEditor({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] text-muted-foreground">Discussion</div>
+            <div className="flex max-h-44 flex-col gap-1.5 overflow-y-auto rounded-md border border-border bg-card/40 p-2">
+              {comments.length ? (
+                comments.map((c) => (
+                  <div key={c.id} className="text-sm">
+                    <span className="font-semibold">{c.author}</span>{" "}
+                    <span className="text-[10px] text-muted-foreground">{new Date(c.created_at * 1000).toLocaleString()}</span>
+                    <div className="whitespace-pre-wrap">{c.body}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-xs italic text-muted-foreground">No comments yet — start the discussion.</div>
+              )}
+            </div>
+            <div className="mt-1.5 flex gap-1.5">
+              <Input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && post()}
+                placeholder="Comment…"
+                className="h-8 text-sm"
+              />
+              <Button size="sm" disabled={!draft.trim()} onClick={post}>Post</Button>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] text-muted-foreground">Blocked until done</div>
+            {deps.length ? (
+              deps.map((d) => (
+                <div key={d.id} className="mb-1 flex items-center gap-1.5 text-xs">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: d.done ? "#16a34a" : "#dc2626" }} />
+                  <span className="truncate">{d.title}</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">({d.column_name || "no column"}{d.done ? ", done" : ""})</span>
+                  <button className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => removeDep(d.id)} title="Remove dependency">
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-xs italic text-muted-foreground">No dependencies — the card can move forward.</div>
+            )}
+            {depChoices.length > 0 && (
+              <div className="mt-1.5 flex gap-1.5">
+                <Select value={addDep} onValueChange={setAddDep}>
+                  <SelectTrigger size="sm" className="h-8 flex-1 text-xs"><SelectValue placeholder="Add a dependency…" /></SelectTrigger>
+                  <SelectContent>
+                    {depChoices.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button size="sm" disabled={!addDep} onClick={addDepNow}>Add</Button>
+              </div>
+            )}
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>

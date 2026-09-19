@@ -4,7 +4,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type BoardColumn, type Card, type Employee } from "../api/client"
+import { api, type BoardColumn, type Card, type Employee } from "../api/client"
 import { groupByColumn, nextPosition } from "../lib/board"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
@@ -19,7 +19,8 @@ const COL_W = 260 // column width; horizontal strip scrolls
  * Reached filtered (swipe a chat row → its session) or unfiltered (CEO dashboard).
  * Horizontal columns; cards are draggable (react-native-gesture-handler Pan +
  * reanimated — the one place drag-and-drop is justified, kept local to this screen)
- * with a tap→move menu fallback. Moves compute a fractional position via the pure
+ * with a tap→card-detail fallback (its chips move the card; the move menu lived
+ * there). Moves compute a fractional position via the pure
  * lib (lib/board.nextPosition, identical to the server) then POST card_move.
  */
 export default function KanbanScreen({ route, navigation }: Props) {
@@ -92,42 +93,9 @@ export default function KanbanScreen({ route, navigation }: Props) {
     [cards, load]
   )
 
-  const deleteCard = useCallback(
-    (card: Card) => {
-      Alert.alert(card.title, "Delete this card?", [
-        { text: "Cancel", style: "cancel" as const },
-        {
-          text: "Delete",
-          style: "destructive" as const,
-          onPress: async () => {
-            setCards((cur) => cur.filter((c) => c.id !== card.id)) // optimistic
-            // `card_delete` is Red (viewer/orglogic): a caller who can't
-            // self-approve gets an approval back, not a deletion. Reload so the
-            // card reappears — otherwise it looks deleted while it still exists.
-            try {
-              if (isQueued(await api.orgDeleteCard({ card_id: card.id }))) load()
-            } catch { load() }
-          },
-        },
-      ])
-    },
-    [load]
-  )
-
-  const promptMove = useCallback(
-    (card: Card) => {
-      const others = columns.filter((c) => c.id !== card.column_id)
-      Alert.alert(
-        card.title,
-        "Move to column",
-        [
-          ...others.map((col) => ({ text: col.name, onPress: () => moveCard(card, col.id, 9999) })),
-          { text: "Delete card", style: "destructive" as const, onPress: () => deleteCard(card) },
-          { text: "Cancel", style: "cancel" as const },
-        ]
-      )
-    },
-    [columns, moveCard, deleteCard]
+  const openCard = useCallback(
+    (card: Card) => navigation.navigate("CardDetail", { id: card.id }),
+    [navigation]
   )
 
   const promptAssign = useCallback(
@@ -228,10 +196,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
                 index={i}
                 columnCount={colCards.length}
                 assigneeName={empName(card.assignee)}
+                commentCount={card.comment_count ?? 0}
                 colBounds={colBounds}
                 columns={columns}
                 onDropColumn={(colId) => moveCard(card, colId, 9999)}
-                onTap={() => promptMove(card)}
+                onTap={() => openCard(card)}
                 onLongPress={() => promptAssign(card)}
               />
             ))}
@@ -252,13 +221,14 @@ export default function KanbanScreen({ route, navigation }: Props) {
  * release regardless — the list re-renders from state, so no stale transform.
  */
 function DraggableCard({
-  card, theme: t, assigneeName, colBounds, columns, onDropColumn, onTap, onLongPress,
+  card, theme: t, assigneeName, commentCount, colBounds, columns, onDropColumn, onTap, onLongPress,
 }: {
   card: Card
   theme: ReturnType<typeof useTheme>
   index: number
   columnCount: number
   assigneeName?: string
+  commentCount?: number
   colBounds: React.MutableRefObject<Record<number, { x: number; w: number }>>
   columns: BoardColumn[]
   onDropColumn: (columnId: number) => void
@@ -315,12 +285,20 @@ function DraggableCard({
           style={{ backgroundColor: t.bubbleAgent, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
         >
           <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>{card.title}</Text>
-          {assigneeName ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 }}>
-              <Icon name="user" size={12} color={t.textMuted} />
-              <Text style={{ color: t.textMuted, fontSize: 12 }}>{assigneeName}</Text>
-            </View>
-          ) : null}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+            {assigneeName ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Icon name="user" size={12} color={t.textMuted} />
+                <Text style={{ color: t.textMuted, fontSize: 12 }}>{assigneeName}</Text>
+              </View>
+            ) : null}
+            {commentCount ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                <Icon name="chat" size={12} color={t.textMuted} />
+                <Text style={{ color: t.textMuted, fontSize: 12 }}>{commentCount}</Text>
+              </View>
+            ) : null}
+          </View>
         </Pressable>
       </Animated.View>
     </GestureDetector>
