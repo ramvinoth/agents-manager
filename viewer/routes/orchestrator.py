@@ -79,7 +79,13 @@ class OrchestratorMixin:
             (req.query.get("project") or [None])[0],
             (req.query.get("session") or [None])[0])
         if not project:
-            self.send_json({"error": "project required"}, status=400); return
+            # No resolvable board, said in the client's language (the mobile
+            # screen renders this string as-is): a session whose board was never
+            # bound, or a view with no context at all.
+            session = (req.query.get("session") or [None])[0]
+            msg = ("this chat has no board yet — pick a project on the company screen"
+                   if session else "a board is per project — pick one on the company screen")
+            self.send_json({"error": msg}, status=400); return
         self.send_json({"columns": db.board_columns_list(int(project))})
 
     def _p_org_project_for_cwd(self, req):

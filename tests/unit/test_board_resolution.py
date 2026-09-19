@@ -119,11 +119,20 @@ def test_board_explicit_project_wins(db):
     assert s.sent == [(200, {"columns": COLS[20]})]
 
 
-def test_board_with_no_resolvable_project_is_400(db):
+def test_board_with_no_context_is_400_with_an_actionable_message(db):
     db.meta = META
     s = _FakeSelf()
-    s._g_org_board(_req({}))
+    s._g_org_board(_req({}))  # no project, no session
     assert s.sent[0][0] == 400
+    assert "per project" in s.sent[0][1]["error"]
+
+
+def test_board_unbound_session_is_400_with_an_actionable_message(db):
+    db.meta = META
+    s = _FakeSelf()
+    s._g_org_board(_req({"session": ["s9"]}))  # s9 has no bound project
+    assert s.sent[0][0] == 400
+    assert "no board yet" in s.sent[0][1]["error"]
 
 
 # ── card DETAIL: move options composed by the server ────────────────────────

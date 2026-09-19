@@ -401,15 +401,17 @@ export default function ThreadScreen({ route, navigation }: Props) {
             onPress={() => {
               // The session id rides along so the board opens as THIS session's
               // filtered view (the one canonical Kanban, same entry the chat
-              // list's folder icon uses). A brand-new unsent chat has neither,
-              // so it opens the unfiltered board instead of an empty filter.
+              // list's folder icon uses). A brand-new unsent chat has no session
+              // yet — and a board is per session or per project, so it lands on
+              // the company screen (the project picker) instead of an empty view.
               const sid = sessionId || (path?.split("/").pop() || "").replace(/\.jsonl$/, "")
               Alert.alert("", "", [
                 { text: "Search", onPress: () => setSearchOpen(true) },
                 {
                   text: "Board",
                   onPress: () =>
-                    navigation.navigate("Kanban", sid ? { session: sid, title: label } : { title: label }),
+                    sid ? navigation.navigate("Kanban", { session: sid, title: label })
+                       : navigation.navigate("Org"),
                 },
                 { text: "Cancel", style: "cancel" },
               ])
