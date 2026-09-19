@@ -86,11 +86,11 @@ _TOOLS = {
 # fixed endpoint. Listed explicitly so _call never string-builds a path by accident.
 _PATH_ARG = {"session_read": "session"}
 
-# Board tools default to THIS session's project, so an agent's view of the board and
-# the cards it creates stay inside the project it is working in. tool -> arg name,
-# since the read routes take `project` and card_create takes `project_id`.
-_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project",
-                    "card_create": "project_id"}
+# Board READ tools default to THIS session's project, so an agent's view of the
+# board stays inside the project it is working in. card_create is NOT here: the
+# create route resolves the card's project from the session itself (the one rule
+# in routes.orchestrator), so the MCP never carries a second copy of it.
+_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project"}
 
 _HOST_ARG = {"type": "string",
              "description": "Host id from host_list; omit for this machine."}

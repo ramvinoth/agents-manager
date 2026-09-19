@@ -613,16 +613,18 @@ export const api = {
     req<Card>("POST", "/api/org/cards/move", body),
   orgAssignCard: (body: { card_id: number; assignee: number }) =>
     req<Card>("POST", "/api/org/cards/assign", body),
-  orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) =>
+  orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; project_id?: number; position?: number }) =>
     req<Card>("POST", "/api/org/cards/update", body),
   // `card_delete` and the automation resume are Red (viewer/orglogic), so these
   // two can come back queued instead of done — the union makes the caller say so.
   orgDeleteCard: (body: { card_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/cards/delete", body),
-  // The card's detail read: the card itself plus its full comment thread —
-  // the discussion between the owner and the card's session.
+  // The card's detail read: the card itself, its full comment thread, and its
+  // move options — the columns of the board it can move on (its own project,
+  // else its session's bound one; the server resolves, so an empty list means
+  // the card is on no board yet and the detail screen offers to attach it).
   orgCard: (id: number) =>
-    req<{ card: Card; comments: CardComment[] }>("GET", `/api/org/card?id=${id}`),
+    req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[] }>("GET", `/api/org/card?id=${id}`),
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),

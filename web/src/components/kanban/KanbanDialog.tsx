@@ -147,6 +147,16 @@ export function KanbanDialog({
     setEditing(null)
   }
 
+  // The card editor's "Move to" — the decision pipeline (Review/Approved/
+  // Declined) operable from the card's open editor, not only by dragging.
+  async function moveCardEdit(columnId: number) {
+    if (!editing) return
+    const inCol = cards.filter((c) => c.column_id === columnId && c.id !== editing.id)
+    const updated = await api.orgMoveCard({ card_id: editing.id, column_id: columnId, position: nextPosition(inCol, inCol.length) })
+    setCards((cs) => cs.map((c) => (c.id === editing.id ? { ...c, ...updated } : c)))
+    setEditing((e) => (e ? { ...e, column_id: columnId } : e))
+  }
+
   async function deleteCard(id: number) {
     setCards((cs) => cs.filter((c) => c.id !== id))
     // `card_delete` is Red: a caller who can't self-approve gets an approval
@@ -253,6 +263,8 @@ export function KanbanDialog({
           card={editing}
           employees={employees}
           allCards={cards}
+          columns={columns}
+          onMove={moveCardEdit}
           onSave={saveCardEdit}
           onClose={() => setEditing(null)}
         />
@@ -414,12 +426,16 @@ function CardEditor({
   card,
   employees,
   allCards,
+  columns,
+  onMove,
   onSave,
   onClose,
 }: {
   card: Card
   employees: Employee[]
   allCards: Card[]
+  columns: BoardColumn[]
+  onMove: (columnId: number) => void
   onSave: (patch: { title: string; body: string; assignee: number | null }) => void
   onClose: () => void
 }) {
@@ -472,17 +488,34 @@ function CardEditor({
         <div className="flex flex-col gap-2">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="text-sm" />
           <Textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Details…" className="min-h-24 resize-none text-sm" />
-          <div>
-            <div className="mb-1 text-[11px] text-muted-foreground">Assignee</div>
-            <Select value={assignee} onValueChange={setAssignee}>
-              <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                {employees.map((e) => (
-                  <SelectItem key={e.id} value={String(e.id)}>{e.name}{e.role ? ` · ${e.role}` : ""}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="mb-1 text-[11px] text-muted-foreground">Assignee</div>
+              <Select value={assignee} onValueChange={setAssignee}>
+                <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+                  {employees.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>{e.name}{e.role ? ` · ${e.role}` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] text-muted-foreground">Move to</div>
+              <Select
+                value={card.column_id != null ? String(card.column_id) : UNASSIGNED}
+                onValueChange={(v) => { if (v !== UNASSIGNED) onMove(Number(v)) }}
+              >
+                <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {card.column_id == null && <SelectItem value={UNASSIGNED}>Unsorted</SelectItem>}
+                  {columns.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div>
             <div className="mb-1 text-[11px] text-muted-foreground">Discussion</div>

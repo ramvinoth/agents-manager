@@ -456,3 +456,22 @@ def test_dedupe_no_match_and_empty():
     assert orglogic.dedupe_skill("write tests", ["ship build", "restart gpu"]) is False
     assert orglogic.dedupe_skill("", ["anything"]) is False
     assert orglogic.dedupe_skill("x", []) is False
+
+
+# ── resolve_board_project: the ONE board-resolution rule ─────────────────────
+
+def test_explicit_project_wins():
+    assert orglogic.resolve_board_project(5, 7) == 5
+    assert orglogic.resolve_board_project("9", 7) == 9
+    assert orglogic.resolve_board_project("12", "") == 12
+
+
+def test_session_project_when_no_explicit():
+    assert orglogic.resolve_board_project(None, 7) == 7
+    assert orglogic.resolve_board_project(None, "11") == 11  # JSON string form
+    assert orglogic.resolve_board_project("", "11") == 11
+
+
+def test_nothing_gives_none():
+    assert orglogic.resolve_board_project(None, None) is None
+    assert orglogic.resolve_board_project("", "") is None

@@ -64,15 +64,20 @@ class OrchestratorMixin:
                        {**body, "created_by": req.principal["actor"]})
 
     # ── board + cards (columns are per project) ───────────────────────────────
+    def _board_project(self, project=None, session=None):
+        """The one board-resolution rule (orglogic.resolve_board_project) over
+        this server's data: an explicit project wins, else the session's bound
+        project (kanbanProject, set at spawn). The board READ, card CREATE and
+        card DETAIL all resolve through here, so a card is born on the board it
+        was seen on and its detail screen can never disagree with that board."""
+        session_project = ((db.session_meta_get(session) or {}).get("kanbanProject")
+                           if session else None)
+        return orglogic.resolve_board_project(project, session_project)
+
     def _g_org_board(self, req):
-        project = (req.query.get("project") or [None])[0]
-        if not project:
-            # A board (its columns) is per-project. When no project is given,
-            # resolve the session's own project — the one the engine bound to
-            # it at spawn (persisted in session_meta).
-            session = (req.query.get("session") or [None])[0]
-            if session:
-                project = (db.session_meta_get(session) or {}).get("kanbanProject")
+        project = self._board_project(
+            (req.query.get("project") or [None])[0],
+            (req.query.get("session") or [None])[0])
         if not project:
             self.send_json({"error": "project required"}, status=400); return
         self.send_json({"columns": db.board_columns_list(int(project))})
@@ -121,20 +126,36 @@ class OrchestratorMixin:
 
     def _p_org_cards(self, req):
         body = self.read_body() or {}
+        # A card is born on the board it was seen on: no project named → the
+        # session's own bound project (the same rule the board read applies).
+        # Without this a card created from a session-filtered board (the mobile
+        # passes only `session`) lands with NO project and its detail screen has
+        # no columns to move it into — a dead card.
+        if not body.get("project_id"):
+            project = self._board_project(None, body.get("session"))
+            if project:
+                body["project_id"] = project
         self._org_send(req, "card_create",
                        {**body, "created_by": req.principal["actor"]})
 
     def _g_org_card(self, req):
-        """One card with its full comment thread — the read the card's detail
-        screen (mobile) and editor (web) load before letting anyone talk on it."""
+        """One card with its full comment thread AND its move options — the read
+        the card's detail screen (mobile) and editor (web) load before letting
+        anyone talk on it. `columns` is composed here, not by the client: the
+        card's own project's columns, else (an orphan) its session's bound
+        project's — so the detail screen renders exactly the board the card
+        can move on, and an empty list means the card truly has no board (the
+        client then offers to attach it to a project)."""
         cid = (req.query.get("id") or [None])[0]
         if not cid:
             self.send_json({"error": "id required"}, status=400); return
         card = db.card_get(int(cid))
         if not card:
             self.send_json({"error": "not found"}, status=404); return
+        project = self._board_project(card.get("project_id"), card.get("session_id"))
         self.send_json({"card": card, "comments": db.card_comment_list(card["id"]),
-                        "dependencies": db.card_deps_batch([card["id"]]).get(card["id"], [])})
+                        "dependencies": db.card_deps_batch([card["id"]]).get(card["id"], []),
+                        "columns": db.board_columns_list(int(project)) if project else []})
 
     def _g_org_card_deps(self, req):
         """One card's dependency edges — the read side of the dual control: the

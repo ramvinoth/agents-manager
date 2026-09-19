@@ -351,6 +351,23 @@ def mutates_own_session(acting_session, target_session):
 # or spawning any model. The orchestrator (viewer/orchestrator.py) executes the
 # returned intents; NOTHING here has side effects.
 
+def resolve_board_project(explicit=None, session_project=None):
+    """Which project's board a board-view or card belongs to — the ONE rule every
+    board path applies: an explicit project (the caller names it) wins; else the
+    session's own bound project (`kanbanProject`, set when the engine spawns the
+    session); else None — the card/view has no board until one is attached.
+
+    Pure over raw values: both arguments may be int or the JSON string form
+    (session_meta stores it as a string). Every caller that needs a project id
+    runs this instead of re-deriving the rule, so the board read, card create,
+    and card detail can never disagree about which board a card is on."""
+    if explicit not in (None, ""):
+        return int(explicit)
+    if session_project not in (None, ""):
+        return int(session_project)
+    return None
+
+
 def project_columns(columns):
     """Map the board's columns to logical slots by name (case-insensitive), else
     fall back to position order: first=todo, last=done, 2nd=doing, 3rd=review.

@@ -4,7 +4,7 @@ import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type BoardColumn, type Card, type CardComment, type Employee } from "../api/client"
+import { api, isQueued, type BoardColumn, type Card, type CardComment, type Employee, type OrgProject } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -40,6 +40,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [comments, setComments] = useState<CardComment[]>([])
   const [columns, setColumns] = useState<BoardColumn[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
+  // Fetched only when the card resolves to no board: the projects it can be
+  // attached to (the attach action turns the dead card into a movable one).
+  const [projects, setProjects] = useState<OrgProject[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [newComment, setNewComment] = useState("")
@@ -53,10 +56,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       if (r.card) {
         setCard(r.card)
         setComments(r.comments || [])
-        if (r.card.project_id != null) {
-          const b = await api.orgBoard({ project: r.card.project_id }).catch(() => ({ columns: [] as BoardColumn[] }))
-          setColumns(b.columns || [])
-        }
+        // The card's move options come WITH the card: the server resolves the
+        // board (the card's own project, else its session's bound one) and
+        // returns its columns — one round trip, no client-side re-derivation.
+        setColumns(r.columns || [])
       } else {
         navigation.goBack()
       }
@@ -109,6 +112,30 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       }
     },
     [card]
+  )
+
+  // The card resolves to NO board (no project of its own, and its session has
+  // none bound — e.g. a card created before project binding existed, or whose
+  // project was deleted): it cannot be moved. Fetch the project list once so
+  // the owner can attach it; card_update is green, the attach lands at once.
+  useEffect(() => {
+    if (!card || columns.length) return
+    api.orgProjects().then((r) => setProjects(r.projects || [])).catch(() => {})
+  }, [card, columns.length])
+
+  const attach = useCallback(
+    async (projectId: number) => {
+      if (!card) return
+      const prev = card
+      setCard((c) => (c ? { ...c, project_id: projectId } : c))
+      try {
+        await api.orgUpdateCard({ card_id: card.id, project_id: projectId })
+        await load() // the card's board now has columns → MOVE TO appears
+      } catch {
+        setCard(prev)
+      }
+    },
+    [card, load]
   )
 
   const assign = useCallback(() => {
@@ -202,33 +229,72 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{card.body}</Text>
         ) : null}
 
-        {/* the pipeline in one row: tap a column to move the card there */}
+        {/* the pipeline in one row: tap a column to move the card there. When
+            the card resolves to no board, this becomes the attach-to-project
+            picker instead — a card is never left without a way to move it. */}
         <View>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>MOVE TO</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-            {columns.map((col) => {
-              const active = col.id === card.column_id
-              return (
-                <Pressable
-                  key={col.id}
-                  onPress={() => move(col.id)}
-                  testID={`card-detail-col-${col.id}`}
-                  style={{
-                    backgroundColor: active ? t.accent : t.surface,
-                    borderWidth: 1,
-                    borderColor: active ? t.accent : t.border,
-                    borderRadius: 999,
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                  }}
-                >
-                  <Text style={{ color: active ? "#fff" : t.text, fontSize: 12, fontWeight: "600" }}>
-                    {col.name}
-                  </Text>
-                </Pressable>
-              )
-            })}
-          </ScrollView>
+          {columns.length ? (
+            <>
+              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>MOVE TO</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                {columns.map((col) => {
+                  const active = col.id === card.column_id
+                  return (
+                    <Pressable
+                      key={col.id}
+                      onPress={() => move(col.id)}
+                      testID={`card-detail-col-${col.id}`}
+                      style={{
+                        backgroundColor: active ? t.accent : t.surface,
+                        borderWidth: 1,
+                        borderColor: active ? t.accent : t.border,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text style={{ color: active ? "#fff" : t.text, fontSize: 12, fontWeight: "600" }}>
+                        {col.name}
+                      </Text>
+                    </Pressable>
+                  )
+                })}
+              </ScrollView>
+            </>
+          ) : (
+            <>
+              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>
+                ON NO BOARD — ATTACH TO A PROJECT
+              </Text>
+              {projects.length ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                  {projects.map((p) => (
+                    <Pressable
+                      key={p.id}
+                      onPress={() => attach(p.id)}
+                      testID={`card-detail-project-${p.id}`}
+                      style={{
+                        backgroundColor: t.surface,
+                        borderWidth: 1,
+                        borderColor: t.border,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text style={{ color: t.text, fontSize: 12, fontWeight: "600" }}>
+                        {p.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>
+                  No projects exist yet — create one first, then this card can join a board.
+                </Text>
+              )}
+            </>
+          )}
         </View>
 
         {assignee ? (
