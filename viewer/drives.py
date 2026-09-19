@@ -14,18 +14,40 @@ produce) and add one ADAPTERS entry. Nothing else — the app, the MCP layer,
 the routes — learns the vendor's name; they address drives by id through
 adapter_for().
 
-Vendor facts (ASSUMPTIONS until verified against primary docs — Phase 0):
-  google   : an individual dev's OAuth app runs in "Testing" consent
-             (~100 test users, warning banner); web flow only (no device
-             flow for Drive); scopes drive + drivefile.
-  dropbox  : PKCE web flow (no client secret); files.content.read/write;
-             150 MB simple-upload cap (chunked upload above it); refresh
-             tokens expire after ~30 days unused; no server-side zip.
-  onedrive : consumer (personal Microsoft) accounts use the device flow
-             (user types a code — best onboarding for a self-hosted box);
-             Files.ReadWrite; GET on a folder id returns a ZIP (the only
-             native zip of the three); rename = PATCH item name; delete →
-             vendor trash (~30 days).
+Vendor facts (VERIFIED against primary docs 2026-09-19):
+  google   : an unverified app using sensitive scopes (e.g. `drive`) shows
+             an "unverified app" warning before the consent screen and is
+             capped at 100 NEW users; verification is only required before
+             a public launch, and an internal/personal use case is exempt.
+             For a single-owner self-hosted app that is just a warning.
+             Web (authorization-code) flow only — no device flow for
+             Drive. (support.google.com/cloud/answer/7454865)
+  dropbox  : PKCE is the public-client flow — no client secret needed.
+             A refresh token is ONLY returned when the authorize URL
+             carries token_access_type=offline; refresh tokens are
+             long-lived ("a user's approval remains valid until
+             explicitly revoked" — the old ~30-day-expiry claim is not in
+             the current docs, so don't design around it; surface a failed
+             refresh so the user can re-authorize). Access tokens are
+             opaque and may exceed 1 KB. Data calls go to
+             api.dropboxapi.com / content.dropboxapi.com; only the
+             /oauth2/authorize page lives on www.dropbox.com. Business
+             teams can have a monthly "data transport calls" cap — the
+             failure carries a user_message to show the user.
+             (docs.dropboxapi.com: /get-started/authorization, /oauth,
+             /technical-reference/data-transport-limit)
+  onedrive : personal (consumer) Microsoft accounts are supported by the
+             device code flow via the /consumers tenant — the best
+             onboarding path for a self-hosted box (user types a code).
+             Simple upload (PUT /content) accepts up to 250 MB; above
+             that use a resumable upload session. There is NO API to
+             download a folder as a zip (it exists only in the web UI;
+             an April-2024 feature request is still Status: NEW) — so
+             build_zip/compress for OneDrive is download→zip→upload or
+             capability-hidden, NOT a native call.
+             (learn.microsoft.com: /entra/identity-platform/
+             v2-oauth2-device-code, /graph/api/driveitem-put-content;
+             techcommunity.microsoft.com idea 4116936)
 """
 
 from viewer import db
