@@ -5,8 +5,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Load optional local secrets (APNs push config etc.) from a gitignored env file
@@ -129,17 +131,68 @@ def load_system_commands():
         return {}
 
 
+_CLAUDE_BIN_CACHE = {"at": 0.0, "bin": ""}  # resolved binary + when (hourly re-resolve)
+
+
+def _claude_version(path):
+    """(major, minor, patch) parsed from `claude --version`, or () if it cannot
+    be run/parsed — a probe failure must never fail the resolution."""
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True, text=True,
+                             timeout=10).stdout
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+        return tuple(int(g) for g in m.groups()) if m else ()
+    except Exception:
+        return ()
+
+
+def _claude_candidates():
+    """Every claude install on this machine, de-duplicated by real path:
+    the server-PATH hit, the two local install spots, and every nvm node
+    version that has one. Order here is irrelevant — the version decides."""
+    cands = []
+    found = shutil.which("claude")
+    if found:
+        cands.append(found)
+    cands += [str(p) for p in (Path.home() / ".local/bin/claude",
+                               Path.home() / ".claude/local/claude")]
+    cands += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin/claude"))
+    seen, out = set(), []
+    for c in cands:
+        if not os.path.exists(c):
+            continue
+        real = str(Path(c).resolve())
+        if real not in seen:
+            seen.add(real)
+            out.append(c)
+    return out
+
+
 def claude_bin():
+    """The claude binary the viewer spawns. The explicit CLAUDE_BIN env var
+    always wins (the operator's call, never version-checked). Otherwise the
+    NEWEST install among the known locations wins — because a first-on-PATH
+    hit that is months stale is exactly the failure that bit us: the viewer
+    pinned the 2.1.84 Homebrew Cask (2026-04), whose stdio-MCP hang was fixed
+    upstream (2.1.105/2.1.187), while a current nvm install sat unused. The
+    newest-binary rule makes the invariant ("spawn a current claude") true
+    regardless of which install channel drifts; an hour-long cache keeps the
+    per-run cost at zero and picks up fresh installs without a restart."""
     override = os.environ.get("CLAUDE_BIN")
     if override:
         return override
-    found = shutil.which("claude")
-    if found:
-        return found
-    for cand in (Path.home() / ".local/bin/claude", Path.home() / ".claude/local/claude"):
-        if cand.exists():
-            return str(cand)
-    return "claude"
+    now = time.time()
+    if _CLAUDE_BIN_CACHE["bin"] and now - _CLAUDE_BIN_CACHE["at"] < 3600:
+        return _CLAUDE_BIN_CACHE["bin"]
+    best, best_ver = "", ()
+    for cand in _claude_candidates():
+        ver = _claude_version(cand)
+        if ver and ver > best_ver:
+            best, best_ver = cand, ver
+    if not best:
+        best = shutil.which("claude") or "claude"
+    _CLAUDE_BIN_CACHE.update({"at": now, "bin": best})
+    return best
 
 
 def read_back_f(f, end_off, n_lines):
