@@ -314,6 +314,21 @@ def init_db():
               value TEXT NOT NULL,
               PRIMARY KEY (host, key)
             );
+            -- Cloud-storage drives: the third leg of the file layer (local /
+            -- SSH host / cloud drive). The bytes live on the vendor; this row
+            -- holds only the OAuth tokens (`config`) and the plugin lifecycle
+            -- (status active|paused, hidden). `kind` selects the adapter in
+            -- viewer/drives.py — a new vendor is one adapter class + one
+            -- registry entry, nothing else.
+            CREATE TABLE IF NOT EXISTS drives (
+              id         TEXT PRIMARY KEY,
+              label      TEXT NOT NULL DEFAULT '',
+              kind       TEXT NOT NULL,
+              config     JSONB NOT NULL DEFAULT '{}'::jsonb,
+              status     TEXT NOT NULL DEFAULT 'active',
+              hidden     BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at DOUBLE PRECISION NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS providers (
               id            TEXT PRIMARY KEY,
               name          TEXT NOT NULL DEFAULT '',
@@ -1719,6 +1734,85 @@ def host_delete(hid):
     with _db() as cur:
         cur.execute("DELETE FROM hosts WHERE id = %s RETURNING id", (hid,))
         return cur.fetchone() is not None
+
+
+# Drives (cloud storage registry) --------------------------------------------
+# A drive is a cloud account (Google Drive, Dropbox, OneDrive) that the file
+# routes serve as just one more disk. The bytes live on the vendor; these
+# columns hold only the OAuth tokens (`config`, JSONB) and the plugin
+# lifecycle (status active|paused, hidden). The list route must strip `config`
+# before returning to a client, exactly as the hosts list route strips
+# password/key_file.
+def _drive_row(r):
+    return {
+        "id": r["id"],
+        "label": r["label"],
+        "kind": r["kind"],
+        "config": r["config"] or {},
+        "status": r["status"],
+        "hidden": bool(r["hidden"]),
+        "created_at": r["created_at"],
+    }
+
+
+def drives_load():
+    """{id: {label, kind, config, status, hidden, created_at}} for every drive."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM drives ORDER BY created_at")
+        return {r["id"]: _drive_row(r) for r in cur.fetchall()}
+
+
+def drive_get(did):
+    with _db() as cur:
+        cur.execute("SELECT * FROM drives WHERE id = %s", (did,))
+        r = cur.fetchone()
+        return None if r is None else _drive_row(r)
+
+
+def drive_upsert(did, entry):
+    """Create or update one drive row. `entry` uses the JSON keys the API
+    uses: label, kind, config, status, hidden."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO drives (id, label, kind, config, status, hidden, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            "label = EXCLUDED.label, kind = EXCLUDED.kind, config = EXCLUDED.config, "
+            "status = EXCLUDED.status, hidden = EXCLUDED.hidden",
+            (
+                did,
+                entry.get("label") or did,
+                entry.get("kind") or "",
+                Json(entry.get("config") or {}),
+                entry.get("status") or "active",
+                bool(entry.get("hidden")),
+                _now(),
+            ),
+        )
+
+
+def drive_delete(did):
+    with _db() as cur:
+        cur.execute("DELETE FROM drives WHERE id = %s RETURNING id", (did,))
+        return cur.fetchone() is not None
+
+
+def drive_set_status(did, status=None, hidden=None):
+    """Plugin lifecycle: pause/resume (`status`) and hide/show (`hidden`)
+    from the file UI. Either may be given; a paused or hidden drive is
+    refused by viewer.drives.adapter_for."""
+    sets, vals = [], []
+    if status is not None:
+        sets.append("status = %s")
+        vals.append(status)
+    if hidden is not None:
+        sets.append("hidden = %s")
+        vals.append(bool(hidden))
+    if not sets:
+        return
+    vals.append(did)
+    with _db() as cur:
+        cur.execute(f"UPDATE drives SET {', '.join(sets)} WHERE id = %s", vals)
 
 
 # Per-host env vars -----------------------------------------------------------

@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from viewer.drives import DriveError, adapter_for
 from viewer.engine import (
     get_host,
 )
@@ -41,12 +42,71 @@ def _is_secret_path(name: str) -> bool:
     return os.path.dirname(norm) == claude and base.startswith(".")
 
 
+def _resolve_location(req, body=None):
+    """Which disk a file op targets: ("local","local") when neither host nor
+    drive is given, ("ssh", host) for an SSH host, ("drive", id) for a cloud
+    drive. GET handlers pass only req (params in the query string); POST
+    handlers also pass the parsed JSON body, since host/drive may arrive as
+    JSON instead. Exactly one of drive/host may be set — both is a 400.
+    With neither, this is exactly what the pre-drive handlers did, so local
+    and SSH requests run their original paths byte-for-byte."""
+    drive = (req.query.get("drive") or [""])[0]
+    if not drive:
+        drive = (body or {}).get("drive") or ""
+    host = (body or {}).get("host") or req.host
+    if drive:
+        if host != "local":
+            raise DriveError("Specify one of drive or host, not both", 400)
+        return "drive", drive
+    if host != "local":
+        return "ssh", host
+    return "local", "local"
+
+
 class FsMixin:
+    def _drive_target(self, req, body=None):
+        """Route a request to a cloud drive. Returns (True, adapter) for a
+        drive request, (False, None) for local/SSH (the original code below
+        the call site runs unchanged), and (None, None) after an error
+        (DriveError) has already been sent: unknown id 404, paused/hidden
+        403, bad params 400."""
+        try:
+            kind, ref = _resolve_location(req, body)
+        except DriveError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return None, None
+        if kind != "drive":
+            return False, None
+        try:
+            return True, adapter_for(ref)
+        except DriveError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return None, None
+
     def _g_fs_download(self, req):
         fpath = (req.query.get("path") or [""])[0]
         if not fpath:
             self.send_error(400, "Missing path")
             return
+        ok, adapter = self._drive_target(req)
+        if ok:
+            try:
+                data, name = adapter.read_bytes(fpath)
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", content_disposition(name))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if ok is None:
+            return
+        # The secret-file guard protects *this machine's* credentials; a
+        # cloud drive is the owner's own account, so it applies to the local
+        # and SSH legs only.
         if _is_secret_path(fpath):
             self.send_json({"error": "Forbidden: secret file"}, status=403)
             return
@@ -94,6 +154,15 @@ class FsMixin:
         if not _safe_name(name):
             self.send_json({"error": "Invalid folder name"}, status=400)
             return
+        ok, adapter = self._drive_target(req, body)
+        if ok:
+            try:
+                self.send_json(adapter.mkdir(body.get("path") or "~", name))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         hh = body.get("host", "local")
         if hh != "local":
             try:
@@ -135,12 +204,34 @@ class FsMixin:
             if not _safe_name(n):
                 self.send_json({"error": "Invalid item name"}, status=400)
                 return
-            if _is_secret_path(os.path.join(path, n)):
-                self.send_json({"error": "Forbidden: secret file"}, status=403)
-                return
         arcname = archive or ((names[0] + ".zip") if len(names) == 1 else "Archive.zip")
         if not arcname.endswith(".zip"):
             arcname += ".zip"
+
+        ok, adapter = self._drive_target(req)
+        if ok:
+            try:
+                data, _ = adapter.build_zip(path, names)
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", content_disposition(arcname))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if ok is None:
+            return
+
+        # The secret-file guard protects *this machine's* credentials; it
+        # applies to the local and SSH legs. A cloud drive is the owner's own
+        # account — there is no machine secret to shield from its owner.
+        for n in names:
+            if _is_secret_path(os.path.join(path, n)):
+                self.send_json({"error": "Forbidden: secret file"}, status=403)
+                return
 
         if req.host != "local":
             try:
@@ -224,6 +315,15 @@ class FsMixin:
         if not fpath or not _safe_name(name):
             self.send_json({"error": "Invalid name"}, status=400)
             return
+        ok, adapter = self._drive_target(req, body)
+        if ok:
+            try:
+                self.send_json(adapter.rename(fpath, name))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         if hh != "local":
             try:
                 self.send_json(remote_rename(hh, fpath, name))
@@ -254,6 +354,15 @@ class FsMixin:
         fpath = (body.get("path") or "").strip()
         if not fpath or fpath in ("/", "~", "."):
             self.send_json({"error": "Cannot delete system paths"}, status=400)
+            return
+        ok, adapter = self._drive_target(req, body)
+        if ok:
+            try:
+                self.send_json(adapter.delete(fpath))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
             return
         if hh != "local":
             try:
@@ -299,6 +408,15 @@ class FsMixin:
                 return
         if archive and ("/" in archive or "\0" in archive):
             self.send_json({"error": "Invalid archive name"}, status=400)
+            return
+        ok, adapter = self._drive_target(req, body)
+        if ok:
+            try:
+                self.send_json(adapter.compress(path, names, archive))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
             return
         if hh != "local":
             try:
@@ -375,6 +493,15 @@ class FsMixin:
         if not files:
             self.send_json({"error": "No files found in upload"}, status=400)
             return
+        ok, adapter = self._drive_target(req)
+        if ok:
+            try:
+                self.send_json(adapter.upload(path, files))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         if host != "local":
             try:
                 self.send_json(remote_upload(host, path, files))
@@ -401,6 +528,15 @@ class FsMixin:
     def _g_fs(self, req):
         raw = (req.query.get("path") or ["~"])[0]
         show_hidden = (req.query.get("hidden") or ["0"])[0] == "1"
+        ok, adapter = self._drive_target(req)
+        if ok:
+            try:
+                self.send_host_result(adapter.fs_list(raw, show_hidden))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         try:
             self.send_host_result(get_host(req.host).fs_list(raw, show_hidden))
         except Exception as e:
