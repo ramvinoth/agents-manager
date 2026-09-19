@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native"
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native"
+import { useHeaderHeight } from "@react-navigation/elements"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, isQueued, type BoardColumn, type Card, type CardComment, type Employee } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
 
@@ -18,9 +21,20 @@ type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
  * the card to Review/Approved/Declined from here (or by dragging on the board)
  * and comments here to talk; the card's session wakes on that (boardwatch).
  * Polls like the board; a 404 means the card was deleted — go back.
+ *
+ * The composer is the SAME one as the thread screen (styles.ts composerWrap/
+ * composerBar/composerInput/circleBtn) — the app has one input pattern, and it
+ * is the one that sits right above the soft keyboard: a KeyboardAvoidingView
+ * with the real header height (ThreadScreen's pattern), safe-area bottom
+ * padding, and the send button bottom-aligned in its row.
  */
 export default function CardDetailScreen({ route, navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
+  const insets = useSafeAreaInsets()
+  // The real header height, like the thread screen — this is what makes the
+  // keyboard land flush against the composer instead of covering it.
+  const headerHeight = useHeaderHeight()
   const id = route.params.id
   const [card, setCard] = useState<Card | null>(null)
   const [comments, setComments] = useState<CardComment[]>([])
@@ -162,13 +176,18 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: t.bg }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={headerHeight}
+    >
       {error ? <Text style={{ color: t.danger, padding: 12 }}>{error}</Text> : null}
 
       <ScrollView
         ref={sheet}
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: 12, gap: 10 }}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
           <Text style={{ color: t.text, fontSize: 18, fontWeight: "700", flex: 1, marginRight: 8 }}>
@@ -238,22 +257,31 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         )}
       </ScrollView>
 
-      {/* pinned composer */}
-      <View style={{ flexDirection: "row", gap: 8, padding: 10, borderTopWidth: 1, borderColor: t.border, backgroundColor: t.surface }}>
-        <TextInput
-          testID="card-detail-comment"
-          style={{ flex: 1, backgroundColor: t.inputBg, color: t.text, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: t.border }}
-          placeholder="Comment on this card…"
-          placeholderTextColor={t.textMuted}
-          value={newComment}
-          onChangeText={setNewComment}
-          multiline
-          returnKeyType="send"
-        />
-        <Pressable onPress={post} hitSlop={8} disabled={!newComment.trim()} testID="card-detail-send">
-          <Icon name="send" size={20} color={newComment.trim() ? t.accent : t.textMuted} />
-        </Pressable>
+      {/* Composer — the app's one input pattern (ThreadScreen's), so it aligns
+          with the chat: hairline top border, pill input, circular send button
+          bottom-aligned, and bottom padding that clears the home indicator. */}
+      <View style={[styles.composerWrap, { paddingBottom: insets.bottom }]}>
+        <View style={styles.composerBar}>
+          <TextInput
+            testID="card-detail-comment"
+            style={[styles.composerInput, { backgroundColor: t.inputBg, color: t.text, borderColor: t.border }]}
+            placeholder="Comment on this card…"
+            placeholderTextColor={t.textMuted}
+            value={newComment}
+            onChangeText={setNewComment}
+            multiline
+          />
+          <Pressable
+            testID="card-detail-send"
+            accessibilityLabel="send comment"
+            style={[styles.circleBtn, newComment.trim() ? styles.sendBtn : styles.sendBtnDisabled]}
+            onPress={post}
+            disabled={!newComment.trim()}
+          >
+            <Icon name="send" size={19} color="#fff" />
+          </Pressable>
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   )
 }
