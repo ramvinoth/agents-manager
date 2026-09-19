@@ -63,8 +63,12 @@ def schedule_wake(card, event, origin):
     if db.loop_get(lid):
         # A wake is already pending for this card: replace its payload and
         # re-arm. Never stack — the session reads current state on pickup.
+        # `origin` is patched too: the mode filter acts on the LATEST cause, so
+        # a coalesced event must never keep a stale one (a human's comment
+        # merged into an agent-caused wake would otherwise never fire in
+        # 'user' mode — and vice versa in 'harman' mode).
         db.loop_update(lid, {"prompt": prompt, "nextRun": now + _WAKE_DELAY,
-                             "kind": "once", "enabled": True})
+                             "kind": "once", "enabled": True, "origin": origin})
     else:
         db.loop_upsert(lid, {
             "session": sid, "path": "", "prompt": prompt,
