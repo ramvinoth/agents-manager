@@ -138,6 +138,14 @@ class SessionViewerHandler(
           {kind, actor, human_role, session_level, level, user, session}
         where `level` is the effective authority — min(human ceiling, session
         level) — and is the only value a handler should gate on.
+
+        `actor` names the caller the way the owner sees it everywhere else:
+        `user:<name>` for a human at the UI, `employee:<name>` for a session
+        linked to an employee, and `session:<label-or-short-id>` for a session
+        with no employee link — never a fabricated identity ("employee:?").
+        The label is the per-run snapshot from the engine (the same name as
+        the chat list and pushes); without one (e.g. a run outliving a
+        restart) the short id stands in.
         """
         user = self.current_user()
         if user:
@@ -159,8 +167,14 @@ class SessionViewerHandler(
             # the install owner's role — never an implicit escalation, and on a
             # fresh install with no owner it resolves to no authority at all.
             human_role = db.owner_role()
+            if emp:
+                actor = f"employee:{emp.get('name') or emp.get('id') or '?'}"
+            else:
+                # No employee link: name it for what it is — the session — with
+                # the label its live run started with, else the short id.
+                actor = f"session:{info.get('label') or str(sid)[:8]}"
             req.principal = {
-                "kind": "mcp", "actor": f"employee:{emp.get('name', emp.get('id', '?'))}",
+                "kind": "mcp", "actor": actor,
                 "human_role": human_role, "session_level": level,
                 "level": orglogic.effective_level(human_role, level),
                 "user": None, "session": sid,

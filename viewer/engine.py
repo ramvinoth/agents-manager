@@ -935,8 +935,12 @@ def _emp_level(emp):
 
 def validate_session_credential(session_id, token):
     """Authenticate an MCP subprocess by its per-run token. Returns
-    {'employee', 'level'} for the run, or None if unknown/unauthorized (the
-    server then 401s before any handler runs).
+    {'employee', 'level', 'label'} for the run, or None if unknown/unauthorized
+    (the server then 401s before any handler runs). `label` is the display name
+    the run started with (start_claude_run's snapshot) — the same name the chat
+    list and pushes use — so the server's principal can name an UNLINKED
+    session ("session:RSI") instead of "employee:?" without rescanning the
+    transcript on every request.
 
     Either per-run token authenticates. `perm_token` and `kanban_token` are two
     secrets for ONE principal: both are minted by the same start_claude_run, for
@@ -957,8 +961,12 @@ def validate_session_credential(session_id, token):
             if token not in (job.get("kanban_token") or None,
                              job.get("perm_token") or None):
                 return None
-            return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
-    # No live job (restart): validate against the persisted tokens.
+            return {"employee": job.get("employee"),
+                    "level": job.get("employee_level") or "ic",
+                    "label": job.get("label") or ""}
+    # No live job (restart): validate against the persisted tokens. The label
+    # is a per-run snapshot (not persisted), so a run outliving a restart
+    # degrades to "" — the caller falls back to the session's short id.
     try:
         from viewer import db
         row = db.session_token_get(session_id)
@@ -966,7 +974,8 @@ def validate_session_credential(session_id, token):
                                     row.get("perm_token") or None):
             return None
         emp = db.employee_get(row["employee_id"]) if row.get("employee_id") else None
-        return {"employee": emp, "level": row.get("employee_level") or "ic"}
+        return {"employee": emp, "level": row.get("employee_level") or "ic",
+                "label": ""}
     except Exception:
         return None
 
@@ -1306,6 +1315,14 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # Resolve which employee (and authority level) this session runs as, from its
     # session-meta provider link. No employee → default 'ic' scope.
     job["employee"], job["employee_level"] = _resolve_employee(session_id)
+    # Display-name snapshot for the principal the server derives from this run
+    # (read back via validate_session_credential, so the auth path is one dict
+    # lookup, never a transcript rescan). Same name the chat list and pushes
+    # use; a failure here must not block the run from starting.
+    try:
+        job["label"] = _push_label(session_id, cwd)
+    except Exception:
+        job["label"] = f"Chat {str(session_id)[:8]}"
     # Persist the per-run tokens so they survive a server restart: CHAT_JOBS is
     # in-memory, but the durable pending question/plan (and a still-running MCP
     # subprocess) must stay authorized after a restart. Cleared when the job is
