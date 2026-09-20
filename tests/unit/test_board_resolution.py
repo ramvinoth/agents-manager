@@ -94,11 +94,13 @@ def test_create_with_explicit_project_is_untouched(db):
     assert s.intents[0][1]["project_id"] == 20
 
 
-def test_create_with_no_context_stays_projectless(db):
+def test_create_with_no_context_is_400(db):
     db.meta = META
     s = _FakeSelf({"title": "x", "session": "s9"})  # session has no bound project
     s._p_org_cards(_req())
-    assert s.intents[0][1].get("project_id") is None
+    assert s.sent[0][0] == 400
+    assert "needs a board" in s.sent[0][1]["error"]
+    assert s.intents == []  # nothing is created
 
 
 # ── board READ: the rule the board view applies ──────────────────────────────

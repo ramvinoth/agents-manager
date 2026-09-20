@@ -139,8 +139,14 @@ class OrchestratorMixin:
         # no columns to move it into — a dead card.
         if not body.get("project_id"):
             project = self._board_project(None, body.get("session"))
-            if project:
-                body["project_id"] = project
+            if not project:
+                # A card with no board is invisible on every view — refusing it
+                # is the same rule as the read ("a card is born on the board it
+                # was seen on"), closed at the other end.
+                self.send_json(
+                    {"error": "a card needs a board — name a project or an existing chat"},
+                    status=400); return
+            body["project_id"] = project
         self._org_send(req, "card_create",
                        {**body, "created_by": req.principal["actor"]})
 

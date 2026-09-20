@@ -16,7 +16,8 @@ const COL_W = 260 // column width; horizontal strip scrolls
 
 /**
  * KanbanScreen — the org's ONE canonical board rendered as a filtered VIEW.
- * Reached filtered (swipe a chat row → its session) or unfiltered (CEO dashboard).
+ * Only filtered entries exist: swipe a chat row → its session's board, or a
+ * project row on the company screen → that project's board.
  * Horizontal columns; cards are draggable (react-native-gesture-handler Pan +
  * reanimated — the one place drag-and-drop is justified, kept local to this screen)
  * with a tap→card-detail fallback (its chips move the card; the move menu lived
