@@ -149,7 +149,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const empName = (id: number | null) => employees.find((e) => e.id === id)?.name
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View testID="kanban-board" style={{ flex: 1, backgroundColor: t.bg }}>
       {error ? (
         <Text style={{ color: t.danger, padding: 12 }}>{error}</Text>
       ) : null}

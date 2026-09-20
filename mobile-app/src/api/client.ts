@@ -185,8 +185,19 @@ export const api = {
   // ---- push notifications ----
   // Register this device's Expo push token so the server can notify us in the
   // background (turn finished / approval needed). Unregister on logout.
-  pushRegister: (token: string, platform = "ios") =>
-    req<{ registered?: boolean; error?: string }>("POST", "/api/push/register", { token, platform }),
+  // `app` declares what this client runs (version + native build number from
+  // the embedded Info.plist) so the server can see which build is on a device.
+  pushRegister: (
+    token: string,
+    platform = "ios",
+    app: { version?: string | null; build?: string | null } = {},
+  ) =>
+    req<{ registered?: boolean; error?: string }>("POST", "/api/push/register", {
+      token,
+      platform,
+      app_version: app.version || null,
+      app_build: app.build || null,
+    }),
   pushUnregister: (token: string) =>
     req<{ unregistered?: boolean }>("POST", "/api/push/unregister", { token }),
 

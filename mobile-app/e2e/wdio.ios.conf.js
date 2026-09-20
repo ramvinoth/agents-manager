@@ -5,8 +5,9 @@ const { shared } = require("./wdio.shared.conf")
 const caps = {
   platformName: "iOS",
   "appium:automationName": "XCUITest",
-  "appium:deviceName": process.env.E2E_DEVICE || "iPhone 15",
-  "appium:platformVersion": process.env.E2E_IOS_VERSION || "17.5",
+  "appium:deviceName": process.env.E2E_DEVICE,
+  "appium:platformVersion": process.env.E2E_IOS_VERSION,
+  "appium:autoAcceptAlerts": true,
   "appium:app": process.env.APP_PATH,
   "appium:newCommandTimeout": 240,
 }

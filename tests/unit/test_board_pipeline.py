@@ -203,6 +203,9 @@ class FakeBoard:
             self.card = dict(self.card, column_id=column_id, position=position)
         return {"id": card_id, "column_id": column_id, "position": position}
 
+    def card_last_move(self, card_id, seconds):
+        return None  # this fake keeps no audit history — the recency guard is a no-op
+
     def card_comment_add(self, card_id, author, body):
         row = {"id": len(self.comments) + 1, "card_id": card_id,
                "author": author, "body": body}

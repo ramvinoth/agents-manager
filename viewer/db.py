@@ -87,7 +87,9 @@ def init_db():
               token      TEXT PRIMARY KEY,
               user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               platform   TEXT NOT NULL DEFAULT 'ios',
-              created_at DOUBLE PRECISION NOT NULL
+              created_at DOUBLE PRECISION NOT NULL,
+              app_version TEXT,
+              app_build   TEXT
             );
             CREATE TABLE IF NOT EXISTS pending_questions (
               session_id  TEXT PRIMARY KEY,
@@ -109,6 +111,10 @@ def init_db():
             );
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
             ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'viewer';
+            -- What app a device runs, reported by the client on push-register.
+            -- NULL = a build from before this column (we simply can't see it).
+            ALTER TABLE push_tokens ADD COLUMN IF NOT EXISTS app_version TEXT;
+            ALTER TABLE push_tokens ADD COLUMN IF NOT EXISTS app_build TEXT;
             -- Existing installs: the first account IS the owner (signup closes after
             -- it, see routes/auth.py), so promote it rather than locking the only
             -- user out of their own instance. Idempotent: only fires while no owner
@@ -585,17 +591,26 @@ def set_prefs(user_id, data):
         )
 
 
-def add_push_token(user_id, token, platform="ios"):
+def add_push_token(user_id, token, platform="ios", app_version=None, app_build=None):
     """Register a device push token for a user. Idempotent: re-registering the
-    same token re-points it at this user (a device can only serve one account)."""
+    same token re-points it at this user (a device can only serve one account).
+    app_version/app_build are what the client declares it runs. TestFlight
+    builds share one version string (0.1.0) and differ only in the build
+    number, so the build is the identity that matters."""
     if not token:
         return
     with _db() as cur:
         cur.execute(
-            "INSERT INTO push_tokens(token, user_id, platform, created_at) VALUES(%s,%s,%s,%s) "
+            "INSERT INTO push_tokens(token, user_id, platform, created_at, app_version, app_build) "
+            "VALUES(%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, "
-            "platform = excluded.platform, created_at = excluded.created_at",
-            (token, user_id, platform or "ios", time.time()),
+            "platform = excluded.platform, created_at = excluded.created_at, "
+            # COALESCE: a pre-telemetry build re-registering must not erase a
+            # newer declaration for the same token.
+            "app_version = COALESCE(excluded.app_version, push_tokens.app_version), "
+            "app_build = COALESCE(excluded.app_build, push_tokens.app_build)",
+            (token, user_id, platform or "ios", time.time(),
+             app_version or None, app_build or None),
         )
 
 
@@ -986,6 +1001,32 @@ def card_move(card_id, column_id, position):
     return card_update(card_id, column_id=column_id, position=position)
 
 
+def card_last_move(card_id, seconds):
+    """The column this card's most recent column-moving write landed in, if
+    that write happened within the last `seconds` — else None.
+
+    Derived from audit_log: every board write is audited AFTER it runs, with the
+    full intent as `target`, so `target->'args'->>'column_id'` is where a
+    card_move / card_update-with-column actually put the card. The caller
+    validates the column against the card's OWN board, so a row from a refused
+    cross-board drag or a since-deleted column is ignored upstream, not here.
+    (task_done resolves its column at run time, so its audit row carries no
+    column_id and is invisible here by construction — see actions' guard.)
+    Returns (column_id, created_at) or None."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT target->'args'->>'column_id' AS column_id, created_at "
+            "FROM audit_log "
+            "WHERE action IN ('card_move', 'card_update') "
+            "  AND target->'args'->>'card_id' = %s "
+            "  AND target->'args'->>'column_id' IS NOT NULL "
+            "  AND created_at > %s "
+            "ORDER BY id DESC LIMIT 1",
+            (str(card_id), _now() - seconds))
+        row = cur.fetchone()
+    return (row["column_id"], row["created_at"]) if row else None
+
+
 def card_assign(card_id, assignee):
     return card_update(card_id, assignee=assignee)
 
@@ -1158,12 +1199,20 @@ def audit_append(actor, action, target=None, outcome=""):
         return cur.fetchone()["id"]
 
 
-def audit_list(limit=100, actor=None, action=None):
+def audit_list(limit=100, actor=None, action=None, *, before_id=None, result=None):
+    """Newest recorded IDs; optional display filtering happens before the limit."""
     clauses, params = [], []
     if actor is not None:
         clauses.append("actor = %s"); params.append(actor)
     if action is not None:
         clauses.append("action = %s"); params.append(action)
+    if before_id is not None:
+        clauses.append("id < %s"); params.append(before_id)
+    if result is not None:
+        from viewer.audit import outcome_filter
+        clause, values = outcome_filter(result)
+        if clause:
+            clauses.append(clause); params.extend(values)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(int(limit))
     with _db() as cur:
@@ -1608,10 +1657,20 @@ def session_meta_patch(sid, fields):
     survive a concurrent writer) and return the full merged dict. `fields` values
     of None are stored as-is; callers that mean 'remove' should handle that
     explicitly — no current caller does."""
+    fields = dict(fields)
+    merge = "session_meta.data || EXCLUDED.data"
+    if set(fields) & {"provider", "convMode", "effort", "modelSelection"}:
+        fields["aiRevision"] = 1
+        # Legacy clients participate in the AI revision domain too. Changing a
+        # provider cannot carry the previous provider's explicit model across.
+        if "provider" in fields and "modelSelection" not in fields:
+            merge = "(CASE WHEN session_meta.data->>'provider' IS DISTINCT FROM EXCLUDED.data->>'provider' " \
+                    "THEN session_meta.data - 'modelSelection' ELSE session_meta.data END) || EXCLUDED.data"
+        merge += " || jsonb_build_object('aiRevision', COALESCE((session_meta.data->>'aiRevision')::int, 0) + 1)"
     with _db() as cur:
         cur.execute(
             "INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, %s, %s) "
-            "ON CONFLICT (session_id) DO UPDATE SET data = session_meta.data || EXCLUDED.data, "
+            f"ON CONFLICT (session_id) DO UPDATE SET data = {merge}, "
             "updated_at = EXCLUDED.updated_at RETURNING data",
             (sid, Json(fields), _now()),
         )
@@ -1629,21 +1688,37 @@ def session_meta_set(sid, data):
         )
 
 
+def session_ai_cas(sid, revision, fields):
+    """Lock the row through compare + AI-only merge; unrelated metadata survives."""
+    with _db() as cur:
+        cur.execute("INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, '{}'::jsonb, %s) "
+                    "ON CONFLICT DO NOTHING", (sid, _now()))
+        cur.execute("SELECT data FROM session_meta WHERE session_id = %s FOR UPDATE", (sid,))
+        data = cur.fetchone()["data"] or {}
+        if data.get("aiRevision", 0) != revision:
+            return None
+        patch = {**fields, "aiRevision": revision + 1}
+        cur.execute("UPDATE session_meta SET data = data || %s, updated_at = %s "
+                    "WHERE session_id = %s RETURNING data", (Json(patch), _now(), sid))
+        return cur.fetchone()["data"]
+
+
+def ai_defaults_cas(revision, selection):
+    with _db() as cur:
+        cur.execute("INSERT INTO settings (key, value) VALUES ('ai_defaults', '{}'::jsonb) ON CONFLICT DO NOTHING")
+        cur.execute("SELECT value FROM settings WHERE key = 'ai_defaults' FOR UPDATE")
+        record = cur.fetchone()["value"] or {}
+        if record.get("revision", 0) != revision:
+            return None
+        record = {"revision": revision + 1, "selection": selection}
+        cur.execute("UPDATE settings SET value = %s WHERE key = 'ai_defaults'", (Json(record),))
+        return record
+
+
 def session_meta_delete(sid):
     with _db() as cur:
         cur.execute("DELETE FROM session_meta WHERE session_id = %s RETURNING session_id", (sid,))
         return cur.fetchone() is not None
-
-
-def session_meta_set_provider_all(pid):
-    """Set the provider on EVERY session's meta (the apply-default route). Returns
-    how many rows were touched. A row with no `provider` key yet gets one."""
-    with _db() as cur:
-        cur.execute(
-            "UPDATE session_meta SET data = data || %s, updated_at = %s RETURNING session_id",
-            (Json({"provider": pid}), _now()),
-        )
-        return len(cur.fetchall())
 
 
 def session_personas():
@@ -1862,13 +1937,23 @@ def providers_load():
     return out
 
 
-def provider_upsert(pid, rec):
+def provider_upsert(pid, rec, default_change=None):
     cols = [col for _, col, _ in _PROVIDER_COLS]
     vals = [rec.get(jk, dflt) for jk, _, dflt in _PROVIDER_COLS]
     setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
     with _db() as cur:
-        # At most one default: clearing others and the upsert must be one
-        # transaction, else a crash between them could leave two defaults.
+        # The old-client default flag is an adapter once canonical defaults exist.
+        # Lock the same settings row as the new CAS endpoint before changing it.
+        if default_change is not None:
+            cur.execute("INSERT INTO settings (key, value) VALUES ('ai_defaults', '{}'::jsonb) ON CONFLICT DO NOTHING")
+            cur.execute("SELECT value FROM settings WHERE key = 'ai_defaults' FOR UPDATE")
+            defaults = cur.fetchone()["value"] or {}
+            if defaults and (default_change or defaults["selection"]["provider"] == pid):
+                selection = {"provider": pid if default_change else "", "model": {"kind": "default"},
+                             "convMode": "chat" if default_change else "agent", "effort": ""}
+                cur.execute("UPDATE settings SET value = %s WHERE key = 'ai_defaults'",
+                            (Json({"revision": defaults["revision"] + 1, "selection": selection}),))
+        # Preserve the legacy default only until canonical defaults are configured.
         if rec.get("isDefault"):
             cur.execute("UPDATE providers SET is_default = FALSE WHERE id <> %s", (pid,))
         cur.execute(

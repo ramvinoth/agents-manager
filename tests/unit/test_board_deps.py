@@ -265,6 +265,42 @@ def test_dep_remove_wake_says_may_proceed(depboard):
     assert "removed by user:ram" in event and "may be able to proceed" in event
 
 
+def test_move_to_a_column_on_another_board_is_refused(
+        monkeypatch):
+    """Regression: a drag from one project's board onto another project's
+    column used to write the row anyway — the card then vanished from its own
+    board. (Card 25 was parked in foreign column 43 on 2026-09-19 this way.)"""
+    f = FakeDepBoard()
+    f.board_columns_list = lambda pid: [
+        {"id": 42, "name": "Todo", "position": 0},
+        {"id": 45, "name": "Done", "position": 1}]  # this card's board (p16)
+
+    def _move(card_id, column_id, position=1.0):
+        return {"moved": True, "column_id": column_id}
+
+    f.card_move = _move
+    monkeypatch.setattr(actions, "db", f)
+    resp, status = actions.execute(
+        actions.intent("card_move", {"card_id": 42, "column_id": 43},
+                       "user:ram"), "owner", "")
+    assert resp == {"error": "column 43 is not on this card's board"}
+    assert status == 200, "a refused drag is a 200-with-error, like every other board handler"
+
+
+def test_move_within_its_own_board_still_works(monkeypatch):
+    f = FakeDepBoard()
+    f.board_columns_list = lambda pid: [
+        {"id": 42, "name": "Todo", "position": 0},
+        {"id": 45, "name": "Done", "position": 1}]
+    f.card_move = lambda card_id, column_id, position=1.0: \
+        {"id": card_id, "column_id": column_id}
+    monkeypatch.setattr(actions, "db", f)
+    resp, status = actions.execute(
+        actions.intent("card_move", {"card_id": 42, "column_id": 45},
+                       "user:ram"), "owner", "")
+    assert status == 200 and resp["column_id"] == 45
+
+
 def test_dep_add_on_a_unknown_card_errors_without_waking(
         monkeypatch):
     f = FakeDepBoard()

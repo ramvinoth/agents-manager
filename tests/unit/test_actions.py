@@ -46,6 +46,9 @@ class FakeDB:
     def board_columns_list(self, project_id):
         return [{"id": 70, "name": "Todo"}, {"id": 77, "name": "Done"}]
 
+    def card_last_move(self, card_id, seconds):
+        return None  # no recent write by another writer
+
     # -- loop handler surface --------------------------------------------------
     # Enough of the loops table for the agent-loop actions to run against. Rows are
     # kept as dicts so a test can seed a 'user'-origin loop and prove the origin

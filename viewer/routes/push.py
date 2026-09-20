@@ -23,7 +23,10 @@ class PushMixin:
             self.send_json({"error": "Invalid push token"}, status=400)
             return
         try:
-            db.add_push_token(u["id"], token, body.get("platform") or "ios")
+            db.add_push_token(
+                u["id"], token, body.get("platform") or "ios",
+                app_version=body.get("app_version"), app_build=body.get("app_build"),
+            )
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
             return

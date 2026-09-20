@@ -86,6 +86,7 @@ fi
 #    removed from Xcode, so that tool is vestigial), failing the archive with
 #    "terminated with uncaught signal 0". At 15.1 the dylib is never embedded.
 [ -d "$IOS_DIR" ] || (cd "$APP_DIR" && npx expo prebuild -p ios)
+python3 "$HERE/release_identity.py" generated "$IOS_DIR/Agents/Info.plist" "$BUNDLE_ID" "$BUILD_NUMBER"
 
 # 2) Archive for real hardware, signed for distribution.
 #    The -authentication* flags let xcodebuild talk to App Store Connect with the
@@ -95,6 +96,12 @@ fi
 #    which -exportArchive then rejects for app-store-connect distribution.
 log "archive (generic/platform=iOS)"
 mkdir -p "$OUT"
+# Keep each invocation's archive/export together. Never reuse a previous IPA or
+# overwrite another release's artifacts; retain this directory for inspection.
+RUN_DIR="$(mktemp -d "$OUT/release.XXXXXX")"
+ARCHIVE="$RUN_DIR/Agents.xcarchive"
+EXPORT_DIR="$RUN_DIR/ipa"
+log "artifacts $RUN_DIR"
 AUTH=(-allowProvisioningUpdates
       -authenticationKeyPath "$ASC_KEY_PATH"
       -authenticationKeyID "$ASC_KEY_ID"
@@ -102,7 +109,7 @@ AUTH=(-allowProvisioningUpdates
 xcodebuild archive \
   -workspace "$IOS_DIR/Agents.xcworkspace" -scheme Agents -configuration Release \
   -destination 'generic/platform=iOS' \
-  -archivePath "$OUT/Agents.xcarchive" \
+  -archivePath "$ARCHIVE" \
   "${AUTH[@]}" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \
@@ -110,19 +117,9 @@ xcodebuild archive \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
 
-# Gate: the archived bundle must carry the build number we intended. If any
-# step above ran against a stale tree (prebuild from an old app.json, a cached
-# product), the stamp is wrong and Apple records a build that no one can
-# cross-reference — refuse to upload rather than ship the mismatch. (This is
-# the failure of 2026-09-19: the script stamped 1789861329 in the log while
-# the IPA carried 1789790096 from app.json.)
-STAMPED=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
-  "$OUT/Agents.xcarchive/Products/Applications/Agents.app/Info.plist" 2>/dev/null || true)
-if [ "$STAMPED" != "$BUILD_NUMBER" ]; then
-  echo "ERROR: archive stamped '$STAMPED' but intended '$BUILD_NUMBER' — not uploading" >&2
-  exit 1
-fi
-log "stamp verified: $STAMPED"
+# Final artifacts must carry the resolved bundle ID AND intended build number.
+python3 "$HERE/release_identity.py" archive \
+  "$ARCHIVE/Products/Applications/Agents.app/Info.plist" "$BUNDLE_ID" "$BUILD_NUMBER"
 
 # 3) Export a signed .ipa for App Store distribution.
 log "export ipa"
@@ -134,7 +131,7 @@ log "export ipa"
 # just name them here. See scripts/README or asc-tools/.
 : "${PROFILE_NAME:=Agents Manager AppStore}"
 : "${SIGNING_CERT:=Apple Distribution}"
-cat > "$OUT/ExportOptions.plist" <<PLIST
+cat > "$RUN_DIR/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -151,13 +148,13 @@ cat > "$OUT/ExportOptions.plist" <<PLIST
 </plist>
 PLIST
 xcodebuild -exportArchive \
-  -archivePath "$OUT/Agents.xcarchive" \
-  -exportPath "$OUT/ipa" \
-  -exportOptionsPlist "$OUT/ExportOptions.plist" \
+  -archivePath "$ARCHIVE" \
+  -exportPath "$EXPORT_DIR" \
+  -exportOptionsPlist "$RUN_DIR/ExportOptions.plist" \
   "${AUTH[@]}"
 
-IPA="$(find "$OUT/ipa" -name '*.ipa' | head -1)"
-[ -n "$IPA" ] || { echo "ERROR: no .ipa produced" >&2; exit 1; }
+# One discovery, one identity gate, one exact path for BOTH altool calls.
+IPA="$(python3 "$HERE/release_identity.py" ipa "$EXPORT_DIR" "$BUNDLE_ID" "$BUILD_NUMBER")"
 
 # 4) Validate, then upload to App Store Connect → TestFlight.
 log "validate $IPA"
@@ -167,16 +164,6 @@ xcrun altool --validate-app -f "$IPA" -t ios \
 log "upload to TestFlight"
 xcrun altool --upload-app -f "$IPA" -t ios \
   --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
-
-# Persist the build number back to app.json so the next run auto-increments.
-node -e "
-  const fs = require('fs');
-  const p = '$APP_DIR/app.json';
-  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-  j.expo.ios.buildNumber = String($BUILD_NUMBER);
-  fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\\n');
-"
-log "build number $BUILD_NUMBER written to app.json"
 
 log "uploaded — Apple processes the build for ~5-15 min, then it appears in TestFlight."
 echo "Next: App Store Connect → TestFlight → add yourself as an internal tester."

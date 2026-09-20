@@ -35,8 +35,56 @@ def _card_update(a):
     return db.card_update(a.get("card_id"), **fields) or {"error": "not found"}
 
 
-def _card_move(a):
-    return db.card_move(a.get("card_id"), a.get("column_id"),
+# Columns whose NAME (case-insensitive) marks the owner's judgement. An agent
+# may propose (comment), never place: "I make only the decisions" is the whole
+# operating model, so the write path enforces it instead of relying on
+# behaviour. The names come from the board itself (orglogic name contract), so
+# a renamed column re-enables itself correctly.
+_JUDGEMENT_COLUMNS = ("approved", "declined")
+
+# A column-moving write made this recently by ANY writer (human or agent)
+# counts as "the card is mid-conversation": a different writer just acted, so
+# an agent moving it to a DIFFERENT column would clobber a live decision
+# (the card-25 incident: the owner's move was silently overwritten by an agent
+# task_done seconds later). A human is never gated — their write always lands.
+_RECENT_MOVE_WINDOW = 60
+
+
+def _card_move(a, *, by_agent=False):
+    """A column belongs to exactly one board. Refuse to drop a card into a
+    column that lives on another project: the row would still be written, but
+    the card's OWN board never shows that column, so the card silently
+    disappears from its project (and any wake that names the column degrades
+    to the raw id). To move work across projects, move the card's project
+    first — an explicit act, not a drag accident.
+
+    `by_agent` adds two race guards (see _JUDGEMENT_COLUMNS / _RECENT_MOVE_WINDOW):
+    agents cannot place a card into a judgement column, and must not overwrite
+    a column change made seconds ago by a different writer — they comment
+    instead, and the owner decides."""
+    card = db.card_get(a.get("card_id"))
+    if not card:
+        return {"error": "not found"}
+    cols = db.board_columns_list(card.get("project_id")) \
+        if card.get("project_id") else []
+    target = next((c for c in cols if c.get("id") == a.get("column_id")), None)
+    if not target:
+        return {"error": f"column {a.get('column_id')} is not on this card's board"}
+    if by_agent:
+        if str(target.get("name", "")).lower() in _JUDGEMENT_COLUMNS:
+            return {"error": (f"{target['name']} is the owner's judgement — I can "
+                              "propose on the card, I cannot move it into or out of "
+                              "a judgement column. Comment your proposal.")}
+        last = db.card_last_move(card["id"], _RECENT_MOVE_WINDOW)
+        if last:
+            last_id, _ts = str(last[0]), last[1]
+            if last_id != str(a.get("column_id")) and \
+                    any(str(c.get("id")) == last_id for c in cols):
+                last_name = next(c["name"] for c in cols if str(c.get("id")) == last_id)
+                return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
+                                  "a different writer just acted. I won't overwrite a fresh "
+                                  "move; comment on the card and let the owner decide.")}
+    return db.card_move(card["id"], a.get("column_id"),
                         a.get("position", 1.0)) or {"error": "not found"}
 
 
@@ -48,7 +96,7 @@ def _card_delete(a):
     return {"deleted": bool(db.card_delete(a.get("card_id")))}
 
 
-def _task_done(a):
+def _task_done(a, *, by_agent=False):
     """Move a card to the Done column of its own project's board.
 
     WHICH column is Done is resolved HERE, not by the caller: this action can be
@@ -57,10 +105,25 @@ def _task_done(a):
     that is only true at queue time. Name-first (orglogic.project_columns): the
     default pipeline puts decision columns (Review/Approved/…) BETWEEN Doing and
     Done, so "the last column" is no longer a safe rule on its own.
+
+    `by_agent` adds the same recency guard as _card_move: this action clobbered
+    a live owner move on card 25 (his drag to another column, my Done seconds
+    later, his decision silently lost), so an agent must not drag a card to
+    Done out from under a column change made seconds ago by a different writer.
     """
     card = db.card_get(a.get("card_id"))
     cols = db.board_columns_list(card["project_id"]) if card and card.get("project_id") else []
     done_id = orglogic.project_columns(cols).get("done") or (cols[-1]["id"] if cols else None)
+    if by_agent and card:
+        last = db.card_last_move(card["id"], _RECENT_MOVE_WINDOW)
+        if last:
+            last_id, _ts = str(last[0]), last[1]
+            if last_id != str(done_id) and \
+                    any(str(c.get("id")) == last_id for c in cols):
+                last_name = next(c["name"] for c in cols if str(c.get("id")) == last_id)
+                return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
+                                  "a different writer just acted. I won't overwrite a fresh "
+                                  "move; comment on the card and let the owner decide.")}
     return db.card_move(a.get("card_id"), done_id,
                         a.get("position", 1.0)) or {"error": "not found"}
 
@@ -502,7 +565,15 @@ def execute(it, human_role, session_level, acting_session=""):
                               detail=it, created_by=actor)
         db.audit_append(actor, action, it, "queued:red")
         return {"queued": True, "approval": ap["id"]}, 200
-    payload = handler(args)
+    if action in ("card_move", "task_done"):
+        # The two handlers that resolve their target column at RUN time — which
+        # is exactly where they can clobber a human's live move — get the
+        # actor's class so their race guards can tell an agent apart from the
+        # owner. (An agent-queued intent later approved by a human re-runs with
+        # no session level and takes the human path, as intended.)
+        payload = handler(args, by_agent=bool(session_level))
+    else:
+        payload = handler(args)
     db.audit_append(actor, action, it, "done")
     if not (payload or {}).get("error"):
         _board_followup(action, args, actor, session_level, acting_session)

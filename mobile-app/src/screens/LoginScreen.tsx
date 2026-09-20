@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react"
+import Constants from "expo-constants"
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -45,8 +46,16 @@ export default function LoginScreen({ navigation }: Props) {
       const res = signupOpen ? await api.signup(username, password) : await api.signin(username, password)
       if (!res.token) throw new Error("Server did not return a token")
       await setToken(res.token)
-      // Register this device for background push now that we're authenticated.
-      registerForPush((tok) => api.pushRegister(tok)).catch(() => {})
+      // Register this device for background push now that we're authenticated,
+      // declaring which build it runs (version + native build number from the
+      // embedded Info.plist) so the server can see what is on the device.
+      registerForPush((tok) =>
+        api.pushRegister(
+          tok,
+          "ios",
+          { version: Constants.expoConfig?.version ?? null, build: Constants.ios?.buildNumber ?? null },
+        ),
+      ).catch(() => {})
       navigation.replace("Home")
     } catch (e) {
       setError((e as Error).message)
