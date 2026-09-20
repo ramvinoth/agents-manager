@@ -20,7 +20,9 @@
 #
 # Optional env:
 #   BUNDLE_ID     override the bundle id (default: read from app.json)
-#   BUILD_NUMBER  CFBundleVersion; default: unix timestamp (must increase)
+#   BUILD_NUMBER  CFBundleVersion; default: app.json's buildNumber + 1.
+#                 app.json is the single source of the number: expo prebuild
+#                 bakes CFBundleVersion from it into the generated Info.plist.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -42,6 +44,18 @@ if [ -z "${BUILD_NUMBER:-}" ]; then
   _PREV="$(node -p "require('$APP_DIR/app.json').expo.ios.buildNumber || '0'")"
   BUILD_NUMBER=$(( _PREV + 1 ))
 fi
+# Bake the number into app.json BEFORE prebuild: expo prebuild copies
+# buildNumber verbatim into the generated Info.plist's CFBundleVersion, and the
+# generated xcodeproj pins CURRENT_PROJECT_VERSION=1 (a variable Info.plist
+# never reads) — so no xcodebuild flag can change the stamp. One source of
+# truth, written before the thing that reads it.
+node -e "
+  const fs = require('fs');
+  const p = '$APP_DIR/app.json';
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  j.expo.ios.buildNumber = String($BUILD_NUMBER);
+  fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+"
 # Forced on the xcodebuild command line so it applies to EVERY target, including
 # Pods that pin an older target in their podspec. app.json's expo-build-properties
 # setting only reaches the app target and the Podfile platform line, which leaves
@@ -95,6 +109,20 @@ xcodebuild archive \
   IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+
+# Gate: the archived bundle must carry the build number we intended. If any
+# step above ran against a stale tree (prebuild from an old app.json, a cached
+# product), the stamp is wrong and Apple records a build that no one can
+# cross-reference — refuse to upload rather than ship the mismatch. (This is
+# the failure of 2026-09-19: the script stamped 1789861329 in the log while
+# the IPA carried 1789790096 from app.json.)
+STAMPED=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+  "$OUT/Agents.xcarchive/Products/Applications/Agents.app/Info.plist" 2>/dev/null || true)
+if [ "$STAMPED" != "$BUILD_NUMBER" ]; then
+  echo "ERROR: archive stamped '$STAMPED' but intended '$BUILD_NUMBER' — not uploading" >&2
+  exit 1
+fi
+log "stamp verified: $STAMPED"
 
 # 3) Export a signed .ipa for App Store distribution.
 log "export ipa"
