@@ -44,10 +44,11 @@ const ok = (name, cond, detail = "") => {
     sessions: document.querySelectorAll("aside button").length,
     turns: document.querySelectorAll(".markdown-content").length,
     composer: !!document.querySelector("textarea"),
+    agentLogin: [...document.querySelectorAll("button")].some((button) => button.textContent.includes("Log in with Claude")),
   }))
-  ok("app boots (header + composer)", boot.header && boot.composer)
+  ok("app boots (header + composer or agent login gate)", boot.header && (boot.composer || boot.agentLogin))
   ok("session list populated", boot.sessions > 3, `${boot.sessions} buttons`)
-  ok("transcript renders", boot.turns >= 0, `${boot.turns} md blocks`)
+  ok("transcript renders", boot.turns > 0, `${boot.turns} md blocks`)
 
   // 2. Skills (RHS capabilities) load.
   const skills = await page.evaluate(() => /\d+ skills/.test(document.body.innerText))
@@ -87,7 +88,7 @@ const ok = (name, cond, detail = "") => {
   // 6. Host switch to a remote host reloads sessions.
   await page.click("header button:has-text('This machine')").catch(() => {})
   await page.waitForTimeout(500)
-  const remoteItem = page.getByRole("menuitem", { name: new RegExp(REMOTE_LABEL, "i") })
+  const remoteItem = page.getByRole("menuitem", { name: new RegExp(REMOTE_LABEL, "i") }).filter({ hasNotText: "This machine" })
   if ((await remoteItem.count()) > 0) {
     await remoteItem.first().click()
     await page.waitForTimeout(6000)
