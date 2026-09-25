@@ -31,6 +31,7 @@ class _Probe:
 
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
+    monkeypatch.delenv("CLAUDE_BIN", raising=False)
     monkeypatch.setattr(config, "_CLAUDE_BIN_CACHE", {"at": 0.0, "bin": ""})
 
 

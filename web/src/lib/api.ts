@@ -168,7 +168,7 @@ class ApiClient {
   /** List an endpoint's models — from a saved preset (id) or by probing a
    *  baseUrl+key before saving. The key never leaves the server. */
   providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
-    const params =
+    const params: Record<string, string> =
       "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
     return this.getJSON<{ models: string[]; error?: string }>(
       "/api/providers/models?" + new URLSearchParams(params).toString()

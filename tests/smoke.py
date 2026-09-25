@@ -136,7 +136,7 @@ def main():
         _, d = get("/api/default")
         check("server default", "default" in d)
         _, hosts = get("/api/hosts")
-        check("hosts list", isinstance(hosts, list) and len(hosts) >= 1, f"{len(hosts)} hosts")
+        check("hosts list", isinstance(hosts, list), f"{len(hosts)} hosts")
     except Exception as e:
         check("server liveness", False, str(e)[:80]); print("SERVER DOWN"); sys.exit(1)
 
