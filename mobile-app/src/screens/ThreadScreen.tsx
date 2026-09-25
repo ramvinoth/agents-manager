@@ -256,7 +256,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             if (cancelled) return
             setPendingQuestion(s.pending_question || null)
             setPendingPlan(s.pending_plan || null)
-            setBusy(s.running)
+            setBusy(!!s.running)
             if (!s.running) setActivity("")
             if (s.running && !pollRef.current) {
               setBusy(true)

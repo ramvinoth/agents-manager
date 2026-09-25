@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { test } from "node:test"
 import { parseQuestions } from "./auq.ts"
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8")
+const read = (path: string) => readFileSync(resolve("src/lib", path), "utf8")
 test("question reset identity includes choices and selection mode, without a binary NUL", () => {
   const input = (label: string, multiSelect = false) => ({ questions: [{ question: "Choose", options: [{ label, description: "choice" }], multiSelect }] })
   const key = (value: unknown) => JSON.stringify(parseQuestions(value))
