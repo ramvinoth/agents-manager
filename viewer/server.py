@@ -373,6 +373,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
+    WS_PATHS = frozenset((b"/api/terminal/ws", b"/api/browser/ws"))
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
