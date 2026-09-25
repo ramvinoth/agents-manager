@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import React, { useMemo, useState } from "react"
 import { Text, TouchableOpacity, View } from "react-native"
 import { allAnswered, isInstant, parseQuestions, pickOption, type AuqQuestion } from "../lib/auq"
 import Icon from "./Icon"
@@ -12,7 +12,13 @@ import { useStyles } from "../screens/styles"
  * aligned) — the SERVER composes the message it feeds to the resumed session.
  */
 export default function QuestionCard({ input, onAnswer }: { input: unknown; onAnswer: (picks: string[]) => void }) {
-  const questions = parseQuestions(input)
+  const questions = useMemo(() => parseQuestions(input), [input])
+  // Include options and selection mode, not just question text. Keying the inner
+  // card resets answers synchronously, without a stale render or a literal NUL.
+  return <QuestionChoices key={JSON.stringify(questions)} questions={questions} onAnswer={onAnswer} />
+}
+
+function QuestionChoices({ questions, onAnswer }: { questions: AuqQuestion[]; onAnswer: (picks: string[]) => void }) {
   const [picks, setPicks] = useState<Record<number, string[]>>({})
   const [sent, setSent] = useState(false)
   const styles = useStyles()

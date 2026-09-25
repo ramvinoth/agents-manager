@@ -180,7 +180,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path, jumpTo: uuid })
   }
 
-  const PillRow = ({ opts, value, onPick, testPrefix }: { opts: { v: string; label: string }[]; value: string; onPick: (v: string) => void; testPrefix: string }) => (
+  // Render helper, not a new component identity on every keystroke.
+  const renderPill = (opts: { v: string; label: string }[], value: string, onPick: (v: string) => void, testPrefix: string) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
@@ -208,6 +209,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       style={{ flex: 1, backgroundColor: t.bg }}
       contentContainerStyle={{ paddingBottom: 48 }}
       keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="interactive"
     >
       {/* Identity: big avatar + editable name. */}
       <View style={styles.spHeader}>
@@ -267,10 +270,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {/* Per-message controls (moved out of the composer gear). */}
       <Text style={styles.sheetSection}>PERMISSION MODE</Text>
       <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-      <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
+      {renderPill(MODES, mode, setMode, "sp-mode")}
 
       <Text style={styles.sheetSection}>MODEL</Text>
-      <PillRow opts={MODELS} value={model} onPick={setModel} testPrefix="sp-model" />
+      {renderPill(MODELS, model, setModel, "sp-model")}
 
       <View style={styles.ssRow}>
         <View style={{ flex: 1 }}>

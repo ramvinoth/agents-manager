@@ -3,7 +3,9 @@ import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from "reac
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
-import { setToken } from "../state/config"
+import { serverUrl, setToken } from "../state/config"
+import ServerPicker from "../components/ServerPicker"
+import { useTheme } from "../lib/useTheme"
 import { registerForPush } from "../lib/notify"
 import { useStyles } from "./styles"
 
@@ -17,18 +19,27 @@ export default function LoginScreen({ navigation }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
+  const t = useTheme()
+  const [serverOpen, setServerOpen] = useState(false)
+  const [reachable, setReachable] = useState(true)
+
   useEffect(() => {
-    api
-      .authState()
-      .then((s) => setSignupOpen(s.signupOpen))
-      .catch(() => {})
+    let cancelled = false
+    api.authState().then((s) => {
+      if (cancelled) return
+      setSignupOpen(s.signupOpen)
+      setReachable(true)
+    }).catch(() => { if (!cancelled) setReachable(false) })
+    return () => { cancelled = true }
   }, [])
 
   async function submit() {
+    const server = serverUrl()
     setError("")
     setBusy(true)
     try {
       const res = signupOpen ? await api.signup(username, password) : await api.signin(username, password)
+      if (serverUrl() !== server) return
       if (!res.token) throw new Error("Server did not return a token")
       await setToken(res.token)
       // Register this device for background push now that we're authenticated.
@@ -63,6 +74,11 @@ export default function LoginScreen({ navigation }: Props) {
         onChangeText={setPassword}
       />
       {signupOpen ? <Text style={styles.hint}>First run on this instance — this creates the owner account.</Text> : null}
+      {!reachable ? (
+        <Text testID="login-unreachable" style={styles.error}>
+          Can't reach this server. It may be down — use “Change server” below to switch or add a server.
+        </Text>
+      ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <TouchableOpacity
         testID="login-submit"
@@ -73,6 +89,18 @@ export default function LoginScreen({ navigation }: Props) {
       >
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{signupOpen ? "Create account" : "Sign in"}</Text>}
       </TouchableOpacity>
+      <TouchableOpacity
+        testID="login-change-server"
+        accessibilityLabel="change-server"
+        style={{ marginTop: 22, alignItems: "center" }}
+        onPress={() => setServerOpen(true)}
+      >
+        <Text style={{ color: t.accent, fontWeight: "600" }}>Change server</Text>
+        <Text style={[styles.hint, { textAlign: "center", marginTop: 2 }]} numberOfLines={1}>
+          {serverUrl() || "—"}
+        </Text>
+      </TouchableOpacity>
+      <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />
     </View>
   )
 }

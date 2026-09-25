@@ -58,7 +58,7 @@ export default function SessionSettings({
   const styles = useStyles()
   const t = useTheme()
 
-  const PillRow = ({ opts, value, onPick, testPrefix }: { opts: Opt[]; value: string; onPick: (v: string) => void; testPrefix: string }) => (
+  const renderPill = (opts: Opt[], value: string, onPick: (v: string) => void, testPrefix: string) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
@@ -137,15 +137,16 @@ export default function SessionSettings({
         contentContainerStyle={styles.ssScrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
+        automaticallyAdjustKeyboardInsets
       >
         {/* Permission mode + model — the per-message controls that used to
             live behind a separate composer gear. */}
         <Text style={styles.sheetSection}>PERMISSION MODE</Text>
         <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-        <PillRow opts={modes} value={mode} onPick={onMode} testPrefix="sheet-mode" />
+        {renderPill(modes, mode, onMode, "sheet-mode")}
 
         <Text style={styles.sheetSection}>MODEL</Text>
-        <PillRow opts={models} value={model} onPick={onModel} testPrefix="sheet-model" />
+        {renderPill(models, model, onModel, "sheet-model")}
 
         {/* Notifications */}
         <View style={styles.ssRow}>

@@ -22,6 +22,8 @@ import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
 import { extractImages, fmtClock, fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, resultToText, type Block, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
+import { createHistoryPager } from "../lib/history"
+import { splitThinking } from "../lib/thinking"
 import { ensurePermission } from "../lib/notify"
 import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
 import { useTheme } from "../lib/useTheme"
@@ -192,7 +194,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // about, so the poll pings ONCE per new prompt instead of every tick.
   const notifiedInput = useRef("")
 
-  const reload = useCallback(async () => {
+  const pager = useMemo(() => createHistoryPager((tail) => api.sessionReadPage(host, path || "", tail)), [host, path])
+  const activePager = useRef<typeof pager | null>(pager)
+  activePager.current = pager
+  useEffect(() => {
+    activePager.current = pager
+    return () => { activePager.current = null }
+  }, [pager])
+
+  const reload = useCallback(async (more = false, fresh = false) => {
     if (!path) {
       setLoading(false)
       return [] as ReturnType<typeof groupThread>
@@ -202,8 +212,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
     const sid = (path.split("/").pop() || "").replace(/\.jsonl$/, "")
     if (sid) setSessionId(sid)
     try {
-      const lines = await api.sessionRead(host, path)
-      const next = groupThread(parseTranscript(lines))
+      const page = await (more ? pager.more() : pager.load(fresh))
+      if (!page || activePager.current !== pager) return [] as ReturnType<typeof groupThread>
+      const next = groupThread(parseTranscript(page.lines))
       setItems(next)
       // Track the newest tool call so the header/working bubble can name it.
       const last = next[next.length - 1]
@@ -214,21 +225,24 @@ export default function ThreadScreen({ route, navigation }: Props) {
       }
       return next
     } catch (e) {
-      setError((e as Error).message)
+      if (activePager.current === pager) setError((e as Error).message)
       return [] as ReturnType<typeof groupThread>
     } finally {
-      setLoading(false)
+      if (activePager.current === pager) setLoading(false)
     }
-  }, [host, path])
+  }, [path, pager])
+
+  const loadMore = useCallback(() => { void reload(true) }, [reload])
 
   useFocusEffect(
     useCallback(() => {
+      let cancelled = false
       reload()
       // Hydrate pinned message uuids from server session meta (survives reinstall).
       if (path) {
         api
           .sessionMeta(host, path)
-          .then((m) => setPinned(Array.isArray(m.pinned) ? m.pinned : []))
+          .then((m) => { if (!cancelled) setPinned(Array.isArray(m.pinned) ? m.pinned : []) })
           .catch(() => {})
       }
       // On focus, fetch status once: reattach the poll if a run is active, and —
@@ -239,14 +253,22 @@ export default function ThreadScreen({ route, navigation }: Props) {
         api
           .chatStatus(sid)
           .then((s) => {
+            if (cancelled) return
             setPendingQuestion(s.pending_question || null)
             setPendingPlan(s.pending_plan || null)
+            setBusy(s.running)
+            if (!s.running) setActivity("")
             if (s.running && !pollRef.current) {
               setBusy(true)
               startPoll(sid)
             }
           })
           .catch(() => {})
+      }
+      return () => {
+        cancelled = true
+        if (pollRef.current) clearInterval(pollRef.current)
+        pollRef.current = null
       }
     }, [reload, path])
   )
@@ -389,10 +411,14 @@ export default function ThreadScreen({ route, navigation }: Props) {
   function startPoll(sid: string) {
     if (pollRef.current) clearInterval(pollRef.current)
     let ticks = 0
-    pollRef.current = setInterval(async () => {
+    let inFlight = false
+    const interval = setInterval(async () => {
+      if (inFlight || pollRef.current !== interval) return
+      inFlight = true
       ticks++
       try {
         const s = await api.chatStatus(sid)
+        if (pollRef.current !== interval || activePager.current !== pager) return
         setPending(s.pending_approvals || [])
         setPendingQuestion(s.pending_question || null)
         setPendingPlan(s.pending_plan || null)
@@ -400,8 +426,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
         setQueueList(s.queue || [])
         if (!s.running || ticks > 400) {
           if (pollRef.current) clearInterval(pollRef.current)
+          await reload(false, true) // final response replaces the "working" bubble
+          if (pollRef.current !== interval || activePager.current !== pager) return
           pollRef.current = null
-          await reload() // final response replaces the "working" bubble
           // The run ended. It may have ended WAITING on you — a per-tool approval
           // or a parked AskUserQuestion (pending_question). Either way the server
           // already pushed a notification; we just stop the busy spinner and let
@@ -417,8 +444,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }
       } catch {
         /* keep polling through transient errors */
+      } finally {
+        inFlight = false
       }
     }, 1500)
+    pollRef.current = interval
   }
 
   /**
@@ -588,7 +618,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         onPress: () =>
           api
             .restoreSession({ session: path || "", uuid, mode: "conversation", host, agent: "claude" })
-            .then(reload)
+            .then(() => reload())
             .catch((e) => setError((e as Error).message)),
       },
     ])
@@ -776,6 +806,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
         inverted
         data={listData}
         keyExtractor={(it) => it.id}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         // onScroll is display-only: in the inverted list, contentOffset.y is the
         // distance from the bottom (0 = pinned to newest). It drives just the
         // jump-to-latest button and the day-pill flash — never the scroll itself.
@@ -1184,6 +1217,8 @@ function ExchangeView({
     setOpen((o) => !o)
   }
   const toolCount = useMemo(() => steps.filter((b) => b.kind === "tool").length, [steps])
+  const { thinking, body } = useMemo(() => splitThinking(finalText), [finalText])
+  const [thinkOpen, setThinkOpen] = useState(false)
   return (
     <View style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
       {/* Steps (tool calls + narration) render ABOVE the final answer: the steps
@@ -1212,9 +1247,18 @@ function ExchangeView({
         </>
       ) : null}
       {plan ? <PlanCard input={plan} /> : null}
-      {finalText ? (
-        <View style={steps.length ? { marginTop: 8 } : undefined}>
-          <Markdown text={finalText} color={t.text} selectable onLongPress={onLongPress} />
+      {thinking ? (
+        <View style={{ marginTop: steps.length ? 8 : 0 }}>
+          <TouchableOpacity testID="thinking-toggle" accessibilityRole="button" accessibilityState={{ expanded: thinkOpen }} onPress={() => setThinkOpen((value) => !value)} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Icon name={thinkOpen ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
+            <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>Thinking</Text>
+          </TouchableOpacity>
+          {thinkOpen ? <Text selectable style={{ color: t.textMuted, fontSize: 13, lineHeight: 18, paddingLeft: 8, marginTop: 4 }}>{thinking}</Text> : null}
+        </View>
+      ) : null}
+      {body ? (
+        <View style={steps.length || thinking ? { marginTop: 8 } : undefined}>
+          <Markdown text={body} color={t.text} selectable onLongPress={onLongPress} />
         </View>
       ) : null}
       {!finalText && !steps.length && !plan ? (

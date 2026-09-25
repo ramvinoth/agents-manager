@@ -76,7 +76,7 @@ export default function CapabilitiesScreen(_props: Props) {
       {loading ? (
         <ActivityIndicator size="small" color={t.textMuted} style={{ marginTop: 24 }} />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           {tab === "skills" ? (
             <>
               <TouchableOpacity testID="cap-add-skill" style={styles.capAddRow} onPress={() => setSkillEdit(null)}>
@@ -357,7 +357,7 @@ function EditorModal({
       <View style={styles.capModalBackdrop}>
         <View style={[styles.capModalCard, { backgroundColor: t.bg }]}>
           <Text style={[styles.capModalTitle, { color: t.text }]}>{title}</Text>
-          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
+          <ScrollView keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>{children}</ScrollView>
           <View style={styles.capModalActions}>
             {onDelete ? (
               <TouchableOpacity testID="cap-delete" onPress={onDelete} style={{ marginRight: "auto" }}>

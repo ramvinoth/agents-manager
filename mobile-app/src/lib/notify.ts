@@ -13,12 +13,14 @@
  * A notification is a nice-to-have — it must never take the app down, so all
  * failures are swallowed and the feature simply goes quiet.
  */
+import { subscribeNotificationResponses } from "./notificationTap.ts"
+
+const seenTaps = new Set<string>()
 let Notifications: any = null
 let ready = false
 
 async function load() {
   if (ready) return Notifications
-  ready = true
   try {
     Notifications = require("expo-notifications")
     Notifications.setNotificationHandler({
@@ -33,6 +35,7 @@ async function load() {
         shouldSetBadge: false,
       }),
     })
+    ready = true
   } catch {
     Notifications = null
   }
@@ -114,6 +117,20 @@ export async function unregisterPush(send: (token: string) => Promise<unknown>):
     /* best-effort */
   }
   _pushToken = null
+}
+
+/** Cold-start and warm taps; missing native modules never break startup. */
+export function onNotificationTap(handler: (data: Record<string, unknown>) => void): () => void {
+  let cancelled = false
+  let unsubscribe: (() => void) | undefined
+  void load().then((native) => {
+    if (!native || cancelled) return
+    unsubscribe = subscribeNotificationResponses(native, handler, seenTaps)
+  }).catch(() => {})
+  return () => {
+    cancelled = true
+    try { unsubscribe?.() } catch { /* already removed */ }
+  }
 }
 
 /** First line of a reply, trimmed of markdown noise — a usable notification body. */

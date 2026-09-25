@@ -14,6 +14,7 @@ export type Span =
   | { t: "italic"; s: string }
   | { t: "code"; s: string }
   | { t: "link"; s: string; href: string }
+  | { t: "math"; s: string }
 
 export type MdBlock =
   | { t: "p"; spans: Span[] }
@@ -23,24 +24,32 @@ export type MdBlock =
   | { t: "table"; header: string[]; rows: string[][] }
   | { t: "quote"; spans: Span[] }
   | { t: "hr" }
+  | { t: "mathblock"; text: string }
 
 /** Inline spans. Code is extracted first so **bold** inside `code` stays literal. */
 export function parseInline(src: string): Span[] {
   const out: Span[] = []
-  // `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | bare url
+  // Earliest token wins: code shields its contents; math shields _ and *.
   const re =
-    /(`+)([^`]+?)\1|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g
+    /(?<![\\$])\$([^\n$]+?)\$(?!\$)|\\\(([^]+?)\\\)|(`+)([^`]+?)\3|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(src))) {
+    if (m[1] !== undefined && (/^\s|\s$/.test(m[1]) || /^\d[\d.,]*$/.test(m[1]))) {
+      // Retry after the opening dollar, so currency cannot swallow later math.
+      re.lastIndex = m.index + 1
+      continue
+    }
     if (m.index > last) out.push({ t: "text", s: src.slice(last, m.index) })
-    if (m[2] !== undefined) out.push({ t: "code", s: m[2] })
-    else if (m[3] !== undefined) out.push({ t: "bold", s: m[3] })
-    else if (m[4] !== undefined) out.push({ t: "bold", s: m[4] })
-    else if (m[5] !== undefined) out.push({ t: "italic", s: m[5] })
-    else if (m[6] !== undefined) out.push({ t: "italic", s: m[6] })
-    else if (m[7] !== undefined) out.push({ t: "link", s: m[7], href: m[8] })
-    else if (m[9] !== undefined) out.push({ t: "link", s: m[9], href: m[9] })
+    if (m[1] !== undefined) out.push({ t: "math", s: m[1].trim() })
+    else if (m[2] !== undefined) out.push({ t: "math", s: m[2].trim() })
+    else if (m[4] !== undefined) out.push({ t: "code", s: m[4] })
+    else if (m[5] !== undefined) out.push({ t: "bold", s: m[5] })
+    else if (m[6] !== undefined) out.push({ t: "bold", s: m[6] })
+    else if (m[7] !== undefined) out.push({ t: "italic", s: m[7] })
+    else if (m[8] !== undefined) out.push({ t: "italic", s: m[8] })
+    else if (m[9] !== undefined) out.push({ t: "link", s: m[9], href: m[10] })
+    else if (m[11] !== undefined) out.push({ t: "link", s: m[11], href: m[11] })
     last = re.lastIndex
   }
   if (last < src.length) out.push({ t: "text", s: src.slice(last) })
@@ -80,6 +89,33 @@ export function parseMarkdown(src: string): MdBlock[] {
       while (i < lines.length && !/^\s*```+\s*$/.test(lines[i])) body.push(lines[i++])
       blocks.push({ t: "code", lang, text: body.join("\n") })
       continue
+    }
+
+    // Display equations. Only consume a closed block; an incomplete delimiter
+    // must not eat the rest of the reply or discard text after the closing tag.
+    const dm = line.match(/^\s*(\$\$|\\\[)(.*)$/)
+    if (dm) {
+      const close = dm[1] === "$$" ? "$$" : "\\]"
+      const buf: string[] = []
+      let end = i
+      let rest = dm[2]
+      while (!rest.includes(close) && end < lines.length - 1) {
+        buf.push(rest)
+        rest = lines[++end]
+      }
+      const at = rest.indexOf(close)
+      if (at >= 0) {
+        buf.push(rest.slice(0, at))
+        const tex = buf.join("\n").trim()
+        if (tex) {
+          flushPara()
+          blocks.push({ t: "mathblock", text: tex })
+          const suffix = rest.slice(at + close.length).trim()
+          if (suffix) para.push(suffix)
+          i = end
+          continue
+        }
+      }
     }
 
     if (!line.trim()) {

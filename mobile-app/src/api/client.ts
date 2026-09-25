@@ -140,7 +140,9 @@ export const api = {
   // route matches, exactly as the web client does. The server responds with a
   // JSON envelope {start,end,size,lines:[...]}; we return the `lines` array
   // (each entry is one JSONL transcript record).
-  sessionRead: async (host: string, path: string, tail = 400): Promise<string[]> => {
+  sessionRead: async (host: string, path: string, tail = 400): Promise<string[]> =>
+    (await api.sessionReadPage(host, path, tail)).lines,
+  sessionReadPage: async (host: string, path: string, tail = 400): Promise<{ lines: string[]; start: number; size: number }> => {
     if (!serverUrl()) throw new Error("No server configured")
     const q = new URLSearchParams({ tail: String(tail) })
     if (host && host !== "local") q.set("host", host)
@@ -150,8 +152,8 @@ export const api = {
       err.status = res.status
       throw err
     }
-    const env = (await res.json()) as { lines?: string[] }
-    return Array.isArray(env.lines) ? env.lines : []
+    const env = (await res.json()) as { lines?: string[]; start?: number; size?: number }
+    return { lines: Array.isArray(env.lines) ? env.lines : [], start: env.start ?? 0, size: env.size ?? 0 }
   },
   // Start a brand-new agent session in `cwd`. Returns the new session id plus the
   // transcript path, which the thread screen opens directly.

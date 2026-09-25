@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react"
 import { ActivityIndicator, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
-import { DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
+import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 import { effectiveScheme, themeFor } from "./src/lib/theme"
 import { useThemePref } from "./src/lib/useTheme"
@@ -12,7 +12,8 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { loadConfig, serverUrl, token } from "./src/state/config"
-import { registerForPush } from "./src/lib/notify"
+import { registerForPush, onNotificationTap } from "./src/lib/notify"
+import { createNotificationRouter } from "./src/lib/notificationTap"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
 import HomeTabs from "./src/screens/HomeTabs"
@@ -40,6 +41,19 @@ export type RootStackParamList = {
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
+const navigationRef = createNavigationContainerRef<RootStackParamList>()
+const notificationRouter = createNotificationRouter<RootStackParamList["Thread"]>({
+  ready: () => navigationRef.isReady() && !!token() && !["Server", "Login"].includes(navigationRef.getCurrentRoute()?.name || ""),
+  scope: () => JSON.stringify([serverUrl(), token()]),
+  resolve: async ({ session, host }) => {
+    const matches = (await api.sessions(host)).filter((s) => s.id === session)
+    // IDs need not be unique; never guess a path when the payload is ambiguous.
+    if (matches.length !== 1) return
+    const match = matches[0]
+    return { host, path: match.path, label: match.title || match.id.slice(0, 8) }
+  },
+  navigate: (target) => navigationRef.navigate("Thread", target),
+})
 
 export default function App() {
   const [ready, setReady] = useState(false)
@@ -90,6 +104,11 @@ export default function App() {
     })()
   }, [])
 
+  useEffect(() => {
+    const unsubscribe = onNotificationTap(notificationRouter.tap)
+    return () => { unsubscribe(); notificationRouter.clear() }
+  }, [])
+
   if (!ready) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -101,7 +120,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer theme={navTheme}>
+        <NavigationContainer theme={navTheme} ref={navigationRef} onReady={() => void notificationRouter.flush()} onStateChange={() => void notificationRouter.flush()}>
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
             initialRouteName={initial}

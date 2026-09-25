@@ -1,5 +1,6 @@
 import assert from "node:assert"
-import { baseName, humanSize, joinPath, sortEntries } from "./files.ts"
+import { test as nodeTest } from "node:test"
+import { baseName, humanSize, joinPath, sortEntries, navInit, navVisit, navBack, navForward, navCurrent, navCanBack, navCanForward, navResolve, navSwipe } from "./files.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -46,4 +47,30 @@ test("baseName picks the last segment", () => {
   assert.equal(baseName("/a/b/"), "b")
 })
 
+nodeTest("history supports back/forward, branching, canonical paths and boundaries", () => {
+  const root = navInit("~")
+  assert.equal(navBack(root), root)
+  assert.equal(navForward(root), root)
+  let h = navResolve(root, "/home/me")
+  assert.equal(navCurrent(h), "/home/me")
+  assert.equal(navCanBack(h), false)
+  h = navVisit(navVisit(h, "/home/me/a"), "/home/me/a/b")
+  assert.equal(navVisit(h, navCurrent(h)), h)
+  h = navBack(h)
+  assert.equal(navCurrent(h), "/home/me/a")
+  assert.equal(navCanForward(h), true)
+  assert.equal(navCurrent(navForward(h)), "/home/me/a/b")
+  h = navVisit(h, "/other")
+  assert.equal(navCanForward(h), false)
+  assert.equal(navCurrent(navBack(h)), "/home/me/a")
+  assert.deepEqual(root, { stack: ["~"], index: 0 })
+})
+nodeTest("edge navigation preserves vertical and center tab swipes, uses current width", () => {
+  assert.equal(navSwipe(10, 60, 2, 400, true, false), -1)
+  assert.equal(navSwipe(390, -60, 2, 400, false, true), 1)
+  assert.equal(navSwipe(390, -60, 2, 800, false, true), 0)
+  assert.equal(navSwipe(200, 60, 2, 400, true, true), 0)
+  assert.equal(navSwipe(10, 20, 40, 400, true, true), 0)
+  assert.equal(navSwipe(10, 60, 2, 400, false, true), 0)
+})
 console.log(`${passed} passing`)

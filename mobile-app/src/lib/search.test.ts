@@ -1,4 +1,11 @@
 import assert from "node:assert"
+import { test as nodeTest } from "node:test"
+
+nodeTest("malformed exchange fields do not crash search or index undefined", () => {
+  const item = { kind: "exchange", id: "bad", steps: null, finalText: null } as unknown as ThreadItem
+  assert.equal(itemText(item), "")
+  assert.deepEqual(findMatches([item], "undefined"), [])
+})
 import { findMatches, isUnread, itemText, stepMatch, trimSeen } from "./search.ts"
 import type { ThreadItem } from "./thread.ts"
 

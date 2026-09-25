@@ -23,6 +23,9 @@ export default function SwipeToReply({
   const x = useRef(new Animated.Value(0)).current
   const fired = useRef(false)
   const styles = useStyles()
+  // The responder is stable, but a recycled row's reply callback is not.
+  const onReplyRef = useRef(onReply)
+  onReplyRef.current = onReply
 
   const pan = useRef(
     PanResponder.create({
@@ -40,7 +43,7 @@ export default function SwipeToReply({
         if (!fired.current && g.dx >= TRIGGER) fired.current = true
       },
       onPanResponderRelease: () => {
-        if (fired.current) onReply()
+        if (fired.current) onReplyRef.current()
         Animated.spring(x, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start()
       },
       onPanResponderTerminate: () => {

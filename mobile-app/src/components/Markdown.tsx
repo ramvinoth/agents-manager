@@ -1,6 +1,8 @@
 import React, { useMemo } from "react"
 import { Linking, ScrollView, Text, View } from "react-native"
 import { parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
+import { texToUnicode } from "../lib/texUnicode"
+import MathView from "./MathView"
 import { useTheme, type Theme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
 
@@ -52,9 +54,13 @@ function Inline({
         if (s.t === "bold") return <Text key={i} style={styles.mdBold}>{s.s}</Text>
         if (s.t === "italic") return <Text key={i} style={styles.mdItalic}>{s.s}</Text>
         if (s.t === "code") return <Text key={i} style={styles.mdCodeInline}>{s.s}</Text>
+        if (s.t === "math") {
+          const unicode = texToUnicode(s.s)
+          return <Text key={i} style={unicode ? styles.mdItalic : styles.mdCodeInline}>{unicode ?? s.s}</Text>
+        }
         if (s.t === "link")
           return (
-            <Text key={i} style={styles.mdLink} onPress={() => Linking.openURL(s.href).catch(() => {})}>
+            <Text key={i} style={styles.mdLink} onPress={() => { if (s.href) Linking.openURL(s.href).catch(() => {}) }}>
               {s.s}
             </Text>
           )
@@ -124,6 +130,8 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
           <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[styles.mdText, styles.mdQuoteText, color ? { color } : null]} />
         </View>
       )
+    case "mathblock":
+      return <MathView tex={b.text} textColor={color || t.text} />
     case "hr":
       return <View style={styles.mdHr} />
     default:

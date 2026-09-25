@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -184,35 +184,52 @@ export default function ChatsScreen({ navigation }: Props) {
     }, [navigation, project, t])
   )
 
-  const load = useCallback(async () => {
-    setError("")
+  const loadedHost = useRef<string | null>(null)
+  const activeLoad = useRef<object | null>(null)
+  const focusEpoch = useRef(0)
+  const load = useCallback(async (silent = false) => {
+    if (activeLoad.current) return
+    const request = {}
+    activeLoad.current = request
+    const epoch = focusEpoch.current
+    const current = () => epoch === focusEpoch.current && currentHost() === host
+    if (!silent) setError("")
     try {
       const s = await api.sessions(host)
+      if (!current()) return
       s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
       setSessions(s)
+      loadedHost.current = host
+      setError("")
     } catch (e) {
+      if (!current()) return
       const err = e as Error & { status?: number }
       if (err.status === 401) {
         await setToken(null)
-        navigation.replace("Login")
+        if (current()) navigation.replace("Login")
         return
       }
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (activeLoad.current === request) activeLoad.current = null
+      if (current()) setLoading(false)
     }
   }, [host, navigation])
 
-  // Reload on focus (returning from a thread) and whenever the active host changes.
+  // Quiet refresh on return; first load/host change still reports failures.
   useFocusEffect(
     useCallback(() => {
-      load()
-    }, [load])
+      const initial = loadedHost.current !== host
+      if (initial) { setLoading(true); setSessions([]) }
+      void load(!initial)
+      const id = setInterval(() => void load(true), 4000)
+      return () => {
+        clearInterval(id)
+        focusEpoch.current++
+        activeLoad.current = null
+      }
+    }, [host, load])
   )
-  useEffect(() => {
-    setLoading(true)
-    load()
-  }, [host]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
@@ -226,7 +243,7 @@ export default function ChatsScreen({ navigation }: Props) {
           data={rows}
           keyExtractor={(r) => (r.kind === "header" ? `hdr:${r.project}` : r.s.path)}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
+          refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load(false)} />}
           ListHeaderComponent={
             <>
               <View style={[styles.searchWrap, { backgroundColor: t.bg }]}>
