@@ -66,12 +66,13 @@ from viewer.routes.push import PushMixin
 from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
 from viewer.routes.orchestrator import OrchestratorMixin
+from viewer.routes.drives import DrivesMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin,
+    OrchestratorMixin, DrivesMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -337,6 +338,8 @@ class SessionViewerHandler(
         "/api/fs": "_g_fs",
         "/api/fs/download": "_g_fs_download",
         "/api/fs/download-zip": "_g_fs_download_zip",
+        "/api/drives": "_g_drives",
+        "/api/drive/oauth/status": "_g_drive_oauth_status",
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
@@ -405,6 +408,9 @@ class SessionViewerHandler(
         "/api/fs/upload": "_p_fs_upload",
         "/api/fs/rename": "_p_fs_rename",
         "/api/fs/compress": "_p_fs_compress",
+        "/api/drives": "_p_drives_create",
+        "/api/drives/delete": "_p_drives_delete",
+        "/api/drive/oauth/start": "_p_drive_oauth_start",
         "/api/auth/signup": "_p_auth_signup",
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",

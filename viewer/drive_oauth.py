@@ -54,6 +54,13 @@ _VENDORS = {
 }
 
 
+def available_vendors():
+    """The vendor kinds with a built consent flow — the set the UI may offer for
+    connecting a new drive. A vendor ships by adding a _VENDORS entry; nothing
+    else changes (the route and the picker both read this)."""
+    return frozenset(_VENDORS)
+
+
 def _pkce():
     """(code_verifier, code_challenge) using S256. The verifier is a random
     43-char URL-safe string (RFC 7636's 43-128 window); the challenge is
