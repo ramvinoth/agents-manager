@@ -252,22 +252,30 @@ def _http(method, url, headers=None, data=None, timeout=60):
         raise DriveError(f"Vendor unreachable: {e}", 502)
 
 
-def _google_client():
-    """The viewer's own Google OAuth client — ONE shared client for every google
-    drive (per-user tokens live in the drive row). Read from DRIVES_OAUTH_FILE
-    as {"google": {"client_id","client_secret"}}. Missing/incomplete → 403 with
-    guidance, so a first run says exactly what to do instead of failing opaquely."""
+def _vendor_client(kind):
+    """The viewer's OAuth client for `kind` — ONE shared client per vendor
+    (per-user tokens live in the drive row). Read from DRIVES_OAUTH_FILE as
+    {kind: {client_id, client_secret, redirect_uris?}}. Shared by the adapter
+    (_google_client) and the loopback OAuth flow (drive_oauth). Missing or
+    incomplete → 403 with guidance, so a first run says exactly what to do
+    instead of failing opaquely."""
     path = _config.DRIVES_OAUTH_FILE
     try:
         data = json.loads(path.read_text())
     except FileNotFoundError:
-        raise DriveError(f"No Google OAuth client configured — put one in {path}", 403)
+        raise DriveError(f"No {kind} OAuth client configured — put one in {path}", 403)
     except Exception:
-        raise DriveError("Google OAuth client file is not valid JSON", 403)
-    c = data.get("google") or {}
+        raise DriveError(f"{kind} OAuth client file is not valid JSON", 403)
+    c = data.get(kind) or {}
     if not c.get("client_id") or not c.get("client_secret"):
-        raise DriveError("Google OAuth client is incomplete (needs client_id and client_secret)", 403)
+        raise DriveError(f"{kind} OAuth client is incomplete (needs client_id and client_secret)", 403)
     return c
+
+
+def _google_client():
+    """The viewer's own Google OAuth client (one shared client; per-user
+    tokens live in the drive row)."""
+    return _vendor_client("google")
 
 
 class GoogleDrive(BaseDrive):
