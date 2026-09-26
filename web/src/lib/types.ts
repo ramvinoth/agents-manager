@@ -334,6 +334,28 @@ export interface Card {
   /** Dependency edges (dual control: the owner and the card's session see the same rows). */
   dependencies?: CardDep[]
 }
+/** One row of the cross-session decision queue (GET /api/decisions/open): a
+ *  durable question, a durable plan, or a live tool approval. The queue is a
+ *  READ of the existing sources — deciding an item uses the per-session
+ *  routes, never this shape. */
+export interface OpenDecision {
+  kind: "question" | "plan" | "approval"
+  session: string
+  host: string
+  /** The session's human-readable name (its title/goal/project), "" if unknown. */
+  label: string
+  /** Seconds the decision has been waiting. */
+  waiting_s: number
+  /** Bounded one-liner: the question text / plan excerpt / secret-safe tool preview. */
+  summary: string
+  question_count?: number
+  tool_use_id?: string
+  run_id?: string
+  revision?: number
+  tool_name?: string
+  /** The approval's id (only for kind "approval"). */
+  id?: string
+}
 export interface CardComment {
   id: number
   card_id: number

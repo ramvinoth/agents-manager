@@ -1365,6 +1365,26 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
+def pending_approvals_all_public():
+    """Live Allow/Deny tool approvals across ALL sessions — the raw rows for the
+    cross-session decision queue (card #60). Same exclusion as the per-session
+    view: AskUserQuestion and ExitPlanMode entries are NOT plain approvals, they
+    are their own durable question/plan rows. Each row carries a secret-safe
+    preview (the same one the permission push uses), never the raw input."""
+    out = []
+    with CHAT_LOCK:
+        for sid, job in CHAT_JOBS.items():
+            host = job.get("host", "local")
+            for e in job.get("pending_approvals", []):
+                if e.get("question") or e.get("plan"):
+                    continue
+                out.append({"session": sid, "host": host, "id": e["id"],
+                            "tool_name": e["tool_name"],
+                            "preview": _perm_preview(e["tool_name"], e["input"]),
+                            "created": float(e.get("created") or time.time())})
+    return out
+
+
 def effective_permission_mode(session_id, requested):
     """The permission mode a run of `session_id` actually starts with.
 

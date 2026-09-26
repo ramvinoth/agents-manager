@@ -40,12 +40,12 @@ function harness(params: any = { session: "A", project: 7 }) {
     useCallback(fn: Function, deps: any[]) { const i = cursor++; if (!same(slots[i]?.deps, deps)) slots[i] = { fn, deps }; return slots[i].fn },
     useEffect(fn: Function, deps: any[]) { const i = cursor++; if (!same(slots[i]?.deps, deps)) pending.push({ i, fn, deps }) },
   }
-  const api = Object.fromEntries(["orgBoard", "orgCards", "orgEmployees", "orgMoveCard", "orgAssignCard", "orgCreateCard"].map(name => [name, (filter: any) => { const call = { name, filter, ...deferred() }; calls.push(call); return call.promise }]))
+  const api = Object.fromEntries(["orgBoard", "orgCards", "orgEmployees", "openDecisions", "orgMoveCard", "orgAssignCard", "orgCreateCard"].map(name => [name, (filter: any) => { const call = { name, filter, ...deferred() }; calls.push(call); return call.promise }]))
   const modules: Record<string, any> = {
     react: { ...react, default: react },
     "react-native": { ...Object.fromEntries(["ActivityIndicator", "Pressable", "ScrollView", "Text", "TextInput", "TouchableOpacity", "View"].map(x => [x, x])), Alert: { alert: (...args: any[]) => alerts.push(args) } },
     "react-native-gesture-handler": {}, "react-native-reanimated": {},
-    "../api/client": { api }, "../lib/board": board,
+    "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
     "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) },
   }
@@ -63,6 +63,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     calls.filter(c => c.name === "orgBoard")[index].resolve({ columns })
     loads()[index].resolve({ cards: [card(session)] })
     calls.filter(c => c.name === "orgEmployees")[index].resolve({ employees: [{ id: 3, name: "Employee" }] })
+    calls.filter(c => c.name === "openDecisions")[index]?.resolve({ count: 0, decisions: [] })
     await settle()
   }
   return { render, commit, go, start, calls, loads, finish, navigations, alerts, timers, writes: () => writes, token: () => token,

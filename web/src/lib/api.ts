@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -133,6 +133,19 @@ class ApiClient {
   }
   projects() {
     return this.getJSON("/api/projects" + this.qs("?"))
+  }
+  /** The cross-session decision queue (card #60): every open durable
+   *  question/plan + live tool approval, oldest first, with a total count.
+   *  Read-only — deciding an item goes through /api/chat/question/answer,
+   *  /api/chat/plan/decide or /api/chat/permission/decide. */
+  openDecisions() {
+    // getRes (not getJSON): a 404 is a meaningful signal — the server predates
+    // the queue route (restart pending) — and the band hides itself on it
+    // instead of erroring on every board.
+    return this.getRes("/api/decisions/open").then(async (r) => {
+      if (!r.ok) throw Object.assign(new Error(`decisions queue unavailable (${r.status})`), { status: r.status })
+      return r.json() as Promise<{ count: number; decisions: OpenDecision[] }>
+    })
   }
 
   // ---- org / Kanban (project-scoped board) ----

@@ -106,6 +106,12 @@ def get_open(session_id):
     return db.pending_question_get_open(session_id)
 
 
+def get_open_all():
+    """Every open question across all sessions, oldest first (the decision
+    queue's question half)."""
+    return db.pending_question_open_all()
+
+
 def clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
     """Consume only the exact request identified (tool + host + run + revision).
     The answer path itself is owned by decisions.accept_answer (consume-then-
@@ -141,6 +147,12 @@ def record_plan(session_id, pending, host="local"):
 
 def get_open_plan(session_id):
     return db.pending_plan_get_open(session_id)
+
+
+def get_open_plan_all():
+    """Every open plan across all sessions, oldest first (the decision
+    queue's plan half)."""
+    return db.pending_plan_open_all()
 
 
 def plan_decision_message(decision, feedback=""):

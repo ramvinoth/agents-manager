@@ -684,6 +684,22 @@ def pending_question_get_open(session_id):
             "revision": int(row["revision"] or 1)} if row else None
 
 
+def pending_question_open_all():
+    """Every OPEN question, across all sessions, oldest first — the raw rows
+    for the cross-session decision queue (card #60). One row per session (the
+    table is keyed by session); shaping lives in decisions.open_decisions."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT session_id, tool_use_id, questions, host, run_id, revision, created_at "
+            "FROM pending_questions WHERE status = 'open' ORDER BY created_at",
+        )
+        rows = cur.fetchall()
+    return [{"session_id": r["session_id"], "tool_use_id": r["tool_use_id"],
+             "questions": r["questions"], "host": r["host"] or "local",
+             "run_id": r["run_id"] or "", "revision": int(r["revision"] or 1),
+             "created_at": float(r["created_at"] or 0)} for r in rows]
+
+
 def pending_question_clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
     """Delete the session's question row only if it still holds exactly the
     identity of the request being cleaned up (tool + host + run + revision).
@@ -793,6 +809,20 @@ def pending_plan_get_open(session_id):
         row = cur.fetchone()
     return {"tool_use_id": row["tool_use_id"], "plan": row["plan"],
             "host": row["host"]} if row else None
+
+
+def pending_plan_open_all():
+    """Every OPEN plan, across all sessions, oldest first — the raw rows for
+    the cross-session decision queue (card #60). One row per session."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT session_id, tool_use_id, plan, host, created_at "
+            "FROM pending_plans WHERE status = 'open' ORDER BY created_at",
+        )
+        rows = cur.fetchall()
+    return [{"session_id": r["session_id"], "tool_use_id": r["tool_use_id"],
+             "plan": r["plan"], "host": r["host"] or "local",
+             "created_at": float(r["created_at"] or 0)} for r in rows]
 
 
 def pending_plan_resolve(session_id, tool_use_id):

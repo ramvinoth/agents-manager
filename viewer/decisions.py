@@ -19,6 +19,73 @@ this same gate answers it later via the resume path.
 from viewer import db
 
 
+def open_decisions(question_rows, plan_rows, approval_rows, labels, now):
+    """Shape the three decision sources into ONE queue — the kanban decision
+    list (card #60).
+
+    Pure: no db, no clock, no network. The route gathers the raw rows (the
+    durable question/plan tables + the live approval registry) and passes them
+    in, so the shaping is unit-testable without a database.
+
+    Ordering is oldest-first: wait time is the only order that exists before a
+    human ranks anything (manual priority is a later phase — its semantics for
+    a durable row are Ram's call, not this module's). Each item is a pointer +
+    summary, not a decision surface: deciding an item uses the EXISTING
+    per-session routes (/api/chat/question/answer, /api/chat/plan/decide,
+    /api/chat/permission/decide), so the board never becomes a second approval
+    system.
+    """
+    labels = labels or {}
+
+    def label(sid):
+        return labels.get(sid, "")
+
+    items = []
+    for r in question_rows or []:
+        sid = r.get("session_id", "")
+        qs = r.get("questions")
+        qs = qs if isinstance(qs, list) else []
+        first = qs[0] if qs and isinstance(qs[0], dict) else {}
+        text = str(first.get("question") or first.get("header") or "")
+        items.append({
+            "kind": "question",
+            "session": sid,
+            "host": r.get("host") or "local",
+            "label": label(sid),
+            "waiting_s": int(max(0, now - float(r.get("created_at") or now))),
+            "summary": text[:120],
+            "question_count": len(qs),
+            "tool_use_id": r.get("tool_use_id") or "",
+            "run_id": r.get("run_id") or "",
+            "revision": int(r.get("revision") or 0),
+        })
+    for r in plan_rows or []:
+        sid = r.get("session_id", "")
+        items.append({
+            "kind": "plan",
+            "session": sid,
+            "host": r.get("host") or "local",
+            "label": label(sid),
+            "waiting_s": int(max(0, now - float(r.get("created_at") or now))),
+            "summary": str(r.get("plan") or "")[:120],
+            "tool_use_id": r.get("tool_use_id") or "",
+        })
+    for r in approval_rows or []:
+        sid = r.get("session", "")
+        items.append({
+            "kind": "approval",
+            "session": sid,
+            "host": r.get("host") or "local",
+            "label": label(sid),
+            "waiting_s": int(max(0, now - float(r.get("created") or now))),
+            "summary": str(r.get("preview") or r.get("tool_name") or "")[:120],
+            "tool_name": r.get("tool_name") or "",
+            "id": r.get("id") or "",
+        })
+    items.sort(key=lambda i: i["waiting_s"], reverse=True)
+    return {"count": len(items), "decisions": items}
+
+
 def accept_answer(session_id, tool_use_id, answer, host="local", run_id="", revision=0):
     """Accept the owner's answer to a session's open question.
 

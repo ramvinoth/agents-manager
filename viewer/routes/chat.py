@@ -1,13 +1,14 @@
 """viewer.routes.chat — ChatMixin route + business methods."""
 import json
 import os
+import time
 from pathlib import Path
 from viewer.config import (
     CHAT_JOBS, CHAT_LOCK,
 )
 from viewer.adapters import resolve_agent_session
 from viewer.engine import (
-    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
+    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_all_public, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
 )
 from viewer.remote import (
     remote_codex_meta, remote_extract_cwd, remote_resolve,
@@ -217,6 +218,28 @@ class ChatMixin:
                 "pending_question": pending_q,
                 "pending_plan": pending_plan,
             })
+
+    def _g_decisions_open(self, req):
+        """The cross-session decision queue (card #60): every open durable
+        question, durable plan and live tool approval — one read of the three
+        EXISTING sources (no parallel store), oldest first, with a total count.
+        This route only lists; deciding an item goes through the existing
+        per-session routes, which are race-safe via the decisions gate."""
+        from viewer import decisions, questions
+        from viewer.engine import _push_label
+        qrows = questions.get_open_all()
+        prows = questions.get_open_plan_all()
+        arows = pending_approvals_all_public()
+        now = time.time()
+        labels = {}
+        for sid in ({r["session_id"] for r in qrows}
+                    | {r["session_id"] for r in prows}
+                    | {r["session"] for r in arows}):
+            try:
+                labels[sid] = _push_label(sid, "")
+            except Exception:
+                labels[sid] = ""
+        self.send_json(decisions.open_decisions(qrows, prows, arows, labels, now))
 
     def _p_chat_permission(self, req):
         """Internal (called by permission_mcp.py, authed by a per-run token):

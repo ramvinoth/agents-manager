@@ -27,8 +27,9 @@ import { api } from "@/lib/api"
 import { groupByColumn, orderColumn, nextPosition, findCardSession } from "@/lib/board"
 import { useStore } from "@/store"
 import { CardDetail } from "./CardDetail"
+import { DecisionsBand } from "./DecisionsBand"
 import { isQueued } from "@/lib/types"
-import type { BoardColumn, Card, Employee, OrgProject } from "@/lib/types"
+import type { BoardColumn, Card, Employee, OpenDecision, OrgProject } from "@/lib/types"
 
 /**
  * KanbanDialog — the project's task board in a big modal. Resolves which org
@@ -103,6 +104,19 @@ export function KanbanDialog({
     setCards(c.cards || [])
   }
 
+  /** Open a decision-queue item in the thread of the session that owns it (its
+   *  thread renders the actual decision card). Resolves the session from the
+   *  loaded list when it is on this host; a decision on another host is
+   *  shown, not opened, until a cross-host session lookup exists. */
+  function openDecision(d: OpenDecision): boolean {
+    const s = findCardSession(sessions, d.session)
+    const sameHost = s && (s.host === d.host || (d.host === "local" && s.host === "local"))
+    if (!sameHost) return false
+    onClose()
+    loadSession(s.path)
+    return true
+  }
+
   function onDragEnd(ev: DragEndEvent) {
     setActiveId(null)
     const cardId = Number(ev.active.id)
@@ -174,6 +188,8 @@ export function KanbanDialog({
             The project board. Every chat session working in this project shares these tasks.
           </DialogDescription>
         </DialogHeader>
+
+        <DecisionsBand onOpenSession={openDecision} />
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground">

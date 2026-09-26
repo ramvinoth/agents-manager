@@ -4,8 +4,9 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type BoardColumn, type Card, type CardFilter, type Employee } from "../api/client"
+import { api, type BoardColumn, type Card, type CardFilter, type Employee, type OpenDecision } from "../api/client"
 import { boardScopeFilter, groupByColumn, nextPosition } from "../lib/board"
+import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -27,10 +28,11 @@ type Snapshot = {
   columns: BoardColumn[]
   cards: Card[]
   employees: Employee[]
+  decisions: OpenDecision[]
   loading: boolean
   error: string
 }
-const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: [], employees: [], loading: true, error: "" })
+const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: [], employees: [], decisions: [], loading: true, error: "" })
 
 /**
  * KanbanScreen — the org's ONE canonical board rendered as a filtered VIEW.
@@ -41,6 +43,10 @@ const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: 
  * with a tap→card-detail fallback (its chips move the card; the move menu lived
  * there). Moves compute a fractional position via the pure
  * lib (lib/board.nextPosition, identical to the server) then POST card_move.
+ * A top band (DecisionBand) lists the system-wide queue of open decisions —
+ * questions, plans, tool approvals across ALL sessions — with the count; it
+ * polls with the board and only opens the owning thread (the thread performs
+ * the decision).
  */
 export default function KanbanScreen({ route, navigation }: Props) {
   const t = useTheme()
@@ -59,7 +65,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>(() => emptySnapshot(scope))
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
-  const { columns, cards, employees, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
+  const { columns, cards, employees, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
   const adding = scope.draft?.column
   const newTitle = scope.draft?.title || ""
   const colBounds = scope.bounds
@@ -70,13 +76,17 @@ export default function KanbanScreen({ route, navigation }: Props) {
     const current = () => isCurrent() && generation === scope.generation
     setSnapshot(cur => ({ ...(cur.scope === scope ? cur : emptySnapshot(scope)), error: "" }))
     try {
-      const [b, c, e] = await Promise.all([
+      const [b, c, e, d] = await Promise.all([
         api.orgBoard({ project: scope.filter.project, session: scope.filter.session }),
         api.orgCards(scope.filter),
         api.orgEmployees().catch(() => ({ employees: [] as Employee[] })),
+        // The queue is system-wide (every session's open question/plan/approval),
+        // not this filter's — a failed read must not hide the board, so it
+        // degrades to "no open decisions" rather than erroring the poll.
+        api.openDecisions().catch(() => ({ count: 0, decisions: [] as OpenDecision[] })),
       ])
       if (!current()) return
-      setSnapshot({ scope, columns: b.columns || [], cards: c.cards || [], employees: e.employees || [], loading: false, error: "" })
+      setSnapshot({ scope, columns: b.columns || [], cards: c.cards || [], employees: e.employees || [], decisions: d.decisions || [], loading: false, error: "" })
     } catch (err) {
       if (!current()) return
       const e = err as Error & { status?: number }
@@ -125,6 +135,30 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const openCard = useCallback(
     (card: Card) => { if (isCurrent()) navigation.navigate("CardDetail", { id: card.id }) },
     [navigation, isCurrent]
+  )
+
+  // Open the session that owns a queued decision — the same Thread route push
+  // taps use (App.tsx's navToSession), resolved id → path on the decision's
+  // host. Best-effort: a session that is no longer listed (or on an unreachable
+  // host) no-ops rather than throwing.
+  const openDecision = useCallback(
+    async (d: OpenDecision) => {
+      if (!isCurrent()) return
+      const host = d.host || "local"
+      try {
+        const sessions = await api.sessions(host)
+        const match = sessions.find((s) => s.id === d.session)
+        if (match) {
+          if (!isCurrent()) return
+          navigation.navigate("Thread", { host, label: match.title || d.label || match.id.slice(0, 8), path: match.path })
+        } else {
+          Alert.alert(d.label || d.session.slice(0, 8), `This session is not listed on ${host} right now — open it from the chat list, or it will re-appear in the queue while it waits.`)
+        }
+      } catch {
+        /* cross-host or offline: leave the item in the queue */
+      }
+    },
+    [isCurrent, navigation]
   )
 
   const promptAssign = useCallback(
@@ -188,7 +222,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
       {error ? (
         <Text style={{ color: t.danger, padding: 12 }}>{error}</Text>
       ) : null}
-      <ScrollView horizontal contentContainerStyle={{ padding: 10, gap: 10 }} showsHorizontalScrollIndicator={false}>
+      {decisions.length ? (
+        <DecisionBand decisions={decisions} theme={t} onOpen={openDecision} />
+      ) : null}
+      <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: 10, gap: 10 }} showsHorizontalScrollIndicator={false}>
         {grouped.map(({ column, cards: colCards }) => (
           <View
             key={column.id}
@@ -245,6 +282,73 @@ export default function KanbanScreen({ route, navigation }: Props) {
               <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic", padding: 8 }}>No cards</Text>
             ) : null}
           </View>
+        ))}
+      </ScrollView>
+    </View>
+  )
+}
+
+/**
+ * The board's decision band (card #60): every OPEN decision across all
+ * sessions — questions, plan approvals, tool Allow/Deny — oldest first, with
+ * the total count. Read-only here: tapping an item opens the owning session's
+ * thread, where the existing decision UI (race-safe via the decisions gate)
+ * performs the actual decision. This screen never writes a decision.
+ * Rendered only when non-empty — an empty queue shows nothing, so the board
+ * stays clean for the common case.
+ */
+const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield"> = {
+  question: "help",
+  plan: "file",
+  approval: "shield",
+}
+
+function DecisionBand({
+  decisions,
+  theme: t,
+  onOpen,
+}: {
+  decisions: OpenDecision[]
+  theme: ReturnType<typeof useTheme>
+  onOpen: (d: OpenDecision) => void
+}) {
+  return (
+    <View style={{ backgroundColor: t.surface, borderBottomWidth: 1, borderBottomColor: t.border, paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
+      <Text style={{ color: t.text, fontWeight: "700", fontSize: 13 }}>
+        Decisions <Text style={{ color: t.accent, fontWeight: "700" }}>{decisions.length}</Text>
+        <Text style={{ color: t.textMuted, fontWeight: "400" }}> · tap to open its thread</Text>
+      </Text>
+      <ScrollView style={{ maxHeight: 140 }} contentContainerStyle={{ gap: 4 }}>
+        {decisions.map((d) => (
+          <Pressable
+            key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.run_id}`}
+            testID={`decision-${d.kind}-${d.session}`}
+            onPress={() => onOpen(d)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              backgroundColor: t.bg,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: t.border,
+              padding: 8,
+            }}
+          >
+            <Icon name={DECISION_ICON[d.kind] || "help"} size={16} color={t.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: t.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>
+                {d.label || d.session.slice(0, 8)}
+                {d.host !== "local" ? ` · ${d.host}` : ""}
+              </Text>
+              <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
+                {d.summary || "waiting for a decision"}
+              </Text>
+            </View>
+            <Text style={{ color: t.textMuted, fontSize: 12, flexShrink: 0 }}>
+              {fmtWaiting(d.waiting_s)}
+            </Text>
+          </Pressable>
         ))}
       </ScrollView>
     </View>

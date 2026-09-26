@@ -94,6 +94,24 @@ export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 export type Employee = { id: number; name: string; role: string; provider: string; model: string; conv_mode: string; avatar: string; status: string; created_at: number }
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number }
 export type BoardColumn = { id: number; name: string; position: number }
+/** One row of the cross-session decision queue (GET /api/decisions/open): a
+ *  durable question, a durable plan, or a live tool approval. The queue is a
+ *  READ of the existing sources — deciding an item uses the per-session
+ *  routes, never this shape. */
+export type OpenDecision = {
+  kind: "question" | "plan" | "approval"
+  session: string
+  host: string
+  label: string
+  waiting_s: number
+  summary: string
+  question_count?: number
+  tool_use_id?: string
+  run_id?: string
+  revision?: number
+  tool_name?: string
+  id?: string
+}
 export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
@@ -636,6 +654,11 @@ export const api = {
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
+  // The cross-session decision queue (card #60): every open durable question/
+  // plan + live tool approval, oldest first, with a total count. Read-only —
+  // deciding an item goes through the per-session routes, which are race-safe.
+  openDecisions: () =>
+    req<{ count: number; decisions: OpenDecision[] }>("GET", "/api/decisions/open"),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),
   orgAudit: async (result: AuditFilter = "all", before?: number) =>

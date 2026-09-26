@@ -323,6 +323,7 @@ class SessionViewerHandler(
         "/api/debug/stacks": "_g_debug_stacks",
         "/api/sessions": "_g_sessions",
         "/api/chat/status": "_g_chat_status",
+        "/api/decisions/open": "_g_decisions_open",
         "/api/auth/status": "_g_auth_status",
         "/api/auth/me": "_g_auth_me",
         "/api/auth/state": "_g_auth_state",
