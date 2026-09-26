@@ -87,8 +87,6 @@ export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
-/** @deprecated Use Job instead */
-export type Loop = Job
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
   system_prompt: string; goal: string; model?: string; cron?: string; job_prompt?: string

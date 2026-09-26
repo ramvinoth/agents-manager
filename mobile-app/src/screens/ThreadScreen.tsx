@@ -36,7 +36,6 @@ import MessageActions, { type MsgTarget } from "../components/MessageActions"
 import SwipeToReply from "../components/SwipeToReply"
 import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
-import type { VisibleTypes } from "../lib/thread"
 import QuestionCard from "../components/QuestionCard"
 import Markdown from "../components/Markdown"
 import Collapsible from "../components/Collapsible"
@@ -97,20 +96,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const setSessionId = useCallback((id: string) => {
     if (isCurrentThread()) setCreatedSession({ lifetime: routeLifetime, id: id.trim() })
   }, [routeLifetime, isCurrentThread])
-  // Transcript-visibility filter. All on by default; the filter UI now lives on
-  // the SessionProfile screen (kept here as the render still honours it).
-  const [visibleTypes] = useState<VisibleTypes>({
-    user: true,
-    assistant: true,
-    tools: true,
-    system: true,
-  })
-  // Where a message lands while a turn is running. Defaults to "queue" — the
-  // non-destructive choice; interrupting is opt-in.
-  // Default action when the plain send button is tapped mid-run: queue (safe —
-  // never interrupts). The working pill's Interrupt button is the explicit
-  // opt-in to steer.
-  const sendMode: "queue" | "steer" = "queue"
   // What the agent is doing right now (last streamed tool) — drives the header
   // subtitle and the live "working on it" bubble.
   const [activity, setActivity] = useState("")
@@ -182,46 +167,33 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const dateOpacity = useRef(new Animated.Value(0)).current
   const dateHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const slashMatches = useMemo(() => matchCommands(slashTerm(input), commands), [input, commands])
-  // Apply the transcript filter: drop hidden item types, and (for exchanges)
-  // strip tool steps when Tools is off. Mirrors the web LHS "Filter transcript".
-  const shownItems = useMemo(() => {
-    return items
-      .filter((it) => {
-        if (it.kind === "user") return visibleTypes.user
-        if (it.kind === "system") return visibleTypes.system
-        return visibleTypes.assistant // exchange
-      })
-      .map((it) =>
-        it.kind === "exchange" && !visibleTypes.tools ? { ...it, steps: [] } : it
-      )
-  }, [items, visibleTypes])
   // Id of the most recent agent exchange — its steps default to expanded so the
   // current turn is visible without a tap; older exchanges stay collapsed. Keyed
   // by id (not list index) because the inverted render reorders indices.
   const lastExchangeId = useMemo(() => {
-    for (let i = shownItems.length - 1; i >= 0; i--) {
-      if (shownItems[i].kind === "exchange") return shownItems[i].id
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind === "exchange") return items[i].id
     }
     return ""
-  }, [shownItems])
+  }, [items])
   // The list renders `inverted` (newest at offset 0), so it consumes the data
   // reversed. The live WORKING placeholder is the newest thing of all, so it
   // goes to the FRONT of the reversed array (= visual bottom). Built once here so
   // the render stays declarative and index math has a single definition.
   const listData = useMemo<ListItem[]>(() => {
-    const reversed = [...shownItems].reverse()
+    const reversed = [...items].reverse()
     return busy ? [WORKING, ...reversed] : reversed
-  }, [shownItems, busy])
+  }, [items, busy])
   // Pinned messages that still exist in the transcript, in thread order (oldest→
   // newest), each with its preview text — drives the banner and its cycle.
   const pinnedItems = useMemo(() => {
     const byUuid = new Map<string, ThreadItem>()
-    for (const it of shownItems) {
+    for (const it of items) {
       const u = itemUuid(it)
       if (u) byUuid.set(u, it)
     }
     return pinned.map((u) => byUuid.get(u)).filter(Boolean).map((it) => ({ uuid: itemUuid(it as ThreadItem)!, text: itemPreview(it as ThreadItem) }))
-  }, [shownItems, pinned])
+  }, [items, pinned])
   // Search indexes the SAME array the list renders (listData), so a match's
   // index is a valid scrollToIndex target. itemText() returns "" for the WORKING
   // sentinel, so it never matches.
@@ -581,7 +553,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
    * after. Two distinct buttons in the working pill call this, so there's never
    * a mode to guess — each button does exactly what it says.
    */
-  async function primary(mode: "queue" | "steer" = sendMode) {
+  async function primary(mode: "queue" | "steer" = "queue") {
     const raw = input.trim()
     if (!raw) return
     // A reply quotes the message it answers, so the agent sees the referent.
@@ -1217,7 +1189,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
               styles.circleBtn,
               !input.trim() ? styles.sendBtnDisabled : styles.sendBtn,
             ]}
-            onPress={() => primary(busy ? "queue" : sendMode)}
+            onPress={() => primary()}
             disabled={!input.trim()}
           >
             <Icon name="send" size={19} color="#fff" />
