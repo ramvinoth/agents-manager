@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
-import { Gesture, GestureDetector } from "react-native-gesture-handler"
+import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -63,6 +63,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const scope = scopeRef.current
   const isCurrent = useCallback(() => scope.active && scopeRef.current === scope, [scope])
   const [snapshot, setSnapshot] = useState<Snapshot>(() => emptySnapshot(scope))
+  // Height of the horizontal strip the columns live in, measured on layout —
+  // the ceiling that makes a tall column scroll vertically instead of
+  // overflowing off-screen. Re-measured when the band/error banner toggles.
+  const [viewportH, setViewportH] = useState(0)
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
   const { columns, cards, employees, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
@@ -225,7 +229,13 @@ export default function KanbanScreen({ route, navigation }: Props) {
       {decisions.length ? (
         <DecisionBand decisions={decisions} theme={t} onOpen={openDecision} />
       ) : null}
-      <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ padding: 10, gap: 10 }} showsHorizontalScrollIndicator={false}>
+      <ScrollView
+        horizontal
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 10, gap: 10 }}
+        showsHorizontalScrollIndicator={false}
+        onLayout={(ev) => { if (isCurrent()) setViewportH(ev.nativeEvent.layout.height) }}
+      >
         {grouped.map(({ column, cards: colCards }) => (
           <View
             key={column.id}
@@ -234,7 +244,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
               const { x, width } = ev.nativeEvent.layout
               colBounds.current[column.id] = { x, w: width }
             }}
-            style={{ width: COL_W, backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 8 }}
+            style={{ width: COL_W, maxHeight: viewportH ? viewportH - 20 : undefined, backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 8 }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <Text style={{ color: t.text, fontWeight: "700", fontSize: 14 }}>
@@ -262,25 +272,27 @@ export default function KanbanScreen({ route, navigation }: Props) {
               />
             ) : null}
 
-            {colCards.map((card, i) => (
-              <DraggableCard
-                key={card.id}
-                card={card}
-                theme={t}
-                index={i}
-                columnCount={colCards.length}
-                assigneeName={empName(card.assignee)}
-                commentCount={card.comment_count ?? 0}
-                colBounds={colBounds}
-                columns={columns}
-                onDropColumn={(colId) => moveCard(card, colId, 9999)}
-                onTap={() => openCard(card)}
-                onLongPress={() => promptAssign(card)}
-              />
-            ))}
-            {!colCards.length ? (
-              <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic", padding: 8 }}>No cards</Text>
-            ) : null}
+            <GHScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              {colCards.map((card, i) => (
+                <DraggableCard
+                  key={card.id}
+                  card={card}
+                  theme={t}
+                  index={i}
+                  columnCount={colCards.length}
+                  assigneeName={empName(card.assignee)}
+                  commentCount={card.comment_count ?? 0}
+                  colBounds={colBounds}
+                  columns={columns}
+                  onDropColumn={(colId) => moveCard(card, colId, 9999)}
+                  onTap={() => openCard(card)}
+                  onLongPress={() => promptAssign(card)}
+                />
+              ))}
+              {!colCards.length ? (
+                <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic", padding: 8 }}>No cards</Text>
+              ) : null}
+            </GHScrollView>
           </View>
         ))}
       </ScrollView>
