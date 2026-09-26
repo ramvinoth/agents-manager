@@ -14,7 +14,9 @@ produce) and add one ADAPTERS entry. Nothing else — the app, the MCP layer,
 the routes — learns the vendor's name; they address drives by id through
 adapter_for().
 
-Vendor facts (VERIFIED against primary docs 2026-09-19):
+Vendor facts. VERIFIED against the primary docs 2026-09-19, RE-VERIFIED
+against the same primary docs 2026-09-26 (card #32 comment 19 required a
+recheck before resuming; the recheck corrected two entries — marked ✗):
   google   : an unverified app using sensitive scopes (e.g. `drive`) shows
              an "unverified app" warning before the consent screen and is
              capped at 100 NEW users; verification is only required before
@@ -22,6 +24,23 @@ Vendor facts (VERIFIED against primary docs 2026-09-19):
              For a single-owner self-hosted app that is just a warning.
              Web (authorization-code) flow only — no device flow for
              Drive. (support.google.com/cloud/answer/7454865)
+             [2026-09-26] Scopes are tiered (api-specific-auth, updated
+             2026-09-03): non-sensitive (drive.appdata, drive.appfolder,
+             drive.file, drive.install), sensitive (drive.apps.readonly),
+             restricted (drive, drive.readonly, drive.activity.*, …).
+             drive.file = per-file, shared ONLY through the Picker — it
+             cannot browse. Restricted-scope apps get category + security
+             assessment review before production. Testing-mode (external
+             user type): refresh tokens EXPIRE IN 7 DAYS unless the app
+             uses only name/email/profile/OpenID scopes, and a Google
+             account holds at most 100 refresh tokens per client (oldest
+             auto-invalidated, no warning). Uploads: media (binary body),
+             multipart, resumable (session) — max file 5,120 GB (5 TB)
+             per file, any MIME type.
+             (developers.google.com: /workspace/drive/api/guides/
+             api-specific-auth, /identity/protocols/oauth2, /workspace/
+             drive/api/guides/manage-uploads, /workspace/drive/api/
+             reference/rest/v3/files/create)
   dropbox  : PKCE is the public-client flow — no client secret needed.
              A refresh token is ONLY returned when the authorize URL
              carries token_access_type=offline; refresh tokens are
@@ -34,8 +53,32 @@ Vendor facts (VERIFIED against primary docs 2026-09-19):
              /oauth2/authorize page lives on www.dropbox.com. Business
              teams can have a monthly "data transport calls" cap — the
              failure carries a user_message to show the user.
-             (docs.dropboxapi.com: /get-started/authorization, /oauth,
-             /technical-reference/data-transport-limit)
+             [2026-09-26] Docs moved: /get-started/authorization and
+             /oauth → docs.dropboxapi.com/dropbox-api/docs/oauth and
+             /developer-resources/developer-guide (the old /developers-v2/
+             tree is 404). Single /files/upload caps at 150 MB; above
+             that, /files/upload_session/{start,append_v2,finish} in
+             4 MB-multiple chunks, ≤1000 appends per batch, 429
+             too_many_write_operations when saturated.
+             ✗ CORRECTION — server-side zip DOES exist: POST /2/files/
+             download-zip (Dropbox-API-Arg: JSON {"paths":[…]}/{"ids":[…]})
+             makes the vendor zip up to 10,000 files and returns a temp
+             path (metadata + size + timestamp). The temp zip must be
+             DOWNLOADED WITHIN 30 MINUTES or it is deleted; the temp path
+             cannot be listed/moved/renamed/deleted; any single file it
+             cannot include → 400; a long build can time out; a large zip
+             can be throttled (429). → build_zip is NATIVE on Dropbox
+             (Phase 6 no longer "off the table" for this vendor, with
+             those caps); the original card assumption was wrong.
+             Data-access level is an app-level console choice: App folder
+             (dedicated folder under the user's Apps folder; read/write
+             there only) vs Full Dropbox (everything); scopes control
+             WHAT actions, the access level controls WHICH content.
+             Least-privilege is reviewed at production approval.
+             (docs.dropboxapi.com: /dropbox-api/docs/oauth, /dropbox-api/
+             docs/performance, /dropbox-api/docs/file-access, /dropbox-
+             api/api-reference/user-endpoints/files/download-zip,
+             /dropbox-api/docs/developer-resources/developer-guide)
   onedrive : personal (consumer) Microsoft accounts are supported by the
              device code flow via the /consumers tenant — the best
              onboarding path for a self-hosted box (user types a code).
@@ -45,8 +88,35 @@ Vendor facts (VERIFIED against primary docs 2026-09-19):
              an April-2024 feature request is still Status: NEW) — so
              build_zip/compress for OneDrive is download→zip→upload or
              capability-hidden, NOT a native call.
+             [2026-09-26] Device flow detail: the /devicecode response
+             carries the poll `interval` and an `expires_in` defaulting
+             to 15 minutes for the user to sign in; polling errors are
+             authorization_pending / slow_down / expired_token /
+             bad_verification_code. ✗ QUIRK — a PERSONAL account signed
+             in via /common or /consumers is asked to sign in AGAIN on
+             the other device (the code device has no cookies); work or
+             school accounts are not. The onboarding UI must expect a
+             second sign-in and say so.
+             ✗ CORRECTION — upload-session chunk rules (current docs):
+             max 60 MiB per request (the older 32 MiB number is out of
+             date); fragments must be a MULTIPLE OF 320 KiB (327,680
+             bytes) and are uploaded SEQUENTIALLY (out-of-order → error);
+             recommended fragment size 5–10 MiB. The session's
+             expirationDateTime extends with each fragment; a dropped
+             mid-request upload discards only that request's bytes and
+             resumes from the last completed fragment (nextExpectedRanges
+             tells you where). Total file length is known up front.
+             The folder-zip line above stands, sharpened: current v1.0
+             AND beta /content docs say "only driveItems with the file
+             property can be downloaded" — a March-2025 Q&A (official
+             responder) reports folder /content DID return a zip, so the
+             behavior may exist undocumented; treat it as unverified and
+             live-test against a real OneDrive before relying on it.
              (learn.microsoft.com: /entra/identity-platform/
-             v2-oauth2-device-code, /graph/api/driveitem-put-content;
+             v2-oauth2-device-code, /graph/api/driveitem-put-content,
+             /graph/api/driveitem-createuploadsession, /graph/api/
+             resources/uploadsession, /graph/api/driveitem-get-content;
+             learn.microsoft.com/answers/questions/2201182;
              techcommunity.microsoft.com idea 4116936)
 """
 
