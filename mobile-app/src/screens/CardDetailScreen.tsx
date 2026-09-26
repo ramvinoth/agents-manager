@@ -20,7 +20,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
  * This is the pickup surface of the board's decision pipeline: the owner moves
  * the card to Review/Approved/Declined from here (or by dragging on the board)
  * and comments here to talk; the card's session wakes on that (boardwatch).
- * Polls like the board; a 404 means the card was deleted — go back.
+ * Polls like the board; missing or inaccessible cards show a safe retry state.
  *
  * The composer is the SAME one as the thread screen (styles.ts composerWrap/
  * composerBar/composerInput/circleBtn) — the app has one input pattern, and it
@@ -46,14 +46,29 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [newComment, setNewComment] = useState("")
+  const [posting, setPosting] = useState(false)
+  const postPending = useRef(false)
+  const [moving, setMoving] = useState(false)
+  const movePending = useRef(false)
+  const [attaching, setAttaching] = useState(false)
+  const attachPending = useRef(false)
+  const [assigning, setAssigning] = useState(false)
+  const assignPending = useRef(false)
+  const draftRevision = useRef(0)
   const sheet = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const lastCommentCount = useRef(0)
+  const reads = useRef({ issued: 0, applied: 0 })
 
   const load = useCallback(async () => {
-    setError("")
+    const request = ++reads.current.issued
     try {
       const r = await api.orgCard(id)
+      // A slow poll must not undo a newer completed refresh. Still accept a
+      // completed read while the next poll is pending, so slow links can load.
+      if (request < reads.current.applied) return
+      reads.current.applied = request
       if (r.card) {
+        setError("")
         setCard(r.card)
         setComments(r.comments || [])
         // The card's move options come WITH the card: the server resolves the
@@ -61,22 +76,30 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         // returns its columns — one round trip, no client-side re-derivation.
         setColumns(r.columns || [])
       } else {
-        navigation.goBack()
+        setCard(null)
+        setComments([])
+        setColumns([])
+        setError("This card is unavailable. It may have been removed or you may no longer have access.")
       }
     } catch (err) {
+      if (request < reads.current.applied) return
+      reads.current.applied = request
       const e = err as Error & { status?: number }
       if (e.status === 401) {
         setToken(null)
         navigation.replace("Login")
         return
       }
-      if (e.status === 404) {
-        navigation.goBack()
+      if (e.status === 403 || e.status === 404) {
+        setCard(null)
+        setComments([])
+        setColumns([])
+        setError("This card is unavailable. It may have been removed or you may no longer have access.")
         return
       }
-      setError(e.message)
+      setError("Could not refresh this card. Check your connection and try again.")
     } finally {
-      setLoading(false)
+      if (request === reads.current.applied) setLoading(false)
     }
   }, [id, navigation])
 
@@ -102,16 +125,29 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const move = useCallback(
     async (toColumn: number) => {
-      if (!card || toColumn === card.column_id) return
+      if (!card || toColumn === card.column_id || movePending.current) return
+      movePending.current = true
+      setMoving(true)
       const prev = card
-      setCard((c) => (c ? { ...c, column_id: toColumn } : c))
+      const preview = { ...card, column_id: toColumn }
+      setCard(preview)
       try {
         await api.orgMoveCard({ card_id: card.id, column_id: toColumn, position: 9999 })
-      } catch {
-        setCard(prev)
+      } catch (e) {
+        // Roll back only this preview, never a newer refresh or another edit.
+        setCard((current) => current === preview ? prev : current)
+        if ((e as { status?: number })?.status === 401) {
+          setToken(null)
+          navigation.replace("Login")
+          return
+        }
+        Alert.alert("Could not move card", "The move could not be confirmed. Refresh the card to check its current column before trying again.")
+      } finally {
+        movePending.current = false
+        setMoving(false)
       }
     },
-    [card]
+    [card, navigation]
   )
 
   // The card resolves to NO board (no project of its own, and its session has
@@ -125,37 +161,63 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const attach = useCallback(
     async (projectId: number) => {
-      if (!card) return
-      const prev = card
-      setCard((c) => (c ? { ...c, project_id: projectId } : c))
+      if (!card || attachPending.current) return
+      attachPending.current = true
+      setAttaching(true)
       try {
-        await api.orgUpdateCard({ card_id: card.id, project_id: projectId })
-        await load() // the card's board now has columns → MOVE TO appears
-      } catch {
-        setCard(prev)
+        try {
+          await api.orgUpdateCard({ card_id: card.id, project_id: projectId })
+        } catch (e) {
+          if ((e as { status?: number })?.status === 401) {
+            setToken(null)
+            navigation.replace("Login")
+            return
+          }
+          Alert.alert("Could not attach card", "The attachment could not be confirmed. Refresh the card to check its project before trying again.")
+          return
+        }
+        // Fetch the authoritative card AND board together; there is no local
+        // project preview to roll back over a newer refresh on failure.
+        await load()
+      } finally {
+        attachPending.current = false
+        setAttaching(false)
       }
     },
-    [card, load]
+    [card, load, navigation]
   )
 
   const assign = useCallback(() => {
-    if (!card || !employees.length) return
+    if (!card || !employees.length || assignPending.current) return
     Alert.alert(card.title, "Assign to", [
       ...employees.map((e) => ({
         text: e.name,
         onPress: async () => {
-          const prev = card
-          setCard((c) => (c ? { ...c, assignee: e.id } : c))
+          if (assignPending.current) return
+          assignPending.current = true
+          setAssigning(true)
           try {
-            await api.orgAssignCard({ card_id: card.id, assignee: e.id })
-          } catch {
-            setCard(prev)
+            try {
+              await api.orgAssignCard({ card_id: card.id, assignee: e.id })
+            } catch (err) {
+              if ((err as { status?: number })?.status === 401) {
+                setToken(null)
+                navigation.replace("Login")
+                return
+              }
+              Alert.alert("Could not assign card", "The assignment could not be confirmed. Refresh the card to check its assignee before trying again.")
+              return
+            }
+            await load()
+          } finally {
+            assignPending.current = false
+            setAssigning(false)
           }
         },
       })),
       { text: "Cancel", style: "cancel" as const },
     ])
-  }, [card, employees])
+  }, [card, employees, load, navigation])
 
   const deleteCard = useCallback(() => {
     if (!card) return
@@ -167,9 +229,22 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         onPress: async () => {
           // card_delete is Red: an approval back means the card stays until the
           // owner says so — say that out loud instead of pretending it vanished.
-          const r = await api.orgDeleteCard({ card_id: card.id }).catch(() => null)
-          if (r && isQueued(r)) Alert.alert("Queued", "Deletion is queued for the owner's approval.")
-          navigation.goBack()
+          try {
+            const r = await api.orgDeleteCard({ card_id: card.id })
+            if (isQueued(r)) {
+              Alert.alert("Queued", "Deletion is queued for the owner's approval.")
+              return
+            }
+            if (r.deleted) navigation.goBack()
+            else Alert.alert("Deletion not confirmed", "The card may already have been removed. Refresh it to check its status.")
+          } catch (e) {
+            if ((e as { status?: number })?.status === 401) {
+              setToken(null)
+              navigation.replace("Login")
+              return
+            }
+            Alert.alert("Could not delete card", "Deletion could not be confirmed. Please try again.")
+          }
         },
       },
     ])
@@ -177,18 +252,30 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const post = useCallback(async () => {
     const body = newComment.trim()
-    if (!body || !card) return
-    setNewComment("")
+    if (!body || !card || postPending.current) return
+    postPending.current = true
+    setPosting(true)
+    const revision = draftRevision.current
     try {
       await api.orgAddCardComment({ card_id: card.id, body })
-      const r = await api.orgCard(id)
-      setCard(r.card)
-      setComments(r.comments || [])
+      // Only clear the submitted draft, never edits made while awaiting it.
+      if (draftRevision.current === revision) setNewComment("")
     } catch (e) {
-      setNewComment(body)
-      setError((e as Error).message)
+      if ((e as { status?: number })?.status === 401) {
+        setToken(null)
+        navigation.replace("Login")
+        return
+      }
+      setError("Could not post your comment. Please try again.")
+      return
+    } finally {
+      postPending.current = false
+      setPosting(false)
     }
-  }, [card, newComment, id])
+    // The write succeeded. A failed refresh must not present it as an unsent
+    // draft and invite a duplicate; reuse the normal safe card-read handling.
+    await load()
+  }, [card, newComment, load, navigation])
 
   if (loading) {
     return (
@@ -197,7 +284,18 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       </View>
     )
   }
-  if (!card) return null
+  if (!card) return (
+    <View testID="card-detail-unavailable" style={{ flex: 1, backgroundColor: t.bg, padding: 24, justifyContent: "center", gap: 16 }}>
+      <Text accessibilityRole="header" style={{ color: t.text, fontSize: 20, fontWeight: "600" }}>Card unavailable</Text>
+      <Text accessibilityLiveRegion="polite" style={{ color: t.text, fontSize: 16 }}>{error || "This card could not be loaded."}</Text>
+      <Pressable testID="card-detail-retry" accessibilityRole="button" onPress={() => { setLoading(true); void load() }} style={{ minHeight: 44, justifyContent: "center" }}>
+        <Text style={{ color: t.text, fontSize: 17 }}>Try again</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={{ minHeight: 44, justifyContent: "center" }}>
+        <Text style={{ color: t.text, fontSize: 17 }}>Go back</Text>
+      </Pressable>
+    </View>
+  )
 
   const assignee = employees.find((e) => e.id === card.assignee)?.name
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
@@ -244,7 +342,11 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                       key={col.id}
                       onPress={() => move(col.id)}
                       testID={`card-detail-col-${col.id}`}
+                      disabled={moving}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: moving, busy: moving && active, selected: active }}
                       style={{
+                        opacity: moving ? 0.6 : 1,
                         backgroundColor: active ? t.accent : t.surface,
                         borderWidth: 1,
                         borderColor: active ? t.accent : t.border,
@@ -273,7 +375,11 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                       key={p.id}
                       onPress={() => attach(p.id)}
                       testID={`card-detail-project-${p.id}`}
+                      disabled={attaching}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: attaching, busy: attaching }}
                       style={{
+                        opacity: attaching ? 0.6 : 1,
                         backgroundColor: t.surface,
                         borderWidth: 1,
                         borderColor: t.border,
@@ -298,7 +404,14 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         </View>
 
         {assignee ? (
-          <Pressable onPress={assign} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Pressable
+            testID="card-detail-assign"
+            onPress={assign}
+            disabled={assigning}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: assigning, busy: assigning }}
+            style={{ flexDirection: "row", alignItems: "center", gap: 6, opacity: assigning ? 0.6 : 1 }}
+          >
             <Icon name="user" size={14} color={t.textMuted} />
             <Text style={{ color: t.textMuted, fontSize: 12 }}>
               {assignee} — tap to reassign
@@ -334,17 +447,18 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             placeholder="Comment on this card…"
             placeholderTextColor={t.textMuted}
             value={newComment}
-            onChangeText={setNewComment}
+            onChangeText={(text) => { draftRevision.current++; setNewComment(text) }}
             multiline
           />
           <Pressable
             testID="card-detail-send"
-            accessibilityLabel="send comment"
-            style={[styles.circleBtn, newComment.trim() ? styles.sendBtn : styles.sendBtnDisabled]}
+            accessibilityLabel={posting ? "sending comment" : "send comment"}
+            accessibilityState={{ disabled: posting || !newComment.trim(), busy: posting }}
+            style={[styles.circleBtn, !posting && newComment.trim() ? styles.sendBtn : styles.sendBtnDisabled]}
             onPress={post}
-            disabled={!newComment.trim()}
+            disabled={posting || !newComment.trim()}
           >
-            <Icon name="send" size={19} color="#fff" />
+            {posting ? <ActivityIndicator color="#fff" size="small" /> : <Icon name="send" size={19} color="#fff" />}
           </Pressable>
         </View>
       </View>

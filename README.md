@@ -21,7 +21,7 @@ and steer runs right from the browser.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10+ with `psycopg2-binary`, `paramiko` (remote hosts over SSH) and `PyJWT` (APNs push) — `deploy/install.sh` installs them
 - Node.js 20+ (to build the web UI)
 - PostgreSQL (stores accounts, login sessions, and per-user preferences)
 

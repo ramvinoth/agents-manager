@@ -1,28 +1,18 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Provider } from "../api/client"
+import { aiError, connectionPayload, type KeyAction } from "../lib/aiSelection"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Providers">
 
-type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model: string; contextLimit: string }
+type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model: string; contextLimit: string; originalUrl: string; originalContext: string; apiKeyAction: KeyAction }
 
-/**
- * The GLOBAL provider library — add / edit / delete the custom model endpoints
- * (Qwen, LiteLLM, BrainTwin, …) that any chat session can then pick from. This is
- * the single home for provider CRUD: an individual session only SELECTS from this
- * list (see ProviderPicker), it never edits it. Backed entirely by /api/providers
- * (server-side source of truth in ~/.claude/.viewer-providers.json) — nothing is
- * cached or hardcoded on the device.
- *
- * "Built-in (Claude)" is not a stored provider; it's the built-in Claude login
- * (provider = ""), shown here as a pinned, non-editable header for orientation.
- * One provider can be marked isDefault — it auto-selects for new sessions.
- */
+/** Shared server connections. Selecting AI for a chat never edits these presets. */
 export default function ProvidersScreen({ navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
@@ -34,110 +24,74 @@ export default function ProvidersScreen({ navigation }: Props) {
   const [savingProvider, setSavingProvider] = useState(false)
   const [customModel, setCustomModel] = useState(false)
 
+  const [error, setError] = useState("")
+  const [discoveryStatus, setDiscoveryStatus] = useState("")
+  const generation = useRef(0)
+  useEffect(() => () => { generation.current++ }, [])
   useEffect(() => {
-    api.providers().then((r) => setProviders(r.providers || [])).catch(() => {})
+    api.providers().then((r) => setProviders(r.providers || [])).catch(e => setError(aiError(e)))
   }, [])
 
   // Open the editor: blank for a new preset, or pre-filled to edit one. The apiKey
   // is never returned by the server, so the field starts empty and an empty value
   // on save means "keep the existing key".
   function openEditor(p?: Provider) {
+    generation.current++; setLoadingModels(false); setError(""); setDiscoveryStatus("")
     setModelOptions([])
     setCustomModel(false)
     setEditing(
       p
-        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model, contextLimit: p.contextLimit ? String(p.contextLimit) : "" }
-        : { id: "", name: "", baseUrl: "", apiKey: "", model: "", contextLimit: "" }
+        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model, contextLimit: p.contextLimit ? String(p.contextLimit) : "", originalContext: p.contextLimit ? String(p.contextLimit) : "", originalUrl: p.baseUrl, apiKeyAction: "keep" }
+        : { id: "", name: "", baseUrl: "", apiKey: "", model: "", contextLimit: "", originalContext: "", originalUrl: "", apiKeyAction: "remove" }
     )
   }
 
-  // Populate the model dropdown from the endpoint (fetched server-side so the key
-  // never leaves the box). Works before the preset is saved via baseUrl+key.
-  function loadModels() {
-    if (!editing) return
-    setLoadingModels(true)
-    const q = editing.id
-      ? { id: editing.id }
-      : { baseUrl: editing.baseUrl.trim(), key: editing.apiKey.trim() || undefined }
-    api
-      .providerModels(q)
-      .then((r) => {
-        setModelOptions(r.models || [])
-        if (!r.models?.length) setCustomModel(true)
-      })
-      .catch(() => setCustomModel(true))
-      .finally(() => setLoadingModels(false))
+  function changeDraft(change: Partial<Draft>) {
+    generation.current++; setLoadingModels(false); setModelOptions([]); setDiscoveryStatus("")
+    setEditing(e => e ? {...e, ...change} : e)
   }
-
-  // Create or update the preset in the shared library. Unlike the old per-session
-  // editor, this does NOT select the preset for any session — it only manages the list.
-  function saveProvider() {
+  async function loadModels() {
     if (!editing) return
-    const name = editing.name.trim()
-    const baseUrl = editing.baseUrl.trim()
-    const model = editing.model.trim()
-    if (!baseUrl || !model) return
-    setSavingProvider(true)
-    api
-      .providerSave({
-        id: editing.id || undefined,
-        name: name || baseUrl,
-        baseUrl,
-        model,
-        ...(editing.apiKey.trim() ? { apiKey: editing.apiKey.trim() } : {}),
-        // Always send contextLimit so clearing the field (→ 0) actually clears it.
-        contextLimit: Math.max(0, parseInt(editing.contextLimit.trim(), 10) || 0),
-      })
-      .then((saved) => {
-        if (saved.error) return
-        setProviders((all) => {
-          const rest = all.filter((x) => x.id !== saved.id)
-          return [...rest, saved].sort((a, b) => a.name.localeCompare(b.name))
-        })
-        setEditing(null)
-      })
-      .catch(() => {})
-      .finally(() => setSavingProvider(false))
+    const request = ++generation.current
+    setLoadingModels(true); setError("")
+    try {
+      const result = await api.providerDraftModels(connectionPayload(editing, editing.originalUrl))
+      if (request !== generation.current) return
+      if (!result.status) throw new Error("Server update required for draft model discovery.")
+      setModelOptions(result.models || [])
+      setDiscoveryStatus(result.status === "error" ? result.error || "Discovery failed" : result.status === "empty" ? "No models returned. Enter a model ID manually." : result.status === "unsupported" ? "Discovery unsupported. Enter a model ID manually." : "Models loaded from the draft endpoint.")
+      if (result.status !== "ok") setCustomModel(true)
+    } catch (e) { if (request === generation.current) { setError(aiError(e)); setCustomModel(true) } }
+    finally { if (request === generation.current) setLoadingModels(false) }
   }
-
+  async function saveProvider() {
+    if (!editing || savingProvider) return
+    setSavingProvider(true); setError("")
+    try {
+      const saved = await api.providerSave({
+        ...connectionPayload(editing, editing.originalUrl), name: editing.name.trim() || editing.baseUrl.trim(), model: editing.model.trim(),
+        ...(editing.contextLimit !== editing.originalContext ? {contextLimit: Number(editing.contextLimit) || 0} : {}),
+      })
+      if (saved.error || !saved.id) throw new Error(saved.error || "Server did not confirm the connection.")
+      setProviders(all => [...all.filter(p => p.id !== saved.id), saved].sort((a,b) => a.name.localeCompare(b.name)))
+      generation.current++; setEditing(null)
+    } catch (e) { setError(aiError(e)) } finally { setSavingProvider(false) }
+  }
+  function cancel() {
+    if (savingProvider) return
+    Alert.alert("Discard connection changes?", "The saved connection is unchanged.", [{text: "Keep editing", style: "cancel"}, {text: "Discard changes", style: "destructive", onPress: () => { generation.current++; setEditing(null); setError("") }}])
+  }
   function deleteProvider(p: Provider) {
-    Alert.alert(p.name, "Delete this provider? Sessions using it fall back to Built-in (Claude).", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          setProviders((all) => all.filter((x) => x.id !== p.id))
-          if (editing?.id === p.id) setEditing(null)
-          api.providerDelete(p.id).catch(() => {})
-        },
-      },
-    ])
-  }
-
-  function toggleDefault(p: Provider) {
-    const newDefault = !p.isDefault
-    // Optimistic: un-default all, then set this one.
-    setProviders((all) =>
-      all.map((x) => ({ ...x, isDefault: x.id === p.id ? newDefault : false }))
-    )
-    api.providerSave({ id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model, isDefault: newDefault }).catch(() => {})
-  }
-
-  function applyDefaultToAll() {
-    const def = providers.find((p) => p.isDefault)
-    const name = def ? def.name : "Built-in (Claude)"
-    const id = def ? def.id : ""
-    Alert.alert("Apply to all sessions", `Set ${name} as the provider for ALL existing chat sessions?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Apply",
-        onPress: () => {
-          api.providerApplyDefault(id).then((r) => {
-            Alert.alert("Done", `Updated ${r.updated} sessions.`)
-          }).catch(() => {})
-        },
-      },
+    Alert.alert(p.name, "Delete this connection? Chats using it may become unavailable until you choose another provider.", [
+      {text: "Cancel", style: "cancel"}, {text: "Delete", style: "destructive", onPress: async () => {
+        setError("")
+        try {
+          const result = await api.providerDelete(p.id)
+          if (!result.deleted) throw new Error("Server did not confirm deletion.")
+          setProviders(all => all.filter(x => x.id !== p.id))
+          if (editing?.id === p.id) { generation.current++; setEditing(null) }
+        } catch (e) { setError(aiError(e)) }
+      }},
     ])
   }
 
@@ -145,8 +99,10 @@ export default function ProvidersScreen({ navigation }: Props) {
     <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       <Text style={styles.sheetHint}>
         Providers route a session to your own model endpoint. Manage them here; pick one per chat in its
-        settings.
+        settings. Changing a preset default affects chats that use that default. Saving a connection does not change new-chat defaults.
       </Text>
+
+      {error ? <Text testID="provider-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error}</Text> : null}
 
       {/* Built-in (Claude) — the built-in login, not a stored provider. */}
       <Text style={styles.sheetSection}>BUILT-IN</Text>
@@ -154,7 +110,7 @@ export default function ProvidersScreen({ navigation }: Props) {
         <Icon name="sparkle" size={18} color={t.accent} />
         <View style={{ flex: 1, marginLeft: 10 }}>
           <Text style={{ color: t.text, fontWeight: "600" }}>Built-in (Claude)</Text>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Uses your Claude login. Always available.</Text>
+          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Uses the host’s runner configuration and authentication.</Text>
         </View>
       </View>
 
@@ -169,17 +125,9 @@ export default function ProvidersScreen({ navigation }: Props) {
             onPress={() => openEditor(p)}
           >
             <Text style={{ color: t.text, fontWeight: "600" }}>
-              {p.name}{p.isDefault ? " ★ default" : ""}
+              {p.name}
             </Text>
             <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{p.baseUrl}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID={`provider-default-${p.id}`}
-            onPress={() => toggleDefault(p)}
-            hitSlop={8}
-            style={{ marginRight: 6 }}
-          >
-            <Icon name={p.isDefault ? "star" : "starOutline"} size={17} color={p.isDefault ? t.accent : t.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity testID={`provider-delete-${p.id}`} onPress={() => deleteProvider(p)} hitSlop={8} style={{ marginRight: 6 }}>
             <Icon name="trash" size={17} color={t.danger} />
@@ -197,9 +145,7 @@ export default function ProvidersScreen({ navigation }: Props) {
           <TouchableOpacity testID="provider-add" style={styles.ssAddBtn} onPress={() => openEditor()}>
             <Text style={styles.ssAddBtnText}>+ Add provider</Text>
           </TouchableOpacity>
-          <TouchableOpacity testID="provider-apply-all" style={styles.ssAddBtn} onPress={applyDefaultToAll}>
-            <Text style={styles.ssAddBtnText}>Apply default to all sessions</Text>
-          </TouchableOpacity>
+
         </View>
       ) : null}
 
@@ -219,7 +165,7 @@ export default function ProvidersScreen({ navigation }: Props) {
             testID="provider-baseurl"
             style={styles.ssInput}
             value={editing.baseUrl}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, baseUrl: v } : e))}
+            onChangeText={(baseUrl) => changeDraft({baseUrl})}
             placeholder="Base URL (https://inference.braintwin.ai)"
             placeholderTextColor={t.textMuted}
             autoCapitalize="none"
@@ -230,13 +176,17 @@ export default function ProvidersScreen({ navigation }: Props) {
             testID="provider-key"
             style={styles.ssInput}
             value={editing.apiKey}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, apiKey: v } : e))}
+            onChangeText={(apiKey) => changeDraft({apiKey, apiKeyAction: apiKey.trim() ? "replace" : editing.id ? "keep" : "remove"})}
             placeholder={editing.id ? "API key (leave blank to keep current)" : "API key (sk-…, optional)"}
             placeholderTextColor={t.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
           />
+          <View style={{flexDirection: "row", flexWrap: "wrap", gap: 12}}>
+            {(["keep", "remove", "replace"] as KeyAction[]).filter(action => editing.id || action !== "keep").map(action => <TouchableOpacity key={action} testID={`provider-key-${action}`} onPress={() => changeDraft({apiKeyAction: action})} style={{padding: 12}} accessibilityState={{selected: editing.apiKeyAction === action}}><Text style={{color: editing.apiKeyAction === action ? t.accent : t.textMuted}}>{action === "keep" ? "Keep saved key" : action === "remove" ? "Remove key" : "Replace key"}</Text></TouchableOpacity>)}
+          </View>
+          <Text testID="provider-discovery-status" style={styles.sheetHint}>{discoveryStatus}</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <TouchableOpacity
               testID="provider-load-models"
@@ -303,7 +253,7 @@ export default function ProvidersScreen({ navigation }: Props) {
             >
               <Text style={styles.ssAddBtnText}>{savingProvider ? "Saving…" : "Save"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity testID="provider-cancel" onPress={() => setEditing(null)}>
+            <TouchableOpacity testID="provider-cancel" onPress={cancel} disabled={savingProvider}>
               <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
             </TouchableOpacity>
           </View>

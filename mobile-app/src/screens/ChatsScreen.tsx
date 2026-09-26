@@ -444,6 +444,9 @@ export default function ChatsScreen({ navigation }: Props) {
             return (
               <TouchableOpacity
                 testID={`chat-${item.id}`}
+                // An accessible row would swallow the board button below into one
+                // element; the content column and the button are exposed separately.
+                accessible={false}
                 style={[styles.chatRow, { borderBottomColor: t.border }]}
                 onPress={() => {
                   if (selecting) {
@@ -470,7 +473,7 @@ export default function ChatsScreen({ navigation }: Props) {
                   </View>
                 ) : null}
                 <Avatar avatar={item.avatar} seed={item.id} size={46} />
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1 }} accessible accessibilityRole="button">
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     {item.running ? <View style={styles.runningDot} /> : null}
                     <Text
@@ -500,6 +503,8 @@ export default function ChatsScreen({ navigation }: Props) {
                         bottom-tab pager, which would swallow a horizontal swipe. */}
                     <TouchableOpacity
                       testID={`chat-board-${item.id}`}
+                      accessibilityLabel="Open board"
+                      accessibilityRole="button"
                       onPress={() => navigation.navigate("Kanban", { session: item.id, title: name })}
                       hitSlop={8}
                     >

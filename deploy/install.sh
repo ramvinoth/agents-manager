@@ -31,13 +31,19 @@ log() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 cd "$REPO_DIR"
 
 # 1. System prerequisites ─────────────────────────────────────────────────────
+# Every third-party Python module the server imports. paramiko backs remote
+# hosts (terminal / files / sessions over SSH); PyJWT signs the APNs token;
+# tomli/tomli-w read and write Codex's config.toml (tomllib is stdlib only
+# from 3.11, and the system python on macOS is 3.9).
+PY_DEPS="psycopg2-binary paramiko PyJWT tomli tomli-w"
+
 if [[ -n "${SKIP_DEPS:-}" ]]; then
   log "SKIP_DEPS set — assuming python3 / node / postgresql already present."
 elif [[ "$OS" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
   log "Installing system packages via apt (python3, node, postgresql)…"
   sudo apt-get update -qq
   sudo apt-get install -y python3 python3-pip nodejs npm postgresql
-  pip3 install --user --quiet psycopg2-binary
+  pip3 install --user --quiet $PY_DEPS
 elif [[ "$OS" == "Darwin" ]]; then
   if ! command -v brew >/dev/null 2>&1; then
     echo "Homebrew not found. Install it first: https://brew.sh" >&2; exit 1
@@ -45,7 +51,7 @@ elif [[ "$OS" == "Darwin" ]]; then
   log "Installing system packages via Homebrew (python, node, postgresql@16)…"
   brew install python node postgresql@16
   brew services start postgresql@16
-  pip3 install --user --quiet psycopg2-binary
+  pip3 install --user --quiet $PY_DEPS
 else
   log "Unknown package manager on $OS — ensure python3/node/psql are present, or use SKIP_DEPS=1."
 fi

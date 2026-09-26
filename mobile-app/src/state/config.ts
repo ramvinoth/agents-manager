@@ -210,15 +210,6 @@ export async function removeServer(id: string): Promise<void> {
   notifyServer()
 }
 
-/**
- * Legacy shim: set "the" server URL. Preserved so the cold-start ServerScreen
- * keeps working unchanged — it adds the server and switches to it in one call.
- */
-export async function setServerUrl(url: string): Promise<void> {
-  const entry = await addServer(url)
-  await switchServer(entry.id)
-}
-
 /** Store the auth token onto the ACTIVE server (sign-in), or clear it (sign-out
  *  when passed null). No active server → no-op. */
 export async function setToken(t: string | null): Promise<void> {

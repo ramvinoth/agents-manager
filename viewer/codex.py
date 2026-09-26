@@ -22,6 +22,7 @@ from viewer.config import CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT
 from viewer.adapters import _uuid, resolve_agent_session
 from viewer.engine import codex_session_meta, frontmatter_description
 from viewer.login import codex_bin
+from viewer import toml
 
 CODEX_HOME = Path.home() / ".codex"
 CODEX_SESSIONS = CODEX_HOME / "sessions"
@@ -67,16 +68,14 @@ def codex_capabilities(cwd=""):
 
 # ---- MCP config (TOML) -----------------------------------------------------
 def _codex_config():
-    import tomllib
     try:
-        return tomllib.loads(CODEX_CONFIG.read_text()) if CODEX_CONFIG.exists() else {}
+        return toml.loads(CODEX_CONFIG.read_text()) if CODEX_CONFIG.exists() else {}
     except Exception:
         return {}
 
 
 def codex_mcp_save(name, cfg, delete=False):
     """Add/replace or delete an MCP server in ~/.codex/config.toml (backup first)."""
-    import tomli_w
     data = _codex_config()
     servers = data.setdefault("mcp_servers", {})
     if delete:
@@ -91,7 +90,7 @@ def codex_mcp_save(name, cfg, delete=False):
         if CODEX_CONFIG.exists():
             shutil.copy2(CODEX_CONFIG, str(CODEX_CONFIG) + ".bak-viewer")
         CODEX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        CODEX_CONFIG.write_text(tomli_w.dumps(data))
+        CODEX_CONFIG.write_text(toml.dumps(data))
     except Exception as e:
         return {"error": str(e), "status": 500}
     return {"deleted": True} if delete else {"saved": True}

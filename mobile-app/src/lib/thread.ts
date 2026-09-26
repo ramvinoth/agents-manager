@@ -6,6 +6,7 @@
 // from the web parser are intentionally dropped — the phone only draws bubbles.
 
 export type ImagePart = { mime: string; data: string }
+export type VisibleTypes = { user: boolean; assistant: boolean; tools: boolean; system: boolean }
 
 /** A short wall-clock label for a message/tool timestamp, e.g. "3:45 PM".
  *  Returns "" for a missing/unparseable ts so callers can skip rendering. */

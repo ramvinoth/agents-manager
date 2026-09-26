@@ -4,8 +4,8 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type BoardColumn, type Card, type Employee } from "../api/client"
-import { groupByColumn, nextPosition } from "../lib/board"
+import { api, type BoardColumn, type Card, type CardFilter, type Employee } from "../api/client"
+import { boardScopeFilter, groupByColumn, nextPosition } from "../lib/board"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
@@ -13,6 +13,24 @@ import { useTheme } from "../lib/useTheme"
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
 const COL_W = 260 // column width; horizontal strip scrolls
+
+type Scope = {
+  key: string
+  filter: CardFilter | null
+  active: boolean
+  generation: number
+  bounds: React.MutableRefObject<Record<number, { x: number; w: number }>>
+  draft: { column: number; title: string } | null
+}
+type Snapshot = {
+  scope: Scope
+  columns: BoardColumn[]
+  cards: Card[]
+  employees: Employee[]
+  loading: boolean
+  error: string
+}
+const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: [], employees: [], loading: true, error: "" })
 
 /**
  * KanbanScreen — the org's ONE canonical board rendered as a filtered VIEW.
@@ -26,53 +44,63 @@ const COL_W = 260 // column width; horizontal strip scrolls
  */
 export default function KanbanScreen({ route, navigation }: Props) {
   const t = useTheme()
-  const filter = {
-    session: route.params?.session,
-    project: route.params?.project,
-    assignee: route.params?.assignee,
+  const filter = boardScopeFilter(route.params)
+  const key = JSON.stringify([route.key, filter])
+  const scopeRef = useRef<Scope | null>(null)
+  // Invalidate during render, not in an effect: neither retained rows nor old
+  // callbacks may belong to this route, even before effect cleanup runs. The
+  // object identity distinguishes A → B → A from the original A lifetime.
+  if (!scopeRef.current || scopeRef.current.key !== key) {
+    if (scopeRef.current) scopeRef.current.active = false
+    scopeRef.current = { key, filter, active: true, generation: 0, bounds: { current: {} }, draft: null }
   }
-  const [columns, setColumns] = useState<BoardColumn[]>([])
-  const [cards, setCards] = useState<Card[]>([])
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [adding, setAdding] = useState<number | null>(null) // column id we're adding a card to
-  const [newTitle, setNewTitle] = useState("")
-
-  // Measured x-range of each column (screen coords) so a drop can be mapped to a
-  // column. Filled by each column's onLayout.
-  const colBounds = useRef<Record<number, { x: number; w: number }>>({})
+  const scope = scopeRef.current
+  const isCurrent = useCallback(() => scope.active && scopeRef.current === scope, [scope])
+  const [snapshot, setSnapshot] = useState<Snapshot>(() => emptySnapshot(scope))
+  // Draft text and measured bounds belong to the lifetime, not reusable state.
+  const [, redrawDraft] = useState(0)
+  const { columns, cards, employees, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
+  const adding = scope.draft?.column
+  const newTitle = scope.draft?.title || ""
+  const colBounds = scope.bounds
 
   const load = useCallback(async () => {
-    setError("")
+    if (!isCurrent() || !scope.filter) return
+    const generation = ++scope.generation
+    const current = () => isCurrent() && generation === scope.generation
+    setSnapshot(cur => ({ ...(cur.scope === scope ? cur : emptySnapshot(scope)), error: "" }))
     try {
       const [b, c, e] = await Promise.all([
-        api.orgBoard({ project: filter.project, session: filter.session }),
-        api.orgCards(filter),
+        api.orgBoard({ project: scope.filter.project, session: scope.filter.session }),
+        api.orgCards(scope.filter),
         api.orgEmployees().catch(() => ({ employees: [] as Employee[] })),
       ])
-      setColumns(b.columns || [])
-      setCards(c.cards || [])
-      setEmployees(e.employees || [])
+      if (!current()) return
+      setSnapshot({ scope, columns: b.columns || [], cards: c.cards || [], employees: e.employees || [], loading: false, error: "" })
     } catch (err) {
+      if (!current()) return
       const e = err as Error & { status?: number }
       if (e.status === 401) {
         setToken(null)
         navigation.replace("Login")
         return
       }
-      setError(e.message)
+      setSnapshot(cur => ({ ...cur, error: e.message }))
     } finally {
-      setLoading(false)
+      if (current()) setSnapshot(cur => ({ ...cur, loading: false }))
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.params?.session, route.params?.project, route.params?.assignee])
+  }, [scope, isCurrent, navigation])
 
   useEffect(() => {
+    scope.active = true
     load()
-    const id = setInterval(load, 4000) // silent refresh, mirrors ChatsScreen
-    return () => clearInterval(id)
-  }, [load])
+    const id = scope.filter ? setInterval(load, 4000) : undefined
+    return () => {
+      scope.active = false
+      scope.generation++
+      if (id !== undefined) clearInterval(id)
+    }
+  }, [scope, load])
 
   useEffect(() => {
     navigation.setOptions({ title: route.params?.title || "Board" })
@@ -81,27 +109,27 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // Perform a move: compute the fractional position for the drop and persist.
   const moveCard = useCallback(
     async (card: Card, toColumn: number, indexInColumn: number) => {
+      if (!isCurrent()) return
       const inCol = cards.filter((c) => c.column_id === toColumn && c.id !== card.id)
       const position = nextPosition(inCol, indexInColumn)
-      // Optimistic: update local state, reconcile on next poll.
-      setCards((cur) => cur.map((c) => (c.id === card.id ? { ...c, column_id: toColumn, position } : c)))
+      setSnapshot(cur => cur.scope === scope ? { ...cur, cards: cur.cards.map(c => c.id === card.id ? { ...c, column_id: toColumn, position } : c) } : cur)
       try {
         await api.orgMoveCard({ card_id: card.id, column_id: toColumn, position })
       } catch {
-        load() // revert to server truth on failure
+        if (isCurrent()) load() // revert to server truth on failure
       }
     },
-    [cards, load]
+    [cards, scope, isCurrent, load]
   )
 
   const openCard = useCallback(
-    (card: Card) => navigation.navigate("CardDetail", { id: card.id }),
-    [navigation]
+    (card: Card) => { if (isCurrent()) navigation.navigate("CardDetail", { id: card.id }) },
+    [navigation, isCurrent]
   )
 
   const promptAssign = useCallback(
     (card: Card) => {
-      if (!employees.length) return
+      if (!isCurrent() || !employees.length) return
       Alert.alert(
         card.title,
         "Assign to",
@@ -109,11 +137,12 @@ export default function KanbanScreen({ route, navigation }: Props) {
           ...employees.map((e) => ({
             text: e.name,
             onPress: async () => {
-              setCards((cur) => cur.map((c) => (c.id === card.id ? { ...c, assignee: e.id } : c)))
+              if (!isCurrent()) return
+              setSnapshot(cur => cur.scope === scope ? { ...cur, cards: cur.cards.map(c => c.id === card.id ? { ...c, assignee: e.id } : c) } : cur)
               try {
                 await api.orgAssignCard({ card_id: card.id, assignee: e.id })
               } catch {
-                load()
+                if (isCurrent()) load()
               }
             },
           })),
@@ -121,20 +150,26 @@ export default function KanbanScreen({ route, navigation }: Props) {
         ]
       )
     },
-    [employees, load]
+    [employees, scope, isCurrent, load]
   )
 
   async function addCard(columnId: number) {
-    const title = newTitle.trim()
-    if (!title) { setAdding(null); return }
-    setNewTitle("")
-    setAdding(null)
+    if (!isCurrent() || !scope.filter || scope.draft?.column !== columnId) return
+    const title = scope.draft.title.trim()
+    // Consume synchronously: submit and blur can both fire before a render.
+    scope.draft = null
+    redrawDraft(n => n + 1)
+    if (!title) return
     try {
-      await api.orgCreateCard({ title, column_id: columnId, session: filter.session, project_id: filter.project })
-      load()
+      await api.orgCreateCard({ title, column_id: columnId, session: scope.filter.session, project_id: scope.filter.project })
+      if (isCurrent()) load()
     } catch (e) {
-      setError((e as Error).message)
+      if (isCurrent()) setSnapshot(cur => ({ ...cur, error: (e as Error).message }))
     }
+  }
+
+  if (!scope.filter) {
+    return <View testID="kanban-unavailable" style={{ flex: 1, backgroundColor: t.bg, padding: 16 }}><Text style={{ color: t.text }}>Open a board from a chat or project.</Text></View>
   }
 
   if (loading) {
@@ -158,6 +193,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
           <View
             key={column.id}
             onLayout={(ev) => {
+              if (!isCurrent()) return
               const { x, width } = ev.nativeEvent.layout
               colBounds.current[column.id] = { x, w: width }
             }}
@@ -168,7 +204,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
                 {column.name} <Text style={{ color: t.textMuted, fontWeight: "500" }}>{colCards.length}</Text>
               </Text>
               {column.id > 0 ? (
-                <TouchableOpacity testID={`kanban-add-${column.id}`} onPress={() => { setAdding(column.id); setNewTitle("") }} hitSlop={8}>
+                <TouchableOpacity testID={`kanban-add-${column.id}`} onPress={() => { if (isCurrent()) { scope.draft = { column: column.id, title: "" }; redrawDraft(n => n + 1) } }} hitSlop={8}>
                   <Icon name="add" size={18} color={t.accent} />
                 </TouchableOpacity>
               ) : null}
@@ -181,7 +217,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
                 placeholder="Card title…"
                 placeholderTextColor={t.textMuted}
                 value={newTitle}
-                onChangeText={setNewTitle}
+                onChangeText={(title) => { if (isCurrent() && scope.draft?.column === column.id) { scope.draft.title = title; redrawDraft(n => n + 1) } }}
                 autoFocus
                 onSubmitEditing={() => addCard(column.id)}
                 onBlur={() => addCard(column.id)}

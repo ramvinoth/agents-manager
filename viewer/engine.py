@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin, transcript_path,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -48,11 +48,11 @@ def _session_title(session_id):
     """The session's display name, matching the chat list: a custom title if set,
     else the agent name, else the first user message, else ''. Best-effort."""
     try:
-        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
-        if not matches:
+        path = transcript_path(session_id)
+        if not path:
             return ""
         title = first_user = ""
-        with open(matches[0], errors="replace") as f:
+        with open(path, errors="replace") as f:
             for i, line in enumerate(f):
                 if i > 200 or title:
                     break
@@ -107,6 +107,11 @@ def parse_interval(text):
 
 
 CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final status
+# A persisted run credential with no live job is kept this long before the hourly
+# sweep drops it — long enough for a remote child that outlived a restart to keep
+# calling back for a working day, short enough that a dead session's token does
+# not stay valid indefinitely.
+SESSION_TOKEN_MAX_AGE = 86400
 _PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_tick's self-throttle idiom)
 _last_purge = 0.0
 
@@ -264,6 +269,15 @@ def loop_scheduler(launch):
             try:
                 rc = db.retention_config()
                 db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
+            except Exception:
+                pass
+            # Credentials of runs this process never saw (they predate a restart)
+            # are outside the per-job reaper above; sweep them once they are far
+            # older than any run can live, so a dead session's token expires too.
+            try:
+                with CHAT_LOCK:
+                    live = list(CHAT_JOBS.keys())
+                db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
             except Exception:
                 pass
         fire_due_loops(launch, now)
@@ -902,9 +916,92 @@ def _write_perm_mcp_config():
         "viewerperm": {"command": py, "args": [perm]},
         "viewer": {"command": py, "args": [viewer_mcp]},
     }}
-    with open(path, "w") as f:
-        json.dump(cfg, f)
+    # One shared file, rewritten by every run start, read by every claude child
+    # some time after spawn. An in-place open(path, "w") truncates first, so a
+    # child reading during a concurrent start sees "" or a prefix and dies with
+    # "Invalid MCP configuration". Write beside it and rename: the swap is
+    # atomic, and a reader holding the old inode still gets a complete document.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".agents_viewerperm_mcp.", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
+
+
+def _run_settings(provider_env=None):
+    """The `--settings` JSON every driven claude run starts with.
+
+    `permissions.allow` pre-approves the viewer's own MCP tools (`mcp__viewer__*`,
+    the board/org/loop bridge registered by _write_perm_mcp_config). Without it, a
+    run in default/acceptEdits mode routes each viewer tool call through the
+    permission-prompt tool like any unknown MCP tool — a gate nobody answers for a
+    loop-fired or wake-fired agent, so the call sits for PERM_TIMEOUT and is denied,
+    and the agent's board steering silently rots. The server that registers the
+    tools is the one place that knows their name, so the allow rule lives here, not
+    in any machine's ~/.claude/settings.json (which merges with this, never
+    conflicts). The rule does not bypass the viewer's own authority checks: every
+    call still carries the per-run token and is scoped server-side by level.
+
+    provider_env (Agent mode) becomes the `env` block that points the harness at a
+    custom endpoint; see start_claude_run for why it must travel via --settings."""
+    settings = {"permissions": {"allow": ["mcp__viewer__*"]}}
+    if provider_env:
+        penv = {k: str(v) for k, v in provider_env.items()}
+        # Clear any inherited small-fast model so background calls don't leak to
+        # a different endpoint's model namespace.
+        penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
+        settings["env"] = penv
+    return settings
+
+
+RUN_SETTINGS_PREFIX = "viewer-run-"
+
+
+def run_settings_sweep_orphans(live_paths, tmpdir=None):
+    """Boot-time reconciliation for the per-run --settings files.
+
+    start_claude_run unlinks its file in the run thread's `finally`, which never
+    executes when the server is SIGKILLed (`launchctl kickstart -k`), so every
+    restart leaks one file per in-flight run — each holding the provider's
+    ANTHROPIC_* credentials in $TMPDIR. `live_paths` are the files still held open
+    on a running child's argv (from `ps`); everything else with our prefix belongs
+    to a run that died with the previous process. Returns the paths removed."""
+    root = Path(tmpdir or tempfile.gettempdir())
+    live = {str(Path(p)) for p in live_paths}
+    removed = []
+    for path in root.glob(RUN_SETTINGS_PREFIX + "*.json"):
+        if str(path) in live:
+            continue
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except FileNotFoundError:
+            pass
+    return removed
+
+
+def run_settings_paths_in_use():
+    """Settings paths referenced by any live `--settings` argv on this machine —
+    the previous server's children survive a SIGKILL of the parent only when
+    launchd does not take the process group, so ps, not our own bookkeeping, is
+    the authority on which files are still in use."""
+    try:
+        out = subprocess.run(["ps", "-axo", "args="], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return set()
+    paths = set()
+    for line in out.splitlines():
+        for tok in line.split():
+            if RUN_SETTINGS_PREFIX in tok and tok.endswith(".json"):
+                paths.add(tok)
+    return paths
 
 
 def _resolve_employee(session_id):
@@ -1286,6 +1383,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "queue": [], "proc": None, "turns": 0, "steered": 0,
                "stdin_open": False, "mode": mode, "model": model, "cwd": cwd,
                "interrupted": False, "host": host,
+               "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
                "pending_approvals": [], "perm_token": ""}
         CHAT_JOBS[session_id] = job
 
@@ -1340,32 +1438,32 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
     # clients persist it as a literal, which would run `claude --model default`
     # (an invalid model id). Treat it — and blank — as "omit --model".
-    if model and model != "default" and re.fullmatch(r"[A-Za-z0-9._-]+", model):
+    if model and model != "default" and len(model) <= 256 and not re.search(r"[\s\x00-\x1f\x7f]", model):
         cmd += ["--model", model]
 
-    # Custom-provider agent mode: point the harness at the preset's endpoint. The
-    # claude CLI reads env from ~/.claude/settings.json and that WINS over the
-    # subprocess environment — so injecting ANTHROPIC_* into env alone is silently
-    # overridden by any base URL pinned in settings.json (e.g. a LiteLLM proxy).
-    # A `--settings <file>` with the endpoint in its `env` DOES take precedence
-    # (verified: it forces /v1/messages to the given base URL). We write a temp
-    # settings file and pass it, so the session's provider actually routes to its
-    # model (e.g. Qwen on :8081) instead of leaking to the global default.
-    provider_settings_path = None
-    if provider_env:
+    # Per-run --settings: the viewer's own tool allowlist, plus the provider env in
+    # Agent mode. The CLI reads env from ~/.claude/settings.json and that WINS over
+    # the subprocess environment — so injecting ANTHROPIC_* into env alone is
+    # silently overridden by any base URL pinned in settings.json (e.g. a LiteLLM
+    # proxy). A `--settings` env block DOES take precedence (verified: it forces
+    # /v1/messages to the given base URL). Locally the JSON goes through a 0600
+    # temp file so provider secrets stay out of argv. A remote run gets the JSON
+    # inline (the CLI accepts a path or a JSON string): a local temp path means
+    # nothing on the other host, and its shell command already carries the
+    # per-run tokens as exports, so argv adds no new exposure there.
+    run_settings = _run_settings(provider_env)
+    settings_path = None
+    if remote:
+        cmd += ["--settings", json.dumps(run_settings)]
+    else:
         try:
-            import tempfile
-            penv = {k: str(v) for k, v in provider_env.items()}
-            # Clear any inherited small-fast model so background calls don't leak to
-            # a different endpoint's model namespace.
-            penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
-            fd, provider_settings_path = tempfile.mkstemp(prefix="viewer-prov-", suffix=".json")
+            fd, settings_path = tempfile.mkstemp(prefix=RUN_SETTINGS_PREFIX, suffix=".json")
             with os.fdopen(fd, "w") as f:
-                json.dump({"env": penv}, f)
-            os.chmod(provider_settings_path, 0o600)
-            cmd += ["--settings", provider_settings_path]
+                json.dump(run_settings, f)
+            os.chmod(settings_path, 0o600)
+            cmd += ["--settings", settings_path]
         except Exception as e:
-            print(f"[engine] provider settings write failed: {e}", flush=True)
+            print(f"[engine] run settings write failed: {e}", flush=True)
 
     # System prompt = a global Harman system-awareness preamble (so every session
     # knows it is a node in the orchestration system and how its mcp__viewer__*
@@ -1522,6 +1620,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         finally:
             # Must never raise: the running/queue cleanup below has to run so the
             # session doesn't stay wedged as "busy" after the process exits.
+            if settings_path:
+                try:
+                    os.unlink(settings_path)
+                except OSError:
+                    pass
             try:
                 if stderr_buf and stderr_buf[0]:
                     tail = stderr_buf[0]
@@ -1544,7 +1647,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             if leftovers and job["returncode"] == 0:
                 first, rest = leftovers[0], leftovers[1:]
                 if start_claude_run(session_id, ["--resume", session_id], first,
-                                    job["mode"], job["cwd"], job["model"], job.get("host", "local")):
+                                    job["mode"], job["cwd"], job["model"], job.get("host", "local"),
+                                    provider_env=job.get("provider_env"), effort=job.get("effort", "")):
                     with CHAT_LOCK:
                         CHAT_JOBS[session_id]["queue"].extend(rest)
                     leftovers = []  # a follow-up run is now carrying them; don't also notify
@@ -1652,12 +1756,12 @@ def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_d
         # claude CLI can't resume from a bare id in an arbitrary cwd, so an
         # unresolvable one-shot fails here, loudly, instead of resuming into a
         # foreign working directory and dying without a trace.
-        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
-        if not matches:
+        path = transcript_path(session_id)
+        if not path:
             if on_done:
                 on_done(-1, f"session not found: {session_id} (loop has no path and no transcript)")
             return False
-        rel_path = str(matches[0].relative_to(CLAUDE_DIR.parent))
+        rel_path = str(path.relative_to(CLAUDE_DIR.parent))
     full = CLAUDE_DIR.parent / rel_path
     if not full.is_file():
         if on_done:
@@ -1666,28 +1770,22 @@ def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_d
     cwd = extract_cwd(full)
     if not os.path.isdir(cwd):
         cwd = str(Path.home())
-    # Resolve the provider the run should use: the loop's OWN preset id wins, else
-    # inherit the resumed session's provider (its session-meta). This is what makes
-    # a loop resuming a custom-provider session actually hit that endpoint — an
-    # interactive chat already does this (routes/chat.py), but a loop firing
-    # start_claude_run with no provider_env silently ran on Default Claude before.
-    # A set-but-missing/incomplete preset fails the run loudly (rc=-1 into job
-    # history) rather than rerouting to Default — the unattended analogue of the
-    # interactive 400. The preset carries the model, so `model` (a built-in tier)
-    # applies only when there is no provider — mirroring chat.py's `"" if env`.
-    from viewer import providers
-    preset_id = (provider or "").strip() or \
-        (db.session_meta_get(session_id) or {}).get("provider", "")
+    from viewer import ai, providers
+    try:
+        resolved = ai.resolve(db.session_meta_get(session_id) or {}, model,
+                              provider_override=provider, model_override=model)
+    except ValueError as exc:
+        if on_done:
+            on_done(-1, str(exc))
+        return False
     provider_env = None
-    if preset_id:
-        provider_env = providers.anthropic_env(preset_id)
-        if provider_env is None:
-            if on_done:
-                on_done(-1, f"provider preset missing or incomplete: {preset_id}")
-            return False
+    if resolved["provider"]:
+        provider_env = providers.anthropic_env(resolved["provider"], model=resolved["model"],
+                                               preset=resolved["preset"])
     return start_claude_run(session_id, ["--resume", session_id], prompt,
-                            "acceptEdits", cwd, "" if provider_env else model,
-                            provider_env=provider_env, on_done=on_done)
+                            "acceptEdits", cwd, "" if provider_env else resolved["model"],
+                            provider_env=provider_env, effort=resolved["effort"], on_done=on_done)
+
 
 
 def extract_cwd(session_file):
@@ -2144,9 +2242,9 @@ class LocalHost(Host):
         return data
 
     def resolve(self, sid):
-        matches = list(CLAUDE_DIR.glob(f"*/{sid}.jsonl"))
-        if matches:
-            return {"found": True, "path": str(matches[0].relative_to(CLAUDE_DIR.parent))}
+        path = transcript_path(sid)
+        if path:
+            return {"found": True, "path": str(path.relative_to(CLAUDE_DIR.parent))}
         return {"found": False}
 
     @staticmethod

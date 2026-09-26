@@ -19,7 +19,7 @@ _ID_RE = re.compile(r"[A-Za-z0-9_-]+$")
 
 
 def valid_id(pid):
-    return bool(_ID_RE.match(pid or ""))
+    return isinstance(pid, str) and len(pid) <= 128 and bool(_ID_RE.fullmatch(pid))
 
 
 def _public(pid, rec):
@@ -68,6 +68,10 @@ def list_presets():
     """All presets as public dicts (no apiKey), sorted by name then id."""
     data = db.providers_load()
     out = [_public(pid, rec) for pid, rec in data.items() if isinstance(rec, dict)]
+    defaults = db.setting_get("ai_defaults")
+    if defaults:
+        for row in out:
+            row["isDefault"] = row["id"] == defaults["selection"]["provider"]
     out.sort(key=lambda p: (p["name"].lower(), p["id"]))
     return out
 
@@ -85,7 +89,7 @@ def get_api_key(pid):
     return (rec or {}).get("apiKey", "") if rec else ""
 
 
-def anthropic_env(pid):
+def anthropic_env(pid, model=None, preset=None):
     """Agent mode: the ANTHROPIC_* env that points the Claude Code harness at this
     preset's endpoint (our llama-server, which serves the Anthropic Messages API).
     Returns None when the preset is missing/incomplete so the caller falls back.
@@ -97,14 +101,15 @@ def anthropic_env(pid):
     can't leak and redirect requests. The caller applies these via a `--settings`
     file's env block, which overrides the user's ~/.claude/settings.json — plain
     process env vars do NOT (settings.json wins over them)."""
-    rec = get_preset(pid)
+    rec = preset if preset is not None else get_preset(pid)
     if not rec or not rec.get("baseUrl"):
         return None
+    selected_model = rec.get("model", "") if model is None else model
     env = {
         "ANTHROPIC_BASE_URL": rec["baseUrl"],
         "ANTHROPIC_API_KEY": rec.get("apiKey", "") or "dummy_key",
         "ANTHROPIC_AUTH_TOKEN": "",
-        "ANTHROPIC_MODEL": rec.get("model", ""),
+        "ANTHROPIC_MODEL": selected_model,
     }
     # Declare the context window so Claude Code compacts BEFORE the endpoint's hard
     # limit. For an unrecognized model id (our Qwen etc.) the docs say
@@ -113,7 +118,7 @@ def anthropic_env(pid):
     # endpoint's own limit and overshoots it by ~1 (input+output boundary). The
     # window is a property of the model+provider, so it's derived from THIS preset's
     # contextLimit — not a per-session or global setting.
-    declared = _declared_context(rec.get("contextLimit"))
+    declared = _declared_context(rec.get("contextLimit")) if selected_model == rec.get("model", "") else 0
     if declared:
         env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(declared)
         env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(_OUTPUT_RESERVE)
@@ -149,8 +154,15 @@ def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, 
     }
     # provider_upsert clears every other preset's default in the same transaction
     # when this one is the default, so at most one default survives.
-    db.provider_upsert(pid, rec)
-    return _public(pid, rec)
+    if is_default is None:
+        db.provider_upsert(pid, rec)
+    else:
+        db.provider_upsert(pid, rec, default_change=bool(is_default))
+    public = _public(pid, rec)
+    defaults = db.setting_get("ai_defaults")
+    if defaults:
+        public["isDefault"] = pid == defaults["selection"]["provider"]
+    return public
 
 
 
@@ -160,6 +172,9 @@ def delete_preset(pid):
 
 def get_default_id():
     """Return the id of the preset marked isDefault, or "" if none."""
+    defaults = db.setting_get("ai_defaults")
+    if defaults:
+        return defaults["selection"]["provider"]
     data = db.providers_load()
     for pid, rec in data.items():
         if isinstance(rec, dict) and rec.get("isDefault"):

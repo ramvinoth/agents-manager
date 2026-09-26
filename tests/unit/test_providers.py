@@ -19,6 +19,9 @@ class _FakeProviderDB:
     def __init__(self):
         self.rows = {}   # pid -> full record (incl. apiKey), the reveal-path store
 
+    def setting_get(self, key, default=None):
+        return default
+
     def providers_load(self):
         return {pid: dict(rec) for pid, rec in self.rows.items()}
 

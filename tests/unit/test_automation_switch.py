@@ -27,7 +27,7 @@ scheduler body is the only way to catch someone later moving a launch above a ga
 """
 import pytest
 
-from viewer import engine, orchestrator, orglogic
+from viewer import board_wake, engine, orchestrator, orglogic
 
 
 class _StopAfterOnePass(Exception):
@@ -98,6 +98,11 @@ def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(orchestrator, "db", f)
     monkeypatch.setattr(engine, "db", f)
+    # The scheduler pass also runs board_wake.sweep() under 'harman'/'both'. Until
+    # 2026-09-20 that module kept the REAL db here, so every run of this file
+    # stamped the production sweep clock and queued real card wakes (11 sweeps'
+    # worth of audit rows for cards 12/14/19 came from pytest, not the server).
+    monkeypatch.setattr(board_wake, "db", f)
     return f
 
 

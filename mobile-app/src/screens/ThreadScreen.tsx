@@ -7,6 +7,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -29,12 +30,13 @@ import { ensurePermission } from "../lib/notify"
 import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
+import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/boardSwipe"
 import { attachMessage, pickImage, uploadImage } from "../lib/attach"
 import MessageActions, { type MsgTarget } from "../components/MessageActions"
 import SwipeToReply from "../components/SwipeToReply"
 import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
-import type { VisibleTypes } from "../components/SessionSettings"
+import type { VisibleTypes } from "../lib/thread"
 import QuestionCard from "../components/QuestionCard"
 import Markdown from "../components/Markdown"
 import Collapsible from "../components/Collapsible"
@@ -43,15 +45,6 @@ import { speak, stopSpeaking } from "../lib/voice"
 import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
-
-// The models this API key can use — the persisted composer pref is validated
-// against this list so a stale/unavailable model can't be sent. (Mode + model
-// are now chosen on the SessionProfile screen; the thread just reads them.)
-const MODELS = [
-  { v: "default", label: "Default model" },
-  { v: "sonnet", label: "Sonnet" },
-  { v: "haiku", label: "Haiku" },
-]
 
 // Sentinel appended to the list while a run is in flight (see WorkingBubble).
 const WORKING = { kind: "working" as const, id: "__working__" }
@@ -62,7 +55,7 @@ type ListItem = ThreadItem | typeof WORKING
 // then tap a step to see its result). Composer: send / steer / queue, a
 // permission-mode + model dropdown, and in-thread Allow/Deny cards.
 export default function ThreadScreen({ route, navigation }: Props) {
-  const { host, path, label } = route.params
+  const { host, path, label, agent = "claude" } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
   // How many trailing transcript lines to fetch. Grows when the user scrolls to
@@ -76,21 +69,34 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [input, setInput] = useState(() => draftFor(path || ""))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  // Permission mode + model are chosen on the SessionProfile screen and persist
-  // in the global composerPrefs. Read them fresh at send time (below) so a
-  // change made while this thread is open takes effect on the next message —
-  // no stale local copy to keep in sync. `model` falls back to Default if the
-  // persisted pref is one this API key can't use.
+  // Legacy request preferences remain untouched. Explicit server AI configuration
+  // wins during launch resolution; never coerce a full model ID against a catalog.
   const sendPrefs = () => {
     const p = composerPrefs()
-    const model = MODELS.some((m) => m.v === p.model) ? p.model : "default"
-    return { mode: p.mode, model }
+    return { mode: p.mode, model: p.model }
   }
   const [pending, setPending] = useState<PermApproval[]>([])
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null)
   const [queued, setQueued] = useState(0)
-  const [sessionId, setSessionId] = useState("")
+  // A reused Thread route may still hold the last chat's state. Existing chats
+  // derive identity from the route; new-chat responses belong to one lifetime,
+  // not merely a matching path/key (A → B → A must not revive old responses).
+  const routeLifetime = useMemo(() => ({}), [route.key, host, path, agent])
+  const activeLifetime = useRef<object | null>(routeLifetime)
+  activeLifetime.current = routeLifetime
+  useLayoutEffect(() => {
+    activeLifetime.current = routeLifetime
+    return () => { if (activeLifetime.current === routeLifetime) activeLifetime.current = null }
+  }, [routeLifetime])
+  const isCurrentThread = useCallback(() => activeLifetime.current === routeLifetime, [routeLifetime])
+  const [createdSession, setCreatedSession] = useState<{ lifetime: object; id: string } | null>(null)
+  const sessionId = path
+    ? (path.split("/").pop() || "").replace(/\.jsonl$/, "").trim()
+    : createdSession?.lifetime === routeLifetime ? createdSession.id : ""
+  const setSessionId = useCallback((id: string) => {
+    if (isCurrentThread()) setCreatedSession({ lifetime: routeLifetime, id: id.trim() })
+  }, [routeLifetime, isCurrentThread])
   // Transcript-visibility filter. All on by default; the filter UI now lives on
   // the SessionProfile screen (kept here as the render still honours it).
   const [visibleTypes] = useState<VisibleTypes>({
@@ -124,6 +130,50 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [searchAt, setSearchAt] = useState(-1)
   // RHS capabilities drawer (skills + MCP tools)
   const [capDrawerOpen, setCapDrawerOpen] = useState(false)
+  const boardOpening = useRef(false)
+  const transcriptRef = useRef<View>(null)
+  const transcriptBounds = useRef({ left: 0, width: 0 })
+  const boundsGeneration = useRef(0)
+  const boardSwipeCancelled = useRef(false)
+  const measureTranscript = useCallback(() => {
+    const generation = ++boundsGeneration.current
+    transcriptRef.current?.measureInWindow((left, _top, width) => {
+      if (generation === boundsGeneration.current && width > 0) transcriptBounds.current = { left, width }
+    })
+  }, [])
+  const openBoard = useCallback(() => {
+    if (!isCurrentThread() || boardOpening.current || !navigation.isFocused()) return
+    boardOpening.current = true
+    // Unsent chats have no board context yet; preserve the project-picker fallback.
+    if (sessionId) navigation.navigate("Kanban", { session: sessionId, title: label })
+    else navigation.navigate("Org")
+  }, [navigation, sessionId, label, isCurrentThread])
+  const boardSwipeState = useRef({ openBoard, enabled: true })
+  boardSwipeState.current = { openBoard, enabled: !capDrawerOpen && !msgAction }
+  useFocusEffect(useCallback(() => {
+    boardOpening.current = false
+    return () => { boardSwipeCancelled.current = true }
+  }, [routeLifetime]))
+  const boardPan = useRef(PanResponder.create({
+    // Bubble phase only: nested code/table scrolling keeps its own responder.
+    onMoveShouldSetPanResponder: (_event, g) =>
+      boardSwipeState.current.enabled && navigation.isFocused()
+      && !boardOpening.current && !boardSwipeCancelled.current
+      // g.x0 is only assigned on grant, so during should-set it is still 0;
+      // the touch's start point has to be derived from the current position.
+      && shouldClaimBoardSwipe({
+        ...transcriptBounds.current, x0: g.moveX - g.dx, dx: g.dx, dy: g.dy,
+        touches: g.numberActiveTouches,
+      }),
+    onPanResponderMove: (_event, g) => {
+      if (g.numberActiveTouches !== 1) boardSwipeCancelled.current = true
+    },
+    onPanResponderRelease: (_event, g) => {
+      if (!boardSwipeCancelled.current && boardSwipeState.current.enabled
+        && completesBoardSwipe(g)) boardSwipeState.current.openBoard()
+    },
+    onPanResponderTerminate: () => { boardSwipeCancelled.current = true },
+  })).current
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
   // WhatsApp-style floating day header: the date of the topmost visible message,
@@ -212,10 +262,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
       setLoading(false)
       return [] as ReturnType<typeof groupThread>
     }
-    // Derive the session id from the transcript path (…/<id>.jsonl) so an
-    // already-running chat opened from the list can reattach to its live run.
-    const sid = (path.split("/").pop() || "").replace(/\.jsonl$/, "")
-    if (sid) setSessionId(sid)
     try {
       const page = await api.sessionReadPage(host, path, windowLines)
       // start === 0 means the window reaches the top of the file → no older
@@ -356,11 +402,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
           testID="header-title"
           accessibilityLabel="open-session-profile"
           onPress={() =>
-            navigation.navigate("SessionProfile", {
+            isCurrentThread() && navigation.isFocused() && navigation.navigate("SessionProfile", {
               host,
               label,
               path,
-              sessionId: sessionId || (path?.split("/").pop() || "").replace(/\.jsonl$/, ""),
+              sessionId,
+              agent,
             })
           }
           style={styles.headerTitleWrap}
@@ -380,7 +427,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           <TouchableOpacity
             testID="thread-call"
             accessibilityLabel="call-mode"
-            onPress={() => navigation.navigate("Call", { host, label, path })}
+            onPress={() => navigation.navigate("Call", { label, path })}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
           >
@@ -399,20 +446,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
             testID="thread-more"
             accessibilityLabel="more-options"
             onPress={() => {
-              // The session id rides along so the board opens as THIS session's
-              // filtered view (the one canonical Kanban, same entry the chat
-              // list's folder icon uses). A brand-new unsent chat has no session
-              // yet — and a board is per session or per project, so it lands on
-              // the company screen (the project picker) instead of an empty view.
-              const sid = sessionId || (path?.split("/").pop() || "").replace(/\.jsonl$/, "")
               Alert.alert("", "", [
                 { text: "Search", onPress: () => setSearchOpen(true) },
-                {
-                  text: "Board",
-                  onPress: () =>
-                    sid ? navigation.navigate("Kanban", { session: sid, title: label })
-                       : navigation.navigate("Org"),
-                },
+                { text: "Board", onPress: openBoard },
                 { text: "Cancel", style: "cancel" },
               ])
             }}
@@ -424,7 +460,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, t, capDrawerOpen])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
@@ -499,6 +535,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   }
 
   function startPoll(sid: string) {
+    if (!isCurrentThread()) return
     if (pollRef.current) clearInterval(pollRef.current)
     let ticks = 0
     let inFlight = false // guard: a slow status+reload must not overlap the next tick
@@ -856,7 +893,26 @@ export default function ThreadScreen({ route, navigation }: Props) {
           jump-to-latest button and day pill anchor to the LIST's edges, not the
           screen's — keeping the button clear of the composer + run bar, whose
           combined height varies (Working…/Stop, errors, permission cards). */}
-      <View style={{ flex: 1 }}>
+      <View
+        ref={transcriptRef}
+        testID="thread-viewport"
+        style={{ flex: 1 }}
+        onLayout={() => {
+          transcriptBounds.current = { left: 0, width: 0 }
+          boardSwipeCancelled.current = true
+          measureTranscript()
+        }}
+        onTouchStart={(event) => {
+          if (event.nativeEvent.touches.length === 1) boardSwipeCancelled.current = false
+          else boardSwipeCancelled.current = true
+          // A layout pass while another screen covers this one (the keyboard
+          // opening there resizes our KeyboardAvoidingView) measures a view with
+          // no window as zero width, which disables the edge swipe until the next
+          // layout. A touch proves the view is on screen, so measure again now.
+          measureTranscript()
+        }}
+        {...boardPan.panHandlers}
+      >
       {/* Pinned banner: shows the current pin; tap jumps to it, tap again cycles
           (WhatsApp style). The count shows position; the pin icon unpins it. */}
       {pinnedItems.length ? (

@@ -20,7 +20,7 @@ import urllib.request
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from viewer.config import CLAUDE_DIR, CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT
+from viewer.config import CLAUDE_DIR, CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, transcript_path
 from viewer import providers
 
 # How many prior transcript records to feed back as context. A small local model
@@ -41,9 +41,9 @@ def _project_dir_for(cwd):
 def _resolve_transcript(session_id, cwd):
     """Locate this session's transcript, creating an empty file (with an opening
     cwd record) under the cwd-encoded project dir when it doesn't exist yet."""
-    matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
-    if matches:
-        return matches[0]
+    existing = transcript_path(session_id)
+    if existing:
+        return existing
     proj = CLAUDE_DIR / _project_dir_for(cwd)
     proj.mkdir(parents=True, exist_ok=True)
     path = proj / f"{session_id}.jsonl"
@@ -157,33 +157,41 @@ def _enforce_alternating(messages):
     return out
 
 
-def _chat_completion(base_url, api_key, model, messages):
-    """POST /v1/chat/completions (non-streaming) and return the reply text.
-    Raises on transport / HTTP error so the caller can surface it in-thread."""
+def chat_completion_message(base_url, api_key, payload, timeout=None):
+    """POST `payload` to {base_url}/v1/chat/completions and return the first
+    choice's message dict (content, tool_calls, ...). Raises on transport / HTTP
+    error or an empty choice list so the caller can surface it."""
     url = base_url.rstrip("/") + "/v1/chat/completions"
-    body = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
+    body = json.dumps({**payload, "stream": False}).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     # A non-default User-Agent: some CDNs (Cloudflare) 403 the urllib default.
     req.add_header("User-Agent", "harman-viewer/1.0")
     if api_key:
         req.add_header("Authorization", f"Bearer {api_key}")
-    with urllib.request.urlopen(req, timeout=CHAT_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=timeout or CHAT_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8", "replace"))
     choices = data.get("choices") or []
     if not choices:
         raise ValueError("Endpoint returned no choices")
-    content = (choices[0].get("message") or {}).get("content", "") or ""
-    return _strip_audio_payload(content)
+    return choices[0].get("message") or {}
 
 
-def start_custom_run(session_id, preset_id, message, cwd, host="local", mode=""):
+def _chat_completion(base_url, api_key, model, messages):
+    """One plain text turn: the reply text with any audio-model payload stripped."""
+    message = chat_completion_message(base_url, api_key, {"model": model, "messages": messages})
+    return _strip_audio_payload(message.get("content", "") or "")
+
+
+def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="", model=None, preset=None):
     """Proxy one turn through a custom provider, appending user + assistant lines
     to the session transcript. Returns False if the session is already running or
     the preset is missing/invalid."""
-    preset = providers.get_preset(preset_id)
-    if not preset or not preset.get("baseUrl"):
+    preset = dict(preset if preset is not None else (providers.get_preset(preset_id) or {}))
+    if host != "local" or not preset.get("baseUrl"):
         return False
+    if model is not None:
+        preset["model"] = model
 
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)

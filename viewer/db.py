@@ -717,6 +717,22 @@ def session_token_delete(session_id):
         cur.execute("DELETE FROM session_tokens WHERE session_id = %s", (session_id,))
 
 
+def session_tokens_purge_stale(live_session_ids, max_age_secs):
+    """Drop credentials whose run is gone. The per-job reaper only sees runs THIS
+    process started, so a restart leaves every previous run's row behind and a
+    dead session's token would authorize MCP calls forever. A row is stale when
+    no live job holds it and it is older than max_age_secs — the age floor keeps
+    the one legitimate cross-restart case (a child that outlived the server and
+    is still calling back) authorized. Returns the rows removed."""
+    cutoff = _now() - float(max_age_secs)
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM session_tokens WHERE created_at < %s "
+            "AND NOT (session_id = ANY(%s)) RETURNING session_id",
+            (cutoff, list(live_session_ids)))
+        return len(cur.fetchall())
+
+
 # ---- pending plans (ExitPlanMode approval) -------------------------------------
 
 def pending_plan_set(session_id, tool_use_id, plan, host="local"):
@@ -743,6 +759,18 @@ def pending_plan_get_open(session_id):
         row = cur.fetchone()
     return {"tool_use_id": row["tool_use_id"], "plan": row["plan"],
             "host": row["host"]} if row else None
+
+
+def pending_plan_resolve(session_id, tool_use_id):
+    """Mark the session's open plan decided. Returns True if one was open and
+    matched (guards a double-submit / a second device deciding the same plan).
+    Deletes the row — the resumed run is the record, as for questions."""
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM pending_plans WHERE session_id = %s AND tool_use_id = %s AND status = 'open'",
+            (session_id, tool_use_id),
+        )
+        return cur.rowcount > 0
 
 
 def pending_plan_delete(session_id):
@@ -1574,6 +1602,21 @@ def job_run_start(loop_id, session_id, prompt):
         return cur.fetchone()["id"]
 
 
+def job_runs_abandon_running(detail="server restarted mid-run"):
+    """Boot-time reconciliation: a run is finalized by the thread that spawned it,
+    so when the server dies (launchd kills the whole process group, children
+    included) every row still 'running' belongs to a run that no longer exists
+    and would otherwise read as in-flight forever. Called once before the
+    scheduler starts — at that moment nothing can legitimately be running.
+    Returns the rows closed."""
+    with _db() as cur:
+        cur.execute(
+            "UPDATE job_runs SET status = 'error', rc = -1, detail = %s, finished_at = %s "
+            "WHERE status = 'running' RETURNING id",
+            (detail, _now()))
+        return len(cur.fetchall())
+
+
 def job_run_finish(run_id, rc, detail=""):
     """Finalize a run row: status from the return code (ok/error), rc, a bounded
     detail (stderr tail), and the finish time."""
@@ -1585,16 +1628,6 @@ def job_run_finish(run_id, rc, detail=""):
             "UPDATE job_runs SET status = %s, rc = %s, detail = %s, finished_at = %s "
             "WHERE id = %s",
             (status, rc, (detail or "")[:2000], _now(), run_id))
-
-
-def job_runs_list(loop_id, limit=100):
-    """A loop's run history, newest first (the audit view for one schedule)."""
-    with _db() as cur:
-        cur.execute(
-            "SELECT id, loop_id, session_id, prompt, status, rc, detail, started_at, "
-            "finished_at FROM job_runs WHERE loop_id = %s ORDER BY started_at DESC LIMIT %s",
-            (loop_id, limit))
-        return [dict(r) for r in cur.fetchall()]
 
 
 def job_runs_purge(max_age_days, max_per_loop):

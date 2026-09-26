@@ -598,17 +598,16 @@ fail for the same reason: **the topology is hardcoded.**
 
 ### The defect, concretely
 
-`config.py:67-87` hardcodes one machine four times:
+`config.py` hardcodes one machine three times:
 
 ```python
 SPEECH_SERVICE_URL    = env("HARMAN_SPEECH_URL",    "http://100.115.120.89:8095")
 TTS_STREAM_URL        = env("HARMAN_TTS_STREAM_URL","http://100.115.120.89:8097")
 VERIFY_SERVICE_URL    = env("HARMAN_VERIFY_URL",    "http://100.115.120.89:8095")
-ASSISTANT_SERVICE_URL = env("HARMAN_ASSISTANT_URL", "http://100.115.120.89:8099")
 ```
 
 That is not configuration, it is a topology baked into source. Move the GPU box's IP and
-four constants are wrong. Install on someone else's hardware and it silently points at
+three constants are wrong. Install on someone else's hardware and it silently points at
 Ram's tailnet. Add a second speech node and there is nowhere to put it.
 
 ### Nodes declare what they can do
@@ -767,8 +766,14 @@ Each step ships working and is independently reversible.
    tier (read-only, `ic`). Ships the "see all sessions" half.~~ **Done.** The rename kept
    history (`git mv`); both call sites — the local `--mcp-config` writer and the SFTP one
    that ships the helper to a remote host — moved together, and the MCP server key went
-   `viewerkanban` → `viewer` (verified first that no tool allowlist pins the old name; the
-   only `mcp__` literal in the tree is `mcp__viewerperm__approve`). Eight tools became
+   `viewerkanban` → `viewer`. The rename note originally claimed no tool allowlist pinned
+   the old name; that was wrong — this Mac's `~/.claude/settings.json` allowed
+   `mcp__viewerkanban__*`, so from 2026-09-12 to 2026-09-20 every acceptEdits/default run
+   routed each `mcp__viewer__*` call through the permission prompt, waited `PERM_TIMEOUT`,
+   and was denied (bypass runs were unaffected, which hid it). The fix moved the rule to
+   where the tools are registered: `engine._run_settings()` passes
+   `permissions.allow: ["mcp__viewer__*"]` in every run's `--settings`, so no machine
+   needs a local allow entry. Eight tools became
    nineteen: thirteen read, six write.
 
    Two properties are load-bearing and easy to lose later:

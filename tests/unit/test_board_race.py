@@ -72,6 +72,9 @@ class FakeRaceBoard:
 def fdb(monkeypatch):
     f = FakeRaceBoard()
     monkeypatch.setattr(actions, "db", f)
+    # NOW is captured at import; the "Ns ago" text compares int(elapsed), so
+    # a >1s gap between collection and this test flipped 20s into 21s.
+    monkeypatch.setattr(time, "time", lambda: NOW)
     wakes = []
     monkeypatch.setattr(boardwatch, "schedule_wake",
                         lambda card, event, origin: (wakes.append((event, origin)) or "bw25"))

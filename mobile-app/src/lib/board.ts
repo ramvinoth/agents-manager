@@ -18,6 +18,16 @@ function pos(c: { position?: number | null }): number {
   return typeof v === "number" && isFinite(v) ? v : 0
 }
 
+/** Mobile board entries require a session or explicit project; never widen a malformed filter. */
+export function boardScopeFilter(input: CardFilter = {}): CardFilter | null {
+  const { session, project, assignee } = input
+  if (session !== undefined && (typeof session !== "string" || !session.trim())) return null
+  if (project !== undefined && (!Number.isSafeInteger(project) || project <= 0)) return null
+  if (assignee !== undefined && (!Number.isSafeInteger(assignee) || assignee <= 0)) return null
+  if (session === undefined && project === undefined) return null
+  return { session, project, assignee }
+}
+
 /** Cards matching every provided filter (AND). One board → a session/project/employee view. */
 export function filterCards(cards: Card[], f: CardFilter = {}): Card[] {
   return cards.filter((c) => {

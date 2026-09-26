@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type Approval, type AuditEntry, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
+import { api, isQueued, type Approval, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -13,7 +13,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Org">
 /**
  * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects
  * (each opens its board), the open Approvals queue Harman feeds (Approve/Deny),
- * and a read-only audit timeline. Read-heavy; mutations are limited to
+ * and an entry into the read-only audit log. Read-heavy; mutations are limited to
  * approving/denying and creating employees/projects (manager authority,
  * enforced server-side).
  */
@@ -22,7 +22,6 @@ export default function OrgScreen({ navigation }: Props) {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [projects, setProjects] = useState<OrgProject[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
-  const [audit, setAudit] = useState<AuditEntry[]>([])
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
   const [providers, setProviders] = useState<Provider[]>([])
@@ -33,11 +32,10 @@ export default function OrgScreen({ navigation }: Props) {
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, a, au, h, sk, pr] = await Promise.all([
+      const [e, p, a, h, sk, pr] = await Promise.all([
         api.orgEmployees(),
         api.orgProjects(),
         api.orgApprovals(),
-        api.orgAudit(50),
         api.orgHarman().catch(() => null),
         api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
         api.providers().catch(() => ({ providers: [] as Provider[] })),
@@ -45,7 +43,6 @@ export default function OrgScreen({ navigation }: Props) {
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
       setApprovals(a.approvals || [])
-      setAudit(au.audit || [])
       setHarman(h)
       setSkills(sk.skills || [])
       setProviders(pr.providers || [])
@@ -321,6 +318,20 @@ export default function OrgScreen({ navigation }: Props) {
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No projects yet.</Text>}
       </Section>
 
+      <TouchableOpacity
+        testID="org-audit"
+        accessibilityRole="button"
+        accessibilityLabel="Audit log, recorded control actions"
+        onPress={() => navigation.navigate("Audit")}
+        style={{ minHeight: 44, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, marginBottom: 18, flexDirection: "row", alignItems: "center", gap: 12 }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: t.text, fontSize: 17, fontWeight: "600" }}>Audit log</Text>
+          <Text style={{ color: t.text, fontSize: 14, marginTop: 4 }}>Recorded control actions</Text>
+        </View>
+        <Icon name="chevronRight" size={18} color={t.text} />
+      </TouchableOpacity>
+
       <Section title="Skills learned">
         {skills.length ? skills.map((s) => (
           <View key={s.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
@@ -331,15 +342,6 @@ export default function OrgScreen({ navigation }: Props) {
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing learned yet.</Text>}
       </Section>
 
-      <Section title="Audit">
-        {audit.length ? audit.map((a) => (
-          <View key={a.id} style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
-            <Text style={{ color: t.textMuted, fontSize: 12, flex: 1 }} numberOfLines={1}>
-              <Text style={{ color: t.text }}>{a.actor}</Text> {a.action} <Text style={{ color: t.textMuted }}>· {a.outcome}</Text>
-            </Text>
-          </View>
-        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No activity yet.</Text>}
-      </Section>
     </ScrollView>
 
       <CreateSheet

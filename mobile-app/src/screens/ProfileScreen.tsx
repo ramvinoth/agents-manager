@@ -3,8 +3,9 @@ import { ScrollView, Switch, Text, TextInput, TouchableOpacity, useColorScheme, 
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode } from "../api/client"
+import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
 import {
+  currentHost,
   notifyEveryReply,
   serverUrl,
   setNotifyEveryReply,
@@ -18,6 +19,8 @@ import { effectiveScheme } from "../lib/theme"
 import { useTheme, useThemePref } from "../lib/useTheme"
 import { unregisterPush } from "../lib/notify"
 import Icon from "../components/Icon"
+import ProviderPicker from "../components/ProviderPicker"
+import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import ServerPicker from "../components/ServerPicker"
 import { useStyles } from "./styles"
 
@@ -75,6 +78,21 @@ export default function ProfileScreen({ navigation }: Props) {
   const [serverOpen, setServerOpen] = useState(false)
   const [activeUrl, setActiveUrl] = useState(serverUrl())
   useEffect(() => subscribeServer(() => setActiveUrl(serverUrl())), [])
+
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
+  const [aiErr, setAIErr] = useState("")
+  const [aiOpen, setAIOpen] = useState(false)
+  const [providers, setProviders] = useState<Provider[]>([])
+  const host = currentHost()
+  useFocusEffect(useCallback(() => {
+    let alive = true
+    setAIConfig(null); setAIErr(""); setAIOpen(false)
+    Promise.all([api.aiConfig({host}), api.providers()]).then(([config, result]) => {
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      if (alive) { setAIConfig(config); setProviders(result.providers || []) }
+    }).catch(e => { if (alive) setAIErr(aiError(e)) })
+    return () => { alive = false }
+  }, [activeUrl, host]))
 
   // Header theme toggle: cycles the preference light → dark → system → light,
   // mirroring the segmented control below. The glyph shows the CURRENT effective
@@ -286,6 +304,27 @@ export default function ProfileScreen({ navigation }: Props) {
         {loopHint}
       </Text>
 
+      <Text style={styles.sheetSection}>AI</Text>
+      <TouchableOpacity testID="profile-ai-defaults" style={styles.profileInfoRow} disabled={!aiConfig?.capabilities.editable} onPress={() => setAIOpen(true)}>
+        <View style={{flex: 1}}>
+          <Text style={styles.ssRowLabel}>New-chat defaults</Text>
+          <Text style={styles.ssRowHint}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErr || "Loading…"}</Text>
+          {aiConfig?.issue ? <Text style={styles.ssRowHint}>{aiConfig.issue}</Text> : null}
+        </View>
+        <Icon name="chevronRight" size={18} color={t.textMuted}/>
+      </TouchableOpacity>
+      <Text style={styles.sheetHint}>For new chats on this Harman server. Existing chats are unchanged.</Text>
+      <TouchableOpacity
+        testID="open-providers"
+        style={styles.profileInfoRow}
+        onPress={() => navigation.navigate("Providers")}
+      >
+        <Icon name="server" size={18} color={t.accent} />
+        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Provider connections</Text>
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
+      </TouchableOpacity>
+      {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="New-chat defaults" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
+
       <Text style={styles.sheetSection}>SYSTEM PREAMBLE</Text>
       <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
         Prepended to every session's system prompt, so each one knows it is a node in the
@@ -369,15 +408,6 @@ export default function ProfileScreen({ navigation }: Props) {
       >
         <Icon name="folder" size={18} color={t.accent} />
         <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Company & board</Text>
-        <Icon name="chevronRight" size={18} color={t.textMuted} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        testID="open-providers"
-        style={styles.profileInfoRow}
-        onPress={() => navigation.navigate("Providers")}
-      >
-        <Icon name="server" size={18} color={t.accent} />
-        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Model providers</Text>
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
       <TouchableOpacity

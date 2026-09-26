@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   ScrollView,
@@ -10,12 +10,13 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Capabilities, type GitStatus, type Job, type Provider, type SessionSummary } from "../api/client"
+import { api, type Capabilities, type GitStatus, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
+import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
 import { groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
-import { composerPrefs, notifyEveryReply, setComposerPrefs, setNotifyEveryReply } from "../state/config"
+import { notifyEveryReply, setNotifyEveryReply } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
@@ -25,33 +26,16 @@ import { useStyles } from "./styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionProfile">
 
-const MODES = [
+const MODES: { v: PermissionMode; label: string }[] = [
   { v: "acceptEdits", label: "Accept edits" },
   { v: "default", label: "Ask" },
   { v: "plan", label: "Plan" },
-  { v: "bypassPermissions", label: "Bypass" },
+  { v: "bypass", label: "Bypass" },
 ]
-const MODELS = [
-  { v: "default", label: "Default model" },
-  { v: "sonnet", label: "Sonnet" },
-  { v: "haiku", label: "Haiku" },
-]
-
-/**
- * The session's home page — reached by tapping its name in the thread header.
- * Consolidates everything about one session in one place (WhatsApp contact
- * style): its avatar + name at the top, then the controls that used to live in
- * the composer's gear sheet (permission mode, model, system prompt, goal,
- * scheduled jobs, notify) plus its read-only stats. With NO provider, the
- * model pick here is the DEVICE-WIDE composer default (it drives every
- * provider-less session); WITH a provider, the model is the preset's own
- * model — shown read-only, because the provider is the editing surface. The
- * rest persists via /api/session-meta and /api/loops.
- */
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
-  const { host, path, sessionId } = route.params
+  const { host, path, sessionId, agent = "claude" } = route.params
   // A stable, always-defined key for the avatar's default glyph + colour.
   const seed = sessionId || path || "session"
 
@@ -60,10 +44,37 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [systemPrompt, setSystemPrompt] = useState("")
   const [goal, setGoal] = useState("")
   const [saved, setSaved] = useState<"systemPrompt" | "goal" | "title" | null>(null)
-  const [mode, setModeState] = useState(composerPrefs().mode)
-  const [model, setModelState] = useState(
-    MODELS.some((m) => m.v === composerPrefs().model) ? composerPrefs().model : "default"
-  )
+  const [mode, setModeState] = useState("")
+  const [modeTarget, setModeTarget] = useState("")
+  const [modeLoading, setModeLoading] = useState(true)
+  const [modeSaving, setModeSaving] = useState(false)
+  const [modeError, setModeError] = useState("")
+  const [modeReload, setModeReload] = useState(0)
+  const modeRequest = useRef({ active: false, saving: false })
+  useEffect(() => {
+    const request = { active: true, saving: false }
+    modeRequest.current = request
+    setModeState(""); setModeTarget(""); setModeError(""); setModeSaving(false)
+    const id = sessionId || path
+    setModeLoading(agent === "claude" && !!id)
+    if (agent === "claude" && id) {
+      api.sessionDetail(host, id).then(detail => {
+        if (!request.active) return
+        if (!detail.session || typeof detail.meta?.permission_mode !== "string") {
+          throw new Error("Server did not return the session permission policy.")
+        }
+        const stored = detail.meta.permission_mode
+        if (stored && !MODES.some(m => m.v === stored)) {
+          throw new Error("Unrecognized server permission policy. Update the app before changing it.")
+        }
+        setModeTarget(detail.session)
+        setModeState(stored)
+      }).catch(e => {
+        if (request.active) setModeError(e?.message || "Could not load permission policy. Please retry.")
+      }).finally(() => { if (request.active) setModeLoading(false) })
+    }
+    return () => { request.active = false }
+  }, [host, path, sessionId, agent, modeReload])
   const [jobs, setJobs] = useState<Job[]>([])
   const [notify, setNotify] = useState(notifyEveryReply())
   const [summary, setSummary] = useState<SessionSummary | null>(null)
@@ -72,18 +83,21 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [pinned, setPinned] = useState<string[]>([])
   const [pinnedItems, setPinnedItems] = useState<{ uuid: string; text: string }[]>([])
 
-  // Custom LLM providers. `provider` is the session's chosen preset id ("" =
-  // Default/Claude), persisted server-side in session-meta (unlike model, which
-  // is a device-global preference). `providers` is the list of saved presets.
-  const [provider, setProvider] = useState("")
   const [providers, setProviders] = useState<Provider[]>([])
-  // Conversation mode for a custom provider: "chat" (plain proxy) or "agent"
-  // (the full Claude Code harness pointed at the endpoint). Per-session, saved
-  // server-side. Only meaningful when a custom provider is selected.
-  const [convMode, setConvMode] = useState<"chat" | "agent">("chat")
-  const [effort, setEffort] = useState("")
-  // Bottom-sheet provider picker (select-only). Provider CRUD lives in ProvidersScreen.
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
+  const [aiErrorText, setAIErrorText] = useState("")
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
+  const aiScope = { id: sessionId || path, host, agent }
+  useEffect(() => {
+    let alive = true
+    setAIConfig(null)
+    if (!aiScope.id) { setAIErrorText("Session must exist before editing AI settings."); return }
+    api.aiConfig(aiScope).then(config => {
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      if (alive) { setAIConfig(config); setAIErrorText("") }
+    }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
+    return () => { alive = false }
+  }, [sessionId, path, host, agent])
   // Which collapsible cards are open. Behaviour + Model open by default (the
   // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
   // occasional). Stable order + icons = muscle memory.
@@ -110,9 +124,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           setGoal(m.goal || "")
           if (m.avatar) setAvatar(m.avatar)
           setPinned(Array.isArray(m.pinned) ? m.pinned : [])
-          setProvider(m.provider || "")
-          setConvMode(m.convMode === "agent" ? "agent" : "chat")
-          setEffort(m.effort || "")
           if (m.cwd) { setCwd(m.cwd); loadGit(m.cwd) }
           // Skills + MCP tools resolve from the working dir, so load them once
           // the cwd is known (host-aware, same endpoint the drawer/tab use).
@@ -178,35 +189,30 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     flashSaved("title")
   }
 
-  const setMode = (v: string) => {
-    setModeState(v)
-    setComposerPrefs({ mode: v })
+  const setMode = async (v: PermissionMode) => {
+    const request = modeRequest.current
+    if (!request.active || request.saving || !modeTarget || modeLoading || v === mode) return
+    request.saving = true
+    setModeSaving(true); setModeError("")
+    try {
+      const result = await api.sessionModeSet(modeTarget, v)
+      if (!request.active) return
+      if (result.error || result.denied || result.queued) {
+        throw new Error(result.error || result.reason || (result.queued
+          ? "Change queued for owner approval; the saved policy has not changed."
+          : "Permission policy change was denied."))
+      }
+      if (result.session !== modeTarget || result.permission_mode !== v) {
+        throw new Error("Server did not confirm the permission policy. Reload before retrying.")
+      }
+      setModeState(v)
+    } catch (e) {
+      if (request.active) setModeError(e instanceof Error ? e.message : "Could not save permission policy. Please retry.")
+    } finally {
+      request.saving = false
+      if (request.active) setModeSaving(false)
+    }
   }
-  const setModel = (v: string) => {
-    setModelState(v)
-    setComposerPrefs({ model: v })
-  }
-
-  // Select Default (or a saved preset) for THIS session — persisted server-side.
-  function pickProvider(id: string) {
-    setProvider(id)
-    if (path) api.sessionMetaSave({ session: path, provider: id, host }).catch(() => {})
-  }
-
-  // Conversation mode (Chat | Agent), per-session, persisted server-side.
-  function pickConvMode(m: "chat" | "agent") {
-    setConvMode(m)
-    if (path) api.sessionMetaSave({ session: path, convMode: m, host }).catch(() => {})
-  }
-
-  function pickEffort(e: string) {
-    setEffort(e)
-    // "high" is Claude CLI's own default — store "" so we don't explicitly pass
-    // --effort high, which breaks non-Claude backends (e.g. Qwen via vLLM).
-    if (path) api.sessionMetaSave({ session: path, effort: e === "high" ? "" : e, host }).catch(() => {})
-  }
-
-
   function addJob(prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) {
     if (!sessionId) return
     api
@@ -293,7 +299,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // using it as JSX gives it a new identity every keystroke, so React unmounts +
   // remounts its whole subtree — which drops focus from any TextInput inside
   // (the "keyboard dismisses on every letter" bug). Plain calls inline instead.
-  const renderPill = (opts: { v: string; label: string }[], value: string, onPick: (v: string) => void, testPrefix: string) => (
+  const renderPill = (opts: { v: PermissionMode; label: string }[], value: string, onPick: (v: PermissionMode) => void, testPrefix: string) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
@@ -301,7 +307,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           <TouchableOpacity
             key={m.v}
             testID={`${testPrefix}-${m.v}`}
-            style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+            disabled={modeLoading || modeSaving || !modeTarget}
+            accessibilityRole="button"
+            accessibilityLabel={`${m.label} permission policy for future runs`}
+            accessibilityState={{ selected: active, disabled: modeLoading || modeSaving || !modeTarget }}
+            style={[styles.sheetPill, { minHeight: 44 }, active ? styles.sheetPillActive : null]}
             onPress={() => onPick(m.v)}
           >
             {active ? <Icon name="check" size={14} color="#fff" /> : null}
@@ -339,16 +349,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   }
 
   // One-line value summaries shown on each card header (read state without opening).
-  const modeLabel = MODES.find((m) => m.v === mode)?.label || mode
-  const preset = providers.find((p) => p.id === provider)
-  const providerName = provider === "" ? "Built-in (Claude)" : preset?.name || "Custom"
-  const behaviourSummary = provider === "" ? `${modeLabel} · Built-in` : `${modeLabel} · ${providerName} · ${convMode === "agent" ? "Agent" : "Chat"}`
-  // The model a run will ACTUALLY use: the preset's own model when one is set
-  // (exactly what the runner injects), else the device-wide composer default.
-  // Never the provider's name — that was the old punting label.
-  const modelSummary = provider === ""
-    ? (MODELS.find((m) => m.v === model)?.label || "Default model")
-    : (preset?.model || "Set on the provider")
+  const modeLabel = modeLoading ? "Loading…" : MODES.find((m) => m.v === mode)?.label || (modeTarget ? "No saved policy" : "Unavailable")
 
   return (
     <ScrollView
@@ -378,83 +379,30 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {saved === "title" ? <Text style={styles.ssSaved}>Saved</Text> : null}
       </View>
 
-      {/* ── BEHAVIOUR: the knobs you actually turn (open by default). ── */}
-      {renderCard("behaviour", "settings", "Behaviour", behaviourSummary, <>
-        <Text style={styles.sheetSection}>PERMISSION MODE</Text>
-        <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-        {renderPill(MODES, mode, setMode, "sp-mode")}
-
-        <Text style={styles.sheetSection}>PROVIDER</Text>
-        <Text style={styles.sheetHint}>Built-in uses Claude. A custom provider routes this session to your own endpoint.</Text>
-        <TouchableOpacity
-          testID="sp-provider-row"
-          style={styles.profileInfoRow}
-          onPress={() => setProviderPickerOpen(true)}
-        >
-          <Icon name={provider === "" ? "sparkle" : "server"} size={18} color={t.accent} />
-          <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]} numberOfLines={1}>
-            {providerName}
-          </Text>
-          <Icon name="chevronRight" size={18} color={t.textMuted} />
-        </TouchableOpacity>
-        <ProviderPicker
-          visible={providerPickerOpen}
-          providers={providers}
-          selected={provider}
-          onSelect={pickProvider}
-          onClose={() => setProviderPickerOpen(false)}
-          onManage={() => navigation.navigate("Providers")}
-        />
-
-        {/* Conversation mode — only meaningful for a custom provider. */}
-        {provider !== "" ? (
-          <>
-            <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
-            <Text style={styles.sheetHint}>Chat is a plain conversation. Agent runs the full harness (tools, skills, MCP) on your model.</Text>
-            <View style={styles.sheetPills}>
-              {(["chat", "agent"] as const).map((m) => {
-                const active = convMode === m
-                return (
-                  <TouchableOpacity
-                    key={m}
-                    testID={`sp-convmode-${m}`}
-                    style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                    onPress={() => pickConvMode(m)}
-                  >
-                    {active ? <Icon name="check" size={14} color="#fff" /> : null}
-                    <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
-                      {m === "chat" ? "Chat" : "Agent"}
-                    </Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </View>
-          </>
-        ) : null}
-
-        <Text style={styles.sheetSection}>EFFORT LEVEL</Text>
-        <Text style={styles.sheetHint}>Controls reasoning depth. Higher = deeper thinking, more tokens.</Text>
-        <View style={styles.sheetPills}>
-          {(["low", "medium", "high", "xhigh", "max"] as const).map((e) => {
-            const active = (effort || "high") === e
-            const labels: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra High", max: "Max" }
-            return (
-              <TouchableOpacity
-                key={e}
-                testID={`sp-effort-${e}`}
-                style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                onPress={() => pickEffort(e)}
-              >
-                {active ? <Icon name="check" size={14} color="#fff" /> : null}
-                <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>
-                  {labels[e]}
-                </Text>
-              </TouchableOpacity>
-            )
-          })}
+      <TouchableOpacity testID="sp-ai-row" style={styles.spCard} onPress={() => setProviderPickerOpen(true)} disabled={!aiConfig?.capabilities.editable}>
+        <View style={{padding: 16}}>
+          <Text style={styles.spCardTitle}>AI for this chat</Text>
+          <Text style={[styles.sheetHint, {marginTop: 8}]}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErrorText || "Loading AI settings…"}</Text>
+          <Text style={styles.sheetHint}>Changes apply to future runs, not a response already in progress.</Text>
+          {aiConfig?.issue ? <Text style={styles.sheetHint}>{aiConfig.issue}</Text> : null}
         </View>
-
-      </>)}
+      </TouchableOpacity>
+      {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={aiScope} providers={providers} title="AI for this chat" onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
+      {agent === "claude" ? renderCard("behaviour", "settings", "Behaviour", modeLabel, <>
+        <Text style={styles.sheetSection}>PERMISSION POLICY · THIS SESSION</Text>
+        <Text style={styles.sheetHint}>Saved on the server for future chat and scheduled runs, across devices. Does not change a run already in progress.</Text>
+        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. Harman authorization is unchanged.</Text>
+        {!mode && modeTarget ? <Text style={styles.sheetHint}>No saved policy. Each launch uses its requested mode; scheduled runs request Accept edits.</Text> : null}
+        {!sessionId && !path ? <Text style={styles.sheetHint}>Start the chat before setting its permission policy.</Text> : null}
+        {renderPill(MODES, mode, setMode, "sp-mode")}
+        {modeLoading || modeSaving ? <Text style={styles.sheetHint}>{modeSaving ? "Saving…" : "Loading policy…"}</Text> : null}
+        {modeError ? <>
+          <Text testID="sp-mode-error" accessibilityRole="alert" style={styles.sheetHint}>{modeError}</Text>
+          <TouchableOpacity testID="sp-mode-retry" accessibilityRole="button" disabled={modeLoading || modeSaving} onPress={() => setModeReload(n => n + 1)} style={{ minHeight: 44, justifyContent: "center" }}>
+            <Text style={{ color: t.accent }}>Reload policy</Text>
+          </TouchableOpacity>
+        </> : null}
+      </>) : null}
 
       {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}
       {git?.repo ? renderCard("git", "fork", "Git",
@@ -546,19 +494,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         </>)}
 
-      {/* ── MODEL & alerts (open by default). ── */}
-      {renderCard("model", "sparkle", "Model & alerts", modelSummary, <>
-        {provider === "" ? (
-          <>
-            <Text style={styles.sheetSection}>DEFAULT MODEL</Text>
-            <Text style={styles.sheetHint}>No provider on this session — it runs on your Claude login. The pick below is the device-wide default used by all sessions without a provider.</Text>
-            {renderPill(MODELS, model, setModel, "sp-model")}
-          </>
-        ) : (
-          <Text style={[styles.sheetHint, { marginTop: 12 }]}>
-            {convMode === "agent" ? "Agent" : "Chat"} mode on {providerName}. This session runs model {preset?.model || "(set on the provider)"} — change it by editing the provider.
-          </Text>
-        )}
+      {renderCard("notifications", "info", "Notifications", "This device", <>
         <View style={styles.ssRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.ssRowLabel}>Notify every reply</Text>
@@ -702,6 +638,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </View>
           {summary.models?.length ? (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 16, marginTop: 4 }}>
+              <Text style={styles.sheetHint}>Models observed in transcript (historical)</Text>
               {summary.models.map((m) => (
                 <View key={m} style={[styles.pill, { backgroundColor: t.chipBg, marginLeft: 0 }]}>
                   <Text style={[styles.pillText, { color: t.text }]}>{shortModel(m)}</Text>

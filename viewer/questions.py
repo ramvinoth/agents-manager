@@ -127,5 +127,19 @@ def get_open_plan(session_id):
     return db.pending_plan_get_open(session_id)
 
 
+def resolve_plan(session_id, tool_use_id):
+    return db.pending_plan_resolve(session_id, tool_use_id)
+
+
+def plan_decision_message(decision, feedback=""):
+    """The turn fed to a session whose plan was decided AFTER its live waiter was
+    gone (timeout / restart): the CLI never saw an approve/deny, so the resumed
+    run must be told the outcome in words. Pure."""
+    if decision == "approve":
+        return "Your plan is approved — proceed with the implementation."
+    body = f" Feedback: {feedback.strip()}" if feedback and feedback.strip() else ""
+    return f"Your plan was not approved. Revise it and present it again.{body}"
+
+
 def clear_plan(session_id):
     db.pending_plan_delete(session_id)

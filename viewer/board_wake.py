@@ -27,11 +27,12 @@ scheduler tick or the question that became durable.
 import time
 
 from viewer import db, boardwatch, loops
-from viewer.config import CHAT_JOBS, CHAT_LOCK
+from viewer.config import CHAT_JOBS, CHAT_LOCK, transcript_path
 
 SWEEP_INTERVAL = 1800     # the 30-minute safety net
 _MAX_WAKES_PER_SWEEP = 3  # runaway cap per call
 _SETTINGS_KEY = "board_swake_last"   # epoch of the last sweep (settings store)
+_CURSOR_KEY = "board_swake_cursor"   # id of the last card the sweep woke (settings store)
 
 
 def _session_running(session_id):
@@ -59,10 +60,14 @@ def _open_cards():
 
 
 def _wake(card, event, *, skip):
-    """One wake through the single mechanism; skipped for a running session or
-    a session on the skip list. Returns True when a wake was scheduled."""
+    """One wake through the single mechanism; skipped for a running session, a
+    session on the skip list, or a session with no local transcript (the
+    scheduler resolves a path-less wake by transcript — engine.run_loop_iteration
+    — so such a wake can only ever end as "did not start"; queuing it would spend
+    one of the capped slots and an audit row on nothing). Returns True when a
+    wake was scheduled."""
     sid = card.get("session_id")
-    if not sid or sid in skip or _session_running(sid):
+    if not sid or sid in skip or _session_running(sid) or not transcript_path(sid):
         return False
     if boardwatch.schedule_wake(card, event, loops.AGENT_ORIGIN):
         db.audit_append("boardwake", "board_wake",
@@ -71,11 +76,25 @@ def _wake(card, event, *, skip):
     return False
 
 
+def _rotated(open_cards, after_id):
+    """`open_cards` re-ordered to start just past card `after_id` (the card the
+    previous sweep ended on), so the capped budget walks the whole board over
+    successive sweeps instead of re-waking the same first three cards forever.
+    An unknown/absent cursor (first sweep, card deleted) starts from the top."""
+    ids = [c["id"] for c, _ in open_cards]
+    if after_id not in ids:
+        return open_cards
+    i = ids.index(after_id) + 1
+    return open_cards[i:] + open_cards[:i]
+
+
 def sweep():
     """The 30-minute safety net, called from engine.loop_scheduler (the
     existing 5s tick — no new thread). Wakes at most _MAX_WAKES_PER_SWEEP
     open-card sessions when the board changed since the last sweep; a clean
-    board fires nothing. Returns the sessions woken."""
+    board fires nothing. Round-robins over the open cards across sweeps (the
+    cursor lives in the settings store beside the stamp). Returns the sessions
+    woken."""
     now = time.time()
     last = float(db.setting_get(_SETTINGS_KEY, 0) or 0)
     if now - last < SWEEP_INTERVAL:
@@ -86,7 +105,8 @@ def sweep():
         if not changed:
             return []
         fired = []
-        for card, column_name in _open_cards():
+        cursor = db.setting_get(_CURSOR_KEY, None)
+        for card, column_name in _rotated(_open_cards(), cursor):
             if len(fired) >= _MAX_WAKES_PER_SWEEP:
                 break
             deps = db.card_deps_batch([card["id"]]).get(card["id"], [])
@@ -98,6 +118,7 @@ def sweep():
                            f"its comments, then comment your next step",
                      skip=set(fired)):
                 fired.append(card["session_id"])
+                db.setting_set(_CURSOR_KEY, card["id"])
         return fired
     except Exception:
         return []   # a DB error is a missed sweep, not a failed tick

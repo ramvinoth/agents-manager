@@ -16,6 +16,7 @@ import Dropdown from "../components/Dropdown"
 import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
+import { aiError, aiSummary, newChatAI, type AIConfig } from "../lib/aiSelection"
 import { describeSchedule } from "../lib/interval"
 import { resolveSessionPath } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
@@ -28,21 +29,6 @@ const MODES = [
   { v: "default", label: "Ask" },
   { v: "plan", label: "Plan" },
   { v: "bypassPermissions", label: "Bypass" },
-]
-
-const MODELS = [
-  { v: "default", label: "Default" },
-  { v: "sonnet", label: "Sonnet" },
-  { v: "opus", label: "Opus" },
-  { v: "haiku", label: "Haiku" },
-]
-
-const EFFORTS = [
-  { v: "low", label: "Low" },
-  { v: "medium", label: "Medium" },
-  { v: "high", label: "High (default)" },
-  { v: "xhigh", label: "Extra High" },
-  { v: "max", label: "Max" },
 ]
 
 function short(p: string): string {
@@ -76,14 +62,9 @@ export default function NewChatScreen({ navigation, route }: Props) {
     setModeState(v)
     setComposerPrefs({ mode: v })
   }
-  const [model, setModelState] = useState(
-    template?.model && template.model !== "default" ? template.model : composerPrefs().model || "default"
-  )
-  const setModel = (v: string) => {
-    setModelState(v)
-    if (!template?.model) setComposerPrefs({ model: v })
-  }
-  const [effort, setEffort] = useState("high")
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
+  const [aiErrorText, setAIErrorText] = useState("")
+  const ai = aiConfig?.selection
   const [busy, setBusy] = useState(false)
   const [busyText, setBusyText] = useState("")
   const [error, setError] = useState("")
@@ -100,20 +81,19 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [showJobForm, setShowJobForm] = useState(false)
   const [editingJobIdx, setEditingJobIdx] = useState(-1)
 
-  // Provider
-  const [provider, setProvider] = useState("")
   const [providers, setProviders] = useState<Provider[]>([])
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
-
   useEffect(() => {
-    api.providers().then((r) => {
-      const list = r.providers || []
-      setProviders(list)
-      // Auto-select the default provider (if one is marked) for new sessions.
-      const def = list.find((p) => p.isDefault)
-      if (def) setProvider(def.id)
-    }).catch(() => {})
-  }, [])
+    let alive = true
+    setAIConfig(null); setAIErrorText("")
+    Promise.all([api.aiConfig({host}), api.providers()]).then(([config, result]) => {
+      if (!alive) return
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      setProviders(result.providers || [])
+      setAIConfig({...config, selection: newChatAI(config, composerPrefs().model, template?.model)})
+    }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
+    return () => { alive = false }
+  }, [host, template?.model])
 
   const loadProjects = useCallback(async () => {
     try {
@@ -129,7 +109,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   async function start() {
     const msg = message.trim()
-    if (!msg || busy) return
+    if (!msg || busy || !ai || !aiConfig?.capabilities.editable) return
     setError("")
     setBusy(true)
     setBusyText("Starting session…")
@@ -138,12 +118,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
         message: msg,
         cwd: cwd.trim() || "~",
         mode,
-        model: model !== "default" ? model : undefined,
+        ai,
         host,
         agent: "claude",
         systemPrompt: systemPrompt.trim() || undefined,
         goal: goal.trim() || undefined,
-        effort: effort !== "high" ? effort : undefined,
       })
 
       // The server may return `path` (for codex/copilot) or not (Claude).
@@ -166,11 +145,6 @@ export default function NewChatScreen({ navigation, route }: Props) {
         api.renameSession({ session: sessionPath, title: trimTitle, host }).catch(() => {})
       }
 
-      // Save provider to session meta.
-      if (provider) {
-        api.sessionMetaSave({ session: sessionPath, provider, host }).catch(() => {})
-      }
-
       // Create all scheduled jobs.
       if (jobs.length > 0) {
         for (const job of jobs) {
@@ -179,7 +153,6 @@ export default function NewChatScreen({ navigation, route }: Props) {
             prompt: job.prompt,
             cron: job.cron,
             interval: job.interval,
-            model: model !== "default" ? model : undefined,
           }).catch(() => {})
         }
       }
@@ -206,7 +179,6 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   const catColor = template ? (CATEGORY_COLOR[template.category] ?? t.accent) : t.accent
   const iconName = (template?.icon || "sparkle") as IconName
-  const providerName = provider === "" ? "Built-in (Claude)" : providers.find((p) => p.id === provider)?.name || "Custom"
 
   // --- Card wrapper ---
   const card = (children: React.ReactNode) => (
@@ -236,25 +208,6 @@ export default function NewChatScreen({ navigation, route }: Props) {
   )
 
   const divider = () => <View style={{ height: 1, backgroundColor: t.border, marginHorizontal: 14 }} />
-
-  const selectorRow = (label: string, value: string, icon: IconName, onPress?: () => void) => (
-    <TouchableOpacity
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-      }}
-      activeOpacity={onPress ? 0.5 : 1}
-      onPress={onPress}
-      disabled={!onPress}
-    >
-      <Icon name={icon} size={16} color={t.textMuted} />
-      <Text style={{ fontSize: 13, color: t.textMuted, marginLeft: 8, flex: 1 }}>{label}</Text>
-      <Text style={{ fontSize: 14, color: t.text, fontWeight: "500" }}>{value}</Text>
-      {onPress ? <View style={{ marginLeft: 6 }}><Icon name="chevronRight" size={12} color={t.border} /></View> : null}
-    </TouchableOpacity>
-  )
 
   // Build project dropdown options from recent projects
   const projectOptions = [
@@ -437,25 +390,12 @@ export default function NewChatScreen({ navigation, route }: Props) {
             <Dropdown testIDPrefix="newchat-mode" value={mode} options={MODES} onChange={setMode} />
           </View>
           {divider()}
-          <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-            <Text style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Model</Text>
-            <Dropdown testIDPrefix="newchat-model" value={model} options={MODELS} onChange={setModel} />
-          </View>
-          {divider()}
-          <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-            <Text style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>Effort level</Text>
-            <Dropdown testIDPrefix="newchat-effort" value={effort} options={EFFORTS} onChange={setEffort} />
-          </View>
-          {divider()}
-          {selectorRow("Provider", providerName, provider === "" ? "sparkle" : "server", () => setProviderPickerOpen(true))}
-          <ProviderPicker
-            visible={providerPickerOpen}
-            providers={providers}
-            selected={provider}
-            onSelect={(id) => setProvider(id)}
-            onClose={() => setProviderPickerOpen(false)}
-            onManage={() => { setProviderPickerOpen(false); navigation.navigate("Providers" as never) }}
-          />
+          <TouchableOpacity testID="newchat-ai-row" disabled={!aiConfig?.capabilities.editable || busy} onPress={() => setProviderPickerOpen(true)} style={{padding: 14}}>
+            <Text style={{color: t.accent, fontWeight: "600"}}>AI for this chat</Text>
+            <Text style={{color: t.text, marginTop: 6}}>{ai ? aiSummary(ai, providers) : aiErrorText || "Loading AI settings…"}</Text>
+          </TouchableOpacity>
+          {aiErrorText ? <Text testID="newchat-ai-error" style={styles.sheetHint}>{aiErrorText}</Text> : null}
+          {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for this chat" localOnly onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
         </>)}
 
         {/* ── Scheduled jobs ── */}
@@ -637,10 +577,10 @@ export default function NewChatScreen({ navigation, route }: Props) {
             paddingVertical: 15,
             alignItems: "center",
             marginTop: 20,
-            opacity: !message.trim() || busy ? 0.45 : 1,
+            opacity: !message.trim() || busy || !aiConfig?.capabilities.editable ? 0.45 : 1,
           }}
           onPress={start}
-          disabled={busy || !message.trim()}
+          disabled={busy || !message.trim() || !aiConfig?.capabilities.editable}
         >
           {busy ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>

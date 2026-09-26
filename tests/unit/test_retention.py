@@ -101,3 +101,38 @@ class TestLoopsDisableForEmployee:
         # Disable (reversible), scoped to sessions linked by that provider id.
         assert "SET enabled = FALSE" in sql
         assert "data->>'provider'" in sql
+
+
+# ── boot reconciliation: runs orphaned by a server death ─────────────────────
+
+class TestJobRunsAbandonRunning:
+    def test_closes_only_running_rows_as_errors(self, cursor):
+        """A row stays 'running' until the thread that spawned the run finalizes
+        it; after a restart that thread is gone, so the boot pass must close every
+        such row — and only such rows — with an error status the history can show."""
+        cursor._results = [[{"id": 127}, {"id": 133}]]
+        assert db.job_runs_abandon_running() == 2
+        (sql,) = cursor.executed
+        assert "UPDATE job_runs SET status = 'error', rc = -1" in sql
+        assert "WHERE status = 'running'" in sql
+
+    def test_nothing_to_close_returns_zero(self, cursor):
+        assert db.job_runs_abandon_running() == 0
+
+
+# ── stale run credentials: rows the per-job reaper can never see ─────────────
+
+class TestSessionTokensPurgeStale:
+    def test_keeps_live_jobs_and_young_rows(self, cursor):
+        """A token is dropped only when it is BOTH older than the age floor AND
+        not held by a live job; either condition alone keeps a still-legitimate
+        credential (a child that outlived a restart) authorized."""
+        cursor._results = [[{"session_id": "old-dead"}]]
+        assert db.session_tokens_purge_stale(["live-1", "live-2"], 86400) == 1
+        (sql,) = cursor.executed
+        assert "DELETE FROM session_tokens WHERE created_at <" in sql
+        assert "NOT (session_id = ANY(%s))" in sql
+
+    def test_no_live_jobs_is_a_valid_input(self, cursor):
+        assert db.session_tokens_purge_stale([], 86400) == 0
+        assert "DELETE FROM session_tokens" in cursor.executed[0]

@@ -267,8 +267,26 @@ class OrchestratorMixin:
         self.send_json({**row, **({"result": result} if result is not None else {})})
 
     def _g_org_audit(self, req):
-        limit = (req.query.get("limit") or ["100"])[0]
-        self.send_json({"audit": db.audit_list(limit=int(limit))})
+        from urllib.parse import parse_qs
+        from viewer import audit
+
+        # _Req.query drops blank values. Preserve them here so an invalid view
+        # cannot silently fall back to the legacy raw response.
+        query = parse_qs(req.raw_query, keep_blank_values=True)
+        if "view" not in query:
+            limit = (req.query.get("limit") or ["100"])[0]
+            self.send_json({"audit": db.audit_list(limit=int(limit))})
+            return
+        try:
+            limit, before_id, result = audit.display_options(query)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+        rows = db.audit_list(limit=limit + 1, before_id=before_id, result=result)
+        page = rows[:limit]
+        self.send_json({"view": "display-v1",
+                        "audit": [audit.project_entry(row) for row in page],
+                        "next_before": page[-1]["id"] if len(rows) > limit else None})
 
     # ── Harman autonomous-manager config (owner surface) ─────────────────────
     def _g_org_harman(self, req):

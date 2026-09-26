@@ -25,6 +25,9 @@ import ProvidersScreen from "./src/screens/ProvidersScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import CardDetailScreen from "./src/screens/CardDetailScreen"
 import OrgScreen from "./src/screens/OrgScreen"
+import AuditScreen from "./src/screens/AuditScreen"
+import AuditEntryScreen from "./src/screens/AuditEntryScreen"
+import type { AuditEntry } from "./src/lib/audit"
 import HostEditScreen from "./src/screens/HostEditScreen"
 import TerminalScreen from "./src/screens/TerminalScreen"
 
@@ -33,14 +36,16 @@ export type RootStackParamList = {
   Login: undefined
   Home: undefined
   NewChat: { template?: import("./src/api/client").AgentTemplate } | undefined
-  Thread: { host: string; label: string; path?: string; jumpTo?: string }
-  Call: { host: string; label: string; path?: string }
-  SessionProfile: { host: string; label: string; path?: string; sessionId: string }
+  Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string }
+  Call: { label: string; path?: string }
+  SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
   Capabilities: { host?: string; cwd?: string; title?: string } | undefined
   Providers: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
   Org: undefined
+  Audit: undefined
+  AuditEntry: { entry: AuditEntry }
   HostEdit: { host?: HostConfig } | undefined
   Terminal: { host: string; label: string }
 }
@@ -180,6 +185,8 @@ export default function App() {
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
+            <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Audit log" }} />
+            <Stack.Screen name="AuditEntry" component={AuditEntryScreen} options={{ title: "Recorded action" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
             <Stack.Screen
               name="Terminal"

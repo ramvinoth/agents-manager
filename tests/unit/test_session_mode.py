@@ -28,6 +28,7 @@ policy over a db it only calls, so no Postgres and no network are needed.
 import pytest
 
 from viewer import actions, engine, orglogic, push
+from viewer.routes import orchestrator
 from viewer.routes.orchestrator import OrchestratorMixin
 from viewer.routes.sessions import SessionsMixin
 
@@ -219,6 +220,9 @@ def test_agent_targets_another_session_via_for_session(monkeypatch):
 def test_agent_cannot_target_its_own_session(monkeypatch):
     f = FakeDb()
     monkeypatch.setattr(actions, "db", f)
+    # The self-mutation denial is audited by the route itself (before any
+    # action is dispatched), so it reads the orchestrator module's db seam.
+    monkeypatch.setattr(orchestrator, "db", f)
     # The MCP transport mirrors the caller's id into `session`; with no
     # for_session the target falls onto the mirrored value = itself.
     h = _it({"actor": "employee:rsi", "human_role": "owner",
@@ -228,6 +232,8 @@ def test_agent_cannot_target_its_own_session(monkeypatch):
     assert h.sent[1] == 403 and h.sent[0].get("denied") is True
     assert f.approvals == [], "not even the request reaches the owner's queue"
     assert f.meta == {}
+    assert f.audit[-1][1:] == ("self_mutation", {"session": "sess-rsi", "what": "its own permission mode"},
+                               "denied:self_mutation")
 
 
 def test_human_at_ui_passes_session_directly(monkeypatch):
