@@ -3,6 +3,7 @@ import { api } from "./lib/api"
 import { describeHost } from "./lib/host"
 import { SessionParser } from "./lib/parser"
 import { isQueued } from "./lib/types"
+import type { AIConfig } from "./lib/aiSelection"
 import type {
   AgentInfo,
   Capabilities,
@@ -113,6 +114,9 @@ interface AppState {
   analysisLoading: boolean
   analysisError: string | null
   meta: SessionMeta | null
+  /** The session's AI selection (provider/model/mode/effort) as the server
+   *  holds it — null until loaded or when the harness has no AI settings. */
+  sessionAI: AIConfig | null
   git: GitStatus | null
   loops: Loop[]
   /** Global custom-provider library (from /api/providers). Session-independent. */
@@ -169,7 +173,9 @@ interface AppState {
   analyzeSession: (refresh?: boolean) => Promise<void>
   maybeAutoAnalyze: () => void
   loadMeta: () => Promise<void>
-  saveMeta: (field: "goal" | "systemPrompt" | "provider" | "convMode", value: string) => Promise<void>
+  saveMeta: (field: "goal" | "systemPrompt", value: string) => Promise<void>
+  /** Cache the result of a successful AI save (the dialog already has it). */
+  setSessionAI: (config: AIConfig) => void
   loadGitStatus: () => Promise<void>
   loadProviders: () => Promise<void>
   loadLoops: () => Promise<void>
@@ -231,7 +237,7 @@ interface AppState {
   setFloatRect: (r: { x: number; y: number; w: number; h: number }) => void
 }
 
-function sessionIdOf(path: string): string {
+export function sessionIdOf(path: string): string {
   return path ? path.split("/").pop()!.replace(".jsonl", "") : ""
 }
 
@@ -538,6 +544,7 @@ export const useStore = create<AppState>((set, get) => {
     analysisError: null,
     pendingDraft: null,
     meta: null,
+    sessionAI: null,
     git: null,
     loops: [],
     providers: [],
@@ -608,7 +615,7 @@ export const useStore = create<AppState>((set, get) => {
         needsAuth: true, authUser: null, error: null,
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
         sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
-        meta: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
+        meta: null, sessionAI: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
         harman: null, loopControl: null, automationOn: false, systemPreamble: null,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,
         panel: null, fsOpen: false, searchOpen: false,
@@ -987,7 +994,16 @@ export const useStore = create<AppState>((set, get) => {
       } catch {
         /* ignore */
       }
+      // The AI selection is a separate, revisioned document (viewer/ai.py) —
+      // read it from its own route, never from the legacy meta fields.
+      try {
+        const c = await api.aiConfig({ id: sessionIdOf(currentSessionPath), host: get().currentHost, agent: get().currentAgent })
+        if (get().currentSessionPath === currentSessionPath) set({ sessionAI: c })
+      } catch {
+        set({ sessionAI: null })
+      }
     },
+    setSessionAI: (config) => set({ sessionAI: config }),
     // Git repo/branch state for the session's cwd (drives the GitSection bar).
     loadGitStatus: async () => {
       const cwd = get().meta?.cwd

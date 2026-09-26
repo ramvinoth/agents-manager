@@ -233,10 +233,6 @@ export interface SessionMeta {
   goal?: string
   systemPrompt?: string
   cwd?: string
-  /** Custom LLM provider preset id ("" or undefined = Default/Claude). */
-  provider?: string
-  /** Conversation mode for a custom provider: plain proxy vs full agent harness. */
-  convMode?: "chat" | "agent"
 }
 
 /**

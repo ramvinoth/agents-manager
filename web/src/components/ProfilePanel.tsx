@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react"
-import { Power, Repeat, ScrollText } from "lucide-react"
+import { ChevronRight, Power, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { api } from "@/lib/api"
 import { useStore } from "@/store"
+import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
 import type { LoopMode } from "@/lib/types"
+import { AISelectionDialog } from "./settings/AISelectionDialog"
 
 // Loop-firing modes, in escalating order of what's licensed to run — the
 // plain-language version of loops.LOOP_MODES. Mirrors the mobile Profile screen.
@@ -67,6 +70,25 @@ export function ProfilePanel() {
   const setLoopMode = useStore((s) => s.setLoopMode)
   const systemPreamble = useStore((s) => s.systemPreamble)
   const setSystemPreamble = useStore((s) => s.setSystemPreamble)
+  const providers = useStore((s) => s.providers)
+  const currentHost = useStore((s) => s.currentHost)
+
+  // New-chat AI defaults: one server-owned document per user (/api/ai/defaults).
+  // Read here for the summary row; the dialog does the editing and hands back
+  // the saved document so the row updates without a refetch.
+  const [aiDefaults, setAiDefaults] = useState<AIConfig | null>(null)
+  const [aiErr, setAiErr] = useState("")
+  const [aiOpen, setAiOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    api
+      .aiConfig({ host: currentHost })
+      .then((c) => alive && setAiDefaults(c))
+      .catch((e) => alive && setAiErr(aiError(e)))
+    return () => {
+      alive = false
+    }
+  }, [currentHost])
 
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
@@ -157,6 +179,28 @@ export function ProfilePanel() {
         </section>
 
         <section className="py-4">
+          <SectionHeader icon={Server} title="AI for new chats" />
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <Server className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left" onClick={() => setAiOpen(true)} disabled={!aiDefaults}>
+              <div className="truncate text-sm font-medium">
+                {aiDefaults ? aiSummary(aiDefaults.selection, providers) : aiErr || "Loading…"}
+              </div>
+              <div className={cn("truncate text-[11px]", aiDefaults?.issue ? "text-destructive" : "text-muted-foreground")}>
+                {aiDefaults?.issue
+                  ? aiDefaults.issue
+                  : aiDefaults && !aiDefaults.configured
+                    ? "Not set — new chats use the server's rules. Save once to pin them."
+                    : "What every new chat on this server starts with. Existing chats keep their own."}
+              </div>
+            </button>
+            <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50" onClick={() => setAiOpen(true)} disabled={!aiDefaults} title="Change new-chat AI">
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        </section>
+
+        <section className="py-4">
           <SectionHeader icon={Repeat} title="Scheduled loops" />
           <div className="grid grid-cols-4 gap-1.5">
             {LOOP_OPTS.map((o) => {
@@ -214,6 +258,16 @@ export function ProfilePanel() {
           </div>
         </section>
       </div>
+
+      {aiOpen && (
+        <AISelectionDialog
+          scope={{ host: currentHost }}
+          title="AI for new chats"
+          hint="Every new chat you start on this server begins with these settings. Chats that already exist are unchanged."
+          onSaved={setAiDefaults}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
     </div>
   )
 }

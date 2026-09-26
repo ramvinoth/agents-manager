@@ -3,6 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision, Drive } from "./types"
+import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 
 type Body = Record<string, unknown>
 
@@ -61,6 +62,23 @@ class ApiClient {
   }
   async postJSON<T = any>(path: string, body?: Body): Promise<T> {
     return (await this.postRes(path, body)).json()
+  }
+  /** Like getJSON/postJSON but a non-2xx response THROWS an Error carrying
+   *  `status` and the server's `error` text, for callers that branch on the
+   *  status code (400 invalid, 409 stale revision) instead of reading an
+   *  `error` field off the body. */
+  private async strict<T>(res: Response): Promise<T> {
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw Object.assign(new Error(data?.error || `HTTP ${res.status}`), { status: res.status })
+    }
+    return data as T
+  }
+  private async getStrict<T>(path: string): Promise<T> {
+    return this.strict<T>(this.tap(await fetch(path)))
+  }
+  private async postStrict<T>(path: string, body?: Body): Promise<T> {
+    return this.strict<T>(await this.postRes(path, body))
   }
 
   // ---- agents ----
@@ -280,9 +298,32 @@ class ApiClient {
   providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
     const params: Record<string, string> =
       "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
-    return this.getJSON<{ models: string[]; error?: string }>(
+    return this.getJSON<ModelDiscovery & { error?: string }>(
       "/api/providers/models?" + new URLSearchParams(params).toString()
     )
+  }
+
+  // ---- AI selection (server-owned; viewer/ai.py) ----
+  private aiPath(scope: AIScope) {
+    return scope.id ? "/api/session/ai" : "/api/ai/defaults"
+  }
+  /** The stored selection + capabilities for a scope. Pass `draft` to get the
+   *  capabilities for a provider/mode the user is trying, not the stored one. */
+  aiConfig(scope: AIScope, draft?: AISelection) {
+    const params: Record<string, string> = { host: scope.host, agent: scope.agent || "claude" }
+    if (scope.id) params.id = scope.id
+    if (draft) Object.assign(params, { provider: draft.provider, convMode: draft.convMode })
+    return this.getStrict<AIConfig>(this.aiPath(scope) + "?" + new URLSearchParams(params).toString())
+  }
+  /** Compare-and-swap save: 400 on an invalid selection, 409 when `revision`
+   *  is stale — both surface as thrown errors carrying `status`. */
+  aiSave(scope: AIScope, revision: number, selection: AISelection) {
+    return this.postStrict<AIConfig>(this.aiPath(scope), {
+      ...scope,
+      agent: scope.agent || "claude",
+      revision,
+      selection,
+    })
   }
 
   // ---- session lifecycle ----

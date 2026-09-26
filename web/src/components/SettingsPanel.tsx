@@ -17,11 +17,12 @@ import {
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { useStore } from "@/store"
+import { useStore, sessionIdOf } from "@/store"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { LoopsDialog } from "./settings/LoopsDialog"
 import { GitDialog } from "./settings/GitDialog"
-import { ModelProviderDialog } from "./settings/ModelProviderDialog"
+import { AISelectionDialog } from "./settings/AISelectionDialog"
+import { aiSummary } from "@/lib/aiSelection"
 import type { VisibleTypes } from "@/lib/types"
 
 function SectionHeader({
@@ -96,7 +97,7 @@ const TYPE_META: Record<keyof VisibleTypes, { label: string; icon: React.Compone
 }
 const TYPES: (keyof VisibleTypes)[] = ["user", "assistant", "tools", "system"]
 
-type Modal = "provider" | "systemPrompt" | "goal" | "loops" | "git" | null
+type Modal = "ai" | "systemPrompt" | "goal" | "loops" | "git" | null
 
 export function SettingsPanel() {
   const meta = useStore((s) => s.meta)
@@ -106,6 +107,10 @@ export function SettingsPanel() {
   const toggleVisible = useStore((s) => s.toggleVisible)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const providers = useStore((s) => s.providers)
+  const sessionAI = useStore((s) => s.sessionAI)
+  const setSessionAI = useStore((s) => s.setSessionAI)
+  const currentHost = useStore((s) => s.currentHost)
+  const currentAgent = useStore((s) => s.currentAgent)
   const git = useStore((s) => s.git)
 
   const [modal, setModal] = useState<Modal>(null)
@@ -116,9 +121,6 @@ export function SettingsPanel() {
 
   const sysPrompt = meta?.systemPrompt || ""
   const goal = meta?.goal || ""
-  const providerName = meta?.provider
-    ? providers.find((p) => p.id === meta.provider)?.name || "Custom provider"
-    : "Default (Claude)"
 
   return (
     <div className="h-full overflow-y-auto">
@@ -149,24 +151,32 @@ export function SettingsPanel() {
           </div>
         </section>
 
-        {/* Model provider — per-session choice from the global library. */}
-        <section className="py-4">
-          <SectionHeader icon={Server} title="Model provider" />
-          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
-            <Server className="size-4 shrink-0 text-muted-foreground" />
-            <button className="min-w-0 flex-1 text-left" onClick={() => setModal("provider")}>
-              <div className="text-sm font-medium">{providerName}</div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {meta?.provider
-                  ? `${meta.convMode || "chat"} mode · ${providers.find((p) => p.id === meta.provider)?.model || "model set on the provider"}`
-                  : "Uses your Claude login"}
-              </div>
-            </button>
-            <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("provider")} title="Choose provider">
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-        </section>
+        {/* AI — the session's provider/model/mode/effort (server-owned, revisioned). */}
+        {sessionAI && (
+          <section className="py-4">
+            <SectionHeader icon={Server} title="AI" />
+            <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+              <Server className="size-4 shrink-0 text-muted-foreground" />
+              <button className="min-w-0 flex-1 text-left" onClick={() => setModal("ai")} disabled={!sessionAI.capabilities.editable}>
+                <div className="truncate text-sm font-medium">{aiSummary(sessionAI.selection, providers)}</div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {sessionAI.issue ? (
+                    <span className="text-destructive">{sessionAI.issue}</span>
+                  ) : sessionAI.capabilities.editable ? (
+                    "Applies to the next message"
+                  ) : (
+                    "Fixed for this agent"
+                  )}
+                </div>
+              </button>
+              {sessionAI.capabilities.editable && (
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setModal("ai")} title="Change AI settings">
+                  <ChevronRight className="size-4" />
+                </Button>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* System prompt / Goal / Loops / Git — summary rows opening modals. */}
         <section className="space-y-2 py-4">
@@ -223,7 +233,15 @@ export function SettingsPanel() {
         </section>
       </div>
 
-      {modal === "provider" && <ModelProviderDialog onClose={() => setModal(null)} />}
+      {modal === "ai" && (
+        <AISelectionDialog
+          scope={{ id: sessionIdOf(currentSessionPath), host: currentHost, agent: currentAgent }}
+          title="AI for this chat"
+          hint="Changes apply from the next message on. A response already running finishes with the old settings."
+          onSaved={setSessionAI}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "systemPrompt" && (
         <TextFieldDialog
           title="System prompt"

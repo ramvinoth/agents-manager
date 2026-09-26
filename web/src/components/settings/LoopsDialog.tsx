@@ -37,7 +37,7 @@ const INHERIT_PROVIDER = "__inherit__"
 export function LoopsDialog({ onClose }: { onClose: () => void }) {
   const loops = useStore((s) => s.loops)
   const providers = useStore((s) => s.providers)
-  const sessionProvider = useStore((s) => s.meta?.provider) || ""
+  const sessionProvider = useStore((s) => s.sessionAI?.selection.provider) || ""
   const createLoop = useStore((s) => s.createLoop)
   const editLoop = useStore((s) => s.editLoop)
   const toggleLoop = useStore((s) => s.toggleLoop)

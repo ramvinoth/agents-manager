@@ -281,28 +281,19 @@ class SessionsMixin:
             # A list of pinned message uuids. Cap count + id length so a stray
             # payload can't bloat the persisted meta.
             fields["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
-        if "provider" in body:
-            # Custom LLM provider preset id ("" = Default/Claude). Runs for this
-            # session are proxied to that endpoint instead of the claude CLI.
-            fields["provider"] = str(body["provider"]).strip()[:64]
-        if "convMode" in body:
-            # Conversation mode for a custom provider: "chat" (plain proxy) or
-            # "agent" (full Claude Code harness pointed at the endpoint).
-            cm = str(body["convMode"]).strip()
-            fields["convMode"] = cm if cm in ("chat", "agent") else "chat"
-        if "effort" in body:
-            eff = str(body["effort"]).strip()
-            fields["effort"] = eff if eff in ("low", "medium", "high", "xhigh", "max", "") else ""
+        # provider / convMode / effort / model are NOT accepted here: the AI
+        # selection is a revisioned, validated document owned by viewer/ai.py
+        # and written only through /api/session/ai (routes/providers.py).
+        if body.keys() & {"provider", "convMode", "effort", "modelSelection"}:
+            self.send_json({"error": "AI settings are saved via /api/session/ai"}, status=400)
+            return
         meta = db.session_meta_patch(sid, fields) if fields else db.session_meta_get(sid)
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
-                        "pinned": meta.get("pinned", []),
-                        "provider": meta.get("provider", ""),
-                        "convMode": meta.get("convMode", "chat"),
-                        "effort": meta.get("effort", "")})
+                        "pinned": meta.get("pinned", [])})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -317,8 +308,7 @@ class SessionsMixin:
             self.send_json({"session": sid, "goal": meta.get("goal", ""),
                             "systemPrompt": meta.get("systemPrompt", ""),
                             "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                            "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
-                            "effort": meta.get("effort", ""), "cwd": cwd})
+                            "cwd": cwd})
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -329,8 +319,6 @@ class SessionsMixin:
         self.send_json({"session": sid, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                        "provider": meta.get("provider", ""), "convMode": meta.get("convMode", "chat"),
-                        "effort": meta.get("effort", ""),
                         "cwd": extract_cwd(full)})
 
     def serve_remote_session_file(self, host, rel_path, q):
