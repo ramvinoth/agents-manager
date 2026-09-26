@@ -1,4 +1,4 @@
-import { filterCards, orderColumn, groupByColumn, nextPosition, type Card, type BoardColumn } from "./board.ts"
+import { filterCards, orderColumn, groupByColumn, nextPosition, formatActor, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -53,6 +53,18 @@ eq("top", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 0
 eq("bottom", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 2), 7)
 eq("middle midpoint", nextPosition([C({ id: 1, position: 4 }), C({ id: 2, position: 6 })], 1), 5)
 eq("orders input first", nextPosition([C({ id: 1, position: 6 }), C({ id: 2, position: 4 })], 1), 5)
+
+// formatActor — principal strings → a person-readable name + kind
+// (must stay in step with web/src/lib/board.ts)
+eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
+eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
+eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
+eq("employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
+eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
+eq("no colon", formatActor("legacy-label"), { name: "legacy-label", kind: "unknown" })
+eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })
+eq("null", formatActor(null), { name: "Unknown", kind: "unknown" })
+eq("user with empty name", formatActor("user:", "ram"), { name: "Unknown user", kind: "unknown" })
 
 console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
 if (fail) process.exit(1)

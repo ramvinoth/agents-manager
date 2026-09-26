@@ -211,11 +211,18 @@ export async function removeServer(id: string): Promise<void> {
 }
 
 /** Store the auth token onto the ACTIVE server (sign-in), or clear it (sign-out
- *  when passed null). No active server → no-op. */
-export async function setToken(t: string | null): Promise<void> {
-  _servers = setActiveToken(_servers, t || "")
+ *  when passed null). The username (when given) is stored alongside so actor
+ *  labels can render "you" without a round trip. No active server → no-op. */
+export async function setToken(t: string | null, username?: string): Promise<void> {
+  _servers = setActiveToken(_servers, t || "", t ? username : "")
   await persistServers()
   notifyServer()
+}
+
+/** The signed-in username on the active server ("" when unknown). Feeds the
+ *  actor-label rule in lib/board.ts so "user:ram" renders as "you". */
+export function username(): string {
+  return activeEntry(_servers)?.username || ""
 }
 
 /** Unsent composer draft for a session (empty string if none). */

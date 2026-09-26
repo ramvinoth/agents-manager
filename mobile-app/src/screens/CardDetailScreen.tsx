@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, isQueued, type BoardColumn, type Card, type CardComment, type Employee, type OrgProject } from "../api/client"
-import { setToken } from "../state/config"
+import { setToken, username } from "../state/config"
+import { formatActor, type ActorKind } from "../lib/board"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "./styles"
@@ -299,6 +300,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const assignee = employees.find((e) => e.id === card.assignee)?.name
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
+  // Principal strings ("user:ram", "session:Harman", "employee:?") rendered for a
+  // person — the same rule the web card detail uses (lib/board.ts).
+  const self = username()
+  const creator = formatActor(card.created_by, self)
 
   return (
     <KeyboardAvoidingView
@@ -326,6 +331,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         {card.body ? (
           <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{card.body}</Text>
         ) : null}
+
+        <Text style={{ color: t.textMuted, fontSize: 12 }}>
+          opened by <ActorName name={creator.name} kind={creator.kind} /> · {fmt(card.created_at)}
+        </Text>
 
         {/* the pipeline in one row: tap a column to move the card there. When
             the card resolves to no board, this becomes the attach-to-project
@@ -422,15 +431,18 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         <View style={{ height: 1, backgroundColor: t.border, marginVertical: 4 }} />
 
         {comments.length ? (
-          comments.map((c) => (
-            <View key={c.id} style={{ backgroundColor: t.surface, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: t.border }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
-                <Text style={{ color: t.text, fontSize: 12, fontWeight: "700" }}>{c.author}</Text>
-                <Text style={{ color: t.textMuted, fontSize: 11 }}>{fmt(c.created_at)}</Text>
+          comments.map((c) => {
+            const who = formatActor(c.author, self)
+            return (
+              <View key={c.id} style={{ backgroundColor: t.surface, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: who.kind === "agent" ? t.accent : t.border }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4, alignItems: "center" }}>
+                  <ActorName name={who.name} kind={who.kind} />
+                  <Text style={{ color: t.textMuted, fontSize: 11 }}>{fmt(c.created_at)}</Text>
+                </View>
+                <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{c.body}</Text>
               </View>
-              <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{c.body}</Text>
-            </View>
-          ))
+            )
+          })
         ) : (
           <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>No comments yet — start the discussion.</Text>
         )}
@@ -463,5 +475,20 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         </View>
       </View>
     </KeyboardAvoidingView>
+  )
+}
+
+/** One actor rendered for a person: the reader sees "you", other humans their
+ *  name, agents get a small "agent" marker. The rule is formatActor in
+ *  lib/board.ts (shared with the web card detail) — this is display only. */
+function ActorName({ name, kind }: { name: string; kind: ActorKind }) {
+  const t = useTheme()
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+      <Text style={{ color: t.text, fontSize: 12, fontWeight: "700" }}>{kind === "you" ? "you" : name}</Text>
+      {kind === "agent" ? (
+        <Text style={{ color: t.accent, fontSize: 10, fontWeight: "700" }}>agent</Text>
+      ) : null}
+    </View>
   )
 }

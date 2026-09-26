@@ -45,7 +45,9 @@ export default function LoginScreen({ navigation }: Props) {
     try {
       const res = signupOpen ? await api.signup(username, password) : await api.signin(username, password)
       if (!res.token) throw new Error("Server did not return a token")
-      await setToken(res.token)
+      // Record the username with the token so actor labels ("you") render
+      // client-side on cards and threads without a round trip.
+      await setToken(res.token, res.user?.username)
       // Register this device for background push now that we're authenticated,
       // declaring which build it runs (version + native build number from the
       // embedded Info.plist) so the server can see what is on the device.

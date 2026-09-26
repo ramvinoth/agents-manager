@@ -70,6 +70,31 @@ export function groupByColumn(
 }
 
 /**
+ * A principal actor string (viewer/server.py: `user:<name>` for a human,
+ * `session:<title>` / `employee:<name>` for an agent) rendered for a person:
+ * the name alone, plus whether it was a human, an agent, or the reader.
+ * "employee:?" is the server's marker for an unlinked agent, never a name.
+ *
+ * Ported verbatim from web/src/lib/board.ts so both clients label the same
+ * author identically — one rule, two renderings, no third copy in a screen.
+ */
+export type ActorKind = "you" | "human" | "agent" | "unknown"
+export function formatActor(actor: string | null | undefined, selfUsername?: string): { name: string; kind: ActorKind } {
+  const raw = (actor || "").trim()
+  const sep = raw.indexOf(":")
+  if (sep < 0) return raw ? { name: raw, kind: "unknown" } : { name: "Unknown", kind: "unknown" }
+  const prefix = raw.slice(0, sep)
+  const name = raw.slice(sep + 1).trim()
+  if (prefix === "user") {
+    return name ? { name, kind: name === selfUsername ? "you" : "human" } : { name: "Unknown user", kind: "unknown" }
+  }
+  if (prefix === "session" || prefix === "employee") {
+    return name && name !== "?" ? { name, kind: "agent" } : { name: "Unlinked agent", kind: "agent" }
+  }
+  return { name: raw, kind: "unknown" }
+}
+
+/**
  * nextPosition — the fractional rank for a card dropped at `index` within a column
  * that is ALREADY ordered by position (the card being moved assumed absent). Same
  * rule as server orglogic.next_position so client + server agree:

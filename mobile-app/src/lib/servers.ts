@@ -7,10 +7,13 @@
  * function takes and returns a plain `ServerState` — never mutating its input.
  */
 
-/** One saved backend: its URL, the per-server auth token, and an optional
- *  nickname. The token is server-specific (issued by that server's /api/auth),
- *  so it travels with the entry rather than living as a single global value. */
-export type ServerEntry = { id: string; url: string; token: string; name?: string }
+/** One saved backend: its URL, the per-server auth token, an optional
+ *  nickname, and the signed-in username. The token is server-specific
+ *  (issued by that server's /api/auth), so it travels with the entry rather
+ *  than living as a single global value. The username is recorded at sign-in
+ *  so actor labels ("user:ram" → you / human) can be rendered client-side
+ *  without a round trip — the server's /api/auth response carries it. */
+export type ServerEntry = { id: string; url: string; token: string; name?: string; username?: string }
 
 /** The whole persisted server selection: the list plus which entry is active. */
 export type ServerState = { servers: ServerEntry[]; activeId: string }
@@ -76,12 +79,16 @@ export function removeFromList(state: ServerState, id: string): ServerState {
 }
 
 /** Write a token onto the active entry (used after sign-in). No active entry →
- *  unchanged. Passing "" clears the token (sign-out). */
-export function setActiveToken(state: ServerState, token: string): ServerState {
+ *  unchanged. Passing "" clears the token (sign-out); passing "" or undefined
+ *  for username clears / leaves it alone respectively. */
+export function setActiveToken(state: ServerState, token: string, username?: string): ServerState {
   if (!activeEntry(state)) return state
-  const servers = state.servers.map((s) =>
-    s.id === state.activeId ? { ...s, token } : s
-  )
+  const servers = state.servers.map((s) => {
+    if (s.id !== state.activeId) return s
+    const next: ServerEntry = { ...s, token }
+    if (username !== undefined) next.username = username || undefined
+    return next
+  })
   return { ...state, servers }
 }
 
