@@ -24,7 +24,20 @@ from viewer import db, orglogic
 
 
 def _card_create(a):
-    return db.card_create(a.get("title", ""), a.get("body", ""), a.get("column_id"),
+    # A card is born in a LANE, not just on a board: with no column named, the
+    # board's first column (Todo in the seeded pipeline). The route already
+    # refuses a card with no board; a null column here would make the card
+    # exist in no lane and render on no board view (the other end of fc89546's
+    # rule). Every create path (HTTP, MCP, orchestrator intent, approval) runs
+    # through this one handler, so the default lives here, not in N clients.
+    column_id = a.get("column_id")
+    if not column_id and a.get("project_id"):
+        try:
+            cols = db.board_columns_list(int(a["project_id"]))
+        except (TypeError, ValueError):
+            cols = []
+        column_id = orglogic.project_columns(cols)["todo"]
+    return db.card_create(a.get("title", ""), a.get("body", ""), column_id,
                           a.get("assignee"), a.get("project_id"), a.get("session"),
                           a.get("position", 1.0), a.get("created_by", ""))
 

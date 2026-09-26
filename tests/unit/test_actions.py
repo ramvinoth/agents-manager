@@ -44,7 +44,13 @@ class FakeDB:
         return {"id": card_id, "project_id": 7}
 
     def board_columns_list(self, project_id):
-        return [{"id": 70, "name": "Todo"}, {"id": 77, "name": "Done"}]
+        return [{"id": 70, "name": "Todo", "position": 0},
+                {"id": 77, "name": "Done", "position": 7}]
+
+    def card_create(self, title, body="", column_id=None, assignee=None, project_id=None,
+                    session_id=None, position=1.0, created_by=""):
+        self.cards_moved.append(("create", title, column_id, project_id))
+        return {"id": 1, "title": title, "column_id": column_id, "project_id": project_id}
 
     def card_last_move(self, card_id, seconds):
         return None  # no recent write by another writer
@@ -178,6 +184,38 @@ def test_task_done_resolves_the_done_column_at_execution_time(fdb):
         actions.intent("task_done", {"card_id": 5}, "employee:bob"), "owner", "ic")
     assert status == 200
     assert fdb.cards_moved == [("move", 5, 77, 1.0)]
+
+
+# ── a card is born in a lane, not just on a board ────────────────────────────
+
+def test_card_create_without_column_defaults_to_the_boards_todo(fdb):
+    """A card with no column named lands in the board's first column (Todo) at
+    execution time, so it renders on a board view instead of existing in no
+    lane. The board's shape is resolved from the columns, never assumed."""
+    resp, status = actions.execute(
+        actions.intent("card_create", {"title": "park it", "project_id": 7},
+                       "employee:jarvis"), "owner", "ic")
+    assert status == 200
+    assert fdb.cards_moved == [("create", "park it", 70, 7)]
+
+
+def test_card_create_with_an_explicit_column_keeps_it(fdb):
+    resp, status = actions.execute(
+        actions.intent("card_create", {"title": "t", "project_id": 7, "column_id": 77},
+                       "employee:jarvis"), "owner", "ic")
+    assert status == 200
+    assert fdb.cards_moved == [("create", "t", 77, 7)]
+
+
+def test_card_create_without_columns_or_project_stays_laneless(fdb):
+    """No board shape to resolve against (and the route would have refused a
+    boardless card anyway) — the handler must not invent a column."""
+    fdb.board_columns_list = lambda project_id: []
+    resp, status = actions.execute(
+        actions.intent("card_create", {"title": "orphan"}, "employee:jarvis"),
+        "owner", "ic")
+    assert status == 200
+    assert fdb.cards_moved == [("create", "orphan", None, None)]
 
 
 # ── skill_propose vs skill_promote: same write, different risk ───────────────
