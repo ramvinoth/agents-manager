@@ -1,18 +1,16 @@
 /**
- * CallScreen — a WhatsApp-style voice CALL with the agentic assistant.
+ * CallScreen — a WhatsApp-style voice CALL with Harman.
  *
  * CallKit shows the system call UI, and the conversation keeps running with the
- * screen locked or the app backgrounded. It uses `useAssistantTurn` for the
- * hands-free loop — the only additions are the CallKit lifecycle (via
- * `callManager`) and a call-styled UI.
+ * screen locked or the app backgrounded. `useAssistantTurn` owns the listen /
+ * think / speak loop against the fast call brain — the only additions here are
+ * the CallKit lifecycle (via `callManager`) and a call-styled UI that shows the
+ * last thing heard and the last reply.
  *
- * Flow on mount: start the CallKit call → start the hands-free listen loop (forced
- * assistant voice). CallKit's didActivateAudioSession hands the audio session to
- * our expo-av coordinator. Ending (in-app End, Recents, or the LOCK SCREEN) stops
- * the loop, releases audio, and pops the screen.
- *
- * Half-duplex for v1: Harman finishes speaking, then the mic reopens — the status
- * line ("Speaking…") sets that expectation. True barge-in is Phase 2.
+ * Flow on mount: start the CallKit call → start the listen loop. CallKit's
+ * didActivateAudioSession hands the audio session to our expo-av coordinator.
+ * Ending (in-app End, Recents, or the LOCK SCREEN) stops the loop, releases
+ * audio, and pops the screen.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { Pressable, Text, View } from "react-native"
@@ -35,17 +33,15 @@ function fmtElapsed(sec: number): string {
 }
 
 export default function CallScreen({ route, navigation }: Props) {
-  const { host, path, label } = route.params
+  const { path, label } = route.params
   const t = useTheme()
   const insets = useSafeAreaInsets()
   // Barge-in "Harman, end the call" reaches hangUp via this ref (hangUp is defined
   // below the hook, so the hook gets a stable indirection instead of the closure).
   const hangUpRef = useRef<null | (() => void)>(null)
-  const turn = useAssistantTurn(host, path, {
-    callMode: true,
+  const { phase, engine, model, heard, reply, error, startHandsFree, stopHandsFree } = useAssistantTurn(path, {
     onEndCall: () => hangUpRef.current?.(),
   })
-  const { phase, error, startHandsFree, stopHandsFree, enrolled } = turn
 
   const [muted, setMuted] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -67,9 +63,6 @@ export default function CallScreen({ route, navigation }: Props) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      // If the user hasn't enrolled a voiceprint the wake+verify loop can't fire a
-      // turn; still start the call (they can enroll from the Voice screen), but the
-      // status line will show the unenrolled hint from the shared hook's error.
       await callManager.startCall(label, {
         onEnd: () => {
           // System / lock-screen End button → tear down through the same path.
@@ -110,10 +103,8 @@ export default function CallScreen({ route, navigation }: Props) {
 
   const statusLine =
     phase === "denied" ? "Microphone access denied"
-    : !enrolled ? "Enroll your voice in Voice mode first"
-    // A call runs the full agent, which may work silently for a while on a task
-    // (tools, files) before it speaks — "Working…" sets that expectation honestly.
-    : phase === "thinking" ? "Working…"
+    : phase === "connecting" ? (engine === "nemotron" ? "Loading voice model…" : "Connecting…")
+    : phase === "thinking" ? "Thinking…"
     : phase === "speaking" ? "Speaking…"
     : muted ? "Muted"
     : "Listening…"
@@ -121,7 +112,7 @@ export default function CallScreen({ route, navigation }: Props) {
   // A soft pulsing dot conveys "live" without animation deps: color by phase.
   const dotColor =
     phase === "speaking" ? t.accent
-    : phase === "thinking" ? t.textMuted
+    : phase === "thinking" || phase === "connecting" ? t.textMuted
     : muted ? t.danger
     : "#4caf50"
 
@@ -139,11 +130,29 @@ export default function CallScreen({ route, navigation }: Props) {
         </View>
         <Text style={{ color: t.text, fontSize: 24, fontWeight: "700" }}>Harman</Text>
         <Text style={{ color: t.textMuted, fontSize: 14 }} numberOfLines={1}>{label}</Text>
+        {/* The server's own name for what is answering — so a tester can tell a
+            Nemotron call from the STT/brain/TTS path without guessing. */}
+        {engine ? (
+          <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
+            {engine === "nemotron" ? `Voice: ${model || "Nemotron"}` : "Voice: call brain"}
+          </Text>
+        ) : null}
         <Text style={{ color: t.textMuted, fontSize: 13, marginTop: 2 }}>{fmtElapsed(elapsed)}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 }}>
           <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dotColor }} />
           <Text style={{ color: t.text, fontSize: 16 }}>{statusLine}</Text>
         </View>
+        {/* The exchange in text, so a glance confirms what was heard and said. */}
+        {heard ? (
+          <Text style={{ color: t.textMuted, fontSize: 14, textAlign: "center", marginTop: 12, maxWidth: 320 }} numberOfLines={2}>
+            You: {heard}
+          </Text>
+        ) : null}
+        {reply ? (
+          <Text style={{ color: t.text, fontSize: 14, textAlign: "center", marginTop: 4, maxWidth: 320 }} numberOfLines={4}>
+            {reply}
+          </Text>
+        ) : null}
         {error ? (
           <Text style={{ color: t.danger, fontSize: 13, textAlign: "center", marginTop: 8, maxWidth: 300 }}>{error}</Text>
         ) : null}

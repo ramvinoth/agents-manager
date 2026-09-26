@@ -24,16 +24,18 @@ import json
 import os
 import re
 import socket
-import subprocess
+import sys
 import threading
 from urllib.parse import urlparse, parse_qs
 
 from viewer import db, orglogic
+from viewer.remote import tailnet_ipv4
 from viewer.config import (
-    CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, claude_bin,
+    CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, VIEWER_PREFLIGHT, claude_bin,
 )
 from viewer.engine import (
-    loop_scheduler, run_loop_iteration, validate_session_credential,
+    loop_scheduler, run_loop_iteration, run_settings_paths_in_use,
+    run_settings_sweep_orphans, validate_session_credential,
 )
 
 
@@ -338,6 +340,8 @@ class SessionViewerHandler(
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
+        "/api/voice/nemotron/status": "_g_voice_nemotron_status",
+        "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/browser/frame": "_g_browser_frame",
@@ -358,6 +362,8 @@ class SessionViewerHandler(
         "/api/providers": "_g_providers",
         "/api/providers/default": "_g_providers_default",
         "/api/providers/models": "_g_providers_models",
+        "/api/ai/defaults": "_g_ai_defaults",
+        "/api/session/ai": "_g_session_ai",
         "/api/org/employees": "_g_org_employees",
         "/api/org/projects": "_g_org_projects",
         "/api/org/board": "_g_org_board",
@@ -412,9 +418,7 @@ class SessionViewerHandler(
         "/api/chat/permission/decide": "_p_chat_permission_decide",
         "/api/chat/question/answer": "_p_chat_question_answer",
         "/api/chat/plan/decide": "_p_chat_plan_decide",
-        "/api/voice/stt": "_p_voice_stt",
-        "/api/voice/tts": "_p_voice_tts",
-        "/api/voice/enroll": "_p_voice_enroll",
+        "/api/call/turn": "_p_call_turn",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
@@ -433,8 +437,10 @@ class SessionViewerHandler(
         "/api/agent-templates/delete": "_p_agent_templates_delete",
         "/api/session-meta": "_p_session_meta",
         "/api/providers": "_p_providers",
+        "/api/providers/models": "_p_providers_models",
+        "/api/ai/defaults": "_p_ai_defaults",
+        "/api/session/ai": "_p_session_ai",
         "/api/providers/delete": "_p_providers_delete",
-        "/api/providers/apply-default": "_p_providers_apply_default",
         "/api/org/employees": "_p_org_employees",
         "/api/org/employees/update": "_p_org_employees_update",
         "/api/org/projects": "_p_org_projects",
@@ -478,7 +484,8 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws",
+                b"/api/voice/nemotron/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
@@ -553,24 +560,37 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
         finally:
             self.shutdown_request(request)
 
+    # A client hanging up mid-response (the app cancelling a transcript poll,
+    # a tab closing) surfaces as one of these while the handler writes. It is
+    # the client's choice, not a server fault; the stdlib default prints a full
+    # 20-line traceback for each, and those bury the real errors in the log.
+    CLIENT_GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, self.CLIENT_GONE):
+            print(f"client {client_address[0]} disconnected mid-response ({type(exc).__name__})",
+                  file=sys.stderr)
+            return
+        super().handle_error(request, client_address)
+
     def server_close(self):
         super().server_close()
         self._pool.shutdown(wait=False)
 
 
 def main():
+    # Under launchd stdout is a file, so Python block-buffers it: the boot
+    # banner and every print() diagnostic sit in an 8 KiB buffer until it fills
+    # or the process exits cleanly. `launchctl kickstart -k` SIGKILLs, so the
+    # buffer is simply lost — the log showed three banners for weeks of
+    # restarts. stderr (logging, tracebacks) is already line-buffered.
+    sys.stdout.reconfigure(line_buffering=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    tailscale_ip = "N/A"
-    try:
-        result = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
-        tailscale_ip = result.stdout.strip()
-    except Exception:
-        pass
-
     try:
         db.init_db()
     except Exception as e:
@@ -579,12 +599,34 @@ def main():
     if not (UI_DIR / "index.html").exists():
         print(f"  ⚠ web UI not built ({UI_DIR}) — run: cd web && npm install && npm run build")
 
-    threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
+    # Nothing is running yet at boot: loop runs from the previous process died with
+    # it, so their still-'running' history rows are closed as errors and the
+    # --settings files those runs held (provider credentials) are removed before
+    # the scheduler can open new ones. A preflight boot shares this Postgres and
+    # $TMPDIR with a live server whose runs ARE running — it must not touch either,
+    # nor start a second scheduler.
+    if VIEWER_PREFLIGHT:
+        print("  ⚠ PREFLIGHT (VIEWER_PREFLIGHT) — boot reconciliation and scheduler skipped")
+    else:
+        try:
+            abandoned = db.job_runs_abandon_running()
+            if abandoned:
+                print(f"  ⚠ closed {abandoned} loop run(s) left 'running' by the previous server process")
+        except Exception as e:
+            print(f"  ⚠ job_runs reconciliation failed: {e}")
+        try:
+            swept = run_settings_sweep_orphans(run_settings_paths_in_use())
+            if swept:
+                print(f"  ⚠ removed {len(swept)} orphaned run settings file(s) left by the previous server process")
+        except Exception as e:
+            print(f"  ⚠ run settings sweep failed: {e}")
+        threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
     server = PooledHTTPServer((os.environ.get("VIEWER_HOST","0.0.0.0"), PORT), SessionViewerHandler)
 
     print("Agents")
     print(f"  Local:     http://localhost:{PORT}/")
-    print(f"  Tailscale: http://{tailscale_ip}:{PORT}/")
+    tailscale_ip = tailnet_ipv4()
+    print("  Tailscale: " + (f"http://{tailscale_ip}:{PORT}/" if tailscale_ip else "N/A (no tailnet address found)"))
     print(f"  Network:   http://0.0.0.0:{PORT}/")
     if VIEWER_NO_AUTH:
         print("  ⚠ AUTH DISABLED (VIEWER_NO_AUTH) — the API exposes a shell + FS; front it with your own auth")

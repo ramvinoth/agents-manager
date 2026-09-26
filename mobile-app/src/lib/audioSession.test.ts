@@ -13,8 +13,9 @@ import assert from "node:assert"
 import { AudioSession, type AudioBackend, type RecordingHandle } from "./audioSession.ts"
 
 let passed = 0
+const tests: Promise<void>[] = []
 function test(name: string, fn: () => Promise<void> | void) {
-  Promise.resolve()
+  tests.push(Promise.resolve()
     .then(fn)
     .then(
       () => {
@@ -24,7 +25,7 @@ function test(name: string, fn: () => Promise<void> | void) {
         console.error(`✖ ${name}\n  ${(e as Error).message}`)
         process.exitCode = 1
       }
-    )
+    ))
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 5))
@@ -209,7 +210,61 @@ test("adoptActiveSession falls back to setRecordMode when adopt path is absent",
   assert.ok(m.log.includes("setRecordMode"), "fell back to the plain path")
 })
 
-// Report after the microtask/timer queue drains.
-setTimeout(() => {
+test("stop interrupts active playback rather than waiting behind it", async () => {
+  const m = makeBackend()
+  const s = new AudioSession(m.backend)
+  const playing = s.play("fixture.wav", {})
+  await tick(); await tick(); await tick()
+  assert.ok(m.isHeld())
+  await s.stopPlayback()
+  await playing
+  assert.equal(m.isHeld(), false)
+  assert.equal(s.getState(), "idle")
+})
+
+test("reset interrupts active playback before queued cleanup", async () => {
+  const m = makeBackend()
+  const s = new AudioSession(m.backend)
+  const playing = s.play("fixture.wav", {})
+  await tick(); await tick(); await tick()
+  assert.ok(m.isHeld())
+  await s.reset()
+  await playing
+  assert.equal(s.getState(), "idle")
+})
+
+test("stop invalidates queued playback", async () => {
+  const m = makeBackend()
+  const s = new AudioSession(m.backend)
+  const playing = s.play("fixture.wav", {})
+  await s.stopPlayback()
+  await playing
+  assert.ok(!m.log.includes("playStart"))
+})
+
+test("stop during audio-mode setup prevents playback", async () => {
+  const m = makeBackend()
+  let release!: () => void
+  let entered!: () => void
+  const setupStarted = new Promise<void>(resolve => { entered = resolve })
+  m.backend.setRecordMode = () => {
+    entered()
+    return new Promise<void>(resolve => { release = resolve })
+  }
+  const s = new AudioSession(m.backend)
+  const playing = s.play("fixture.wav", {})
+  await setupStarted
+  await s.stopPlayback()
+  release()
+  await playing
+  assert.ok(!m.log.includes("playStart"))
+})
+
+const watchdog = setTimeout(() => {
+  console.error("Audio session tests did not settle")
+  process.exit(1)
+}, 5000)
+Promise.all(tests).then(() => {
+  clearTimeout(watchdog)
   if (!process.exitCode) console.log(`${passed} passing`)
-}, 100)
+})

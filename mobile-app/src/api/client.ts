@@ -7,6 +7,8 @@
  */
 import { serverUrl, token } from "../state/config"
 import { normModel } from "../lib/model"
+import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
+import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 
 export type User = { id: number; username: string }
 export type Host = {
@@ -19,6 +21,28 @@ export type Host = {
   keyFile: string
 }
 export type ChatResult = { session: string }
+/** The call brain's conversation memory (OpenAI-style messages). Opaque to the
+ *  app: stored between turns and sent back verbatim. */
+export type CallHistory = Array<Record<string, unknown>>
+/** The Nemotron GPU service's /health, passed through by the viewer as-is (see
+ *  viewer.nemotron.status / deploy/voicechat_service.py `health`). Every field
+ *  but `enabled` is the SERVER's own claim about itself — the phone must never
+ *  hardcode a backend name/model or infer capabilities from anywhere else.
+ *  `tools`/`duplex` are always false for this backend today; the UI must never
+ *  promise delegation or true two-way audio regardless of `model`/`backend`. */
+export type NemotronStatus = {
+  enabled: boolean
+  installed: boolean
+  ready: boolean
+  busy: boolean
+  backend?: string
+  model?: string
+  input?: { format: string; rate: number; channels: number; max_seconds: number }
+  output?: { format: string; rate: number; channels: number }
+  tools?: boolean
+  duplex?: boolean
+  error?: string
+}
 export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
@@ -45,6 +69,7 @@ export type AgentInfo = {
   loggedIn?: boolean
   docs?: string
 }
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass"
 export type PermApproval = { id: string; tool_name: string; input: unknown }
 export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string; provider?: string; convMode?: "chat" | "agent"; effort?: string }
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
@@ -72,7 +97,6 @@ export type BoardColumn = { id: number; name: string; position: number }
 export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
-export type AuditEntry = { id: number; actor: string; action: string; target: unknown; outcome: string; created_at: number }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
@@ -263,6 +287,7 @@ export const api = {
     systemPrompt?: string
     goal?: string
     effort?: string
+    ai?: AISelection
   }) => req<{ started: boolean; session: string; path: string }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
   // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
   resolve: (id: string, host?: string) =>
@@ -290,6 +315,12 @@ export const api = {
     queue?: boolean
   }) => req<ChatResult>("POST", "/api/chat", { ...body, model: normModel(body.model) }),
   chatStatus: (id: string) => req<ChatStatus>("GET", `/api/chat/status?id=${encodeURIComponent(id)}`),
+  // One spoken exchange with the fast call brain. It answers in ~1-2 s: small talk
+  // itself, real work handed to the session at `path` as a background turn (the
+  // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
+  // echo the returned one back on the next turn; the server keeps no call state.
+  callTurn: (body: { path: string; text: string; history: CallHistory; mode?: string }) =>
+    req<{ reply: string; history: CallHistory; tools: string[] }>("POST", "/api/call/turn", body),
   // The server derives the session id from `path` (via sid_from_path, which also
   // accepts a bare id). Send `path` to match — sending `session` is ignored and
   // yields "Session and message required".
@@ -346,6 +377,15 @@ export const api = {
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
 
+  sessionDetail: (host: string, id: string) =>
+    req<{ session: string; meta: { permission_mode: string }; running: boolean }>(
+      "GET", `/api/session-detail?${new URLSearchParams({ host, id, agent: "claude" })}`
+    ),
+  sessionModeSet: (session: string, mode: PermissionMode) =>
+    req<{ session?: string; permission_mode?: PermissionMode; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
+      "POST", "/api/session/mode", { for_session: session, mode }
+    ),
+
   // ---- per-session metadata (system prompt + goal), mirrors web api.sessionMeta ----
   sessionMeta: (host: string, session: string) =>
     req<SessionMeta>(
@@ -360,21 +400,18 @@ export const api = {
   //      on save but never returned; /models is fetched server-side so the key
   //      never touches the device. ----
   providers: () => req<{ providers: Provider[] }>("GET", "/api/providers"),
-  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; contextLimit?: number; isDefault?: boolean }) =>
+  aiConfig: (scope: { id?: string; host: string; agent?: string }, selection?: AISelection) =>
+    req<AIConfig>("GET", `${scope.id ? "/api/session/ai" : "/api/ai/defaults"}?${new URLSearchParams({ host: scope.host, agent: scope.agent || "claude", ...(scope.id ? { id: scope.id } : {}), ...(selection ? { provider: selection.provider, convMode: selection.convMode } : {}) })}`),
+  aiSave: (scope: { id?: string; host: string; agent?: string }, revision: number, selection: AISelection) =>
+    req<AIConfig>("POST", scope.id ? "/api/session/ai" : "/api/ai/defaults", { ...scope, agent: scope.agent || "claude", revision, selection }),
+  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; apiKeyAction?: KeyAction; contextLimit?: number }) =>
     req<Provider & { error?: string }>("POST", "/api/providers", body),
   providerDelete: (id: string) => req<{ deleted?: boolean }>("POST", "/api/providers/delete", { id }),
   providerDefault: () => req<{ id: string }>("GET", "/api/providers/default"),
-  providerApplyDefault: (id: string) => req<{ updated: number }>("POST", "/api/providers/apply-default", { id }),
-  // Populate the model dropdown: either from a saved preset (id), or by probing a
-  // baseUrl+key before the preset is saved.
-  providerModels: (q: { id: string } | { baseUrl: string; key?: string }) =>
-    req<{ models: string[]; error?: string }>(
-      "GET",
-      "/api/providers/models?" +
-        new URLSearchParams(
-          "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
-        ).toString()
-    ),
+  providerModels: (q: { id: string }) =>
+    req<ModelDiscovery>("GET", `/api/providers/models?${new URLSearchParams(q)}`),
+  providerDraftModels: (draft: ConnectionDraft) =>
+    req<ModelDiscovery>("POST", "/api/providers/models", draft),
 
   // ---- capabilities: skills + MCP tools (host-aware), mirrors web api ----
   capabilities: (host: string, cwd?: string) =>
@@ -470,80 +507,40 @@ export const api = {
     return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
   },
 
-  // ---- voice (speech-to-text + text-to-speech) ----
-  // STT: POST the recorded audio as the raw request body (the server reads the
-  // body directly by Content-Length — see _p_voice_stt). `body` is a Blob (RN
-  // gives one from fetch(fileUri).blob()) so the platform sets Content-Length.
-  voiceStt: async (audio: Blob, mime = "audio/m4a"): Promise<{ text: string }> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const res = await fetch(`${serverUrl()}/api/voice/stt`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": mime },
-      body: audio,
-    })
-    const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null
-    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
-    return { text: data?.text || "" }
-  },
-  // TTS: POST text, get back WAV audio bytes as a Blob. The voice lib writes it
-  // to a temp file for Audio playback (expo-av can't POST a remote source).
-  voiceTts: async (text: string): Promise<Blob> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const res = await fetch(`${serverUrl()}/api/voice/tts`, {
-      method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    })
-    if (!res.ok) {
-      const err = (await res.json().catch(() => null)) as { error?: string } | null
-      throw new Error(err?.error || `HTTP ${res.status}`)
-    }
-    return await res.blob()
-  },
+  // ---- voice (call listening + text-to-speech) ----
   // Streaming TTS URL for react-native-track-player: a GET that returns a live
   // AAC stream (Pocket generate_audio_stream -> ffmpeg). track-player plays the
   // URL and can send the Authorization header, so first audio arrives in ~0.5s
   // even for a long reply. Returns { url, headers } for TrackPlayer.add().
-  // assistant=true routes to the Harman assistant service: `text` is the user's
-  // UTTERANCE (not a pre-made reply); the server answers via the Qwen agent and
-  // speaks it back in the cloned assistant voice — brain + voice in one stream.
-  voiceTtsStreamUrl: (text: string, assistant?: boolean): { url: string; headers: Record<string, string> } => ({
-    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}${assistant ? "&assistant=1" : ""}`,
+  voiceTtsStreamUrl: (text: string): { url: string; headers: Record<string, string> } => ({
+    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}`,
     headers: authHeaders(),
   }),
-  // Enroll the user's voiceprint from a recorded clip (a few seconds of speech).
-  // Body is the raw audio Blob (same wire shape as voiceStt); the server stores a
-  // speaker embedding so hands-free listening can verify the speaker.
-  voiceEnroll: async (
-    audio: Blob,
-    speakerId = "default",
-    mime = "audio/m4a"
-  ): Promise<{ ok: boolean; speaker_id?: string; dim?: number }> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const res = await fetch(
-      `${serverUrl()}/api/voice/enroll?speaker_id=${encodeURIComponent(speakerId)}`,
-      { method: "POST", headers: { ...authHeaders(), "Content-Type": mime }, body: audio }
-    )
-    const data = (await res.json().catch(() => null)) as
-      | { ok?: boolean; speaker_id?: string; dim?: number; error?: string }
-      | null
-    if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
-    return { ok: !!data?.ok, speaker_id: data?.speaker_id, dim: data?.dim }
-  },
-  // Hands-free listening WebSocket. The app streams short audio windows (binary
-  // frames); the server runs wake-word + strict speaker verification on the GPU
-  // box and pushes back {type:"utterance",text} ONLY when the enrolled user says
-  // "Harman …". Auth rides the handshake header (RN WebSocket allows it).
-  voiceWsUrl: (speakerId = "default", callMode = false): { url: string; headers: Record<string, string> } => {
-    const base = serverUrl().replace(/^http/, "ws")
-    // callMode drops the per-turn "Harman" wake word (a phone call is already the
-    // "talking to you" signal); speaker verification still gates who.
-    const mode = callMode ? "&mode=call" : ""
-    return {
-      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}${mode}`,
-      headers: authHeaders(),
-    }
-  },
+  // Call listening WebSocket. The app streams endpointed utterances (binary
+  // frames); the server transcribes each on the GPU box and pushes back
+  // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
+  // signal, so there is no per-turn wake word. Auth rides the handshake header.
+  voiceWsUrl: (): { url: string; headers: Record<string, string> } => ({
+    url: `${serverUrl().replace(/^http/, "ws")}/api/voice/ws?mode=call`,
+    headers: authHeaders(),
+  }),
+
+  // ---- Nemotron voicechat (call audio, turn-based) ----
+  // GET /api/voice/nemotron/status -> the GPU service's /health passed through
+  // (see viewer.nemotron.status). Always 200 in the normal/disabled case; only a
+  // configured-but-broken backend returns 502 with `error` set. `ready:false`
+  // while idle is EXPECTED (the model loads per call) — poll `installed` to
+  // decide whether to show the feature at all, and `ready` only means "this
+  // call's model finished loading", never "feature available".
+  nemotronStatus: () => req<NemotronStatus>("GET", "/api/voice/nemotron/status"),
+  // The one Nemotron call WS for a session. Same auth pattern as voiceWsUrl:
+  // Bearer token on the handshake header (RN's WebSocket 3rd-arg), never a
+  // query param. `kind:"ready"` arrives once the model loaded for this call —
+  // never send audio before it. Binary replies precede their turn_end frame.
+  nemotronWsUrl: (path: string): { url: string; headers: Record<string, string> } => ({
+    url: `${serverUrl().replace(/^http/, "ws")}/api/voice/nemotron/ws?path=${encodeURIComponent(path)}`,
+    headers: authHeaders(),
+  }),
 
   // Barge-in wake-guard WS: a lightweight keyword-spotting stream that runs WHILE
   // the assistant is speaking. The server uses a cheap KWS pass (not full STT) so
@@ -641,7 +638,8 @@ export const api = {
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),
-  orgAudit: (limit = 100) => req<{ audit: AuditEntry[] }>("GET", `/api/org/audit?limit=${limit}`),
+  orgAudit: async (result: AuditFilter = "all", before?: number) =>
+    parseAuditPage(await req("GET", auditPath(result, before)), before),
   orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
   orgSetHarman: (patch: Partial<HarmanConfig>) =>
     req<HarmanConfig | Queued>("POST", "/api/org/harman", patch),

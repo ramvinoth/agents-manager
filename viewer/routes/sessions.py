@@ -33,7 +33,7 @@ class SessionsMixin:
         except Exception:
             self.send_error(400, "Invalid path")
             return None
-        if not full_path.exists():
+        if not full_path.is_file():
             self.send_error(404, "Session not found")
             return None
         return full_path
@@ -369,23 +369,17 @@ class SessionsMixin:
                     break
                 self.wfile.write(chunk)
 
-    # ----- Chat -----
-
-    def launch_claude(self, session_id, session_args, message, mode, cwd, model=""):
-        """Spawn a headless claude run via the shared runner. Returns False (and
-        sends a 409) if the session is already busy."""
-        if not start_claude_run(session_id, session_args, message, mode, cwd, model):
-            self.send_json({"error": "A message is already being processed for this session"}, status=409)
-            return False
-        return True
-
     def resolve_session_quiet(self, rel_path):
         """Like resolve_session but returns None without sending an error."""
         try:
             full_path = (CLAUDE_DIR.parent / rel_path).resolve()
             if not str(full_path).startswith(str(CLAUDE_DIR.parent.resolve()) + os.sep):
                 return None
-            return full_path if full_path.exists() else None
+            # A session is a regular file (its .jsonl). A directory under
+            # ~/.claude exists too, but is not a session — and a route that
+            # accepted one would bind real resources (a GPU call slot, a chat
+            # job) to something no transcript can ever be written to.
+            return full_path if full_path.is_file() else None
         except Exception:
             return None
 
@@ -793,6 +787,26 @@ class SessionsMixin:
 
     # ----- Fork / restore / delete -----
 
+    @staticmethod
+    def carry_fork_meta(parent_sid, new_sid, title=""):
+        """A fork inherits the parent conversation, so it must inherit the parent's
+        per-session settings too — provider, model, permission mode, effort,
+        convMode, kanbanProject and any UI prefs all live in the session_meta row,
+        keyed by session id, which copying the transcript alone does not carry.
+        Without this the child silently falls back to defaults (a different model /
+        provider / permission mode than the session it was forked from). The child
+        gets its own title (its own identity) but inherits everything else. No-op
+        when the parent has no meta row."""
+        meta = dict(db.session_meta_get(parent_sid) or {})
+        if title:
+            meta["title"] = title
+        elif "title" in meta:
+            # Don't duplicate the parent's title onto the fork; a fork with no
+            # explicit title reads as "<parent> (fork)" in the list, not a twin.
+            meta.pop("title", None)
+        if meta:
+            db.session_meta_set(new_sid, meta)
+
     def _g_sessions(self, req):
         reader = (req.principal or {}).get("actor", "")
         agent = (req.query.get("agent") or ["claude"])[0]
@@ -842,14 +856,18 @@ class SessionsMixin:
         if agent == "codex" and host == "local":
             title = (body.get("title") or "").strip()[:200]
             res = codex_fork(body.get("session", ""), cut_uuid, title)
-            if title and res.get("session"):
-                db.session_meta_patch(res["session"], {"title": title})
+            if res.get("session"):
+                parent_sid = self.sid_from_path(body.get("session", "")) or ""
+                self.carry_fork_meta(parent_sid, res["session"], title)
             self.send_host_result(res)
             return
         if host != "local":
             sid = self.sid_from_path(body.get("session", ""))
             title = (body.get("title") or "").strip()[:200]
-            self.send_json(remote_session_edit(host, "fork", sid, uuid=cut_uuid, title=title))
+            res = remote_session_edit(host, "fork", sid, uuid=cut_uuid, title=title)
+            if isinstance(res, dict) and res.get("session"):
+                self.carry_fork_meta(sid or "", res["session"], title)
+            self.send_json(res)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
         if not full:
@@ -879,6 +897,8 @@ class SessionsMixin:
             self.send_json({"error": str(e)}, status=500)
             return
         rel = str(dst.relative_to(CLAUDE_DIR.parent))
+        parent_sid = self.sid_from_path(body.get("session", "")) or full.stem
+        self.carry_fork_meta(parent_sid, new_sid, title)
         self.send_json({"forked": True, "path": rel, "session": new_sid,
                         "message": self.message_text(cut)})
 
@@ -920,6 +940,21 @@ class SessionsMixin:
                 self.send_json({"error": f"Not a directory: {cwd}"}, status=400)
                 return
 
+        from viewer import ai
+        selection = body.get("ai")
+        if "ai" not in body and body.get("agent", "claude") == "claude":
+            defaults = db.setting_get(ai.DEFAULTS_KEY) or {}
+            selection = defaults.get("selection")
+        if selection is not None:
+            try:
+                selection = ai.validate(selection, host, body.get("agent", "claude"))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, status=400)
+                return
+        elif "ai" in body:
+            self.send_json({"error": "ai must be a selection object"}, status=400)
+            return
+
         if body.get("agent", "claude") == "codex":
             if host != "local":
                 self.send_json({"error": "New Codex sessions are local-only"}, status=400)
@@ -956,21 +991,24 @@ class SessionsMixin:
         conv_mode = (body.get("convMode") or "chat").strip()
         if conv_mode not in ("chat", "agent"):
             conv_mode = "chat"
-        if sp or goal or provider or effort:
-            meta = {"systemPrompt": sp, "goal": goal}
-            if provider:
-                meta["provider"] = provider[:64]
-                meta["convMode"] = conv_mode
-            if effort and effort in ("low", "medium", "high", "xhigh", "max"):
-                meta["effort"] = effort
-            db.session_meta_set(session_id, meta)
+        meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
+                "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+        if selection is not None:
+            meta.update(ai.meta_fields(selection), aiRevision=1)
+        try:
+            resolved = ai.resolve(meta, model, host)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
+        provider, model, conv_mode, effort = (resolved[k] for k in ("provider", "model", "convMode", "effort"))
+        db.session_meta_set(session_id, meta)
         # A new custom-provider session (local only).
         if provider and host == "local":
             if conv_mode == "agent":
                 # Agent mode: the full harness pointed at the custom endpoint. The
                 # claude CLI creates the transcript (as a normal Claude session).
                 from viewer import providers
-                penv = providers.anthropic_env(provider)
+                penv = providers.anthropic_env(provider, model=model, preset=resolved["preset"])
                 if not penv:
                     self.send_json({"error": "Provider unavailable"}, status=502)
                     return
@@ -982,7 +1020,7 @@ class SessionsMixin:
                 return
             # Chat mode: the viewer proxies and creates the transcript file itself.
             from viewer.customrun import start_custom_run
-            if not start_custom_run(session_id, provider, message, cwd, host, mode):
+            if not start_custom_run(session_id, provider, message, cwd, host, mode, model=model, preset=resolved["preset"]):
                 self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)
                 return
             self.send_json({"started": True, "session": session_id})

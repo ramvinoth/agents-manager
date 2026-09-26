@@ -43,7 +43,23 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(
 # is the one public path (it's entirely client-side). Set VIEWER_NO_AUTH=1 only
 # when fronting the tool with your own auth/proxy.
 VIEWER_NO_AUTH = os.environ.get("VIEWER_NO_AUTH") == "1"
+# A preflight boot (spare port, same Postgres, live server still running) only
+# proves the code imports and serves. It must not act on shared state: boot
+# reconciliation would close the live server's in-flight job_runs as "restarted
+# mid-run" and sweep the settings files its runs are using, and a second
+# scheduler would fire due loops twice.
+VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
+
+
+def transcript_path(session_id):
+    """The local transcript of a session, or None: <project-dir>/<id>.jsonl one
+    level under CLAUDE_DIR (the CLI's layout). The one rule every resolver
+    shares — the scheduler cannot resume a session this returns None for."""
+    if not session_id:
+        return None
+    matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
 
 # The UI is the built React app in web/dist — run `cd web && npm run build` first
@@ -89,12 +105,18 @@ VERIFY_SERVICE_URL = os.environ.get(
     "HARMAN_VERIFY_URL", "http://100.115.120.89:8095")
 VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
 
-# The Harman assistant voice service (deploy/harman_assistant_service.py):
-# takes a USER UTTERANCE, routes action requests to the Qwen agent (:8081),
-# and speaks the answer in the cloned assistant voice (Step-Audio :8000 + token2wav),
-# streamed as ADTS-AAC — same contract as the Pocket TTS stream, so the voice
-# route can proxy it unchanged. Selected per-request via ?assistant=1.
-ASSISTANT_SERVICE_URL = os.environ.get("HARMAN_ASSISTANT_URL", "http://100.115.120.89:8099")
+# ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====
+# A SEPARATE, single-slot GPU backend (see deploy/voicechat.md) — not the
+# sherpa-onnx STT/TTS service above. Empty URL/token-file disables it: no
+# production default, so a fresh install never proxies to a box it hasn't
+# been pointed at. The service token lives in a private file (same 0600
+# read-a-secret-file convention as VIEWER_TOKEN_FILE / viewer/login.py),
+# never in an env var a process listing could show, and is read fresh on
+# each request rather than cached in memory at import time.
+NEMOTRON_URL = os.environ.get("HARMAN_NEMOTRON_URL", "")
+NEMOTRON_TOKEN_FILE = (Path(os.environ["HARMAN_NEMOTRON_TOKEN_FILE"])
+                      if os.environ.get("HARMAN_NEMOTRON_TOKEN_FILE") else None)
+NEMOTRON_TIMEOUT = int(os.environ.get("HARMAN_NEMOTRON_TIMEOUT", "15"))  # /health only
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()

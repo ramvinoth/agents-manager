@@ -1,9 +1,10 @@
 /**
- * Voice I/O helpers for call mode — the mechanics of recording a spoken turn
+ * Voice I/O helpers for call mode — the mechanics of listening for utterances
  * and speaking a reply, kept out of the screen so the component stays about UI.
  *
- * Recording produces an .m4a the server transcribes (its ffmpeg fallback decodes
- * m4a). Playback streams the viewer's live AAC via react-native-track-player.
+ * Listening records endpointed .m4a utterances and streams them over the voice
+ * WebSocket (the server transcribes; its ffmpeg fallback decodes m4a). Playback
+ * streams the viewer's live AAC via react-native-track-player.
  *
  * IMPORTANT: this module does NOT touch the iOS audio session directly. All
  * recorder/playback/session transitions go through `audioSession` (the single
@@ -16,7 +17,6 @@
  */
 import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"
-import * as SecureStore from "expo-secure-store"
 import { api } from "../api/client"
 import { audioSession } from "./audioSessionNative"
 import {
@@ -32,139 +32,44 @@ export async function prepareAudio(): Promise<boolean> {
   return audioSession.configure()
 }
 
-/** Start a push-to-talk recording; the coordinator guarantees any prior playback
- *  has released the session first. Returns the live recorder handle. */
-export async function startRecording(): Promise<Audio.Recording> {
-  return audioSession.record(Audio.RecordingOptionsPresets.HIGH_QUALITY) as Promise<Audio.Recording>
-}
-
 /** Force-release the recorder + any playback (screen unmount / loop stop). */
-export async function resetRecorder(): Promise<void> {
+async function resetRecorder(): Promise<void> {
   await audioSession.reset()
 }
 
-// Silence floor (dBFS) for the on-device VAD. expo-av meters loudness in dBFS —
-// roughly -160 (pure silence) up to 0 (clipping). A window whose PEAK stays
-// below this never contained speech, so we skip it entirely (no upload / decode /
-// STT) — that's what cuts the battery cost of always-listening at rest. Tunable
-// via setVadThreshold(); -45 is conservative but still catches room-level speech.
-let _vadFloorDb = -45
+// Silence floor (dBFS) for the on-device endpointer. expo-av meters loudness in
+// dBFS — roughly -160 (pure silence) up to 0 (clipping). An utterance whose PEAK
+// stays below this never contained speech, so it is dropped without an upload —
+// that's what cuts the battery cost of always-listening at rest. -45 is
+// conservative but still catches room-level speech.
+const VAD_FLOOR_DB = -45
 
-/** Adjust the on-device VAD silence floor (dBFS, negative). Lower = more
- *  sensitive (sends quieter windows). */
-export function setVadThreshold(db: number): void {
-  _vadFloorDb = db
-  // Keep the endpointer's loudness floor in sync — otherwise this knob only
-  // affects the legacy window gate and does nothing on the real hands-free/call
-  // endpointing path (which reads _endpointOpts.floorDb, snapshotted at init).
-  _endpointOpts.floorDb = db
-}
-
-/** Recording options with metering enabled so each window reports a peak dB level
- *  for the VAD gate. */
+/** Recording options with metering enabled so each frame reports a dB level for
+ *  the endpointer. */
 const METERED_OPTIONS: Audio.RecordingOptions = {
   ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
   isMeteringEnabled: true,
 }
 
-/**
- * Stop the current recording (via the session owner) and transcribe it. Returns
- * the recognized text (may be "" for silence). Cleans up the temp file.
- *
- * The `recording` arg is accepted for call-site clarity but the owner tracks the
- * live recorder, so we stop through it to keep session state consistent.
- */
-export async function stopAndTranscribe(_recording: Audio.Recording): Promise<string> {
-  const uri = await audioSession.stopRecording()
-  if (!uri) return ""
-  try {
-    const res = await fetch(uri)
-    const blob = await res.blob()
-    const { text } = await api.voiceStt(blob, "audio/m4a")
-    return text
-  } finally {
-    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
-  }
-}
-
-/** Record ~`seconds` of speech and return it as a Blob (m4a), or null. Used by
- *  enrollment (one clean clip). Goes through the session owner. */
-async function _recordClipBlob(seconds: number): Promise<Blob | null> {
-  await audioSession.record(METERED_OPTIONS)
-  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
-  const uri = await audioSession.stopRecording()
-  if (!uri) return null
-  try {
-    const res = await fetch(uri)
-    return await res.blob()
-  } finally {
-    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
-  }
-}
-
-/**
- * Record ~`seconds` and return the raw m4a bytes as an ArrayBuffer, plus whether
- * the window was silent. Used by the hands-free listen loop.
- *
- * On-device VAD: with metering enabled we watch the window's PEAK loudness. If it
- * never rose above the silence floor, we return {silent:true} WITHOUT reading the
- * file — the caller skips the upload + server STT for that window (the battery
- * win). The recorder is obtained from the session owner (so it's serialized with
- * playback); the metering callback is a read-only observation set on the handle.
- */
-async function _recordListenWindow(
-  seconds: number
-): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
-  let peak = -160
-  const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
-  rec.setProgressUpdateInterval(120)
-  rec.setOnRecordingStatusUpdate((s) => {
-    if (s.isRecording && typeof s.metering === "number" && s.metering > peak) {
-      peak = s.metering
-    }
-  })
-  await new Promise((r) => setTimeout(r, Math.max(300, seconds * 1000)))
-  const uri = await audioSession.stopRecording()
-  // VAD gate: window never rose above the silence floor -> skip it (no upload).
-  if (peak < _vadFloorDb) {
-    if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
-    return { buf: null, silent: true }
-  }
-  if (!uri) return { buf: null, silent: false }
-  try {
-    const b64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
-    })
-    return { buf: _base64ToArrayBuffer(b64), silent: false }
-  } catch {
-    return { buf: null, silent: false }
-  } finally {
-    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})
-  }
-}
-
-/** Default endpointing profile for the call/hands-free loop: forgiving 1.5s
- *  silence-hang (tolerates thinking pauses; resuming speech extends the window),
- *  a 15s hard cap, and a 4s "you never spoke" give-up so a truly silent window is
- *  dropped fast (battery). Tunable via setEndpointOptions(). */
-let _endpointOpts: EndpointOptions = {
-  floorDb: _vadFloorDb,
+/** Endpointing profile for the call loop: forgiving 1.5s silence-hang (tolerates
+ *  thinking pauses; resuming speech extends the window), a 15s hard cap, and a 4s
+ *  "you never spoke" give-up so a truly silent window is dropped fast (battery). */
+const ENDPOINT_OPTS: EndpointOptions = {
+  floorDb: VAD_FLOOR_DB,
   silenceHangMs: 1500,
   maxMs: 15000,
   noSpeechTimeoutMs: 4000,
 }
 
-/** Adjust the endpointing profile (e.g. a snappier hang). Loudness floor stays in
- *  sync with the VAD threshold unless overridden here. */
-export function setEndpointOptions(opts: Partial<EndpointOptions>): void {
-  _endpointOpts = { ..._endpointOpts, floorDb: _vadFloorDb, ...opts }
-}
+/** One endpointed recording window: the m4a bytes (null if unreadable) and
+ *  whether the caller never spoke (dropped on-device, nothing uploaded). */
+export type Utterance = { buf: ArrayBuffer | null; silent: boolean }
 
 /**
  * Record ONE utterance with silence-based endpointing: keep recording until the
  * speaker finishes (≈`silenceHangMs` of trailing quiet after speech), or the hard
  * cap, or give up if they never spoke. Returns the m4a bytes + whether the window
- * was silent — same shape as `_recordListenWindow`, so the loop is a drop-in swap.
+ * was silent.
  *
  * This is what makes the call feel natural: instead of a fixed 2.5s window that
  * clips mid-sentence, the clip grows to fit what you actually said, and a thinking
@@ -173,8 +78,11 @@ export function setEndpointOptions(opts: Partial<EndpointOptions>): void {
  *
  * The endpoint decision is the pure `endpoint.ts` helper fed by expo-av metering
  * frames; timing uses the frame's own `s.durationMillis` (monotonic, no Date).
+ *
+ * Shared by both call engines: the STT listen loop below streams each window to
+ * /api/voice/ws, and the Nemotron loop (useAssistantTurn) sends it as one turn.
  */
-async function _recordEndpointedWindow(): Promise<{ buf: ArrayBuffer | null; silent: boolean }> {
+export async function recordUtterance(): Promise<Utterance> {
   let state: EndpointState = { heardSpeech: false, lastLoudMs: -1 }
   let stopReason: "endpoint" | "max" | "no-speech" | null = null
   const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
@@ -190,15 +98,15 @@ async function _recordEndpointedWindow(): Promise<{ buf: ArrayBuffer | null; sil
     rec.setOnRecordingStatusUpdate((s) => {
       if (!s.isRecording || typeof s.metering !== "number" || typeof s.durationMillis !== "number") return
       const now = s.durationMillis
-      state = observeFrame(state, s.metering, now, _endpointOpts.floorDb)
-      const v = endpointVerdict(state, now, now, _endpointOpts)
+      state = observeFrame(state, s.metering, now, ENDPOINT_OPTS.floorDb)
+      const v = endpointVerdict(state, now, now, ENDPOINT_OPTS)
       if (v.done) {
         stopReason = v.reason
         done()
       }
     })
     // Absolute safety net in case status updates stall: cap slightly above maxMs.
-    setTimeout(done, _endpointOpts.maxMs + 1000)
+    setTimeout(done, ENDPOINT_OPTS.maxMs + 1000)
   })
 
   const uri = await audioSession.stopRecording()
@@ -244,84 +152,28 @@ function _atobPolyfill(input: string): string {
   return out
 }
 
-/** Whether the user has enrolled a voiceprint before (persisted across app
- *  launches + sessions so re-opening the voice screen doesn't force re-enroll).
- *  The voiceprint itself lives on the server, keyed by speaker_id; this is just a
- *  local "we've done it" flag. */
-const ENROLLED_KEY = "harman.voice.enrolled"
-
-/** Whether the assistant voice is on: the utterance is answered +
- *  spoken by the assistant service (Qwen brain + cloned voice) in one call,
- *  instead of the default chat pipeline + Kokoro/Pocket TTS. Persisted locally. */
-const ASSISTANT_KEY = "harman.voice.assistant"
-
-export async function isAssistantVoice(): Promise<boolean> {
-  try {
-    return (await SecureStore.getItemAsync(ASSISTANT_KEY)) === "1"
-  } catch {
-    return false
-  }
-}
-
-export async function setAssistantVoice(on: boolean): Promise<void> {
-  try {
-    await SecureStore.setItemAsync(ASSISTANT_KEY, on ? "1" : "0")
-  } catch {
-    /* best-effort persistence */
-  }
-}
-
-export async function isEnrolled(): Promise<boolean> {
-  try {
-    return (await SecureStore.getItemAsync(ENROLLED_KEY)) === "1"
-  } catch {
-    return false
-  }
-}
-
-/** Enroll the user's voiceprint from a fresh ~`seconds`-second recording. The
- *  server stores a speaker embedding so hands-free listening can verify it's
- *  really them saying "Harman". Returns true on success and remembers it. */
-export async function enrollVoice(seconds = 5, speakerId = "default"): Promise<boolean> {
-  const blob = await _recordClipBlob(seconds)
-  if (!blob) return false
-  try {
-    const { ok } = await api.voiceEnroll(blob, speakerId, "audio/m4a")
-    if (ok) await SecureStore.setItemAsync(ENROLLED_KEY, "1").catch(() => {})
-    return ok
-  } catch {
-    return false
-  }
-}
-
 /** A parsed message from the hands-free WS. */
 export type ListenEvent =
-  | { type: "utterance"; text: string; score?: number }
+  | { type: "utterance"; text: string }
   | { type: "idle" }
-  | { type: "unenrolled" }
   | { type: "error"; error?: string }
 
 // One live hands-free session at a time. `_listenStop` cancels the record loop.
 let _listenStop: (() => void) | null = null
 
 /**
- * Start HANDS-FREE listening: continuously record short audio windows and stream
- * each one to the server's /api/voice/ws, which runs wake-word + strict speaker
- * verification on the GPU box. `onEvent` fires for every window's verdict; the
- * caller acts only on {type:"utterance"} (the enrolled user said "Harman …").
+ * Start listening for a call: continuously record endpointed utterances and
+ * stream each one to the server's /api/voice/ws (call mode: the GPU box
+ * transcribes any speech; no wake word). `onEvent` fires for every window's
+ * verdict; the caller acts only on {type:"utterance"}.
  *
  * Each window is a self-contained m4a the box decodes standalone, so there's no
  * stream reassembly. Recording goes through the session owner, so it's serialized
  * with any TTS playback. Returns a stop() function.
  */
-export async function startListening(
-  onEvent: (e: ListenEvent) => void,
-  opts: { windowSeconds?: number; speakerId?: string; callMode?: boolean } = {}
-): Promise<() => void> {
+export async function startListening(onEvent: (e: ListenEvent) => void): Promise<() => void> {
   await stopListening() // never run two loops at once
-  const windowSeconds = opts.windowSeconds ?? 2.5
-  const speakerId = opts.speakerId ?? "default"
-  const { url, headers } = api.voiceWsUrl(speakerId, opts.callMode ?? false)
+  const { url, headers } = api.voiceWsUrl()
 
   let stopped = false
   // RN's WebSocket runtime accepts a 3rd `options` arg carrying request headers
@@ -360,19 +212,17 @@ export async function startListening(
 
   // On OPEN, loop: record ONE endpointed utterance (grows to fit what was said,
   // ends on a natural pause), send it, repeat. audioSession serializes each record,
-  // which naturally paces the stream. `windowSeconds` is retained for API
-  // compatibility but the utterance length is now decided by endpointing.
-  void windowSeconds
+  // which naturally paces the stream.
   ws.onopen = async () => {
     while (!stopped && ws.readyState === WebSocket.OPEN) {
-      let res: { buf: ArrayBuffer | null; silent: boolean } = { buf: null, silent: false }
+      let res: Utterance = { buf: null, silent: false }
       try {
-        res = await _recordEndpointedWindow()
+        res = await recordUtterance()
       } catch {
         res = { buf: null, silent: false }
       }
       if (stopped || ws.readyState !== WebSocket.OPEN) break
-      // On-device VAD: a silent window is dropped here — no upload, no server STT.
+      // On-device endpointer: a silent window is dropped here — no upload, no server STT.
       if (res.silent) continue
       if (res.buf && res.buf.byteLength > 0) {
         try {
@@ -387,7 +237,7 @@ export async function startListening(
   return stop
 }
 
-/** Stop the hands-free listen loop (if any) and release the recorder. */
+/** Stop the listen loop (if any) and release the recorder. */
 export async function stopListening(): Promise<void> {
   if (_listenStop) _listenStop()
   await resetRecorder().catch(() => {})
@@ -399,10 +249,16 @@ export async function stopListening(): Promise<void> {
  * audio arrives in ~0.5s. Resolves when playback finishes AND the session has been
  * released — so a following recording sees a free session.
  */
-export async function speak(text: string, assistant?: boolean): Promise<void> {
+export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
-  const { url, headers } = api.voiceTtsStreamUrl(text, assistant)
+  const { url, headers } = api.voiceTtsStreamUrl(text)
   await audioSession.play(url, headers)
+}
+
+/** Play an already-persisted reply file (a Nemotron turn's WAV) to completion
+ *  through the session owner — same exclusivity with recording as `speak`. */
+export async function playFile(uri: string): Promise<void> {
+  await audioSession.play(uri, {})
 }
 
 /** Stop any in-progress TTS playback (barge-in / new turn). */

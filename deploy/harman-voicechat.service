@@ -1,0 +1,19 @@
+[Unit]
+Description=Harman Nemotron turn-based audio (GPU-isolated)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/harman-voicechat
+EnvironmentFile=%h/harman-voicechat/service.env
+ExecStart=%h/harman-voicechat/venv/bin/python %h/harman-voicechat/voicechat_service.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

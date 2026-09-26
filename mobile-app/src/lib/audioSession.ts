@@ -14,12 +14,12 @@
  *     fully awaited — a recording cannot begin until playback has emitted its
  *     terminal event AND released the session, and vice-versa.
  *
- * Correctness comes from ORDERING, not from retries or sleeps. All public calls
- * run through a single serialized queue (`chain`) so overlapping requests from
- * the UI (e.g. speak() then record()) can never interleave their native calls.
+ * Record/play transitions run through one serialized queue (`chain`). Stop
+ * interrupts the active player outside that queue, so it cannot deadlock behind
+ * playback; the queued transition still waits for native cleanup.
  *
  * This file has NO react-native imports so it runs under the plain-Node test
- * harness. The native backend (expo-av + track-player) is injected via
+ * harness. The native backend (expo-av) is injected via
  * `AudioBackend`; the real wiring + app singleton live in `audioSessionNative.ts`.
  */
 
@@ -34,7 +34,7 @@ export interface RecordingHandle {
 
 /**
  * The native operations the coordinator drives. Injecting this interface keeps
- * the state machine pure and testable; the real impl wires expo-av + track-player.
+ * the state machine pure and testable; the real implementation uses expo-av.
  */
 export interface AudioBackend {
   requestPermission(): Promise<boolean>
@@ -63,6 +63,17 @@ export class AudioSession {
   private backend: AudioBackend
   // Serializes every public transition so native calls never interleave.
   private chain: Promise<unknown> = Promise.resolve()
+  // Bumped by stopPlayback() to invalidate any play() that hasn't reached its
+  // native call yet — either still queued behind an earlier transition, or
+  // mid-load. Without this, "End" during playback would enqueue BEHIND the
+  // very play() it's trying to interrupt (play() only resolves once its own
+  // native call finishes) and could never run at all — a real deadlock, not
+  // just a slow cancel. So stopPlayback bypasses the queue entirely (like
+  // setPlaybackVolume below) and acts immediately, both by telling the
+  // backend to release the session now AND by invalidating this token so a
+  // play() still waiting its turn in the queue skips straight past instead of
+  // starting playback nobody wants anymore.
+  private playToken = 0
 
   constructor(backend: AudioBackend) {
     this.backend = backend
@@ -166,27 +177,42 @@ export class AudioSession {
    * Voice/Call screen has configured the session yet.
    */
   play(url: string, headers: Record<string, string>): Promise<void> {
+    const token = ++this.playToken
     return this.enqueue(async () => {
+      // A stopPlayback() (or a newer play()) already fired while this one sat
+      // queued behind an earlier transition — nobody wants this playback
+      // anymore, so skip the native call entirely rather than starting audio
+      // just to immediately race it back down.
+      if (token !== this.playToken) return
       await this.dropRecorder()
       // Ensure the audio mode is set so playback works in silent mode. This is
       // idempotent if configure() already ran (Voice/Call). Without it, a
       // read-aloud tap from the thread (no prior configure) would be silent.
       await this.backend.setRecordMode()
+      if (token !== this.playToken) return
       this.state = "playing"
       try {
         await this.backend.playToEnd(url, headers)
       } finally {
-        this.state = "idle"
+        if (this.state === "playing") this.state = "idle"
       }
     })
   }
 
-  /** Stop any playback now (barge-in). → idle. Idempotent. */
-  stopPlayback(): Promise<void> {
-    return this.enqueue(async () => {
-      await this.backend.stopPlayback()
-      if (this.state === "playing") this.state = "idle"
-    })
+  /** Stop any playback now (barge-in / end-call). Idempotent. NOT enqueued —
+   *  a queued stopPlayback would sit BEHIND the very play() it's trying to
+   *  interrupt (play() only resolves once playToEnd itself resolves), which
+   *  is a deadlock disguised as a slow cancel, not a real interruption. So
+   *  this acts immediately: it invalidates any play() still waiting in the
+   *  queue (via playToken, so it never starts) or already loading/playing
+   *  (the backend call below stops it), then resolves once the backend
+   *  confirms the session is released — same observable contract as before
+   *  (await stopPlayback() means "safe to record now"), just not
+   *  queue-ordered against play(). */
+  async stopPlayback(): Promise<void> {
+    const token = ++this.playToken
+    await this.backend.stopPlayback()
+    if (token === this.playToken && this.state === "playing") this.state = "idle"
   }
 
   /** Live volume of the current playback (0..1) for barge-in ducking. NOT enqueued
@@ -227,9 +253,10 @@ export class AudioSession {
 
   /** Release everything (screen unmount). Idempotent, awaited. */
   reset(): Promise<void> {
+    const stopped = this.stopPlayback()
     return this.enqueue(async () => {
+      await stopped
       await this.dropRecorder()
-      await this.backend.stopPlayback()
       this.state = "idle"
     })
   }
