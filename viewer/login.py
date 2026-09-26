@@ -30,6 +30,13 @@ def _redact(text):
 def auth_status():
     """Report whether claude is logged in, based on stored credentials."""
     info = {"loggedIn": False, "method": None, "subscriptionType": None}
+    # Custom-login bypass: skip Claude's own login flow and route straight to
+    # the composer. Set VIEWER_ASSUME_LOGGED_IN=1 when the `claude` CLI is
+    # authenticated out-of-band (e.g. ANTHROPIC_AUTH_TOKEN against a gateway),
+    # which none of the checks below can see.
+    if os.environ.get("VIEWER_ASSUME_LOGGED_IN") == "1":
+        info.update({"loggedIn": True, "method": "external"})
+        return info
     try:
         creds = json.loads(CREDENTIALS_FILE.read_text())
         oauth = creds.get("claudeAiOauth") or {}
