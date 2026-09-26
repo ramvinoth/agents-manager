@@ -6,11 +6,16 @@ covers what that file does not:
 
 - db: a card can never depend on itself; the dep's `done` flag follows the
   board's name contract (column named "done", case-insensitive).
-- board_wake: the 30-min sweep wakes only when the board actually changed
-  (a clean board costs nothing), never a running session, never a session the
-  scheduler could not resume (no transcript), always harman-origin, and walks
-  the board round-robin so the per-sweep cap reaches every open card; an open
-  question wakes the sessions that own open cards — never the source.
+- board_wake: the 30-min sweep wakes only cards carrying an UNANSWERED
+  foreign event (someone other than the card's session acted last — a board
+  where every session has answered costs nothing), never a running session,
+  never a session the scheduler could not resume (no transcript), always
+  harman-origin, and walks the pending cards round-robin so the per-sweep cap
+  reaches every one; an open question wakes the sessions that own open cards
+  — never the source.
+- actions: the follow-up stamps that ledger — a foreign write marks the card,
+  the card's own session writing clears it (the regression that made the
+  sweep wake sessions on their own "nothing new" comments forever).
 - actions: adding/removing a dependency wakes the card with the WHY text.
 
 Everything faked: the logic under test is pure policy over db/boardwatch,
@@ -92,11 +97,15 @@ def test_coalesced_wake_updates_origin_to_the_latest_cause(monkeypatch):
 
 OPEN_CARD = {"id": 7, "session_id": "sess-9", "title": "Fix login",
              "project_id": 16, "column_id": 101}
+PENDING_CARD = dict(OPEN_CARD, column_name="Review", attention_since=1e9)
 
 
 class FakeWakeDb:
-    def __init__(self, changed=False, stamp=0.0):
-        self.changed = changed
+    """`pending` is what cards_needing_attention would return: open cards with
+    an unanswered foreign event, oldest first, each carrying column_name."""
+
+    def __init__(self, pending=(), stamp=0.0):
+        self.pending = [dict(c) for c in pending]
         self.settings = {board_wake._SETTINGS_KEY: stamp}
         self.audit = []
 
@@ -114,8 +123,8 @@ class FakeWakeDb:
     def setting_set(self, key, value):
         self.settings[key] = value
 
-    def board_changed_since(self, since):
-        return (self.changed, "2 card(s) changed") if self.changed else (False, "")
+    def cards_needing_attention(self):
+        return [dict(c) for c in self.pending]
 
     def card_list(self):
         return [dict(OPEN_CARD)]
@@ -169,23 +178,23 @@ def test_sweep_is_noop_inside_the_interval(fdb):
     assert fdb.wakes == [], "nothing to say → no tokens spent"
 
 
-def test_sweep_no_change_no_wake(fdb):
-    fdb.db.stamp = 0  # long ago, but...
-    fdb.db.changed = False
+def test_sweep_nothing_pending_no_wake(fdb):
+    fdb.db.stamp = 0  # long ago, but every session has answered its board
     assert board_wake.sweep() == []
     assert fdb.wakes == []
-    assert fdb.db.stamp > 0, "the stamp moves even when nothing changed"
+    assert fdb.db.stamp > 0, "the stamp moves even when nothing is pending"
 
 
-def test_sweep_wakes_open_card_with_harman_origin_and_deps(fdb):
+def test_sweep_wakes_pending_card_with_harman_origin_and_deps(fdb):
     fdb.db.stamp = 0
-    fdb.db.changed = True
+    fdb.db.pending = [PENDING_CARD]
     fired = board_wake.sweep()
     assert fired == ["sess-9"]
     card, event, origin = fdb.wakes[0]
     assert origin == loops.AGENT_ORIGIN, "autonomous wakes are harman-origin"
     assert card["session_id"] == "sess-9"
-    assert "board sweep" in event and "2 card(s) changed" in event
+    assert "board sweep" in event and "someone else acted on this card" in event
+    assert "you are in 'Review'" in event
     assert 'card 3 "Buy the gap data" (NOT done, in Todo)' in event
     assert len(fdb.db.audit) == 1, "every sweep wake is audited"
 
@@ -194,16 +203,16 @@ def test_sweep_never_wakes_a_running_session(fdb):
     with CHAT_LOCK:
         CHAT_JOBS[OPEN_CARD["session_id"]] = {"running": True}
     fdb.db.stamp = 0
-    fdb.db.changed = True
+    fdb.db.pending = [PENDING_CARD]
     assert board_wake.sweep() == [], "a running session is already awake"
     assert fdb.wakes == []
 
 
 def _six_card_board(monkeypatch):
-    f = FakeWakeDb(changed=True)
-    f.card_list = lambda: [
-        {"id": i, "session_id": f"sess-{i}", "title": f"t{i}",
-         "project_id": 16, "column_id": 101} for i in range(6)]
+    f = FakeWakeDb(pending=[
+        {"id": i, "session_id": f"sess-{i}", "title": f"t{i}", "project_id": 16,
+         "column_id": 101, "column_name": "Doing", "attention_since": 1e9 + i}
+        for i in range(6)])
     monkeypatch.setattr(board_wake, "db", f)
     monkeypatch.setattr(boardwatch, "schedule_wake",
                         lambda card, event, origin: "bw")
@@ -220,7 +229,9 @@ def test_sweep_round_robins_so_the_cap_reaches_every_card(monkeypatch):
     a cap of 3 the same three lowest cards were woken every 30 minutes (cards
     12/14/19 got 11 wakes each over two days on the live board) while every
     other open card was never swept. The cursor (settings store, survives a
-    restart) makes successive sweeps walk the whole board."""
+    restart) makes successive sweeps walk every pending card — a woken
+    session that does not answer stays pending, so oldest-first alone would
+    re-wake the same three."""
     f = _six_card_board(monkeypatch)
     assert board_wake.sweep() == ["sess-0", "sess-1", "sess-2"]
     assert f.settings[board_wake._CURSOR_KEY] == 2
@@ -282,6 +293,9 @@ class FakeDepBoard:
     def card_get(self, card_id):
         c = self.cards.get(card_id)
         return dict(c) if c else None
+
+    def card_mark_attention(self, card_id, by_own_session):
+        pass  # the sweep ledger — covered in test_board_pipeline
 
     def card_dep_add(self, card_id, depends_on, created_by=""):
         return {"id": 1, "card_id": card_id, "depends_on": depends_on}

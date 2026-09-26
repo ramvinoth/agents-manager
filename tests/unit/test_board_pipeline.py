@@ -190,9 +190,13 @@ class FakeBoard:
         self.comments = []
         self.moves = []
         self.audit = []
+        self.attention = []   # (card_id, by_own_session) — the sweep's ledger writes
 
     def card_get(self, card_id):
         return dict(self.card) if self.card and self.card.get("id") == card_id else None
+
+    def card_mark_attention(self, card_id, by_own_session):
+        self.attention.append((card_id, by_own_session))
 
     def board_columns_list(self, project_id):
         return list(self.columns)
@@ -255,6 +259,24 @@ def test_agent_on_its_own_card_wakes_nothing(board):
                         "employee:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert board.wakes == [] and board.pushes == []
+
+
+def test_followup_keeps_the_sweep_ledger(board):
+    """Regression: the 30-min sweep used to re-wake a session on its OWN status
+    comment (the comment bumped updated_at, which read as "board changed"), so
+    every open card's session was woken every 30 minutes forever. The ledger
+    the sweep reads is written here: a foreign event marks the card as having
+    news for its session; the session's own write clears it."""
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "go ahead"}),
+                    "owner", "")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "on it"},
+                        "employee:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "any update?"},
+                        "employee:eve"),
+                    "owner", "ic", acting_session="sess-2")
+    assert board.db.attention == [(42, False), (42, True), (42, False)], \
+        "human → pending, own session → cleared, foreign agent → pending"
 
 
 def test_foreign_agent_move_wakes_with_harman_origin(board):

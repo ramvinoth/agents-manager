@@ -297,6 +297,13 @@ def init_db():
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'user';
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '';
             ALTER TABLE loops ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'recurring';
+            -- Epoch of the last board event on a card made by someone OTHER than
+            -- the card's own session (a move, comment, edit, dependency), reset
+            -- to 0 once that session acts on the card again. The board sweep
+            -- wakes on this, not on updated_at: a session's own writes are not
+            -- news to it, and waking it on them made it comment "nothing new",
+            -- which bumped updated_at, which woke it again next sweep.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS attention_since DOUBLE PRECISION NOT NULL DEFAULT 0;
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -1212,31 +1219,31 @@ def card_deps_batch(card_ids):
         return out
 
 
-def board_changed_since(since):
-    """Did the board change after `since` (epoch seconds)? Cards (updated_at),
-    comments (created_at) and dependency edges (created_at) all store epoch
-    doubles, so the check is a plain numeric comparison. Returns
-    (changed, summary) — the summary is a one-line data string for wake
-    prompts, never instructions."""
+def card_mark_attention(card_id, by_own_session):
+    """Record who last acted on a card, for the board sweep. A FOREIGN actor (the
+    owner, another session) stamps `attention_since` = now — the card's session
+    has something to read. The card's OWN session acting clears it to 0 — it
+    has seen the board. Idempotent per state, so re-stamping an already
+    pending card only moves the time forward."""
     with _db() as cur:
-        cur.execute("SELECT count(*) AS n FROM cards WHERE updated_at > %s", (since,))
-        n_cards = cur.fetchone()["n"]
-        cur.execute("SELECT count(*) AS n FROM card_comments WHERE created_at > %s",
-                    (since,))
-        n_comments = cur.fetchone()["n"]
-        cur.execute("SELECT count(*) AS n FROM card_deps WHERE created_at > %s",
-                    (since,))
-        n_deps = cur.fetchone()["n"]
-    if not (n_cards or n_comments or n_deps):
-        return False, ""
-    bits = []
-    if n_cards:
-        bits.append(f"{n_cards} card(s) changed")
-    if n_comments:
-        bits.append(f"{n_comments} new comment(s)")
-    if n_deps:
-        bits.append(f"{n_deps} dependency change(s)")
-    return True, ", ".join(bits)
+        cur.execute("UPDATE cards SET attention_since = %s WHERE id = %s",
+                    (0 if by_own_session else _now(), card_id))
+
+
+def cards_needing_attention():
+    """Open cards (not in a Done-named column) whose last board event came from
+    someone other than their own session, with that column's name, oldest
+    event first. Each row: {card fields..., column_name}. Cards with no
+    session cannot be woken and are excluded; the sweep reads only this."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, bc.name AS column_name FROM cards c "
+            "LEFT JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE c.attention_since > 0 AND c.session_id IS NOT NULL "
+            "AND c.session_id <> '' "
+            "AND lower(coalesce(bc.name, '')) <> 'done' "
+            "ORDER BY c.attention_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
 
 
 # Approvals -------------------------------------------------------------------

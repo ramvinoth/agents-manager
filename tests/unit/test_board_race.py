@@ -41,6 +41,9 @@ COLS = [
 
 
 class FakeRaceBoard:
+    def card_mark_attention(self, card_id, by_own_session):
+        pass  # the sweep ledger — covered in test_board_pipeline
+
     def __init__(self, last_move=None):
         self.card = dict(CARD)
         # (column_id, epoch) of the last column-moving write — emulates the

@@ -8,13 +8,17 @@ loop-control mode AND the automation master switch (a human's own card moves
 get user-origin wakes from actions._board_followup instead — a person asking,
 never halted):
 
-  SWEEP — a 30-minute safety net for board changes the event path missed
+  SWEEP — a 30-minute safety net for board events the event path missed
           (the card's session was running at trigger time, the viewer
-          restarted, ...). It fires only when the board actually changed
-          since the last sweep, so an idle board costs nothing — no polling,
-          no idle token burn. The last-sweep stamp lives in the settings
-          store so it survives a viewer restart, and is set BEFORE the change
-          check so a slow pass cannot double-fire on the next tick.
+          restarted, ...). It wakes only cards with UNANSWERED foreign
+          events: someone other than the card's session moved, commented on
+          or edited the card (db.cards_needing_attention, stamped by
+          actions._board_followup) and that session has not written to the
+          card since. A session's own writes are never news to it — the
+          previous "anything on the board changed" trigger woke every open
+          card on its own status comments, forever (card 19: five identical
+          "still in Review, no decision" comments, each of which was the
+          change that caused the next wake). Idle board = zero cost.
   OPEN QUESTION — when another session's AskUserQuestion / ExitPlanMode
           becomes a durable open question/plan for the owner, wake the
           sessions that own OPEN cards (never the source — it is the one
@@ -43,22 +47,6 @@ def _session_running(session_id):
         return bool(job and job.get("running"))
 
 
-def _open_cards():
-    """Cards not in a Done-named column, as (card, column_name) pairs — a Done
-    card's session needs no watching. Resolves names by the board's name
-    contract (same rule as orglogic.project_columns)."""
-    cards = db.card_list()
-    if not cards:
-        return []
-    col_by_id = {}
-    for pid in {c.get("project_id") for c in cards if c.get("project_id")}:
-        for col in db.board_columns_list(pid):
-            col_by_id[col["id"]] = col["name"]
-    return [(c, col_by_id.get(c.get("column_id")) or "")
-            for c in cards
-            if (col_by_id.get(c.get("column_id")) or "").lower() != "done"]
-
-
 def _wake(card, event, *, skip):
     """One wake through the single mechanism; skipped for a running session, a
     session on the skip list, or a session with no local transcript (the
@@ -76,52 +64,73 @@ def _wake(card, event, *, skip):
     return False
 
 
-def _rotated(open_cards, after_id):
-    """`open_cards` re-ordered to start just past card `after_id` (the card the
-    previous sweep ended on), so the capped budget walks the whole board over
-    successive sweeps instead of re-waking the same first three cards forever.
+def _rotated(cards, after_id):
+    """`cards` re-ordered to start just past card `after_id` (the card the
+    previous sweep ended on), so the capped budget walks every pending card
+    over successive sweeps instead of re-waking the same first three forever.
     An unknown/absent cursor (first sweep, card deleted) starts from the top."""
-    ids = [c["id"] for c, _ in open_cards]
+    ids = [c["id"] for c in cards]
     if after_id not in ids:
-        return open_cards
+        return cards
     i = ids.index(after_id) + 1
-    return open_cards[i:] + open_cards[:i]
+    return cards[i:] + cards[:i]
+
+
+def _describe(card):
+    """The wake's event text: what happened, how long it has waited, where the
+    card sits, what blocks it — data for the session, never instructions."""
+    waited = int((time.time() - float(card.get("attention_since") or 0)) / 60)
+    deps = db.card_deps_batch([card["id"]]).get(card["id"], [])
+    dep_txt = ", ".join(
+        f'card {d["id"]} "{d["title"]}" ({"done" if d["done"] else "NOT done, in " + (d["column_name"] or "no column")})'
+        for d in deps) or "none"
+    return (f"board sweep: someone else acted on this card {waited} min ago and you "
+            f"have not written to it since; you are in '{card.get('column_name') or ''}'; "
+            f"your dependencies: {dep_txt} — read the card and its comments, then act "
+            f"or comment your next step")
 
 
 def sweep():
     """The 30-minute safety net, called from engine.loop_scheduler (the
     existing 5s tick — no new thread). Wakes at most _MAX_WAKES_PER_SWEEP
-    open-card sessions when the board changed since the last sweep; a clean
-    board fires nothing. Round-robins over the open cards across sweeps (the
-    cursor lives in the settings store beside the stamp). Returns the sessions
-    woken."""
+    sessions whose cards carry an unanswered foreign event; a board where every
+    session has answered fires nothing. Round-robins across sweeps (the cursor
+    lives in the settings store beside the stamp). Returns the sessions woken."""
     now = time.time()
     last = float(db.setting_get(_SETTINGS_KEY, 0) or 0)
     if now - last < SWEEP_INTERVAL:
         return []
     db.setting_set(_SETTINGS_KEY, now)  # stamp FIRST: a slow pass can't double-fire
     try:
-        changed, summary = db.board_changed_since(last)
-        if not changed:
+        pending = db.cards_needing_attention()
+        if not pending:
             return []
         fired = []
         cursor = db.setting_get(_CURSOR_KEY, None)
-        for card, column_name in _rotated(_open_cards(), cursor):
+        for card in _rotated(pending, cursor):
             if len(fired) >= _MAX_WAKES_PER_SWEEP:
                 break
-            deps = db.card_deps_batch([card["id"]]).get(card["id"], [])
-            dep_txt = ", ".join(
-                f'card {d["id"]} "{d["title"]}" ({"done" if d["done"] else "NOT done, in " + (d["column_name"] or "no column")})'
-                for d in deps) or "none"
-            if _wake(card, f"board sweep: {summary}; you are in '{column_name}'; "
-                           f"your dependencies: {dep_txt} — read the card and "
-                           f"its comments, then comment your next step",
-                     skip=set(fired)):
+            if _wake(card, _describe(card), skip=set(fired)):
                 fired.append(card["session_id"])
                 db.setting_set(_CURSOR_KEY, card["id"])
         return fired
     except Exception:
         return []   # a DB error is a missed sweep, not a failed tick
+
+
+def _open_cards():
+    """Cards not in a Done-named column — a Done card's session needs no
+    open-question relay. Resolves names by the board's name contract (same
+    rule as orglogic.project_columns)."""
+    cards = db.card_list()
+    if not cards:
+        return []
+    col_by_id = {}
+    for pid in {c.get("project_id") for c in cards if c.get("project_id")}:
+        for col in db.board_columns_list(pid):
+            col_by_id[col["id"]] = col["name"]
+    return [c for c in cards
+            if (col_by_id.get(c.get("column_id")) or "").lower() != "done"]
 
 
 def wake_on_open_question(source_session, summary):
@@ -130,7 +139,7 @@ def wake_on_open_question(source_session, summary):
     Bounded to _MAX_WAKES_PER_SWEEP. Best-effort: never raises."""
     try:
         fired = []
-        for card, _column_name in _open_cards():
+        for card in _open_cards():
             if len(fired) >= _MAX_WAKES_PER_SWEEP:
                 break
             if _wake(card,

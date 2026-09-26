@@ -14,6 +14,9 @@ class FakeDB:
     """Records what execute() did. Only the handful of db functions the gate itself
     touches; handlers are exercised through the registry, not stubbed individually."""
 
+    def card_mark_attention(self, card_id, by_own_session):
+        pass  # the sweep ledger — covered in test_board_pipeline
+
     def __init__(self):
         self.audit = []          # (actor, action, target, outcome)
         self.approvals = []      # rows opened

@@ -505,6 +505,10 @@ def _board_followup(action, args, actor, session_level, acting_session):
         if not card or not card.get("session_id"):
             return
         agent = bool(session_level)
+        own = agent and card.get("session_id") == (acting_session or "")
+        # The sweep's ledger: a foreign event marks the card as having news for
+        # its session; the session's own write means it has read the board.
+        db.card_mark_attention(card["id"], by_own_session=own)
         if action == "card_comment":
             body = (args.get("body") or "").strip()
             excerpt = body[:200] + ("…" if len(body) > 200 else "")
@@ -514,7 +518,7 @@ def _board_followup(action, args, actor, session_level, acting_session):
             from viewer import push
             push.notify_all(f"Board · {card.get('title', '')}",
                             f"{actor}: {excerpt}"[:300])
-        if agent and card.get("session_id") == (acting_session or ""):
+        if own:
             return
         if action == "card_move":
             cols = db.board_columns_list(card["project_id"]) \

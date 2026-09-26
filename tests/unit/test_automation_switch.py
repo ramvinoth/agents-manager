@@ -40,6 +40,9 @@ class FakeDB:
     backs the schedule. Every write is recorded so a test can assert that a paused
     pass consumed nothing."""
 
+    def cards_needing_attention(self):
+        return []
+
     def __init__(self):
         self.settings = {}          # key -> value (harman config lives here)
         self.loops = []             # schedule rows (dicts, each with an id)
