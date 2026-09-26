@@ -21,7 +21,7 @@ import { notifyEveryReply, setNotifyEveryReply } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
-import JobScheduler from "../components/JobScheduler"
+import JobScheduler, { type JobSchedule } from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
 import { useStyles } from "./styles"
 
@@ -214,7 +214,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       if (request.active) setModeSaving(false)
     }
   }
-  function addJob(prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) {
+  function addJob(prompt: string, schedule: JobSchedule) {
     if (!sessionId) return
     api
       .loopsCreate({ session: path || sessionId, prompt, ...schedule })
@@ -244,7 +244,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   // Edit: update the job via API, then refresh the list.
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
-  function editJob(id: string, prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) {
+  function editJob(id: string, prompt: string, schedule: JobSchedule) {
     api
       .loopsEdit({ id, prompt, ...schedule })
       .then(() => sessionId ? api.loops(sessionId) : [])
@@ -588,7 +588,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
                   ) : null}
                   {paused ? (
                     <Text style={styles.ssJobNext}>Paused</Text>
-                  ) : j.nextRun ? (
+                  ) : j.nextRun && j.kind !== "once" ? (
                     <Text style={styles.ssJobNext}>Next: {fmtNextRun(j.nextRun)}</Text>
                   ) : null}
                 </View>
@@ -608,7 +608,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               <JobScheduler
                 styles={styles}
                 providers={providers}
-                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval, provider: j.provider }}
+                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval, kind: j.kind, nextRun: j.nextRun, provider: j.provider }}
                 onCancel={() => setEditingJobId(null)}
                 onSubmit={(prompt, schedule) => editJob(j.id, prompt, schedule)}
               />

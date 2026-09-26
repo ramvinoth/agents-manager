@@ -9,9 +9,12 @@
  *     "every 7.5 hr"). Emits { interval } in seconds.
  *   • At set times — a wall-clock calendar (daily / weekdays / weekly / monthly)
  *     with a native time picker and day pickers. Emits { cron }.
+ *   • Once — a single date+time on the device's clock. Emits { at } as ISO with
+ *     the device's UTC offset; the server stores it as a one-shot (kind "once")
+ *     that fires once and then retires.
  *
- * On submit, calls onSubmit(prompt, { cron?, interval? }) — the same contract
- * every consumer screen already relies on.
+ * On submit, calls onSubmit(prompt, { cron?, interval?, at? }) — the same
+ * contract every consumer screen already relies on.
  */
 import React, { useEffect, useState } from "react"
 import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
@@ -25,6 +28,7 @@ import {
   parseCron,
   parseInterval,
   splitInterval,
+  toIsoWithOffset,
   WEEKDAYS,
   type CronKind,
   type IntervalUnit,
@@ -36,11 +40,33 @@ export type JobInitialValues = {
   prompt: string
   cron?: string
   interval?: number
+  /** Saved one-shot: kind "once" with the fire time in nextRun (epoch seconds). */
+  kind?: string
+  nextRun?: number
+  /** Unsaved one-shot draft (NewChat): the ISO `at` the form emitted. */
+  at?: string
   /** Custom provider preset id these runs use ("" = inherit the session's own). */
   provider?: string
 }
 
-type Mode = "interval" | "cron"
+type Mode = "interval" | "cron" | "once"
+
+export type JobSchedule = { cron?: string; interval?: number; at?: string; provider?: string }
+
+function initialMode(v?: JobInitialValues): Mode {
+  if (v?.cron) return "cron"
+  if (v?.at || v?.kind === "once") return "once"
+  return "interval"
+}
+
+/** The one-shot fire time an edit starts from, or a round hour from now. */
+function initialOnce(v?: JobInitialValues): Date {
+  const saved = v?.at ? Date.parse(v.at) : v?.kind === "once" && v.nextRun ? v.nextRun * 1000 : NaN
+  if (!isNaN(saved)) return new Date(saved)
+  const d = new Date(Date.now() + 3600e3)
+  d.setMinutes(0, 0, 0)
+  return d
+}
 
 export default function JobScheduler({
   onSubmit,
@@ -49,7 +75,7 @@ export default function JobScheduler({
   onCancel,
   providers,
 }: {
-  onSubmit: (prompt: string, schedule: { cron?: string; interval?: number; provider?: string }) => void
+  onSubmit: (prompt: string, schedule: JobSchedule) => void
   styles: ReturnType<typeof import("../screens/styles").useStyles>
   /** When set, pre-fills the form for editing. */
   initialValues?: JobInitialValues
@@ -64,7 +90,7 @@ export default function JobScheduler({
   const isEdit = !!initialValues
 
   const [prompt, setPrompt] = useState(initialValues?.prompt ?? "")
-  const [mode, setMode] = useState<Mode>(initialValues?.cron ? "cron" : "interval")
+  const [mode, setMode] = useState<Mode>(initialMode(initialValues))
 
   // Interval axis: a free numeric string + a unit. Kept as text so the field
   // can be empty mid-edit; parsed (and clamped) only on submit.
@@ -83,6 +109,9 @@ export default function JobScheduler({
   const [dow, setDow] = useState(parsed?.dow ?? 1)
   const [dom, setDom] = useState(parsed?.dom ?? 1)
 
+  // Once axis: a single local date+time.
+  const [once, setOnce] = useState(() => initialOnce(initialValues))
+
   // Provider axis: which preset ("" = inherit the session's own) these runs use.
   // Only meaningful when `providers` is passed; otherwise the picker is hidden and
   // this stays "" (inherit).
@@ -92,7 +121,8 @@ export default function JobScheduler({
   useEffect(() => {
     if (!initialValues) return
     setPrompt(initialValues.prompt)
-    setMode(initialValues.cron ? "cron" : "interval")
+    setMode(initialMode(initialValues))
+    setOnce(initialOnce(initialValues))
     const sp = initialValues.interval && !initialValues.cron ? splitInterval(initialValues.interval) : null
     setAmount(sp ? String(sp.value) : "30")
     setUnit(sp?.unit ?? "m")
@@ -104,14 +134,16 @@ export default function JobScheduler({
     setDow(p?.dow ?? 1)
     setDom(p?.dom ?? 1)
     setProvider(initialValues.provider ?? "")
-  }, [initialValues?.prompt, initialValues?.cron, initialValues?.interval, initialValues?.provider]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialValues?.prompt, initialValues?.cron, initialValues?.interval, initialValues?.provider, initialValues?.at, initialValues?.kind, initialValues?.nextRun]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The schedule the current selection would produce — clamped, so the preview
   // is honest about the [30s, 24h] floor/ceiling the server enforces.
-  const schedule: { cron?: string; interval?: number; provider?: string } = {
+  const schedule: JobSchedule = {
     ...(mode === "cron"
       ? { cron: buildCron(kind, time.getHours(), time.getMinutes(), dow, dom) }
-      : { interval: parseInterval(`${amount || "0"}${unit}`) }),
+      : mode === "once"
+        ? { at: toIsoWithOffset(once) }
+        : { interval: parseInterval(`${amount || "0"}${unit}`) }),
     // Only carry provider when the picker is shown; NewChat jobs inherit the
     // session's provider and must not pin "" over it.
     ...(providers ? { provider } : {}),
@@ -151,6 +183,7 @@ export default function JobScheduler({
           [
             { v: "interval", label: "Every N" },
             { v: "cron", label: "At set times" },
+            { v: "once", label: "Once" },
           ] as { v: Mode; label: string }[]
         ).map((o) => {
           const active = mode === o.v
@@ -198,6 +231,33 @@ export default function JobScheduler({
           </View>
           <Text style={[styles.ssRowHint, { marginTop: 8, maxWidth: undefined }]}>
             {describeSchedule({ interval: previewInterval })} · runs on a sliding cadence, min 30s, max 24h.
+          </Text>
+        </View>
+      ) : mode === "once" ? (
+        /* ── Once: a single local date + time ── */
+        <View style={{ marginHorizontal: 18, marginTop: 8 }}>
+          <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>RUN ONCE AT</Text>
+          <DateTimePicker
+            testID="job-once-date"
+            value={once}
+            mode="date"
+            minimumDate={new Date()}
+            display={Platform.OS === "ios" ? "compact" : "default"}
+            onChange={(_, d) => { if (d) setOnce(new Date(d.getFullYear(), d.getMonth(), d.getDate(), once.getHours(), once.getMinutes())) }}
+            textColor={t.text}
+          />
+          <DateTimePicker
+            testID="job-once-time"
+            value={once}
+            mode="time"
+            display={Platform.OS === "ios" ? "spinner" : "default"}
+            minuteInterval={5}
+            onChange={(_, d) => { if (d) setOnce(new Date(once.getFullYear(), once.getMonth(), once.getDate(), d.getHours(), d.getMinutes())) }}
+            textColor={t.text}
+            style={{ height: 120 }}
+          />
+          <Text style={[styles.ssRowHint, { marginTop: 8, maxWidth: undefined }]}>
+            {describeSchedule(schedule)} · fires once, then the job retires. A time already past fires on the next tick.
           </Text>
         </View>
       ) : (

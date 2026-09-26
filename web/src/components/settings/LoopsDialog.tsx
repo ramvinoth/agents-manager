@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Loader2, Plus, Repeat, Trash2, Pencil, Pause, Play, ChevronLeft } from "lucide-react"
+import { Loader2, Plus, Repeat, Trash2, Pencil, Pause, Play, ChevronLeft, CalendarClock } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -19,11 +19,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { fmtInterval, parseInterval } from "@/lib/format"
+import { fmtInterval, fmtWhen, parseInterval, toDatetimeLocal, toIsoWithOffset } from "@/lib/format"
 import { useStore } from "@/store"
-import type { Loop } from "@/lib/types"
+import type { Loop, LoopSchedule } from "@/lib/types"
 
-type Draft = { id: string; prompt: string; interval: string; provider: string }
+/** The form: `mode` picks which schedule axis is sent. `once` is the
+ *  datetime-local string of the one-shot fire time on this browser's clock. */
+type Draft = { id: string; prompt: string; mode: "repeat" | "once"; interval: string; once: string; provider: string }
+
+/** A round hour from now — the default one-shot time. */
+function nextRoundHour(): string {
+  const d = new Date(Date.now() + 3600e3)
+  d.setMinutes(0, 0, 0)
+  return toDatetimeLocal(d)
+}
+
+/** The schedule a draft would submit, or null when its chosen axis is invalid. */
+function scheduleOf(d: Draft): LoopSchedule | null {
+  if (d.mode === "once") {
+    const t = new Date(d.once)
+    return isNaN(t.getTime()) ? null : { at: toIsoWithOffset(t) }
+  }
+  const interval = parseInterval(d.interval)
+  return interval ? { interval } : null
+}
 
 // Radix Select forbids an empty-string item value; a loop's provider "" means
 // "inherit the session's own provider", shown under this sentinel in the dropdown.
@@ -61,22 +80,23 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
   function openForm(l?: Loop) {
     setConfirmDelete(null)
     setConfirmPause(null)
+    const once = l?.kind === "once" && l.nextRun ? toDatetimeLocal(new Date(l.nextRun * 1000)) : nextRoundHour()
     setEditing(
       l
-        ? { id: l.id, prompt: l.prompt, interval: fmtInterval(l.interval), provider: l.provider || "" }
-        : { id: "", prompt: "", interval: "1h", provider: "" }
+        ? { id: l.id, prompt: l.prompt, mode: l.kind === "once" ? "once" : "repeat", interval: fmtInterval(l.interval || 3600), once, provider: l.provider || "" }
+        : { id: "", prompt: "", mode: "repeat", interval: "1h", once, provider: "" }
     )
   }
 
   async function save() {
     if (!editing) return
     const prompt = editing.prompt.trim()
-    const interval = parseInterval(editing.interval)
-    if (!prompt || !interval) return
+    const schedule = scheduleOf(editing)
+    if (!prompt || !schedule) return
     setSaving(true)
     try {
-      if (editing.id) await editLoop(editing.id, prompt, interval, editing.provider)
-      else await createLoop(prompt, interval, editing.provider)
+      if (editing.id) await editLoop(editing.id, prompt, schedule, editing.provider)
+      else await createLoop(prompt, schedule, editing.provider)
       setEditing(null)
     } finally {
       setSaving(false)
@@ -98,14 +118,15 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
             )}
             {loops.map((l) => {
               const paused = l.enabled === false
+              const once = l.kind === "once"
               return (
               <div key={l.id} className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
-                <Repeat className="size-4 shrink-0 text-muted-foreground" />
+                {once ? <CalendarClock className="size-4 shrink-0 text-muted-foreground" /> : <Repeat className="size-4 shrink-0 text-muted-foreground" />}
                 <button className={`min-w-0 flex-1 text-left ${paused ? "opacity-50" : ""}`} onClick={() => openForm(l)} title="Edit">
                   <div className="truncate text-sm" title={l.prompt}>{l.prompt}</div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Badge variant="outline" className="px-1.5 text-[10px] font-normal tabular-nums">
-                      {fmtInterval(l.interval)}
+                      {once && l.nextRun ? `Once · ${fmtWhen(l.nextRun)}` : `Every ${fmtInterval(l.interval)}`}
                     </Badge>
                     {l.provider && (
                       <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
@@ -198,19 +219,41 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
               placeholder="Prompt to run on a schedule…"
               className="min-h-24 resize-none text-sm leading-relaxed"
             />
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] text-muted-foreground">Runs every</span>
-              <Input
-                value={editing.interval}
-                onChange={(e) => setEditing((d) => (d ? { ...d, interval: e.target.value } : d))}
-                placeholder="1h"
-                className="h-8 w-16 px-2 text-center text-xs tabular-nums"
-                title="Interval — e.g. 30s, 5m, 1h"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={editing.mode}
+                onValueChange={(v) => setEditing((d) => (d ? { ...d, mode: v as Draft["mode"] } : d))}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="repeat">Runs every</SelectItem>
+                  <SelectItem value="once">Run once at</SelectItem>
+                </SelectContent>
+              </Select>
+              {editing.mode === "once" ? (
+                <Input
+                  type="datetime-local"
+                  value={editing.once}
+                  min={toDatetimeLocal(new Date())}
+                  onChange={(e) => setEditing((d) => (d ? { ...d, once: e.target.value } : d))}
+                  className="h-8 w-48 px-2 text-xs tabular-nums"
+                  title="Fires once at this local time, then the loop retires"
+                />
+              ) : (
+                <Input
+                  value={editing.interval}
+                  onChange={(e) => setEditing((d) => (d ? { ...d, interval: e.target.value } : d))}
+                  placeholder="1h"
+                  className="h-8 w-16 px-2 text-center text-xs tabular-nums"
+                  title="Interval — e.g. 30s, 5m, 1h"
+                />
+              )}
               <Button
                 size="sm"
                 className="ml-auto h-8"
-                disabled={!editing.prompt.trim() || !parseInterval(editing.interval) || saving}
+                disabled={!editing.prompt.trim() || !scheduleOf(editing) || saving}
                 onClick={save}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : null} Save

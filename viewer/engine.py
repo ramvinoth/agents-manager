@@ -116,16 +116,6 @@ def _push_label(session_id, cwd=""):
     return f"Chat {str(session_id)[:8]}"
 
 
-def parse_interval(text):
-    """'30s' / '5m' / '2h' / plain seconds -> seconds (min 30, max 24h)."""
-    text = str(text).strip().lower()
-    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smh]?)", text)
-    if not m:
-        return None
-    val = float(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
-    return int(min(max(val, 30), 86400))
-
-
 CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final status
 # A persisted run credential with no live job is kept this long before the hourly
 # sweep drops it — long enough for a remote child that outlived a restart to keep

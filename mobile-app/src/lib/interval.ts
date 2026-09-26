@@ -129,10 +129,30 @@ export function parseCron(cron: string): { kind: CronKind; hour: number; minute:
 // Display
 // ---------------------------------------------------------------------------
 
-/** Human-readable description of a schedule (interval or cron). */
-export function describeSchedule(job: { cron?: string; interval: number }): string {
+/** The schedule a job carries: cron wins, then a one-shot `at`, then interval —
+ *  the server's precedence. A saved one-shot comes back as kind "once" with its
+ *  fire time in nextRun; an unsaved one (NewChat draft) still holds `at`. */
+export type ScheduleLike = { cron?: string; interval?: number; kind?: string; nextRun?: number; at?: string }
+
+/** Human-readable description of a schedule (cron, one-shot or interval). */
+export function describeSchedule(job: ScheduleLike): string {
   if (job.cron) return describeCron(job.cron)
-  return `Every ${fmtInterval(job.interval)}`
+  const once = job.at ? Date.parse(job.at) / 1000 : job.kind === "once" ? job.nextRun : undefined
+  if (once) return `Once at ${fmtNextRun(once)}`
+  return `Every ${fmtInterval(job.interval ?? 0)}`
+}
+
+/** ISO 8601 with the phone's own UTC offset (never a trailing "Z"), e.g.
+ *  "2026-09-27T09:00:00-07:00". The user picked a wall-clock time on THIS
+ *  device; carrying the offset makes it the same instant on a server in any
+ *  timezone. Seconds are zeroed — the picker has minute resolution. */
+export function toIsoWithOffset(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? "+" : "-"
+  const abs = Math.abs(off)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
 }
 
 /** Human-readable description of a cron expression. */

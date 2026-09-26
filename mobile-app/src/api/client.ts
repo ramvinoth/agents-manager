@@ -80,7 +80,9 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
 export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
-export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
+/** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
+ *  (the default) follows cron or interval. */
+export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
 /** @deprecated Use Job instead */
 export type Loop = Job
 export type AgentTemplate = {
@@ -456,9 +458,10 @@ export const api = {
 
   // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
   loops: (sessionId: string) => req<Job[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
-  loopsCreate: (body: { session: string; prompt: string; interval?: number; cron?: string; model?: string; provider?: string }) =>
-    req<{ id?: string }>("POST", "/api/loops", body),
-  loopsEdit: (body: { id: string; prompt?: string; interval?: number; cron?: string; model?: string; enabled?: boolean; provider?: string }) =>
+  // Schedule precedence is the server's: cron > at (one-shot ISO datetime) > interval.
+  loopsCreate: (body: { session: string; prompt: string; interval?: number; cron?: string; at?: string; model?: string; provider?: string }) =>
+    req<{ created?: string; error?: string }>("POST", "/api/loops", body),
+  loopsEdit: (body: { id: string; prompt?: string; interval?: number; cron?: string; at?: string; model?: string; enabled?: boolean; provider?: string }) =>
     req<{ updated?: string }>("POST", "/api/loops/edit", body),
   loopsDelete: (id: string) => req("POST", "/api/loops/delete", { id }),
 

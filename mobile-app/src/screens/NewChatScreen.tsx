@@ -71,7 +71,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(!!template)
 
   // Scheduled jobs
-  type Job = { prompt: string; cron?: string; interval?: number }
+  type Job = { prompt: string; cron?: string; interval?: number; at?: string }
   const [jobs, setJobs] = useState<Job[]>(() => {
     if (template?.cron && template?.job_prompt) {
       return [{ prompt: template.job_prompt, cron: template.cron }]
@@ -153,6 +153,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
             prompt: job.prompt,
             cron: job.cron,
             interval: job.interval,
+            at: job.at,
           }).catch(() => {})
         }
       }
@@ -438,7 +439,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, color: t.text }} numberOfLines={2}>{job.prompt}</Text>
                     <Text style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }}>
-                      {describeSchedule({ cron: job.cron, interval: job.interval ?? 0 })}
+                      {describeSchedule(job)}
                     </Text>
                   </View>
                   <TouchableOpacity

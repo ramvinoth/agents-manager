@@ -1,6 +1,7 @@
 """Unit tests for pure helpers in viewer.engine: loop-interval parsing (clamped)
 and SKILL.md/command frontmatter description extraction."""
-from viewer.engine import frontmatter_description, parse_interval
+from viewer.engine import frontmatter_description
+from viewer.loops import parse_interval
 
 
 class TestParseInterval:

@@ -14,8 +14,9 @@ from viewer.config import (
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    extract_cwd, get_host, parse_interval, session_analysis, start_claude_run, start_copilot_new,
+    extract_cwd, get_host, session_analysis, start_claude_run, start_copilot_new,
 )
+from viewer.loops import USER_ORIGIN, build_schedule
 from viewer.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
 )
@@ -108,8 +109,6 @@ class SessionsMixin:
             return
         rel = body.get("session", "")
         prompt = (body.get("prompt") or "").strip()
-        cron_expr = (body.get("cron") or "").strip() or None
-        interval = parse_interval(body.get("interval", "")) if not cron_expr else None
         full = self.resolve_session_quiet(rel)
         if not full:
             self.send_json({"error": "Session not found"}, status=404)
@@ -117,35 +116,29 @@ class SessionsMixin:
         if not prompt:
             self.send_json({"error": "Empty prompt"}, status=400)
             return
-        if not cron_expr and not interval:
-            self.send_json({"error": "Provide a cron expression or interval (e.g. 30s, 5m, 1h)"}, status=400)
+        # cron > at (one-shot, kind='once') > interval — same vocabulary and
+        # precedence as the agent-side loop_create action.
+        sched, err = build_schedule(body.get("cron"), body.get("interval"), body.get("at"))
+        if err:
+            self.send_json({"error": err}, status=400)
             return
-        if cron_expr:
-            from viewer.loops import cron_next_run, parse_cron
-            if not parse_cron(cron_expr):
-                self.send_json({"error": "Invalid cron expression"}, status=400)
-                return
-            next_run = cron_next_run(cron_expr) or (time.time() + 86400)
-        else:
-            next_run = time.time() + interval
-        model = (body.get("model") or "").strip()
-        provider = (body.get("provider") or "").strip()
         lid = uuid_mod.uuid4().hex[:12]
         entry = {"session": full.stem, "path": rel, "prompt": prompt,
-                 "nextRun": next_run, "runs": 0, "created": time.time(),
-                 "enabled": True, "model": model, "provider": provider}
-        if cron_expr:
-            entry["cron"] = cron_expr
-            entry["interval"] = 0
-        else:
-            entry["interval"] = interval
+                 "runs": 0, "created": time.time(), "enabled": True,
+                 "origin": USER_ORIGIN,
+                 "model": (body.get("model") or "").strip(),
+                 "provider": (body.get("provider") or "").strip(),
+                 **sched}
         db.loop_upsert(lid, entry)
-        self.send_json({"created": lid, "interval": interval or 0, "cron": cron_expr})
+        self.send_json({"created": lid, "kind": sched["kind"], "interval": sched["interval"],
+                        "cron": sched["cron"], "nextRun": sched["nextRun"]})
 
     def handle_edit_loop(self):
         """Update an existing loop/job in place, preserving its id, session and
-        run history. Only the fields present in the body change; the schedule
-        (`nextRun`) is recomputed when interval or cron changes."""
+        run history. Only the fields present in the body change. Any schedule
+        input (`at`, `cron`, `interval`) rebuilds the whole schedule through
+        build_schedule: `at` turns the job into a one-shot (kind='once') and
+        clears a stale cron; cron/interval turn a one-shot back to recurring."""
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -156,37 +149,30 @@ class SessionsMixin:
             self.send_json({"error": "Job not found"}, status=404)
             return
         fields = {}
-        # Track cron through this edit so the interval branch below sees the
-        # just-applied value (setting cron ignores interval; clearing it allows one).
-        cur_cron = loop.get("cron")
         if "prompt" in body:
             prompt = (body.get("prompt") or "").strip()
             if not prompt:
                 self.send_json({"error": "Empty prompt"}, status=400)
                 return
             fields["prompt"] = prompt
-        if "cron" in body:
-            cron_expr = (body.get("cron") or "").strip() or None
-            if cron_expr:
-                from viewer.loops import cron_next_run, parse_cron
-                if not parse_cron(cron_expr):
-                    self.send_json({"error": "Invalid cron expression"}, status=400)
-                    return
-                fields["cron"] = cron_expr
-                fields["interval"] = 0
-                fields["nextRun"] = cron_next_run(cron_expr) or (time.time() + 86400)
-                cur_cron = cron_expr
-            else:
-                fields["cron"] = None
-                cur_cron = None
-        if "interval" in body and not cur_cron:
-            interval = parse_interval(body.get("interval", ""))
-            if not interval:
-                self.send_json({"error": "Bad interval — use e.g. 30s, 5m, 1h"}, status=400)
-                return
-            if interval != loop.get("interval"):
-                fields["interval"] = interval
-                fields["nextRun"] = time.time() + interval
+        if "at" in body:
+            sched, err = build_schedule(None, None, body.get("at"))
+        elif "cron" in body or "interval" in body:
+            # Absent inputs keep their stored value, so cron still wins over an
+            # interval-only edit until the caller clears it (cron: "").
+            sched, err = build_schedule(body.get("cron", loop.get("cron")),
+                                        body.get("interval", loop.get("interval")))
+        else:
+            sched, err = None, None
+        if err:
+            self.send_json({"error": err}, status=400)
+            return
+        if sched is not None:
+            # An unchanged recurring schedule (editor re-sending the same interval
+            # alongside a prompt tweak) must not push nextRun out again.
+            same = all(sched[k] == loop.get(k) for k in ("cron", "interval", "kind"))
+            if not (same and sched["kind"] == "recurring"):
+                fields.update(sched)
         if "model" in body:
             fields["model"] = (body.get("model") or "").strip()
         if "provider" in body:
@@ -198,8 +184,9 @@ class SessionsMixin:
             # missed while off.
             fields["enabled"] = bool(body["enabled"])
         updated = db.loop_update(lid, fields)
-        self.send_json({"updated": lid, "interval": updated.get("interval"),
-                        "cron": updated.get("cron"), "enabled": updated.get("enabled")})
+        self.send_json({"updated": lid, "kind": updated.get("kind", "recurring"),
+                        "interval": updated.get("interval"), "cron": updated.get("cron"),
+                        "nextRun": updated.get("nextRun"), "enabled": updated.get("enabled")})
 
     # ----- Slash commands / projects / session resolution -----
 

@@ -271,12 +271,18 @@ export interface Loop {
   session: string
   prompt: string
   interval: number
+  /** "once" fires at nextRun then retires; "recurring" (default) repeats every `interval`. */
+  kind?: "recurring" | "once"
   nextRun?: number
   runs?: number
   enabled?: boolean
   /** Custom provider preset id these runs use ("" = inherit the session's own). */
   provider?: string
 }
+/** Schedule a loop is created/edited with. Server precedence: `at` (one-shot,
+ *  ISO datetime with offset) beats `interval`; whichever is present rebuilds the
+ *  whole schedule, so a one-shot edited with an interval becomes recurring. */
+export type LoopSchedule = { interval?: number; at?: string }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
 // ---- org / Kanban ----------------------------------------------------------

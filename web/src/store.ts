@@ -13,6 +13,7 @@ import type {
   Loop,
   LoopControl,
   LoopMode,
+  LoopSchedule,
   Provider,
   SessionAnalysis,
   SessionListItem,
@@ -193,8 +194,8 @@ interface AppState {
    *  request is queued (not applied), so this resolves to a status string for the
    *  caller to show ("" = applied cleanly). */
   setSystemPreamble: (text: string) => Promise<string>
-  createLoop: (prompt: string, interval: number, provider: string) => Promise<void>
-  editLoop: (id: string, prompt: string, interval: number, provider: string) => Promise<void>
+  createLoop: (prompt: string, schedule: LoopSchedule, provider: string) => Promise<void>
+  editLoop: (id: string, prompt: string, schedule: LoopSchedule, provider: string) => Promise<void>
   /** Pause (enabled=false) or resume (true) a loop. A paused loop stops firing;
    *  resuming leaves its nextRun untouched, so an overdue loop fires at most once. */
   toggleLoop: (id: string, enabled: boolean) => Promise<void>
@@ -1116,16 +1117,16 @@ export const useStore = create<AppState>((set, get) => {
         /* ignore */
       }
     },
-    createLoop: async (prompt, interval, provider) => {
+    createLoop: async (prompt, schedule, provider) => {
       const { currentSessionPath } = get()
       if (!prompt.trim()) return
-      const res = await api.loopsCreate({ session: currentSessionPath, prompt, interval, provider })
+      const res = await api.loopsCreate({ session: currentSessionPath, prompt, ...schedule, provider })
       await res.json().catch(() => ({}))
       get().loadLoops()
     },
-    editLoop: async (id, prompt, interval, provider) => {
+    editLoop: async (id, prompt, schedule, provider) => {
       if (!prompt.trim()) return
-      const res = await api.loopsEdit({ id, prompt, interval, provider })
+      const res = await api.loopsEdit({ id, prompt, ...schedule, provider })
       await res.json().catch(() => ({}))
       get().loadLoops()
     },

@@ -49,6 +49,31 @@ export function parseInterval(text: string): number {
   return Math.min(86400, Math.max(30, secs))
 }
 
+/** ISO 8601 with this browser's UTC offset (never "Z"), e.g.
+ *  "2026-09-27T09:00:00-07:00" — the user picked a wall-clock time here, and the
+ *  offset makes it the same instant on a server in any timezone. */
+export function toIsoWithOffset(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? "+" : "-"
+  const abs = Math.abs(off)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+}
+
+/** The value an <input type="datetime-local"> wants for a Date: local wall-clock, minute resolution. */
+export function toDatetimeLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** Short local rendering of an epoch-seconds fire time, e.g. "Sep 27, 9:00 AM". */
+export function fmtWhen(epoch: number): string {
+  return new Date(epoch * 1000).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
+}
+
 /** Final path segment (the project/dir name) from a full directory path. */
 export function projectName(p: string): string {
   const parts = String(p).split("/").filter(Boolean)
