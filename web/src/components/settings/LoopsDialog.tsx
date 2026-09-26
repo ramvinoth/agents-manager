@@ -46,6 +46,9 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
   const [editing, setEditing] = useState<Draft | null>(null) // null = list; Draft = form
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // Pause/resume flips what fires on this machine unattended, so it gets the
+  // same inline two-step as delete (only one confirm shows per row at a time).
+  const [confirmPause, setConfirmPause] = useState<string | null>(null)
 
   // The label a loop's provider setting shows in the list row. "" inherits the
   // session's own provider (resolved at fire time server-side).
@@ -56,6 +59,8 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
   }
 
   function openForm(l?: Loop) {
+    setConfirmDelete(null)
+    setConfirmPause(null)
     setEditing(
       l
         ? { id: l.id, prompt: l.prompt, interval: fmtInterval(l.interval), provider: l.provider || "" }
@@ -123,13 +128,33 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                       Cancel
                     </Button>
                   </>
+                ) : confirmPause === l.id ? (
+                  <>
+                    <Button
+                      variant={paused ? "default" : "outline"}
+                      size="sm"
+                      className="h-7"
+                      onClick={() => {
+                        toggleLoop(l.id, paused)
+                        setConfirmPause(null)
+                      }}
+                    >
+                      {paused ? "Resume" : "Pause"}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7" onClick={() => setConfirmPause(null)}>
+                      Cancel
+                    </Button>
+                  </>
                 ) : (
                   <>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="size-7"
-                      onClick={() => toggleLoop(l.id, paused)}
+                      onClick={() => {
+                        setConfirmPause(l.id)
+                        setConfirmDelete(null)
+                      }}
                       title={paused ? "Resume" : "Pause"}
                     >
                       {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
@@ -141,7 +166,10 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                       variant="ghost"
                       size="icon"
                       className="size-7 text-destructive hover:text-destructive"
-                      onClick={() => setConfirmDelete(l.id)}
+                      onClick={() => {
+                        setConfirmDelete(l.id)
+                        setConfirmPause(null)
+                      }}
                       title="Delete"
                     >
                       <Trash2 className="size-3.5" />

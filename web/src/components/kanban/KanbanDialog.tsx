@@ -16,6 +16,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -60,6 +61,15 @@ export function KanbanDialog({
   const [editing, setEditing] = useState<Card | null>(null) // card editor (null = closed)
   const [addingCol, setAddingCol] = useState(false)
   const [newColName, setNewColName] = useState("")
+  // Confirmation gate for the two deletions that touch more than one row:
+  // deleting a card removes its comment thread, and deleting a column with
+  // cards re-parents them. The dialog holds the target, not a boolean, so the
+  // confirm is the single place the consequences are worded.
+  const [confirm, setConfirm] = useState<
+    | null
+    | { kind: "card"; card: Card }
+    | { kind: "column"; column: BoardColumn; count: number }
+  >(null)
   const authUser = useStore((s) => s.authUser)
   const sessions = useStore((s) => s.sessions)
   const loadSession = useStore((s) => s.loadSession)
@@ -179,6 +189,27 @@ export function KanbanDialog({
     reload()
   }
 
+  // Card delete always confirms: it removes the card AND its comment thread.
+  // Column delete confirms only when the column holds cards — an empty column
+  // is free to drop (adding one back is one click, nothing is at stake).
+  function requestDeleteCard(card: Card) {
+    setConfirm({ kind: "card", card })
+  }
+  function requestDeleteColumn(column: BoardColumn) {
+    const count = cards.filter((c) => c.column_id === column.id).length
+    if (count === 0) {
+      deleteColumn(column.id)
+      return
+    }
+    setConfirm({ kind: "column", column, count })
+  }
+  function confirmDelete() {
+    if (!confirm) return
+    if (confirm.kind === "card") deleteCard(confirm.card.id)
+    else deleteColumn(confirm.column.id)
+    setConfirm(null)
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="flex h-[90vh] max-w-[95vw] flex-col sm:max-w-[95vw]">
@@ -213,9 +244,12 @@ export function KanbanDialog({
                   empById={empById}
                   onAddCard={(t) => addCard(column.id, t)}
                   onEditCard={setEditing}
-                  onDeleteCard={deleteCard}
+                  onDeleteCard={(id) => {
+                    const c = cards.find((x) => x.id === id)
+                    if (c) requestDeleteCard(c)
+                  }}
                   onRename={(nm) => renameColumn(column.id, nm)}
-                  onDelete={() => deleteColumn(column.id)}
+                  onDelete={() => requestDeleteColumn(column)}
                 />
               ))}
               {/* Add column */}
@@ -261,9 +295,35 @@ export function KanbanDialog({
             setCards((cs) => cs.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)))
             setEditing((e) => (e && e.id === updated.id ? { ...e, ...updated } : e))
           }}
-          onDelete={deleteCard}
+          onDelete={(id) => {
+            const c = editing || cards.find((x) => x.id === id)
+            if (c) requestDeleteCard(c)
+          }}
           onClose={() => setEditing(null)}
         />
+      )}
+
+      {confirm && (
+        <Dialog open onOpenChange={(o) => !o && setConfirm(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {confirm.kind === "card"
+                  ? `Delete card “${confirm.card.title}”?`
+                  : `Delete column “${confirm.column.name}”?`}
+              </DialogTitle>
+              <DialogDescription>
+                {confirm.kind === "card"
+                  ? "The card and its comment thread are removed from the board. This can't be undone."
+                  : `Its ${confirm.count} card${confirm.count === 1 ? "" : "s"} move to Unsorted with their comments intact; only the column itself is removed.`}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </Dialog>
   )

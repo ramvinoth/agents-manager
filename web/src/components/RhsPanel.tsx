@@ -34,6 +34,7 @@ function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => v
   const [scope, setScope] = useState<"user" | "project">("user")
   const [content, setContent] = useState<string | null>(skill ? null : NEW_SKILL)
   const [err, setErr] = useState("")
+  const [confirmDel, setConfirmDel] = useState(false)
   const readonly = !!skill && !skill.editable
 
   if (skill && content === null) {
@@ -62,6 +63,7 @@ function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => v
   }
   async function del() {
     if (!skill) return
+    setConfirmDel(false)
     await api.skillDelete({ path: skill.path })
     loadCapabilities()
     onClose()
@@ -103,15 +105,25 @@ function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => v
         />
         {err && <div className="text-xs text-destructive">{err}</div>}
         <DialogFooter>
-          {skill?.editable && (
-            <Button variant="ghost" className="mr-auto text-destructive" onClick={del}>
-              Delete
-            </Button>
-          )}
+          {skill?.editable &&
+            (confirmDel ? (
+              <>
+                <Button variant="destructive" className="mr-auto" onClick={del}>
+                  Delete
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmDel(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button variant="ghost" className="mr-auto text-destructive" onClick={() => setConfirmDel(true)}>
+                Delete
+              </Button>
+            ))}
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          {!readonly && <Button onClick={save}>Save</Button>}
+          {!readonly && !confirmDel && <Button onClick={save}>Save</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -127,6 +139,7 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
     JSON.stringify(server ? server.config : { command: "npx", args: ["-y", "some-mcp-server"], env: {} }, null, 2)
   )
   const [err, setErr] = useState("")
+  const [confirmDel, setConfirmDel] = useState(false)
   const readonly = !!server && !server.editable
 
   async function save() {
@@ -150,6 +163,7 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
   }
   async function del() {
     if (!server) return
+    setConfirmDel(false)
     await api.mcpDelete({ name: server.name, scope: server.scope === "global" ? "global" : "project", session })
     loadCapabilities()
     onClose()
@@ -185,15 +199,25 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
         />
         {err && <div className="text-xs text-destructive">{err}</div>}
         <DialogFooter>
-          {server?.editable && (
-            <Button variant="ghost" className="mr-auto text-destructive" onClick={del}>
-              Delete
-            </Button>
-          )}
+          {server?.editable &&
+            (confirmDel ? (
+              <>
+                <Button variant="destructive" className="mr-auto" onClick={del}>
+                  Delete
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmDel(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button variant="ghost" className="mr-auto text-destructive" onClick={() => setConfirmDel(true)}>
+                Delete
+              </Button>
+            ))}
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          {!readonly && <Button onClick={save}>Save</Button>}
+          {!readonly && !confirmDel && <Button onClick={save}>Save</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

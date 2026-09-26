@@ -73,6 +73,10 @@ export function FileBrowser() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showHidden, setShowHidden] = useState(false)
   const [menu, setMenu] = useState<Menu | null>(null)
+  // Delete is a trash MOVE (recoverable on local/remote/drive — the server
+  // never rm -rf's), but a bulk selection still warrants an explicit confirm
+  // before N items (or a whole folder) leave the view.
+  const [confirmTrash, setConfirmTrash] = useState<string[] | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState("")
@@ -351,6 +355,30 @@ export function FileBrowser() {
           </Button>
         </div>
 
+        {confirmTrash && (
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2" data-nomarquee>
+            <span className="min-w-0 flex-1 truncate text-xs">
+              Move {confirmTrash.length === 1 ? `“${confirmTrash[0]}”` : `${confirmTrash.length} items`} to the
+              trash? They stay recoverable there — nothing is permanently deleted.
+            </span>
+            <Button variant="ghost" size="sm" className="h-7 shrink-0" onClick={() => setConfirmTrash(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 shrink-0"
+              onClick={() => {
+                const names = confirmTrash
+                setConfirmTrash(null)
+                trashMany(names)
+              }}
+            >
+              Move to Trash
+            </Button>
+          </div>
+        )}
+
         {/* Toolbar */}
         <div className="flex items-center gap-1 border-b border-border px-2 py-1.5" data-nomarquee>
           <Button
@@ -564,7 +592,7 @@ export function FileBrowser() {
                     Download as Zip
                   </MenuItem>
                   <div className="my-1 h-px bg-border" />
-                  <MenuItem icon={Trash2} danger onClick={() => { trashMany(selNames); setMenu(null) }}>
+                  <MenuItem icon={Trash2} danger onClick={() => { setMenu(null); setConfirmTrash(selNames) }}>
                     Move {selNames.length} items to Trash
                   </MenuItem>
                 </>
@@ -589,7 +617,7 @@ export function FileBrowser() {
                     Rename
                   </MenuItem>
                   <div className="my-1 h-px bg-border" />
-                  <MenuItem icon={Trash2} danger onClick={() => { trashMany([menu.entry!.name]); setMenu(null) }}>
+                  <MenuItem icon={Trash2} danger onClick={() => { setMenu(null); setConfirmTrash([menu.entry!.name]) }}>
                     Move to Trash
                   </MenuItem>
                 </>

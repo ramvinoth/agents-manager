@@ -27,6 +27,9 @@ export function EnvDialog({ onClose }: { onClose: () => void }) {
   const [newVal, setNewVal] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
+  // Inline two-step (same idiom as the Loops/Host dialogs): an env var can be
+  // a credential — removing it breaks this host's runs for that service.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   useEffect(() => {
     api.env(currentHost).then((d: any) => setKeys(d.keys || [])).catch(() => {})
@@ -103,10 +106,23 @@ export function EnvDialog({ onClose }: { onClose: () => void }) {
                     Save
                   </Button>
                 )}
-                <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive"
-                  onClick={() => remove(k)} title="Delete">
-                  <Trash2 className="size-3.5" />
-                </Button>
+                {confirmDelete === k ? (
+                  <>
+                    <Button variant="destructive" size="sm" className="h-7"
+                      onClick={() => { setConfirmDelete(null); remove(k) }}>
+                      Delete
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7" onClick={() => setConfirmDelete(null)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive"
+                    onClick={() => { setConfirmDelete(k); setShown((s) => { const n = { ...s }; delete n[k]; return n }) }}
+                    title="Delete">
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
               </div>
             )
           })}

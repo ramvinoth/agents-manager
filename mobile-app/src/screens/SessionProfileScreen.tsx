@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   Switch,
   Text,
@@ -223,9 +224,22 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   }
 
   function removeJob(id: string) {
-    setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
-    if (editingJobId === id) setEditingJobId(null)
-    api.loopsDelete(id).catch(() => {})
+    Alert.alert(
+      "Delete this scheduled job?",
+      "It stops at its next scheduled run and won't come back. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
+            if (editingJobId === id) setEditingJobId(null)
+            api.loopsDelete(id).catch(() => {})
+          },
+        },
+      ],
+    )
   }
 
   // Edit: update the job via API, then refresh the list.
@@ -239,16 +253,32 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     setEditingJobId(null)
   }
 
-  // Pause/resume: flip the loop's enabled flag. Optimistic, then refresh. A
+  // Pause/resume: flip the loop's enabled flag. Confirm first (it changes what
+  // runs on this machine unattended), then optimistic update + refresh. A
   // paused loop stops firing (server filters enabled=TRUE); resuming leaves its
   // nextRun untouched, so an overdue loop fires at most once, not a backlog.
   function toggleJob(j: Job) {
-    const next = !(j.enabled ?? true)
-    setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled: next } : x)))
-    api.loopsEdit({ id: j.id, enabled: next })
-      .then(() => sessionId ? api.loops(sessionId) : [])
-      .then((l) => { if (Array.isArray(l)) setJobs(l) })
-      .catch(() => {})
+    const pausing = j.enabled !== false
+    Alert.alert(
+      pausing ? "Pause this scheduled job?" : "Resume this scheduled job?",
+      pausing
+        ? "It stops firing on its schedule. You can resume it any time."
+        : "It fires on its schedule again. If its next run time has passed, it fires once, not a backlog.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: pausing ? "Pause" : "Resume",
+          onPress: () => {
+            const next = !(j.enabled ?? true)
+            setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled: next } : x)))
+            api.loopsEdit({ id: j.id, enabled: next })
+              .then(() => sessionId ? api.loops(sessionId) : [])
+              .then((l) => { if (Array.isArray(l)) setJobs(l) })
+              .catch(() => {})
+          },
+        },
+      ],
+    )
   }
 
   function toggleNotify(v: boolean) {
