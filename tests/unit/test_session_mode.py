@@ -181,9 +181,12 @@ def test_remote_host_is_named():
         "Approve Bash? — ls (on suha-ai)"
 
 
-def test_non_bash_tools_show_their_args():
+def test_non_bash_tools_show_their_identity():
+    # The preview names the tool's target (identity fields), never the raw
+    # input JSON or its payload (content, message, ...) — that is what the
+    # old format leaked to the lock screen (#31/#42).
     assert engine._perm_push_body("Edit", {"file_path": "/x"}, "local") == \
-        'Approve Edit? — {"file_path": "/x"}'
+        'Approve Edit? — file_path=/x'
 
 
 # ── routes._p_session_mode: who may target what ────────────────────────────

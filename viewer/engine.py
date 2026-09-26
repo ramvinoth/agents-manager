@@ -78,10 +78,27 @@ def _session_title(session_id):
         return ""
 
 
+def _project_label(session_id):
+    """The project the session's transcript lives in, read off the CLAUDE_DIR
+    layout (the project dir is the cwd with '/' -> '-', e.g.
+    -Users-rponnarasu-srv-tim-agents -> 'agents'). The last resolvable name
+    before a raw id: a session with no custom title, no goal and no cwd still
+    gets 'agents' instead of 'Chat 65cf166a'."""
+    try:
+        path = transcript_path(session_id)
+        if not path:
+            return ""
+        return os.path.basename(str(path.parent).replace("-", "/").rstrip("/"))
+    except Exception:
+        return ""
+
+
 def _push_label(session_id, cwd=""):
     """A short human title for a push notification: the session's display name
     (matching the chat list), else its goal, else the working-directory basename,
-    else a short session id."""
+    else the project the transcript lives in, else a short session id. The raw-id
+    fallback is the LAST resort — a bare 'Chat <id>' is useless for the owner to
+    tell which session is asking (#31/#42)."""
     name = _session_title(session_id)
     if name:
         return name
@@ -93,6 +110,9 @@ def _push_label(session_id, cwd=""):
         base = os.path.basename(cwd.rstrip("/"))
         if base:
             return base
+    proj = _project_label(session_id)
+    if proj:
+        return proj
     return f"Chat {str(session_id)[:8]}"
 
 
@@ -1367,17 +1387,64 @@ def effective_permission_mode(session_id, requested):
     return requested
 
 
+def _redact_secrets(text):
+    """Redact obvious credential material before it reaches a LOCK-SCREEN
+    notification (APNs bodies are shown to anyone who can read the screen):
+    Bearer tokens and token/key/password/api-key assignments. The command's
+    shape stays readable; only the value goes."""
+    return re.sub(
+        r"(?i)((?:bearer|token|secret|api[_-]?key|access[_-]?key|password|passwd|pwd)\s*[=:]?\s+)\S+",
+        r"\1***",
+        text,
+    )
+
+
+def _perm_preview(tool_name, tinput):
+    """A bounded, secret-safe one-liner for what a gated tool call would do.
+    The CLI sends the tool input as a dict or a JSON string (both shapes
+    seen in the wild), so parse leniently; a string-shaped input used to
+    crash this function and silently kill the whole push.
+
+    Only identity-shaped fields are previewed (command / file path / url /
+    name / pattern / query / question) — never the tool's payload fields
+    (content, message, data), which may hold the work itself. Everything is
+    redacted and capped before it leaves the server."""
+    if isinstance(tinput, str):
+        try:
+            tinput = json.loads(tinput)
+        except Exception:
+            tinput = {}
+    if not isinstance(tinput, dict):
+        tinput = {}
+    if tool_name == "Bash":
+        raw = str(tinput.get("command") or "")
+    else:
+        raw = ""
+        for key in ("file_path", "path", "url", "name", "pattern", "query",
+                    "question", "header"):
+            v = tinput.get(key)
+            if v is None or v == "":
+                continue
+            if key in ("question", "header"):
+                raw = str(v)
+            else:
+                raw = f"{key}={v}"
+            break
+    return _redact_secrets(re.sub(r"\s+", " ", raw).strip())
+
+
 def _perm_push_body(tool_name, tinput, host):
     """The push body for a gated tool call: WHAT is being asked. The old body
     was 'Approve Bash? The agent needs your permission to continue.' — no way
     for the owner to judge from the notification alone. Now it carries a
-    one-line preview of the command (or the tool's args), and the host when the
-    run is remote (a local machine's label is noise)."""
-    if tool_name == "Bash":
-        preview = re.sub(r"\s+", " ", str((tinput or {}).get("command") or "")).strip()
-    else:
-        preview = re.sub(r"\s+", " ", json.dumps(tinput or {})).strip()
+    bounded, secret-safe preview of the command (or the tool's identity
+    fields), and the host when the run is remote (a local machine's label is
+    noise). The preview is capped and redacted (see _perm_preview)."""
     body = f"Approve {tool_name}?"
+    try:
+        preview = _perm_preview(tool_name, tinput)
+    except Exception:
+        preview = ""
     if preview:
         body += f" — {preview[:79]}…" if len(preview) > 80 else f" — {preview}"
     if host and host != "local":
