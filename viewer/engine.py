@@ -1091,6 +1091,12 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     """Block a driven claude's AskUserQuestion until the user answers (or timeout),
     returning the CLI-consumable permission decision. Also persists a durable
     pending_questions row so the app can render the card and it survives restart.
+
+    On TIMEOUT this method does NOT clear the durable row: the question stays
+    open (the card, the next heartbeat) and is answered later by resuming the
+    session — a skipped question resurfaces instead of being silently dropped.
+    An ANSWERED question is consumed exactly once, by the accept path
+    (decisions.accept_answer), before this wait even releases.
     """
     from viewer import questions
     q_list = questions.questions_from_input(tinput)
@@ -1103,14 +1109,28 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         job.setdefault("pending_approvals", []).append(
             {"id": pid, "tool_name": "AskUserQuestion", "input": tinput,
              "tool_use_id": tool_use_id, "event": ev, "decision": None,
-             "answer": None, "question": True, "created": time.time()})
+             "answer": None, "question": True, "created": time.time(),
+             "run_id": job.get("run_id") or "",
+             "revision": 0})
         cwd = job.get("cwd", "")
         host = job.get("host", "local")
+        run_id = job.get("run_id") or ""
     # Durable row: the app renders the card from this; survives app-close/restart.
+    # record returns the row's revision; the live waiter keeps it so the exact
+    # identity travels with the wait.
+    revision = 0
     try:
-        questions.record(session_id, {"tool_use_id": tool_use_id, "questions": q_list}, host)
+        revision = questions.record(session_id,
+                                    {"tool_use_id": tool_use_id, "questions": q_list},
+                                    host, run_id) or 0
     except Exception:
         pass
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        pend = job.get("pending_approvals", []) if job else []
+        entry = next((e for e in pend if e["id"] == pid), None)
+        if entry:
+            entry["revision"] = revision
     # Background push so the user knows a question is waiting (works app-closed).
     try:
         from viewer.push import notify_all
@@ -1127,10 +1147,9 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         if entry:
             pend.remove(entry)
     answer = (entry.get("answer") if entry else None) or ""
-    try:
-        questions.clear(session_id)  # row consumed; the resumed turn is the record
-    except Exception:
-        pass
+    # No clear here, on either path: an answer consumed the exact row at accept
+    # time (decisions.accept_answer); a timeout leaves the row open so the
+    # question resurfaces. (questions.clear is session-delete-only now.)
     if not decided or not answer:
         # No answer in time: hand back the CLI's own "unanswered" so it can proceed.
         return {"behavior": "deny", "message": "The user did not answer the questions."}
@@ -1177,10 +1196,9 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
             pend.remove(entry)
     decision = entry.get("decision") if entry else None
     feedback = (entry.get("feedback") if entry else None) or ""
-    try:
-        questions.clear_plan(session_id)
-    except Exception:
-        pass
+    # No clear here, on either path: an answered plan consumed the row at accept
+    # time (decisions.decide_plan); a timeout leaves the row open so the plan
+    # resurfaces for a later decision. (clear_plan is session-delete-only now.)
     if not decided:
         return {"behavior": "deny", "message": "No response (timed out) — plan not approved."}
     if decision == "approve":
@@ -1272,13 +1290,20 @@ def answer_live_question(session_id, answer):
     """UI answers a live (blocked) AskUserQuestion for a session: set the answer on
     the waiting entry and release its Event so the blocked permission call returns
     the pick to the CLI, continuing the SAME turn. Returns True if a live question
-    was waiting, False otherwise (caller falls back to resume)."""
+    was waiting, False otherwise (caller falls back to resume).
+
+    First-writer-wins in memory too: a question already answered (by another
+    device/surface) is not answerable a second time. The durable row is the
+    real guard (decisions.accept_answer consumes it first); this stops a
+    duplicate from reaching the CLI even if a caller skips the gate."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
             return False
         entry = next((e for e in job.get("pending_approvals", []) if e.get("question")), None)
         if not entry:
+            return False
+        if entry.get("answer") is not None:
             return False
         entry["answer"] = answer
         entry["event"].set()
@@ -1288,13 +1313,17 @@ def answer_live_question(session_id, answer):
 def decide_plan(session_id, decision, feedback=""):
     """UI approves or denies a live (blocked) ExitPlanMode. approve -> the agent
     starts executing; deny -> the agent revises using `feedback`. Returns True if a
-    live plan decision was waiting, else False."""
+    live plan decision was waiting, else False. First-writer-wins: a plan already
+    decided is not decidable again (the durable row is the real guard —
+    decisions.decide_plan consumes it first)."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
             return False
         entry = next((e for e in job.get("pending_approvals", []) if e.get("plan")), None)
         if not entry:
+            return False
+        if entry.get("decision") is not None:
             return False
         entry["decision"] = "approve" if decision == "approve" else "deny"
         entry["feedback"] = feedback or ""

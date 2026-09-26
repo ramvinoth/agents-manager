@@ -97,6 +97,8 @@ def init_db():
               questions   JSONB NOT NULL,
               status      TEXT NOT NULL DEFAULT 'open',
               host        TEXT NOT NULL DEFAULT 'local',
+              run_id      TEXT NOT NULL DEFAULT '',
+              revision    INTEGER NOT NULL DEFAULT 1,
               created_at  DOUBLE PRECISION NOT NULL
             );
             CREATE TABLE IF NOT EXISTS session_tokens (
@@ -110,6 +112,8 @@ def init_db():
               created_at     DOUBLE PRECISION NOT NULL
             );
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
+            ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'viewer';
             -- What app a device runs, reported by the client on push-register.
             -- NULL = a build from before this column (we simply can't see it).
@@ -637,44 +641,74 @@ def all_push_tokens():
 # open question per session at a time (PRIMARY KEY on session_id).
 
 
-def pending_question_set(session_id, tool_use_id, questions, host="local"):
-    """Record (or replace) the open question for a session, remembering which host
-    the run was on so the answer can resume there."""
+def pending_question_set(session_id, tool_use_id, questions, host="local", run_id=""):
+    """Record (or replace) the open question for a session, remembering which
+    host and which run it came from, and returning the row's new revision.
+
+    The row is keyed by session (one open question per session, replaced on
+    re-ask). The revision is the request's version within that row: it bumps
+    when the SAME (run, tool) is re-recorded and resets to 1 when a different
+    run or a different question replaces it. A cleanup that carries the
+    revision can only ever match the exact request it belongs to — see
+    pending_question_clear_exact."""
     with _db() as cur:
         cur.execute(
-            "INSERT INTO pending_questions(session_id, tool_use_id, questions, status, host, created_at) "
-            "VALUES(%s,%s,%s,'open',%s,%s) "
+            "INSERT INTO pending_questions(session_id, tool_use_id, questions, status, host, run_id, created_at) "
+            "VALUES(%s,%s,%s,'open',%s,%s,%s) "
             "ON CONFLICT(session_id) DO UPDATE SET tool_use_id = excluded.tool_use_id, "
             "questions = excluded.questions, status = 'open', host = excluded.host, "
-            "created_at = excluded.created_at",
-            (session_id, tool_use_id, Json(questions or []), host or "local", time.time()),
+            "run_id = excluded.run_id, created_at = excluded.created_at, "
+            "revision = CASE WHEN pending_questions.run_id = excluded.run_id "
+            "AND pending_questions.tool_use_id = excluded.tool_use_id "
+            "THEN pending_questions.revision + 1 ELSE 1 END "
+            "RETURNING revision",
+            (session_id, tool_use_id, Json(questions or []), host or "local",
+             run_id or "", time.time()),
         )
+        row = cur.fetchone()
+        return int(row["revision"]) if row else 1
 
 
 def pending_question_get_open(session_id):
     """The open question for a session, else None. Shape:
-    {tool_use_id, questions, host}."""
+    {tool_use_id, questions, host, run_id, revision}."""
     with _db() as cur:
         cur.execute(
-            "SELECT tool_use_id, questions, host FROM pending_questions "
+            "SELECT tool_use_id, questions, host, run_id, revision FROM pending_questions "
             "WHERE session_id = %s AND status = 'open'",
             (session_id,),
         )
         row = cur.fetchone()
     return {"tool_use_id": row["tool_use_id"], "questions": row["questions"],
-            "host": row["host"]} if row else None
+            "host": row["host"], "run_id": row["run_id"] or "",
+            "revision": int(row["revision"] or 1)} if row else None
 
 
-def pending_question_resolve(session_id, tool_use_id):
-    """Mark the session's open question answered. Returns True if one was open and
-    matched (guards a double-submit / stale card). Deletes the row (answered
-    questions carry no further state — the resumed run is the record)."""
+def pending_question_clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
+    """Delete the session's question row only if it still holds exactly the
+    identity of the request being cleaned up (tool + host + run + revision).
+    A session-only DELETE is the wrong primitive: the row is keyed by session
+    and replaced on re-ask, so a stale cleanup from an old waiter would
+    otherwise erase a NEWER request the same session recorded meanwhile.
+    Returns True if a row was removed."""
     with _db() as cur:
         cur.execute(
-            "DELETE FROM pending_questions WHERE session_id = %s AND tool_use_id = %s AND status = 'open'",
-            (session_id, tool_use_id),
+            "DELETE FROM pending_questions "
+            "WHERE session_id = %s AND tool_use_id = %s AND host = %s "
+            "AND run_id = %s AND revision = %s AND status = 'open'",
+            (session_id, tool_use_id, host or "local", run_id or "", int(revision or 0)),
         )
         return cur.rowcount > 0
+
+
+def decision_answer_accept(session_id, tool_use_id, host="local", run_id="", revision=0):
+    """First-writer-wins acceptance of an answer for the session's open
+    question: consumes the exact row. Returns True if THIS call won the race —
+    a concurrent second answer (another device, a double tap) finds the row
+    gone and loses instead of double-firing the session. Acceptance is
+    committed before any delivery, so the decision is durable at the moment
+    it is made."""
+    return pending_question_clear_exact(session_id, tool_use_id, host, run_id, revision)
 
 
 def pending_question_delete(session_id):

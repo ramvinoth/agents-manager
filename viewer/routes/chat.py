@@ -237,12 +237,14 @@ class ChatMixin:
 
     def _p_chat_question_answer(self, req):
         """UI answers an AskUserQuestion. Body: {session, picks:[label,...]}.
-        Fast path: a live permission call is BLOCKED waiting on this answer — set it
-        and the SAME turn continues (works mid-conversation, all modes, remote).
-        Fallback: no live block (run ended / server restarted) — RESUME the session
-        on its original host with the composed answer as a fresh turn."""
-        from viewer import questions
-        from viewer.engine import answer_live_question
+        The decision goes through decisions.accept_answer: the exact row is
+        consumed first-writer-wins (a racing second tap gets 409, never a
+        double resume), then — only if the consume won — a live blocked waiter
+        is unblocked (same turn continues) or, failing that, the session is
+        RESUMED on its original host with the composed answer as a fresh turn
+        (run ended / server restarted). A question nobody answered in time was
+        never cleared, so a late tap lands here and resumes — it resurfaces."""
+        from viewer import decisions, questions
         body = self.read_body() or {}
         rel = body.get("session", "")
         picks = body.get("picks") or []
@@ -253,12 +255,17 @@ class ChatMixin:
             return
         host = pending.get("host") or "local"
         message = questions.answer_message(pending["questions"], picks)
-        # Fast path: unblock the waiting permission call — the turn resumes in place.
-        if answer_live_question(sid, message):
+        accepted, delivered = decisions.accept_answer(
+            sid, pending["tool_use_id"], message, host,
+            pending.get("run_id") or "", pending.get("revision") or 0)
+        if delivered:
             self.send_json({"answered": True, "session": sid})
             return
-        # Fallback: the block is gone; resume the session as a fresh turn.
-        questions.resolve(sid, pending["tool_use_id"])
+        if not accepted:
+            # A racing answer (another device, a double tap) committed first.
+            self.send_json({"error": "This question was already answered"}, status=409)
+            return
+        # The block is gone (timeout / restart); resume as a fresh turn.
         self._resume_with_reply(rel, sid, host, message, body)
 
     def _resume_with_reply(self, rel, sid, host, message, body):
@@ -287,12 +294,12 @@ class ChatMixin:
         """UI approves or denies an ExitPlanMode. Body: {session,
         decision:"approve"|"deny", feedback?}. Fast path: the run is blocked waiting —
         approve lets it execute, deny returns `feedback` so it revises, same turn.
-        Fallback (waiter gone: timeout / server restart): the durable pending_plans
-        row is resolved and the session is RESUMED with the decision in words, the
-        same way a late-answered question is — otherwise the card stays forever
-        and every tap 409s."""
-        from viewer import questions
-        from viewer.engine import decide_plan
+        Same durable-first shape as the question answer (decisions.decide_plan):
+        the exact row is consumed first-writer-wins, then the live waiter is
+        unblocked or — waiter gone (timeout / server restart) — the session is
+        RESUMED with the decision in words, so a late decision on a timed-out
+        plan lands instead of 409ing forever."""
+        from viewer import decisions, questions
         body = self.read_body() or {}
         rel = body.get("session", "")
         sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
@@ -302,10 +309,12 @@ class ChatMixin:
             return
         decision = "approve" if body.get("decision") == "approve" else "deny"
         feedback = body.get("feedback", "")
-        if decide_plan(sid, decision, feedback):
+        accepted, delivered = decisions.decide_plan(
+            sid, pending["tool_use_id"], decision, feedback)
+        if delivered:
             self.send_json({"decided": True, "session": sid})
             return
-        if not questions.resolve_plan(sid, pending["tool_use_id"]):
+        if not accepted:
             self.send_json({"error": "This plan was already decided"}, status=409)
             return
         self._resume_with_reply(rel, sid, pending.get("host") or "local",

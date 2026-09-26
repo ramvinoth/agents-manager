@@ -5,9 +5,13 @@ viewer's permission tool answers on the user's behalf: it BLOCKS the live turn, 
 a durable row here (viewer.db.pending_questions) so the app can render a card that
 survives an app close or a server restart, and feeds back the user's pick as the tool
 result — the same turn continues. If nobody answers before the block times out, the
-turn ends and the durable row is answered later by resuming the session
-(routes/chat.py `_p_chat_question_answer`). Works in every permission mode, local and
-remote. The engine drives this; see engine.py `_await_question_answer`.
+turn ends and the durable row STAYS open: the question resurfaces (the card, the
+next heartbeat) and is answered later by resuming the session (routes/chat.py
+`_p_chat_question_answer`) — a skipped question is never silently dropped. Answers
+are consumed first-writer-wins at the moment of acceptance (viewer.decisions),
+before any delivery, so two surfaces racing on the same question cannot both win.
+Works in every permission mode, local and remote. The engine drives this; see
+engine.py `_await_question_answer`.
 
 This module is host-agnostic: `questions_from_input` is a pure parser, and the DB
 wrappers carry no HTTP or threading knowledge.
@@ -56,8 +60,11 @@ def answer_message(questions, picks):
 
 # ---- thin DB wrappers (single source of truth = viewer.db) ----------------------
 
-def record(session_id, pending, host="local"):
+def record(session_id, pending, host="local", run_id=""):
     """Persist the open question, then count it as an interruption.
+
+    Returns the row's new revision (db.pending_question_set) — the caller stores
+    it on its live waiter so a later cleanup can match the exact request.
 
     The audit row is what remains of the cut `ask_owner` tool: escalation itself is
     native (Claude's AskUserQuestion), but "interruptions fall as autonomy is earned"
@@ -70,7 +77,8 @@ def record(session_id, pending, host="local"):
     Ordered persist-then-audit, and the audit is best-effort, so a bookkeeping failure
     can never lose a question the user is waiting to answer.
     """
-    db.pending_question_set(session_id, pending["tool_use_id"], pending["questions"], host)
+    revision = db.pending_question_set(session_id, pending["tool_use_id"],
+                                       pending["questions"], host, run_id)
     try:
         db.audit_append(f"session:{session_id}", "ask_owner",
                         {"session": session_id, "host": host,
@@ -91,17 +99,25 @@ def record(session_id, pending, host="local"):
                 board_wake.wake_on_open_question(session_id, summary)
     except Exception:
         pass
+    return revision
 
 
 def get_open(session_id):
     return db.pending_question_get_open(session_id)
 
 
-def resolve(session_id, tool_use_id):
-    return db.pending_question_resolve(session_id, tool_use_id)
+def clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
+    """Consume only the exact request identified (tool + host + run + revision).
+    The answer path itself is owned by decisions.accept_answer (consume-then-
+    deliver, first-writer-wins); this is the identity primitive for any other
+    exact consumer."""
+    return db.pending_question_clear_exact(session_id, tool_use_id, host, run_id, revision)
 
 
 def clear(session_id):
+    """Session-wide drop — for session DELETE only. Never the answer path: the
+    row is keyed by session and replaced on re-ask, so a session-wide delete
+    from a stale waiter would erase a NEWER request. See db.pending_question_clear_exact."""
     db.pending_question_delete(session_id)
 
 
@@ -125,10 +141,6 @@ def record_plan(session_id, pending, host="local"):
 
 def get_open_plan(session_id):
     return db.pending_plan_get_open(session_id)
-
-
-def resolve_plan(session_id, tool_use_id):
-    return db.pending_plan_resolve(session_id, tool_use_id)
 
 
 def plan_decision_message(decision, feedback=""):

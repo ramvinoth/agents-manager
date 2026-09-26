@@ -58,8 +58,9 @@ class TestRecordCountsTheInterruption:
         def __init__(self, boom=False):
             self.rows, self.audit, self.boom = [], [], boom
 
-        def pending_question_set(self, session_id, tool_use_id, qs, host="local"):
-            self.rows.append((session_id, tool_use_id, qs, host))
+        def pending_question_set(self, session_id, tool_use_id, qs, host="local", run_id=""):
+            self.rows.append((session_id, tool_use_id, qs, host, run_id))
+            return 1
 
         def audit_append(self, actor, action, target=None, outcome=""):
             if self.boom:
@@ -93,4 +94,4 @@ class TestRecordCountsTheInterruption:
         f = self.FakeDB(boom=True)
         monkeypatch.setattr(questions, "db", f)
         questions.record("sid3", {"tool_use_id": "t3", "questions": Q})
-        assert f.rows == [("sid3", "t3", Q, "local")]
+        assert f.rows == [("sid3", "t3", Q, "local", "")]
