@@ -39,11 +39,11 @@ def test_exact_display_contract_and_sensitive_exclusion():
     assert projected == {
         "id": 1, "actor": "user:ram", "action": "Comment on card",
         "target": {"label": "Card #44", "card_id": 44},
-        "result": {"category": "returned", "label": "Handler returned",
+        "result": {"category": "returned", "label": "Ran",
                    "explanation": audit.project_entry(row())["result"]["explanation"]},
         "created_at": 1789800000.0,
     }
-    assert "does not establish success" in projected["result"]["explanation"]
+    assert "does not prove" in projected["result"]["explanation"]
     assert SECRET not in json.dumps(projected)
 
 
@@ -111,6 +111,50 @@ def test_direct_writer_reference_allowlist(action, field, label):
     assert SECRET not in json.dumps(audit.project_entry(entry))
 
 
+@pytest.mark.parametrize("column_id,expected", [
+    (40, {"label": "Card #44", "card_id": 44, "column_id": 40}),
+    ("40", {"label": "Card #44", "card_id": 44}),
+    (0, {"label": "Card #44", "card_id": 44}),
+    (None, {"label": "Card #44", "card_id": 44}),
+])
+def test_move_carries_only_a_validated_destination(column_id, expected):
+    target = {"action": "card_move", "args": {"card_id": 44, "column_id": column_id, "body": SECRET}}
+    assert audit.project_entry(row(action="card_move", target=target))["target"] == expected
+
+
+def test_other_actions_never_carry_a_column():
+    target = {"action": "card_update", "args": {"card_id": 44, "column_id": 40}}
+    assert audit.project_entry(row(action="card_update", target=target))["target"] == {
+        "label": "Card #44", "card_id": 44}
+
+
+def test_name_references_attaches_current_names_and_skips_missing_rows():
+    entries = [audit.project_entry(row(1)),
+               audit.project_entry(row(2, action="card_move", target={
+                   "action": "card_move", "args": {"card_id": 45, "column_id": 40}})),
+               audit.project_entry(row(3, target={"action": "card_comment", "args": {"card_id": 46}})),
+               audit.project_entry(row(4, target=None))]
+    asked = {}
+    def titles(ids):
+        asked["cards"] = ids
+        return {44: "Ship the editor", 46: SECRET, 99: "never asked"}
+    def names(ids):
+        asked["columns"] = ids
+        return {40: "Review"}
+    audit.name_references(entries, titles, names)
+    assert asked == {"cards": [44, 45, 46], "columns": [40]}
+    assert entries[0]["target"] == {"label": "Card #44", "card_id": 44, "title": "Ship the editor"}
+    assert entries[1]["target"] == {"label": "Card #45", "card_id": 45, "column_id": 40, "column": "Review"}
+    assert entries[2]["target"]["title"] == SECRET  # a title is the card's own public text
+    assert entries[3]["target"] == {"label": "Target not available"}
+
+
+def test_name_references_makes_no_lookup_without_references():
+    entries = [audit.project_entry(row(target=None))]
+    boom = lambda ids: (_ for _ in ()).throw(AssertionError("looked up nothing"))
+    assert audit.name_references(entries, boom, boom) == entries
+
+
 @pytest.mark.parametrize("action", [SECRET, None, [], {}, "future_action"])
 def test_unknown_actions_never_use_arbitrary_labels_or_ids(action):
     projected = audit.project_entry(row(action=action, target={"card_id": 44, "id": 45}))
@@ -120,24 +164,24 @@ def test_unknown_actions_never_use_arbitrary_labels_or_ids(action):
 
 
 @pytest.mark.parametrize("outcome,category,label", [
-    ("done", "returned", "Handler returned"),
-    ("queued:red", "queued", "Queued when recorded"),
+    ("done", "returned", "Ran"),
+    ("queued:red", "queued", "Sent for approval"),
     ("denied:scope", "denied", "Denied"),
     ("denied:self_resolve", "denied", "Denied"),
     ("denied:self_mutation", "denied", "Denied"),
-    ("error:unknown_action", "error", "Error recorded"),
-    ("error", "error", "Error recorded"),
-    ("ok", "other", "Tick returned"),
-    ("planned", "other", "Dry-run plan recorded"),
-    ("pending", "other", "Approval opened when recorded"),
-    ("no_provider", "other", "No session returned"),
-    ("asked", "other", "Question recorded"),
-    ("queued", "other", "Wake queued when recorded"),
-    ("denied:" + SECRET, "other", "Other recorded result"),
-    ("error:" + SECRET, "other", "Other recorded result"),
-    (SECRET, "other", "Other recorded result"),
-    (None, "other", "Other recorded result"),
-    ({"error": SECRET}, "other", "Other recorded result"),
+    ("error:unknown_action", "error", "Failed"),
+    ("error", "error", "Failed"),
+    ("ok", "other", "Tick ran"),
+    ("planned", "other", "Planned (dry run)"),
+    ("pending", "other", "Approval opened"),
+    ("no_provider", "other", "No session started"),
+    ("asked", "other", "Question asked"),
+    ("queued", "other", "Wake scheduled"),
+    ("denied:" + SECRET, "other", "Unknown result"),
+    ("error:" + SECRET, "other", "Unknown result"),
+    (SECRET, "other", "Unknown result"),
+    (None, "other", "Unknown result"),
+    ({"error": SECRET}, "other", "Unknown result"),
 ])
 def test_source_backed_result_mapping(outcome, category, label):
     result = audit.project_entry(row(outcome=outcome))["result"]
@@ -156,7 +200,7 @@ def test_handler_error_payload_is_still_recorded_as_returned(monkeypatch):
     assert status == 200 and payload == {"error": SECRET}
     actor, action, target, outcome = captured[0]
     result = audit.project_entry(row(actor=actor, action=action, target=target, outcome=outcome))
-    assert result["result"]["label"] == "Handler returned"
+    assert result["result"]["label"] == "Ran"
     assert SECRET not in json.dumps(result)
 
 
@@ -217,6 +261,8 @@ def sql_store(monkeypatch):
                       for k in ("id", "actor", "action", "target", "outcome", "created_at")])
 
     monkeypatch.setattr(db, "_db", database)
+    monkeypatch.setattr(db, "card_titles", lambda ids: {})
+    monkeypatch.setattr(db, "board_column_names", lambda ids: {})
     yield SimpleNamespace(insert=insert, statements=statements)
     conn.close()
 

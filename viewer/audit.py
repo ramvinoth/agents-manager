@@ -1,7 +1,10 @@
 """Versioned, allowlisted display of recorded audit facts (never raw arguments).
 
-No identity/resource joins: targets describe recorded references, not current
-existence or access. New/unknown values fail closed to controlled display text.
+project_entry is pure: targets describe recorded references (ids), not current
+existence. The route then names those references (card titles, column names)
+through `name_references`, so a person reads "Moved 'Ship the editor' to Review"
+instead of "Card #44 / column 40". New/unknown values fail closed to controlled
+display text; free-text arguments (comment bodies, patches) never pass through.
 """
 import math
 import re
@@ -11,48 +14,43 @@ import unicodedata
 # outcome -> (category, label, explanation). This is also the SQL filter authority.
 # actions.execute audits `done` after ANY handler return, including error payloads.
 _OUTCOMES = {
-    "done": ("returned", "Handler returned",
-             "The handler returned. This does not establish success or task completion; "
-             "handlers can return error payloads."),
-    "queued:red": ("queued", "Queued when recorded",
-                   "The action was placed in the approval queue when recorded. "
-                   "This does not describe its current approval state."),
+    "done": ("returned", "Ran",
+             "The handler ran and returned. Its own reply is not recorded here, so this "
+             "alone does not prove the change took effect."),
+    "queued:red": ("queued", "Sent for approval",
+                   "This action needs the owner's approval and was placed in the queue. "
+                   "Whether it was later approved is not part of this record."),
     "denied:scope": ("denied", "Denied",
-                     "The caller's effective authority did not allow this action."),
+                     "The caller's authority did not allow this action."),
     # routes.orchestrator: guards before approval resolution / self mutation.
     "denied:self_resolve": ("denied", "Denied",
-                            "The caller could not resolve an approval they raised."),
+                            "The caller tried to resolve an approval they raised themselves."),
     "denied:self_mutation": ("denied", "Denied",
-                             "The caller was blocked from changing their own session or loop controls."),
-    "error:unknown_action": ("error", "Error recorded",
-                             "No registered handler was found for the action."),
+                             "The caller tried to change its own session or loop controls."),
+    "error:unknown_action": ("error", "Failed",
+                             "No handler is registered for this action."),
     # orchestrator.tick catches an exception for one planned action.
-    "error": ("error", "Error recorded",
-              "The manager tick recorded an exception while processing an action. "
-              "This does not establish whether earlier changes occurred."),
+    "error": ("error", "Failed",
+              "The manager tick hit an exception while processing this action."),
     # Tick values intentionally stay Other, not handler-return / approval categories.
-    "ok": ("other", "Tick returned",
-           "The manager tick recorded 'ok' after its operation returned. "
-           "This does not establish task completion."),
-    "planned": ("other", "Dry-run plan recorded",
-                "The manager tick recorded a proposed action in dry-run mode, "
-                "without executing that action."),
-    "pending": ("other", "Approval opened when recorded",
-                "The manager tick opened an approval when recorded. "
-                "This does not describe its current approval state."),
-    "no_provider": ("other", "No session returned",
-                    "The manager tick recorded no session identifier for a spawn attempt. "
-                    "This record alone does not identify the cause."),
+    "ok": ("other", "Tick ran",
+           "The manager tick finished this operation."),
+    "planned": ("other", "Planned (dry run)",
+                "The manager tick proposed this action in dry-run mode and did not execute it."),
+    "pending": ("other", "Approval opened",
+                "The manager tick opened an approval for the owner. Whether it was decided "
+                "is not part of this record."),
+    "no_provider": ("other", "No session started",
+                    "The manager tick got no session identifier back from a spawn attempt."),
     # questions.persist and board_wake._wake respectively.
-    "asked": ("other", "Question recorded",
-              "An owner question was persisted when recorded. "
-              "This does not say whether it has since been answered."),
-    "queued": ("other", "Wake queued when recorded",
-               "A board wake was scheduled when recorded. "
-               "This does not establish that it ran or remains scheduled."),
+    "asked": ("other", "Question asked",
+              "A question for the owner was saved. Whether it has been answered is not part "
+              "of this record."),
+    "queued": ("other", "Wake scheduled",
+               "A board wake was scheduled for a session."),
 }
-_OTHER = ("other", "Other recorded result",
-          "No supported result meaning is available for this record.")
+_OTHER = ("other", "Unknown result",
+          "This record carries a result this version cannot interpret.")
 RESULT_CATEGORIES = ("all", "returned", "queued", "denied", "error", "other")
 # Limits of this API contract, not claims about database or platform capacity.
 MAX_LIMIT = 100
@@ -137,12 +135,39 @@ def _target(action, reference, target):
     if "args" in target or "action" in target:
         if target.get("action") != action or not isinstance(target.get("args"), dict):
             return fallback
-        value = target["args"].get(intent_key) if intent_key else None
+        args = target["args"]
+        value = args.get(intent_key) if intent_key else None
     else:
+        args = {}
         value = target.get(direct_key) if direct_key else None
     if not _positive_id(value):
         return fallback
-    return {"label": f"{label} #{value}", **({"card_id": value} if label == "Card" else {})}
+    out = {"label": f"{label} #{value}", **({"card_id": value} if label == "Card" else {})}
+    # A move is meaningless without its destination; the column id is the only
+    # other argument that is a validated reference rather than free text.
+    if action == "card_move" and _positive_id(args.get("column_id")):
+        out["column_id"] = args["column_id"]
+    return out
+
+
+def name_references(entries, card_titles, column_names):
+    """Attach current names to the validated ids in projected entries, in place.
+
+    `card_titles(ids) -> {id: title}` and `column_names(ids) -> {id: name}` are
+    injected (db functions in production) so the projection stays testable
+    without a database. A reference to a deleted row simply keeps its number.
+    """
+    cards = {e["target"]["card_id"] for e in entries if "card_id" in e["target"]}
+    columns = {e["target"]["column_id"] for e in entries if "column_id" in e["target"]}
+    titles = card_titles(sorted(cards)) if cards else {}
+    names = column_names(sorted(columns)) if columns else {}
+    for e in entries:
+        t = e["target"]
+        if "card_id" in t and isinstance(titles.get(t["card_id"]), str):
+            t["title"] = titles[t["card_id"]]
+        if "column_id" in t and isinstance(names.get(t["column_id"]), str):
+            t["column"] = names[t["column_id"]]
+    return entries
 
 
 def project_entry(row):

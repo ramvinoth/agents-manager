@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react"
-import { ChevronRight, Power, Repeat, ScrollText, Server } from "lucide-react"
+import { ChevronRight, History, Power, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
 import type { LoopMode } from "@/lib/types"
 import { AISelectionDialog } from "./settings/AISelectionDialog"
+import { AuditDialog } from "./AuditDialog"
 
 // Loop-firing modes, in escalating order of what's licensed to run — the
 // plain-language version of loops.LOOP_MODES. Mirrors the mobile Profile screen.
@@ -79,6 +80,8 @@ export function ProfilePanel() {
   const [aiDefaults, setAiDefaults] = useState<AIConfig | null>(null)
   const [aiErr, setAiErr] = useState("")
   const [aiOpen, setAiOpen] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)
+  const authUser = useStore((s) => s.authUser)
   useEffect(() => {
     let alive = true
     api
@@ -226,6 +229,20 @@ export function ProfilePanel() {
         </section>
 
         <section className="py-4">
+          <SectionHeader icon={History} title="Activity" />
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <History className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left" onClick={() => setAuditOpen(true)}>
+              <div className="text-sm font-medium">Who did what, and when</div>
+              <div className="truncate text-[11px] text-muted-foreground">Every recorded board change, approval and denial across the org.</div>
+            </button>
+            <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setAuditOpen(true)} title="Open activity">
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        </section>
+
+        <section className="py-4">
           <SectionHeader icon={ScrollText} title="System preamble" />
           <p className="mb-2 text-[11px] text-muted-foreground">
             Prepended to every session's system prompt, so each one knows it is a node in
@@ -259,6 +276,7 @@ export function ProfilePanel() {
         </section>
       </div>
 
+      {auditOpen && <AuditDialog selfUsername={authUser?.username} onClose={() => setAuditOpen(false)} />}
       {aiOpen && (
         <AISelectionDialog
           scope={{ host: currentHost }}

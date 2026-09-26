@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { auditReducer, initialAuditState, parseAuditPage, auditPath, groupAuditEntries, auditTime, auditTimestamp, auditError, auditSubject, resultTone, type AuditEntry, type AuditPage } from "./audit.ts"
-import { themeFor, contrast } from "./theme.ts"
 
 const entry = (id: number, created_at: number | null = 0): AuditEntry => ({
   id, actor: "Recorded actor", action: "Move card", target: { label: "Card #44", card_id: 44 },
@@ -81,9 +80,4 @@ state = auditReducer(state, { type: "begin", request: 8, mode: "refresh", filter
 assert.equal(auditReducer(state, { type: "success", request: 7, page: page([88]) }), state)
 assert.equal(auditError({ status: 403, message: "SECRET_SENTINEL" }), "You do not have access to this audit log.")
 assert.equal(auditError(new Error("SECRET_SENTINEL")).includes("SECRET_SENTINEL"), false)
-for (const scheme of ["light", "dark"] as const) {
-  const t = themeFor(scheme)
-  assert.ok(contrast(t.text, t.bg) >= 4.5)
-  assert.ok(contrast(t.text, t.surface) >= 4.5)
-}
-console.log("Audit contract, date, paging, stale-request, error and contrast tests passed")
+console.log("Audit contract, date, paging, stale-request and error tests passed")

@@ -4,6 +4,7 @@
 
 import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision, Drive } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
+import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 
 type Body = Record<string, unknown>
 
@@ -198,6 +199,11 @@ class ApiClient {
   }
   orgEmployees() {
     return this.getJSON<{ employees: Employee[] }>("/api/org/employees")
+  }
+  /** The activity feed, validated against the display-v1 contract before any of
+   *  it is rendered — a raw or older-shaped response throws, never displays. */
+  async orgAudit(result: AuditFilter = "all", before?: number) {
+    return parseAuditPage(await this.getStrict(auditPath(result, before)), before)
   }
   /** Find-or-create the org project for a (host, cwd) directory → the board it maps to. */
   orgProjectForCwd(body: { host: string; cwd: string; name?: string }) {

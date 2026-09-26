@@ -284,8 +284,9 @@ class OrchestratorMixin:
             return
         rows = db.audit_list(limit=limit + 1, before_id=before_id, result=result)
         page = rows[:limit]
-        self.send_json({"view": "display-v1",
-                        "audit": [audit.project_entry(row) for row in page],
+        entries = audit.name_references([audit.project_entry(row) for row in page],
+                                        db.card_titles, db.board_column_names)
+        self.send_json({"view": "display-v1", "audit": entries,
                         "next_before": page[-1]["id"] if len(rows) > limit else None})
 
     # ── Harman autonomous-manager config (owner surface) ─────────────────────

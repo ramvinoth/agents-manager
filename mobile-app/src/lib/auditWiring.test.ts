@@ -35,9 +35,12 @@ function harness(path: string, props: Record<string, unknown> = {}) {
     "react-native": Object.fromEntries(["ActivityIndicator", "Pressable", "SectionList", "ScrollView", "Text", "View"].map(name => [name, name])),
     "react-native-safe-area-context": { useSafeAreaInsets: () => ({ bottom: 0 }) },
     "../api/client": { api: { orgAudit: (filter: audit.AuditFilter, before?: number) => new Promise<audit.AuditPage>((resolve, reject) => calls.push({ filter, before, resolve, reject })) } },
-    "../state/config": { setToken: () => { clearedToken = true } },
+    "../state/config": { setToken: () => { clearedToken = true }, username: () => "" },
     "../lib/useTheme": { useTheme: () => ({}) },
     "../lib/audit": audit,
+    "../lib/board": { formatActor: (actor: string) => ({ name: actor, kind: "unknown" }) },
+    // The detail screen borrows the feed's badge and chip palette; both are pure markup.
+    "./AuditScreen": { ActorBadge: "ActorBadge", toneColors: () => ({ fg: "", bg: "" }) },
   }
   const js = ts.transpileModule(source(path), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
   const exports: { default?: Function } = {}
@@ -88,8 +91,7 @@ test("screen retains rows on refresh failure and requests an explicit older curs
 test("filter selection supersedes older responses and row opens safe detail", async () => {
   const view = harness("../screens/AuditScreen.tsx")
   view.start()
-  find(view.render(), node => node.props.testID === "audit-result-filter")!.props.onPress()
-  find(view.list().props.ListHeaderComponent, node => node.props.testID === "audit-filter-denied")!.props.onPress()
+  find(view.render(), node => node.props.testID === "audit-filter-denied")!.props.onPress()
   assert.equal(view.calls[1].filter, "denied")
   view.calls[1].resolve(page(8))
   await settle()
@@ -117,7 +119,7 @@ test("detail links only positive card IDs, delegates reads, and has labelled sel
   find(tree, node => node.props.testID === "audit-entry-card")!.props.onPress()
   assert.deepEqual(view.navigations[0], ["CardDetail", { id: 44 }])
   assert.ok(find(tree, node => node.props.selectable === true))
-  for (const label of ["Actor", "Target", "Recorded result", "Recorded at", "Record ID"]) assert.match(JSON.stringify(tree), new RegExp(label))
+  for (const label of ["Actor", "Target", "Recorded result", "Recorded at", "Record ID", "Does not establish success."]) assert.match(JSON.stringify(tree), new RegExp(label))
   for (const card_id of [undefined, -1, 0, 1.5, "44"]) {
     const invalid = harness("../screens/AuditEntryScreen.tsx", { route: { params: { entry: { ...entry, target: { label: "Unknown target", card_id } } } } })
     assert.equal(find(invalid.render(), node => node.props.testID === "audit-entry-card"), undefined)

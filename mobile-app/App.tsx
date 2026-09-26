@@ -185,7 +185,7 @@ export default function App() {
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
-            <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Audit log" }} />
+            <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />
             <Stack.Screen name="AuditEntry" component={AuditEntryScreen} options={{ title: "Recorded action" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
             <Stack.Screen

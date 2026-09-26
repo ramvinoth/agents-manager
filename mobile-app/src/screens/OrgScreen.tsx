@@ -321,15 +321,15 @@ export default function OrgScreen({ navigation }: Props) {
       <TouchableOpacity
         testID="org-audit"
         accessibilityRole="button"
-        accessibilityLabel="Audit log, recorded control actions"
+        accessibilityLabel="Activity, who did what and when"
         onPress={() => navigation.navigate("Audit")}
         style={{ minHeight: 44, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, marginBottom: 18, flexDirection: "row", alignItems: "center", gap: 12 }}
       >
         <View style={{ flex: 1 }}>
-          <Text style={{ color: t.text, fontSize: 17, fontWeight: "600" }}>Audit log</Text>
-          <Text style={{ color: t.text, fontSize: 14, marginTop: 4 }}>Recorded control actions</Text>
+          <Text style={{ color: t.text, fontSize: 17, fontWeight: "600" }}>Activity</Text>
+          <Text style={{ color: t.textMuted, fontSize: 14, marginTop: 4 }}>Who did what, and when</Text>
         </View>
-        <Icon name="chevronRight" size={18} color={t.text} />
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
 
       <Section title="Skills learned">

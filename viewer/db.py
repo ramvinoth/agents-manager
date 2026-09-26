@@ -979,6 +979,15 @@ def board_columns_list(project_id):
         return [dict(r) for r in cur.fetchall()]
 
 
+def board_column_names(column_ids):
+    """{id: name} for the columns that still exist among `column_ids`."""
+    if not column_ids:
+        return {}
+    with _db() as cur:
+        cur.execute("SELECT id, name FROM board_columns WHERE id = ANY(%s)", (list(column_ids),))
+        return {r["id"]: r["name"] for r in cur.fetchall()}
+
+
 def board_column_create(project_id, name, position=0):
     with _db() as cur:
         cur.execute(
@@ -1080,6 +1089,15 @@ def card_get(card_id):
         cur.execute("SELECT * FROM cards WHERE id = %s", (card_id,))
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def card_titles(card_ids):
+    """{id: title} for the cards that still exist among `card_ids`."""
+    if not card_ids:
+        return {}
+    with _db() as cur:
+        cur.execute("SELECT id, title FROM cards WHERE id = ANY(%s)", (list(card_ids),))
+        return {r["id"]: r["title"] for r in cur.fetchall()}
 
 
 def card_update(card_id, **fields):

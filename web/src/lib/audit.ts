@@ -1,4 +1,5 @@
 // The server owns the safe projection and result meaning. Never accept raw audit rows.
+// Mirrors mobile-app/src/lib/audit.ts verbatim — one contract, two renderings.
 export type AuditResult = "returned" | "queued" | "denied" | "error" | "other"
 export type AuditFilter = "all" | AuditResult
 export type AuditTarget = {

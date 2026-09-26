@@ -11,7 +11,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
-import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare } from "lucide-react"
+import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare, History } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,7 @@ import { groupByColumn, orderColumn, nextPosition, findCardSession } from "@/lib
 import { useStore } from "@/store"
 import { CardDetail } from "./CardDetail"
 import { DecisionsBand } from "./DecisionsBand"
+import { AuditDialog } from "../AuditDialog"
 import { isQueued } from "@/lib/types"
 import type { BoardColumn, Card, Employee, OpenDecision, OrgProject } from "@/lib/types"
 
@@ -60,6 +61,7 @@ export function KanbanDialog({
   const [activeId, setActiveId] = useState<number | null>(null)
   const [editing, setEditing] = useState<Card | null>(null) // card editor (null = closed)
   const [addingCol, setAddingCol] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)
   const [newColName, setNewColName] = useState("")
   // Confirmation gate for the two deletions that touch more than one row:
   // deleting a card removes its comment thread, and deleting a column with
@@ -213,8 +215,13 @@ export function KanbanDialog({
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="flex h-[90vh] max-w-[95vw] flex-col sm:max-w-[95vw]">
-        <DialogHeader>
-          <DialogTitle>Tasks · {name}</DialogTitle>
+        <DialogHeader className="pr-10">
+          <div className="flex items-center gap-3">
+            <DialogTitle className="flex-1">Tasks · {name}</DialogTitle>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAuditOpen(true)} title="Who did what, and when">
+              <History className="size-3.5" /> Activity
+            </Button>
+          </div>
           <DialogDescription>
             The project board. Every chat session working in this project shares these tasks.
           </DialogDescription>
@@ -300,6 +307,20 @@ export function KanbanDialog({
             if (c) requestDeleteCard(c)
           }}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {auditOpen && (
+        <AuditDialog
+          selfUsername={authUser?.username}
+          onOpenCard={(id) => {
+            const c = cards.find((x) => x.id === id)
+            if (!c) return false
+            setAuditOpen(false)
+            setEditing(c)
+            return true
+          }}
+          onClose={() => setAuditOpen(false)}
         />
       )}
 
