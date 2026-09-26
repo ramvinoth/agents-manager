@@ -387,3 +387,16 @@ export interface FileListResponse {
   home: string
   truncated?: boolean
 }
+
+/** A cloud drive in the file browser's location picker — the sanitized view
+ *  the server returns (no tokens, no client secret). `authorized` is the
+ *  "has a usable token" presence flag; an unauthorized drive still lists but
+ *  selecting it re-runs the consent flow. */
+export interface Drive {
+  id: string
+  label: string
+  kind: string
+  status: string
+  hidden: boolean
+  authorized: boolean
+}

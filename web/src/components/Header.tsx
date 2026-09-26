@@ -159,17 +159,15 @@ export function Header() {
         <KeyRound className="size-4 text-muted-foreground" />
       </Button>
 
-      {currentHost !== "local" && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="size-7"
-          onClick={openFs}
-          title={`Browse files on ${hostLabel}`}
-        >
-          <FolderOpen className="size-4 text-muted-foreground" />
-        </Button>
-      )}
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-7"
+        onClick={openFs}
+        title={`Browse files on ${hostLabel} or a cloud drive`}
+      >
+        <FolderOpen className="size-4 text-muted-foreground" />
+      </Button>
 
       <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setNsOpen(true)}>
         <Plus className="size-3.5" /> New

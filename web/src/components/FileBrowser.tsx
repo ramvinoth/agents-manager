@@ -30,9 +30,11 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { fmtBytes, fmtAgo } from "@/lib/format"
 import { describeHost } from "@/lib/host"
+import { HOST_LOCATION, START_PATH, isLiveLocation, type Location } from "@/lib/location"
+import { LocationPicker } from "@/components/LocationPicker"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
-import type { FileEntry, FileListResponse } from "@/lib/types"
+import type { Drive, FileEntry, FileListResponse } from "@/lib/types"
 
 // ---- file-type → icon + accent color ---------------------------------------
 const EXT: Record<string, { Icon: typeof FileIcon; color: string }> = {}
@@ -66,7 +68,16 @@ export function FileBrowser() {
   const hosts = useStore((s) => s.hosts)
   const hostLabel = describeHost(currentHost, hosts)
 
-  const [path, setPath] = useState("~")
+  // Where the files come from: the current host ("" — the header's app-wide
+  // choice) or one cloud drive. Passed per call, never stored on the api
+  // client, so no non-file request can ever carry a drive. Pick mode
+  // ("Use this folder" for a session cwd) is host-only — a drive path is not
+  // a directory any session can run in.
+  const [location, setLocation] = useState<Location>(HOST_LOCATION)
+  const [drives, setDrives] = useState<Drive[]>([])
+  const [vendors, setVendors] = useState<string[]>([])
+  const drive = location || undefined
+  const [path, setPath] = useState(START_PATH)
   const [data, setData] = useState<FileListResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -97,7 +108,7 @@ export function FileBrowser() {
       setMenu(null)
       lastIdx.current = null
       try {
-        const d = (await api.fs(p, showHidden)) as FileListResponse & { error?: string }
+        const d = (await api.fs(p, showHidden, drive)) as FileListResponse & { error?: string }
         if (d.error) throw new Error(d.error)
         setData(d)
         setPath(d.path)
@@ -106,13 +117,34 @@ export function FileBrowser() {
       }
       setLoading(false)
     },
-    [showHidden]
+    [showHidden, drive]
   )
 
   useEffect(() => {
     load(path)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showHidden])
+  }, [showHidden, location])
+
+  useEffect(() => {
+    if (fsPick) return
+    api.drives().then((d) => {
+      setDrives(d.drives || [])
+      setVendors(d.vendors || [])
+    }).catch(() => {})
+  }, [fsPick])
+
+  // A selected drive that disappears (removed here or elsewhere) must not keep
+  // rendering as a place — fall back to the host.
+  useEffect(() => {
+    if (!isLiveLocation(location, drives)) changeLocation(HOST_LOCATION)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drives])
+
+  function changeLocation(loc: Location) {
+    if (loc === location) return
+    setLocation(loc)
+    setPath(START_PATH)
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -147,13 +179,13 @@ export function FileBrowser() {
   }
 
   function download(entry: FileEntry) {
-    triggerDownload(api.fsDownload(joinPath(path, entry.name)), entry.name)
+    triggerDownload(api.fsDownload(joinPath(path, entry.name), drive), entry.name)
   }
 
   function downloadZip(names: string[]) {
     if (!names.length) return
     const arc = names.length === 1 ? names[0] + ".zip" : "Archive.zip"
-    triggerDownload(api.fsDownloadZip(path, names), arc)
+    triggerDownload(api.fsDownloadZip(path, names, undefined, drive), arc)
   }
 
   function openEntry(entry: FileEntry) {
@@ -165,7 +197,7 @@ export function FileBrowser() {
     if (!files.length) return
     setBusy("Uploading…")
     try {
-      const res = await api.fsUpload(path, files)
+      const res = await api.fsUpload(path, files, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       const failed = (d.uploaded || []).filter((u: any) => u.error)
@@ -183,7 +215,7 @@ export function FileBrowser() {
     setNewName("")
     if (!name) return
     try {
-      const res = await api.fsMkdir({ path, name })
+      const res = await api.fsMkdir({ path, name }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       await load(path)
@@ -197,7 +229,7 @@ export function FileBrowser() {
     const name = value.trim()
     if (!name || name === entry.name) return
     try {
-      const res = await api.fsRename({ path: joinPath(path, entry.name), name })
+      const res = await api.fsRename({ path: joinPath(path, entry.name), name }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       await load(path)
@@ -209,7 +241,7 @@ export function FileBrowser() {
   async function trashMany(names: string[]) {
     try {
       for (const n of names) {
-        const res = await api.fsDelete({ path: joinPath(path, n) })
+        const res = await api.fsDelete({ path: joinPath(path, n) }, drive)
         const d = await res.json()
         if (d.error) throw new Error(d.error)
       }
@@ -224,7 +256,7 @@ export function FileBrowser() {
     if (!names.length) return
     setBusy("Compressing…")
     try {
-      const res = await api.fsCompress({ path, names })
+      const res = await api.fsCompress({ path, names }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       flash(`Compressed ${names.length} item${names.length === 1 ? "" : "s"} → ${d.created.split("/").pop()}`)
@@ -330,7 +362,18 @@ export function FileBrowser() {
         <div className="flex items-center gap-2 border-b border-border px-3 py-2" data-nomarquee>
           <FolderOpen className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium">{fsPick ? "Pick a folder" : "Files"}</span>
-          <span className="truncate text-xs text-muted-foreground">· {hostLabel}</span>
+          {fsPick ? (
+            <span className="truncate text-xs text-muted-foreground">· {hostLabel}</span>
+          ) : (
+            <LocationPicker
+              value={location}
+              hostLabel={hostLabel}
+              drives={drives}
+              vendors={vendors}
+              onChange={changeLocation}
+              onDrivesChange={setDrives}
+            />
+          )}
           {fsPick && (
             <Button
               size="sm"

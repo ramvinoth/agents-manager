@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision, Drive } from "./types"
 
 type Body = Record<string, unknown>
 
@@ -406,43 +406,81 @@ class ApiClient {
     )
   }
 
-  // ---- filesystem picker ----
-  fs(path: string, hidden?: boolean) {
+  // ---- filesystem (local / SSH host / cloud drive) ----
+  // A file op targets exactly one location: the current host (threaded like
+  // every other request) or a cloud drive, named per call by the file browser.
+  // The drive is deliberately NOT client-wide state: it is a choice of the
+  // file browser alone and must never ride along on chat/session requests.
+  private fsq(drive?: string): string {
+    return drive ? `&drive=${encodeURIComponent(drive)}` : this.qs()
+  }
+  private fsBody(body: Body, drive?: string): Body {
+    return drive ? { ...body, drive } : this.wh(body)
+  }
+  fs(path: string, hidden?: boolean, drive?: string) {
     return this.getJSON(
-      `/api/fs?path=${encodeURIComponent(path)}&hidden=${hidden ? 1 : 0}` + this.qs()
+      `/api/fs?path=${encodeURIComponent(path)}&hidden=${hidden ? 1 : 0}` + this.fsq(drive)
     )
   }
-  fsMkdir(body: Body) {
-    return this.postRes("/api/fs/mkdir", this.wh(body))
+  fsMkdir(body: Body, drive?: string) {
+    return this.postRes("/api/fs/mkdir", this.fsBody(body, drive))
   }
-  fsDelete(body: Body) {
-    return this.postRes("/api/fs/delete", this.wh(body))
+  fsDelete(body: Body, drive?: string) {
+    return this.postRes("/api/fs/delete", this.fsBody(body, drive))
   }
-  fsDownload(path: string): string {
-    return `/api/fs/download?path=${encodeURIComponent(path)}` + this.qs()
+  fsDownload(path: string, drive?: string): string {
+    return `/api/fs/download?path=${encodeURIComponent(path)}` + this.fsq(drive)
   }
   /** URL that streams a single .zip bundling `names` inside directory `path`. */
-  fsDownloadZip(path: string, names: string[], archive?: string): string {
-    const q = new URLSearchParams()
-    q.set("path", path)
+  fsDownloadZip(path: string, names: string[], archive?: string, drive?: string): string {
+    const q = new URLSearchParams({ path })
     q.set("names", JSON.stringify(names))
     if (archive) q.set("archive", archive)
-    if (this.host && this.host !== "local") q.set("host", this.host)
+    if (drive) q.set("drive", drive)
+    else if (this.host && this.host !== "local") q.set("host", this.host)
     return "/api/fs/download-zip?" + q.toString()
   }
-  fsUpload(path: string, files: File[]): Promise<Response> {
+  fsUpload(path: string, files: File[], drive?: string): Promise<Response> {
     const form = new FormData()
     files.forEach(f => form.append("files", f))
-    return fetch(`/api/fs/upload?path=${encodeURIComponent(path)}${this.qs("&")}`, {
+    return fetch(`/api/fs/upload?path=${encodeURIComponent(path)}` + this.fsq(drive), {
       method: "POST",
       body: form,
     })
   }
-  fsRename(body: Body) {
-    return this.postRes("/api/fs/rename", this.wh(body))
+  fsRename(body: Body, drive?: string) {
+    return this.postRes("/api/fs/rename", this.fsBody(body, drive))
   }
-  fsCompress(body: Body) {
-    return this.postRes("/api/fs/compress", this.wh(body))
+  fsCompress(body: Body, drive?: string) {
+    return this.postRes("/api/fs/compress", this.fsBody(body, drive))
+  }
+
+  // ---- cloud drives (the file browser's third location) ----
+  /** Every drive the location picker can offer (sanitized — no tokens) plus the
+   *  vendors a NEW drive may be created for. */
+  drives() {
+    return this.getJSON<{ drives: Drive[]; vendors: string[] }>("/api/drives")
+  }
+  /** Create an empty drive row to then connect via the consent flow. */
+  driveCreate(body: { label: string; kind: string }) {
+    return this.postJSON<{ drive: Drive }>("/api/drives", body)
+  }
+  /** Remove a drive (and its stored tokens). */
+  driveDelete(id: string) {
+    return this.postJSON<{ ok?: boolean } | { error?: string }>("/api/drives/delete", { drive: id })
+  }
+  /** Begin the loopback consent flow for a drive → the URL to open + the
+   *  pending handle to poll with driveOAuthStatus(). */
+  driveOAuthStart(drive: string) {
+    return this.postJSON<{ url: string; pending: string } | { error?: string }>(
+      "/api/drive/oauth/start", { drive }
+    )
+  }
+  /** Poll an in-flight consent flow until authorized/failed/expired. */
+  driveOAuthStatus(pending: string) {
+    return this.getJSON<{ pending: string; status: "waiting" | "authorized" | "failed" | "expired"; error?: string }>(
+      `/api/drive/oauth/status?pending=${encodeURIComponent(pending)}`
+    )
   }
 
   // ---- browser panel ----
