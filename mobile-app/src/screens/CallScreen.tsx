@@ -134,7 +134,7 @@ export default function CallScreen({ route, navigation }: Props) {
             Nemotron call from the STT/brain/TTS path without guessing. */}
         {engine ? (
           <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
-            {engine === "nemotron" ? `Voice: ${model || "Nemotron"}` : "Voice: call brain"}
+            {engine === "nemotron" ? `Voice: ${model || "Nemotron"}` : `Brain: ${model || "call brain"}`}
           </Text>
         ) : null}
         <Text style={{ color: t.textMuted, fontSize: 13, marginTop: 2 }}>{fmtElapsed(elapsed)}</Text>

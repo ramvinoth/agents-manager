@@ -349,3 +349,36 @@ def test_task_done_lands_on_the_named_done_column_and_wakes(board):
     assert len(board.wakes) == 1
     assert "marked done by user:ram" in board.wakes[0][1]
     assert board.wakes[0][2] == "user"
+
+
+# ── card_create: a card born bound to a session is work handed to it ──────
+
+def _created(board, session_id, actor, level="", acting=""):
+    board.db.card_create = lambda title, body="", column_id=None, assignee=None, project_id=None, \
+        session_id_=None, position=1.0, created_by="": {
+            "id": 77, "title": title, "body": body, "column_id": column_id,
+            "project_id": project_id, "session_id": session_id_}
+    return actions.execute(
+        _it("card_create", {"title": "Check my email", "body": "look for the Apple invoice",
+                            "project_id": 7, "session": session_id}, actor),
+        "owner", level, acting_session=acting)
+
+
+def test_human_created_card_for_a_session_wakes_it(board):
+    resp, status = _created(board, "sess-1", "user:ram")
+    assert status == 200 and resp["id"] == 77
+    card, event, origin = board.wakes[0]
+    assert card["id"] == 77 and card["session_id"] == "sess-1"
+    assert event == 'new card assigned to you by user:ram: "look for the Apple invoice"'
+    assert origin == "user"
+    assert board.db.attention == [(77, False)]
+
+
+def test_card_created_with_no_session_wakes_nothing(board):
+    resp, status = _created(board, None, "user:ram")
+    assert status == 200 and board.wakes == [] and board.db.attention == []
+
+
+def test_session_creating_its_own_card_wakes_nothing(board):
+    _created(board, "sess-1", "employee:bob", level="ic", acting="sess-1")
+    assert board.wakes == [] and board.db.attention == [(77, True)]

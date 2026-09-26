@@ -43,6 +43,10 @@ export type NemotronStatus = {
   duplex?: boolean
   error?: string
 }
+/** GET /api/call/engine — the server's decision about which path a call runs on
+ *  (viewer.callbrain.choose_engine). `model` is the server's own name for the
+ *  brain; `error` means the brain is not configured and a call cannot start. */
+export type CallEngine = { engine: "brain" | "nemotron"; model?: string; error?: string }
 export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
@@ -339,7 +343,8 @@ export const api = {
   // itself, real work handed to the session at `path` as a background turn (the
   // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
-  callTurn: (body: { path: string; text: string; history: CallHistory; mode?: string }) =>
+  callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
+  callTurn: (body: { path: string; text: string; history: CallHistory }) =>
     req<{ reply: string; history: CallHistory; tools: string[] }>("POST", "/api/call/turn", body),
   // The server derives the session id from `path` (via sid_from_path, which also
   // accepts a bare id). Send `path` to match — sending `session` is ignored and
@@ -550,9 +555,8 @@ export const api = {
   // GET /api/voice/nemotron/status -> the GPU service's /health passed through
   // (see viewer.nemotron.status). Always 200 in the normal/disabled case; only a
   // configured-but-broken backend returns 502 with `error` set. `ready:false`
-  // while idle is EXPECTED (the model loads per call) — poll `installed` to
-  // decide whether to show the feature at all, and `ready` only means "this
-  // call's model finished loading", never "feature available".
+  // while idle is EXPECTED (the model loads per call). Consulted only AFTER
+  // callEngine chose "nemotron" — it never decides the engine.
   nemotronStatus: () => req<NemotronStatus>("GET", "/api/voice/nemotron/status"),
   // The one Nemotron call WS for a session. Same auth pattern as voiceWsUrl:
   // Bearer token on the handshake header (RN's WebSocket 3rd-arg), never a

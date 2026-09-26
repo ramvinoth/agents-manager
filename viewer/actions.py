@@ -474,14 +474,22 @@ def intent(action, args, actor):
 
 # Board actions whose success means the card's OWN session (or the owner) must
 # find out — the board is the conversation between them (see boardwatch).
-_BOARD_ACTIONS = ("card_move", "card_update", "card_comment",
+_BOARD_ACTIONS = ("card_create", "card_move", "card_update", "card_comment",
                   "card_dep_add", "card_dep_remove", "task_done")
 
 
-def _board_followup(action, args, actor, session_level, acting_session):
+def _board_followup(action, args, actor, session_level, acting_session, payload=None):
     """After a successful board event, wake the card's own session (boardwatch)
     and — when an AGENT comments — push the owner. Never fails the action: the
     mutation has already committed, so a wake failure is logged, not raised.
+
+    `payload` is the handler's result; card_create is the one action whose card
+    exists only there (the intent has no card_id yet). A card born bound to a
+    session by someone else — the owner typing it on the web or mobile board,
+    the call brain delegating by phone — is work handed to that session, so it
+    is woken like any other foreign event; without this a human-created Todo
+    card waited for the 30-minute sweep, and the sweep skips cards nobody has
+    touched since creation, so it waited forever.
 
     The two follow-ups have different audiences, and that decides when each
     fires:
@@ -501,8 +509,8 @@ def _board_followup(action, args, actor, session_level, acting_session):
         from viewer import boardwatch
         from viewer.loops import AGENT_ORIGIN, USER_ORIGIN
 
-        card = db.card_get(args.get("card_id"))
-        if not card or not card.get("session_id"):
+        card = payload if action == "card_create" else db.card_get(args.get("card_id"))
+        if not card or not card.get("id") or not card.get("session_id"):
             return
         agent = bool(session_level)
         own = agent and card.get("session_id") == (acting_session or "")
@@ -520,7 +528,11 @@ def _board_followup(action, args, actor, session_level, acting_session):
                             f"{actor}: {excerpt}"[:300])
         if own:
             return
-        if action == "card_move":
+        if action == "card_create":
+            body = " ".join((card.get("body") or "").split())
+            event = (f"new card assigned to you by {actor}: \"{body[:300]}\"" if body
+                     else f"new card assigned to you by {actor}")
+        elif action == "card_move":
             cols = db.board_columns_list(card["project_id"]) \
                 if card.get("project_id") else []
             col = next((c for c in cols if c["id"] == card.get("column_id")), None)
@@ -593,5 +605,5 @@ def execute(it, human_role, session_level, acting_session=""):
         payload = handler(args)
     db.audit_append(actor, action, it, "done")
     if not (payload or {}).get("error"):
-        _board_followup(action, args, actor, session_level, acting_session)
+        _board_followup(action, args, actor, session_level, acting_session, payload)
     return payload, 200

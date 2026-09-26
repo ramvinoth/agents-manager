@@ -35,7 +35,6 @@ import { deleteNemotronReply, nemotronNativeBindings } from "./nemotronNative"
 import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
 import { audioSession } from "./audioSessionNative"
-import { composerPrefs } from "../state/config"
 
 // While the user speaks over Harman (before a command is confirmed), duck the TTS
 // to this fraction of full volume so they can hear themselves. Restored to 1.0 on
@@ -54,7 +53,7 @@ export interface UseAssistantTurn {
   phase: Phase
   /** The engine of the current call, once the server has told us. */
   engine: Engine | null
-  /** The server's own name for the model behind the call (Nemotron only). */
+  /** The server's own name for the model behind the call. */
   model: string
   /** What the caller last said (transcribed). Always "" on Nemotron — the
    *  service never returns the caller's words. */
@@ -183,12 +182,7 @@ export function useAssistantTurn(
       setError("")
       setPhase("thinking")
       try {
-        const res = await api.callTurn({
-          path,
-          text,
-          history: historyRef.current,
-          mode: composerPrefs().mode, // the permission mode a delegated turn runs in
-        })
+        const res = await api.callTurn({ path, text, history: historyRef.current })
         historyRef.current = res.history
         setReply(res.reply)
         if (!res.reply.trim()) {
@@ -322,11 +316,17 @@ export function useAssistantTurn(
     if (!current) {
       setPhase("connecting")
       try {
-        const st = await api.nemotronStatus()
-        if (st.enabled && st.error) throw new Error(st.error)
-        if (st.enabled && !st.installed) throw new Error("Nemotron voicechat is not installed on the GPU box")
-        current = st.enabled ? "nemotron" : "brain"
-        setModel(st.enabled ? st.model || "" : "")
+        const chosen = await api.callEngine()
+        if (chosen.error) throw new Error(chosen.error)
+        current = chosen.engine
+        let name = chosen.model || ""
+        if (current === "nemotron") {
+          const st = await api.nemotronStatus()
+          if (st.error) throw new Error(st.error)
+          if (!st.installed) throw new Error("Nemotron voicechat is not installed on the GPU box")
+          name = st.model || ""
+        }
+        setModel(name)
       } catch (e) {
         setError((e as Error).message)
         handsFreeRef.current = false

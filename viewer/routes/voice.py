@@ -10,6 +10,9 @@ All are normal /api routes, so the standard session gate authenticates them.
                         windows (binary WAV frames); the GPU box transcribes each
                         and a JSON text frame comes back ({"type":"utterance"} or,
                         for barge-in wakeguard, {"type":"wake"}). See _g_voice_ws.
+  GET  /api/call/engine -> {engine: "brain"|"nemotron", model?, error?}. Which
+                        engine the phone places a call on: the server's decision
+                        (viewer.callbrain.choose_engine), never the phone's.
   POST /api/call/turn   body = {path, text, history?}  -> {reply, history, tools}.
                         One exchange with the fast call brain (viewer.callbrain).
 
@@ -31,28 +34,27 @@ from viewer.speakable import speakable
 
 
 class VoiceMixin:
+    def _g_call_engine(self, req):
+        from viewer import callbrain
+        self.send_json(callbrain.engine())
+
     def _p_call_turn(self, req):
         """One spoken exchange with the call brain (viewer.callbrain). Body:
-        {path, text, history?, mode?}. The brain answers small talk itself and
-        hands real work to the session at `path` as a background turn; the reply
-        comes back in ~1-2 s regardless of how long that work takes.
+        {path, text, history?}. The brain answers from a live system snapshot and
+        works the board (delegate / check / comment / decide) under the CALLER's
+        principal — the human on the phone — so the reply comes back in ~1-3 s
+        and every request survives the call as a card.
           -> {reply, history, tools}   history is echoed back on the next turn."""
-        import os
-        from pathlib import Path
         from viewer import callbrain
-        from viewer.engine import extract_cwd
         body = self.read_body() or {}
         text = (body.get("text") or "").strip()
         full_path = self.resolve_session_quiet(body.get("path", ""))
         if not text or full_path is None:
             self.send_json({"error": "Session and text required"}, status=400)
             return
-        cwd = extract_cwd(full_path)
-        if not cwd or not os.path.isdir(cwd):
-            cwd = str(Path.home())
         try:
-            result = callbrain.call_turn(full_path.stem, cwd, body.get("mode", "acceptEdits"),
-                                         text, body.get("history") or [])
+            result = callbrain.call_turn(full_path.stem, req.principal, text,
+                                         body.get("history") or [])
         except RuntimeError as e:
             self.send_json({"error": str(e)}, status=409)
             return

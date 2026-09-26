@@ -345,6 +345,7 @@ class SessionViewerHandler(
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
         "/api/voice/nemotron/status": "_g_voice_nemotron_status",
+        "/api/call/engine": "_g_call_engine",
         "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
