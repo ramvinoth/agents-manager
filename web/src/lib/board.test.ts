@@ -1,4 +1,4 @@
-import { filterCards, orderColumn, groupByColumn, nextPosition, type Card, type BoardColumn } from "./board.ts"
+import { filterCards, orderColumn, groupByColumn, nextPosition, decisionActions, formatActor, findCardSession, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -56,6 +56,39 @@ eq("top", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 0
 eq("bottom", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 2), 7)
 eq("middle midpoint", nextPosition([C({ id: 1, position: 4 }), C({ id: 2, position: 6 })], 1), 5)
 eq("orders input first", nextPosition([C({ id: 1, position: 6 }), C({ id: 2, position: 4 })], 1), 5)
+
+// decisionActions — the owner's next moves, by column NAME on the card's own board
+const pipeline: BoardColumn[] = ["Todo", "Doing", "Review", "Approved", "Declined", "Blocked", "Needs-info", "Done"]
+  .map((name, i) => COL({ id: 100 + i, name, position: i }))
+const labels = (colId: number | null) => decisionActions(pipeline, colId).map((a) => `${a.label}>${a.columnId}`)
+eq("review offers the decision", labels(102), ["Approve>103", "Decline>104", "Needs info>106"])
+eq("needs-info resumes", labels(106), ["Resume>101"])
+eq("blocked resumes", labels(105), ["Resume>101"])
+eq("todo starts", labels(100), ["Start>101"])
+eq("approved completes", labels(103), ["Mark done>107"])
+eq("done reopens", labels(107), ["Reopen>100"])
+eq("declined reopens", labels(104), ["Reopen>100"])
+eq("no column → no actions", labels(null), [])
+eq("unknown column → no actions", labels(999), [])
+eq("missing target column is skipped", decisionActions(pipeline.filter((c) => c.name !== "Approved"), 102).map((a) => a.label), ["Decline", "Needs info"])
+eq("custom-named board → nothing forced", decisionActions([COL({ id: 1, name: "Inbox", position: 0 })], 1), [])
+eq("case/whitespace tolerant", decisionActions([COL({ id: 1, name: " REVIEW ", position: 0 }), COL({ id: 2, name: "approved", position: 1 })], 1).map((a) => a.columnId), [2])
+
+// formatActor — principal strings → a person-readable name + kind
+eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
+eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
+eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
+eq("employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
+eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
+eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })
+eq("bare string", formatActor("legacy"), { name: "legacy", kind: "unknown" })
+
+// findCardSession — card.session_id (uuid) ↔ session.path (<dir>/<uuid>.jsonl)
+const sessions = [{ path: "projects/a/1111-2222.jsonl", title: "A" }, { path: "3333.jsonl", title: "B" }]
+eq("nested path", findCardSession(sessions, "1111-2222")?.title, "A")
+eq("bare path", findCardSession(sessions, "3333")?.title, "B")
+eq("prefix must not match", findCardSession(sessions, "2222"), undefined)
+eq("no session id", findCardSession(sessions, null), undefined)
 
 console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
 if (fail) process.exit(1)

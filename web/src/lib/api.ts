@@ -203,7 +203,7 @@ class ApiClient {
   // A card with its full comment thread and dependency edges — the discussion
   // and the dual-control blocker state between the owner and the card's session.
   orgCard(id: number) {
-    return this.getJSON<{ card: Card; comments: CardComment[]; dependencies: CardDep[] }>(`/api/org/card?id=${id}`)
+    return this.getJSON<{ card: Card; comments: CardComment[]; dependencies: CardDep[]; columns: BoardColumn[] }>(`/api/org/card?id=${id}`)
   }
   orgAddCardComment(body: { card_id: number; body: string }) {
     return this.postJSON<CardComment>("/api/org/card_comment", body)

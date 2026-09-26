@@ -74,3 +74,78 @@ export function nextPosition(cardsInColumn: Card[], index: number): number {
   if (index >= n) return pos(ordered[n - 1]) + 1
   return (pos(ordered[index - 1]) + pos(ordered[index])) / 2
 }
+
+/**
+ * The owner's next moves for a card, derived from WHERE it sits in the
+ * pipeline (viewer/orglogic.PIPELINE_COLUMNS, matched by column name so a
+ * renamed or missing column simply yields no action). The board itself is
+ * the source of truth for what columns exist; this only names the handful of
+ * transitions that are a human decision rather than bookkeeping:
+ *   Review     → Approve / Decline / Needs info   (the decision the card waits for)
+ *   Needs-info, Blocked → Resume                 (after answering by comment)
+ *   Todo       → Start
+ *   Approved, Doing → Mark done
+ *   Done, Declined → Reopen
+ * Anything else is reachable through the plain status picker.
+ */
+export type DecisionTone = "approve" | "decline" | "neutral"
+export interface DecisionAction {
+  label: string
+  columnId: number
+  tone: DecisionTone
+}
+
+const TRANSITIONS: Record<string, [label: string, target: string, tone: DecisionTone][]> = {
+  review: [["Approve", "approved", "approve"], ["Decline", "declined", "decline"], ["Needs info", "needs-info", "neutral"]],
+  "needs-info": [["Resume", "doing", "neutral"]],
+  blocked: [["Resume", "doing", "neutral"]],
+  todo: [["Start", "doing", "neutral"]],
+  approved: [["Mark done", "done", "approve"]],
+  doing: [["Mark done", "done", "approve"]],
+  done: [["Reopen", "todo", "neutral"]],
+  declined: [["Reopen", "todo", "neutral"]],
+}
+
+export function decisionActions(columns: BoardColumn[], currentColumnId: number | null): DecisionAction[] {
+  const current = columns.find((c) => c.id === currentColumnId)
+  if (!current) return []
+  const byName = new Map(columns.map((c) => [c.name.trim().toLowerCase(), c.id]))
+  return (TRANSITIONS[current.name.trim().toLowerCase()] || []).flatMap(([label, target, tone]) => {
+    const columnId = byName.get(target)
+    return columnId == null || columnId === current.id ? [] : [{ label, columnId, tone }]
+  })
+}
+
+/**
+ * A principal actor string (viewer/server.py: `user:<name>` for a human,
+ * `session:<title>` / `employee:<name>` for an agent) rendered for a person:
+ * the name alone, plus whether it was a human, an agent, or the reader.
+ * "employee:?" is the server's marker for an unlinked agent, never a name.
+ */
+export type ActorKind = "you" | "human" | "agent" | "unknown"
+export function formatActor(actor: string | null | undefined, selfUsername?: string): { name: string; kind: ActorKind } {
+  const raw = (actor || "").trim()
+  const sep = raw.indexOf(":")
+  if (sep < 0) return raw ? { name: raw, kind: "unknown" } : { name: "Unknown", kind: "unknown" }
+  const prefix = raw.slice(0, sep)
+  const name = raw.slice(sep + 1).trim()
+  if (prefix === "user") {
+    return name ? { name, kind: name === selfUsername ? "you" : "human" } : { name: "Unknown user", kind: "unknown" }
+  }
+  if (prefix === "session" || prefix === "employee") {
+    return name && name !== "?" ? { name, kind: "agent" } : { name: "Unlinked agent", kind: "agent" }
+  }
+  return { name: raw, kind: "unknown" }
+}
+
+/**
+ * The session that owns a card, found in the session list by id: a card's
+ * `session_id` is the transcript's uuid, and a listed session's `path` is
+ * `<project-dir>/<uuid>.jsonl` (viewer/routes/sessions.py). Undefined when the
+ * card has no session or that session is not on this host's list.
+ */
+export function findCardSession<S extends { path: string }>(sessions: S[], sessionId: string | null | undefined): S | undefined {
+  if (!sessionId) return undefined
+  const stem = `/${sessionId}.jsonl`
+  return sessions.find((s) => s.path.endsWith(stem) || s.path === `${sessionId}.jsonl`)
+}
