@@ -97,12 +97,14 @@ class DrivesMixin:
             return
         self.send_json({"ok": True, "drive": did})
 
-    # -- the loopback consent flow -----------------------------------------
+    # -- the hosted consent flow ---------------------------------------------
 
     def _p_drive_oauth_start(self, req):
         """Start a consent flow for an existing drive. Body: {drive}. Returns
-        the consent URL the UI opens in a browser plus the pending handle to
-        poll with /api/drive/oauth/status."""
+        the consent URL the UI opens in a browser, the pending handle to poll
+        with /api/drive/oauth/status, and the redirect_uri the vendor will send
+        the browser back to — derived from the origin THIS request came in on,
+        so the callback lands on the same public hostname the user is using."""
         body = self.read_body() or {}
         did = body.get("drive") or ""
         if not did:
@@ -113,7 +115,7 @@ class DrivesMixin:
             self.send_json({"error": "Unknown drive %r" % did}, status=404)
             return
         try:
-            r = drive_oauth.start(drive["kind"], did)
+            r = drive_oauth.start(drive["kind"], did, self.request_origin())
         except DriveError as e:
             self._err(e, req)
             return
@@ -130,3 +132,11 @@ class DrivesMixin:
             self.send_json(drive_oauth.status(pid))
         except DriveError as e:
             self._err(e, req)
+
+    def _g_drive_oauth_callback(self, req):
+        """Where the vendor redirects the user's browser after consent. Public
+        (no cookie crosses a top-level redirect from another site); the
+        one-time `state` in the query is what ties it to a flow started here.
+        Always a human-readable HTML page — the polling app is where the
+        result actually lands."""
+        self.send_html(drive_oauth.callback(req.query))

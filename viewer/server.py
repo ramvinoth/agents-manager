@@ -85,12 +85,15 @@ class SessionViewerHandler(
     # Authority is min(human ceiling, session level) — orglogic.effective_level.
     #
     # PUBLIC_API is ONLY for endpoints that must work with no credential at all:
-    # signing up/in, and a device dropping its own push token on logout (which
-    # must succeed even though the session is already gone). Everything else
+    # signing up/in, a device dropping its own push token on logout (which
+    # must succeed even though the session is already gone), and the OAuth
+    # callback a cloud-drive vendor redirects the browser to (a cross-site
+    # top-level redirect carries no SameSite=Strict cookie; that route is bound
+    # to its consent by the one-time `state` instead). Everything else
     # authenticates. A handler must never re-derive the caller — read
     # req.principal.
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
-                  "/api/push/unregister"}
+                  "/api/push/unregister", "/api/drive/oauth/callback"}
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -312,6 +315,32 @@ class SessionViewerHandler(
         self.end_headers()
         self.wfile.write(body)
 
+    def send_html(self, html, status=200):
+        """A finished HTML page — for the few routes a browser lands on directly
+        (an OAuth vendor's redirect) rather than the app's fetch()."""
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def request_origin(self):
+        """The origin the client reached this server on — scheme + host as the
+        browser sees it, e.g. 'https://life.suhai.ai' through the Cloudflare
+        tunnel or 'http://localhost:8091' on the dev box. The tunnel forwards
+        the browser's Host and sets X-Forwarded-Proto; without that header
+        only a loopback host is plain http (a public hostname is never served
+        without TLS). This is the source of truth for anything a third party
+        must call us back on, so a new deployment self-configures: nothing
+        about its hostname is stored anywhere in the viewer."""
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost"
+        proto = self.headers.get("X-Forwarded-Proto")
+        if not proto:
+            bare = host.split(":")[0].strip("[]")
+            proto = "http" if bare in ("localhost", "127.0.0.1", "::1") else "https"
+        return "%s://%s" % (proto.split(",")[0].strip(), host)
+
     def log_message(self, format, *args):
         if args and "404" in str(args[0]):
             super().log_message(format, *args)
@@ -341,6 +370,7 @@ class SessionViewerHandler(
         "/api/fs/download-zip": "_g_fs_download_zip",
         "/api/drives": "_g_drives",
         "/api/drive/oauth/status": "_g_drive_oauth_status",
+        "/api/drive/oauth/callback": "_g_drive_oauth_callback",
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",

@@ -563,10 +563,12 @@ class ApiClient {
   driveDelete(id: string) {
     return this.postJSON<{ ok?: boolean } | { error?: string }>("/api/drives/delete", { drive: id })
   }
-  /** Begin the loopback consent flow for a drive → the URL to open + the
-   *  pending handle to poll with driveOAuthStatus(). */
+  /** Begin the hosted consent flow for a drive → the vendor URL to open + the
+   *  pending handle to poll with driveOAuthStatus(). The vendor redirects the
+   *  browser back to this server's /api/drive/oauth/callback, which finishes
+   *  the exchange; the poll is how this tab learns the result. */
   driveOAuthStart(drive: string) {
-    return this.postJSON<{ url: string; pending: string } | { error?: string }>(
+    return this.postJSON<{ url: string; pending: string; redirect_uri: string } | { error?: string }>(
       "/api/drive/oauth/start", { drive }
     )
   }

@@ -35,9 +35,8 @@ were built against):
              refresh_token is issued ONLY when the authorize URL carries
              token_access_type=offline; approval stays valid until revoked.
              redirect_uri must EXACTLY match one registered in the App
-             Console (port included — no RFC 8252 port wildcard is
-             documented, so the client file registers a fixed loopback
-             port). files/upload ≤150 MB per call; files/download_zip
+             Console — the viewer's https callback (drive_oauth.
+             CALLBACK_PATH on the public origin). files/upload ≤150 MB per call; files/download_zip
              zips ONE folder server-side (<20 GB, <4 GB per file, <10,000
              entries). delete_v2 moves to the Dropbox trash. Path errors
              come back as 409 with an error_summary such as
@@ -46,11 +45,11 @@ were built against):
              authorization, /api-reference/user-endpoints/files/*)
   onedrive : Microsoft Graph v1.0, path-addressed via /me/drive/root:/
              {path}: (root children at /me/drive/root/children). Personal
-             accounts through the /consumers tenant. PKCE public client on
-             the "Mobile and desktop applications" platform; for a
-             `localhost` redirect the PORT IS IGNORED when matching (RFC
-             8252), so the loopback flow works unchanged; IPv6 [::1] is not
-             supported. Refresh tokens need the offline_access scope,
+             accounts through the /consumers tenant. PKCE public client
+             ("Allow public client flows" on the app registration) with the
+             viewer's https callback registered as a Web redirect URI (https
+             is valid on every platform; a URI without a path gets a
+             trailing slash appended, ours has one). Refresh tokens need the offline_access scope,
              default 90-day lifetime, rotated on every refresh (store the
              new one), revocable any time → re-authorize. Download: GET
              /content answers 302 to a pre-authenticated URL — we read the
@@ -166,8 +165,8 @@ def _http(method, url, headers=None, data=None, timeout=60):
 def _vendor_client(kind, public=False):
     """The viewer's OAuth client for `kind` — ONE shared client per vendor
     (per-user tokens live in the drive row). Read from DRIVES_OAUTH_FILE as
-    {kind: {client_id, client_secret?, redirect_uris?}}. Shared by the
-    adapters (token refresh) and the loopback OAuth flow (drive_oauth). A
+    {kind: {client_id, client_secret?}}. Shared by the
+    adapters (token refresh) and the hosted OAuth flow (drive_oauth). A
     `public` client (PKCE — Dropbox, OneDrive) needs only client_id; a
     confidential one (Google) needs the secret too. Missing or incomplete →
     403 with guidance, so a first run says exactly what to do instead of

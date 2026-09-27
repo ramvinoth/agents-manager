@@ -10,21 +10,29 @@ network.
 """
 import pytest
 
-from viewer import db, drive_oauth
+from viewer import db, drive_oauth, server
 from viewer.drives import DriveError
 from viewer.routes.drives import DrivesMixin
 
 
 class _Handler(DrivesMixin):
-    def __init__(self, body=None):
+    def __init__(self, body=None, origin="https://h.example.test"):
         self.sent = None
+        self.html = None
         self._body = body
+        self._origin = origin
 
     def send_json(self, data, status=200):
         self.sent = (data, status)
 
+    def send_html(self, html, status=200):
+        self.html = (html, status)
+
     def read_body(self):
         return self._body
+
+    def request_origin(self):
+        return self._origin
 
 
 class _Req:
@@ -181,16 +189,18 @@ class TestOAuthStart:
         _fake_db(monkeypatch, {"dr-1": {"id": "dr-1", "kind": "google"}})
         seen = {}
         monkeypatch.setattr(drive_oauth, "start",
-                            lambda kind, did: (seen.update(kind=kind, did=did),
-                                               {"url": "U", "pending": "p1"})[1])
+                            lambda kind, did, origin: (seen.update(kind=kind, did=did, origin=origin),
+                                                       {"url": "U", "pending": "p1"})[1])
         h = _Handler(body={"drive": "dr-1"})
         h._p_drive_oauth_start(_Req())
-        assert seen == {"kind": "google", "did": "dr-1"}
+        # The flow is started for the origin THIS request arrived on — that is
+        # where the vendor must send the browser back.
+        assert seen == {"kind": "google", "did": "dr-1", "origin": "https://h.example.test"}
         assert h.sent == ({"url": "U", "pending": "p1"}, 200)
 
     def test_unknown_drive_is_404_before_any_flow(self, monkeypatch):
         _fake_db(monkeypatch)
-        def boom(kind, did):
+        def boom(kind, did, origin):
             raise AssertionError("start must not be called for a missing drive")
         monkeypatch.setattr(drive_oauth, "start", boom)
         h = _Handler(body={"drive": "nope"})
@@ -200,7 +210,7 @@ class TestOAuthStart:
     def test_driveerror_is_mapped_to_its_status(self, monkeypatch):
         _fake_db(monkeypatch, {"dr-1": {"id": "dr-1", "kind": "google"}})
         monkeypatch.setattr(drive_oauth, "start",
-                            lambda kind, did: (_ for _ in ()).throw(
+                            lambda kind, did, origin: (_ for _ in ()).throw(
                                 DriveError("no client", 403)))
         h = _Handler(body={"drive": "dr-1"})
         h._p_drive_oauth_start(_Req())
@@ -228,3 +238,53 @@ class TestOAuthStatus:
         h = _Handler()
         h._g_drive_oauth_status(_Req(query={"pending": ["gone"]}))
         assert h.sent[1] == 404
+
+
+class TestOAuthCallback:
+    def test_hands_the_parsed_query_over_and_answers_html(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(drive_oauth, "callback",
+                            lambda q: (seen.update(q), "<html>done</html>")[1])
+        h = _Handler()
+        h._g_drive_oauth_callback(_Req(query={"code": ["C"], "state": ["S"]}))
+        assert seen == {"code": ["C"], "state": ["S"]}
+        assert h.html == ("<html>done</html>", 200)
+        assert h.sent is None   # a browser landed here, never JSON
+
+
+# --- request_origin: the one source of truth for "where do vendors call us back" --
+
+class _OriginHandler:
+    """Bare headers + the real request_origin, unbound from the socket."""
+    request_origin = server.SessionViewerHandler.request_origin
+
+    def __init__(self, **headers):
+        self.headers = headers
+
+
+@pytest.mark.parametrize("headers, origin", [
+    # Through the Cloudflare tunnel: the browser's Host arrives with the
+    # scheme it used.
+    ({"Host": "life.suhai.ai", "X-Forwarded-Proto": "https"}, "https://life.suhai.ai"),
+    # A proxy that rewrites Host but forwards the original.
+    ({"Host": "127.0.0.1:8091", "X-Forwarded-Host": "life.suhai.ai",
+      "X-Forwarded-Proto": "https"}, "https://life.suhai.ai"),
+    # Dev box, no proxy: loopback is plain http, port preserved.
+    ({"Host": "localhost:8091"}, "http://localhost:8091"),
+    ({"Host": "127.0.0.1:9999"}, "http://127.0.0.1:9999"),
+    # A public hostname with no proto header is never assumed to be plain
+    # http — a vendor would refuse an http redirect URI anyway.
+    ({"Host": "life.suhai.ai"}, "https://life.suhai.ai"),
+    # A proxy chain lists several protos; the first is the client's.
+    ({"Host": "h.example.test", "X-Forwarded-Proto": "https, http"}, "https://h.example.test"),
+])
+def test_request_origin_is_what_the_browser_used(headers, origin):
+    assert _OriginHandler(**headers).request_origin() == origin
+
+
+def test_oauth_callback_is_reachable_without_a_session():
+    """The vendor's redirect is a cross-site top-level navigation: the
+    SameSite=Strict session cookie does not travel with it, so the callback
+    must be public — gated only by the one-time state inside drive_oauth."""
+    assert "/api/drive/oauth/callback" in server.SessionViewerHandler.PUBLIC_API
+    assert server.SessionViewerHandler.GET_ROUTES["/api/drive/oauth/callback"] == "_g_drive_oauth_callback"
