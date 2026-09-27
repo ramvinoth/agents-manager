@@ -510,6 +510,17 @@ export default function ChatsScreen({ navigation }: Props) {
                     >
                       <Icon name="folder" size={15} color={t.textMuted} />
                     </TouchableOpacity>
+                    {/* Open this session's inbox (its mailbox) — the same
+                        per-session filtered view as the board's. */}
+                    <TouchableOpacity
+                      testID={`chat-inbox-${item.id}`}
+                      accessibilityLabel="Open inbox"
+                      accessibilityRole="button"
+                      onPress={() => navigation.navigate("Inbox", { session: item.id, host, path: item.path, title: name })}
+                      hitSlop={8}
+                    >
+                      <Icon name="mail" size={15} color={t.textMuted} />
+                    </TouchableOpacity>
                   </View>
                 </View>
               </TouchableOpacity>

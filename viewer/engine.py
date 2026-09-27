@@ -1269,6 +1269,18 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
                    data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
+    # Mirror into the owner's inbox: the live registry above stays the one
+    # source of truth (it disappears on restart — so does this row's open
+    # state); the inbox row carries the cold-reader context and a reply
+    # path. Exception-safe: never fail the permission request on delivery.
+    try:
+        from viewer import inbox
+        inbox.deliver_decision(session_id, "approval", pid,
+                               inbox.format_approval(_push_label(session_id, cwd),
+                                                     tool_name,
+                                                     _perm_push_body(tool_name, tinput, host)))
+    except Exception:
+        pass
     decided = ev.wait(timeout=PERM_TIMEOUT)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)

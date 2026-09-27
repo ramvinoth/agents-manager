@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, InboxFilter, InboxMessage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 
@@ -255,6 +255,35 @@ class ApiClient {
   orgDeleteNote(noteId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/notes/delete", { note_id: noteId })
   }
+  // ---- Inbox (the message ledger; decision rows ride in it — the deciding
+  // tap stays on the per-session routes, this is the delivery surface) ----
+  inboxList(filter: InboxFilter = {}) {
+    const p = new URLSearchParams()
+    if (filter.session) p.set("session", filter.session)
+    if (filter.project != null) p.set("project", String(filter.project))
+    if (filter.kind) p.set("kind", filter.kind)
+    if (filter.unread_only) p.set("unread_only", "1")
+    if (filter.archived) p.set("archived", "1")
+    const q = p.toString()
+    return this.getJSON<{
+      messages: InboxMessage[]
+      unread?: number
+      queue?: { count: number; items: InboxMessage[] }
+    }>(`/api/inbox${q ? "?" + q : ""}`)
+  }
+  inboxRead(id: number) {
+    return this.postJSON<{ ok?: boolean }>("/api/inbox/read", { id })
+  }
+  inboxSnooze(id: number, hours: number) {
+    return this.postJSON<{ ok?: boolean; snoozed_until?: number }>("/api/inbox/snooze", { id, hours })
+  }
+  /** The sender is stamped by the server from the session's identity (an MCP
+   *  subprocess can never impersonate one), so the body carries only the
+   *  destination. Green at ic — an agent's message runs immediately. */
+  inboxSend(body: { to: string; body: string; in_reply_to?: number }) {
+    return this.postJSON<InboxMessage>("/api/inbox/send", body)
+  }
+
   // A card with its full comment thread and dependency edges — the discussion
   // and the dual-control blocker state between the owner and the card's session.
   orgCard(id: number) {

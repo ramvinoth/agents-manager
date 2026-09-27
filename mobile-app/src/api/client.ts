@@ -128,6 +128,37 @@ export type CardFilter = { session?: string; project?: number; assignee?: number
 export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist"
 export type Note = { id: number; title: string; body: string; kind: NoteKind; project_id: number | null; session_id: string | null; pinned: boolean; archived: boolean; created_by: string; created_at: number; updated_at: number }
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
+// ---- inbox (the channel: you ↔ owner ↔ peer sessions) ----
+// A row of the message ledger. `kind` is "message" for a free message, or a
+// decision kind (question | plan | approval | card) that was auto-delivered
+// from its durable source — the inbox is a delivery SURFACE, never a second
+// decision system. `open` is derived at read time from the live sources; a
+// lapsed snooze re-reads as unread, so a skipped decision resurfaces.
+export type InboxKind = "message" | "question" | "plan" | "approval" | "card"
+export type InboxStatus = "sent" | "read" | "snoozed"
+export type InboxMessage = {
+  id: number
+  session_id: string
+  project_id: number | null
+  sender_type: string
+  sender_id: string
+  recipient_type: string
+  recipient_id: string
+  body: string
+  kind: InboxKind
+  ref_id: string
+  in_reply_to: number
+  status: InboxStatus
+  snoozed_until: number | null
+  archived: boolean
+  created_at: number
+  updated_at: number
+  /** Derived at read time: the row's decision is still open in its source. */
+  open?: boolean | null
+  effective_status?: InboxStatus
+  snoozed?: boolean
+}
+export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
  *  viewer/actions.py execute). Any org write can return this, so writes whose
@@ -690,6 +721,29 @@ export const api = {
   // deciding an item goes through the per-session routes, which are race-safe.
   openDecisions: () =>
     req<{ count: number; decisions: OpenDecision[] }>("GET", "/api/decisions/open"),
+  // ---- inbox (the channel). The owner (app principal) may filter freely and
+  //  gets the action queue; an agent (mcp) is pinned to its own mailbox and
+  //  gets no queue — the server decides, not the client. Deciding an open
+  //  decision goes through the per-session routes (the chat), never here.
+  inboxList: (filter: InboxFilter = {}) => {
+    const p = new URLSearchParams()
+    if (filter.session) p.set("session", filter.session)
+    if (filter.project !== undefined) p.set("project", String(filter.project))
+    if (filter.kind) p.set("kind", filter.kind)
+    if (filter.unread_only) p.set("unread_only", "1")
+    if (filter.archived) p.set("archived", "1")
+    const q = p.toString()
+    return req<{ messages: InboxMessage[]; unread?: number; queue?: { count: number; items: InboxMessage[] } }>(
+      "GET", `/api/inbox${q ? "?" + q : ""}`)
+  },
+  inboxMsg: (id: number) =>
+    req<{ message: InboxMessage }>("GET", `/api/inbox/msg?id=${id}`),
+  inboxSend: (body: { to: string; body: string; in_reply_to?: number }) =>
+    req<InboxMessage>("POST", "/api/inbox/send", body),
+  // Owner surface only: mark read / snooze (a snooze is "later", never delete).
+  inboxRead: (id: number) => req<{ ok?: boolean }>("POST", "/api/inbox/read", { id }),
+  inboxSnooze: (id: number, hours: number) =>
+    req<{ ok?: boolean; snoozed_until?: number }>("POST", "/api/inbox/snooze", { id, hours }),
   orgResolveApproval: (body: { id: number; resolution: string }) =>
     req<Approval>("POST", "/api/org/approvals/resolve", body),
   orgAudit: async (result: AuditFilter = "all", before?: number) =>

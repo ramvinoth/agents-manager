@@ -368,6 +368,40 @@ export interface CardComment {
   body: string
   created_at: number
 }
+/** One row of the message ledger (viewer/db `inbox_messages`). The inbox is a
+ *  DELIVERY SURFACE over the existing decision system, not a second one: a row
+ *  can carry a decision (kind question | plan | approval | card) whose
+ *  open/resolved state the server derives at read time from the live sources
+ *  (`open`, below) — the deciding tap stays on the per-session routes. */
+export type InboxKind = "message" | "question" | "plan" | "approval" | "card"
+export type InboxStatus = "sent" | "read" | "snoozed"
+export interface InboxMessage {
+  id: number
+  session_id: string
+  project_id: number | null
+  sender_type: string   // "user" | "session"
+  sender_id: string
+  recipient_type: string
+  recipient_id: string
+  body: string
+  kind: InboxKind
+  ref_id: string
+  in_reply_to: number
+  status: InboxStatus
+  snoozed_until: number | null
+  archived: boolean
+  created_at: number
+  updated_at: number
+  /** Added by GET /api/inbox (attach_state): decision kinds say whether the
+   *  underlying decision is still open; messages are null. */
+  open?: boolean | null
+  /** Added by GET /api/inbox: the effective status once a lapsed snooze is
+   *  re-read as 'sent' (a skipped decision resurfaces, never drops). */
+  effective_status?: InboxStatus
+  /** Added by GET /api/inbox: true while the snooze is still in effect. */
+  snoozed?: boolean
+}
+export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 /** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared
  *  by the owner and every agent session's note_* MCP tools. */

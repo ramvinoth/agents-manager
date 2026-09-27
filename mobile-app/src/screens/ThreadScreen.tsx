@@ -137,6 +137,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
     if (sessionId) navigation.navigate("Notes", { session: sessionId, title: label })
     else navigation.navigate("Notes")
   }, [navigation, sessionId, label])
+  const openInbox = useCallback(() => {
+    if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
+    else navigation.navigate("Inbox")
+  }, [navigation, sessionId, host, path, label])
   const boardSwipeState = useRef({ openBoard, enabled: true })
   boardSwipeState.current = { openBoard, enabled: !capDrawerOpen && !msgAction }
   useFocusEffect(useCallback(() => {
@@ -426,6 +430,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Search", onPress: () => setSearchOpen(true) },
                 { text: "Board", onPress: openBoard },
                 { text: "Notes", onPress: openNotes },
+                { text: "Inbox", onPress: openInbox },
                 { text: "Cancel", style: "cancel" },
               ])
             }}
@@ -437,7 +442,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, isCurrentThread])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while

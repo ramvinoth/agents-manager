@@ -223,6 +223,46 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
             CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
+            -- Inbox: the owner's and the agents' message ledger. A message is
+            -- owned by a session (session_id = the chat it was written in or
+            -- addressed to) and lives and dies with that chat exactly like a
+            -- note: an archived chat shelves its messages, a deleted chat
+            -- takes them. `kind` separates free messages from the
+            -- auto-delivered decision items — a session's open question, an
+            -- open plan, a live tool approval, or a card parked in
+            -- Review/Needs-info. A decision message's ref_id points at the
+            -- EXISTING durable source (pending_questions/pending_plans/the
+            -- approval registry/the card) and its open-vs-resolved state is
+            -- DERIVED from that source at read time, never stored here: the
+            -- board columns and the per-session answer routes remain the only
+            -- decision system, and the inbox is their delivery surface.
+            CREATE TABLE IF NOT EXISTS inbox_messages (
+              id              SERIAL PRIMARY KEY,
+              session_id      TEXT NOT NULL,
+              project_id      INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              sender_type     TEXT NOT NULL DEFAULT 'user',
+              sender_id       TEXT NOT NULL DEFAULT '',
+              recipient_type  TEXT NOT NULL DEFAULT 'user',
+              recipient_id    TEXT NOT NULL DEFAULT '',
+              body            TEXT NOT NULL DEFAULT '',
+              kind            TEXT NOT NULL DEFAULT 'message',
+              ref_id          TEXT NOT NULL DEFAULT '',
+              in_reply_to     INTEGER NOT NULL DEFAULT 0,
+              status          TEXT NOT NULL DEFAULT 'sent',
+              snoozed_until   DOUBLE PRECISION NOT NULL DEFAULT 0,
+              archived        BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at      DOUBLE PRECISION NOT NULL,
+              updated_at      DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS inbox_session_idx ON inbox_messages(session_id);
+            CREATE INDEX IF NOT EXISTS inbox_recipient_idx ON inbox_messages(recipient_type, recipient_id);
+            CREATE INDEX IF NOT EXISTS inbox_kind_ref_idx ON inbox_messages(kind, ref_id);
+            -- A decision item has exactly one durable message: re-delivery of
+            -- the same open question/plan/approval/card refreshes that row
+            -- (its body carries the newest context) instead of piling up a
+            -- second copy. Free messages (ref_id = '') are never deduped.
+            CREATE UNIQUE INDEX IF NOT EXISTS inbox_kind_ref_uniq
+              ON inbox_messages(kind, ref_id) WHERE ref_id <> '';
             CREATE TABLE IF NOT EXISTS approvals (
               id          SERIAL PRIMARY KEY,
               kind        TEXT NOT NULL,
@@ -435,7 +475,7 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update/comment, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose; trust — session_mode_set.
+Your tools (mcp__viewer__*): observe — session_list/read/summary/analysis, host_list, audit_tail; org — employee_list, project_list, board_list, card_list/create/move/assign/update/comment, task_done; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list, skill_propose; trust — session_mode_set; inbox — inbox_list, inbox_send.
 
 Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
 
@@ -446,6 +486,9 @@ Every project's board is the default pipeline: Todo → Doing → Review → App
 
 ## Writing for the owner (every card, comment, push and chat line)
 The owner reads your words cold — on a phone, hours later, with no memory of your session and often several agents' work interleaved. Never refer to work by a bare number ("card 53", "#82", "the build"): always give the card number AND its title AND a one-line plain-language statement of what that work is, every time you mention it. Every message that needs something from the owner starts with what you need, in one sentence, as a question they can answer with one word or one tap — put context after, never before. If a card is waiting on the owner, its column must say so (Review or Needs-info); a card in Approved or Doing is understood as "the agent is working, nothing is asked of me". Never leave a question for the owner in a column that does not signal it.
+
+## Inbox (the channel — messages both ways)
+Every session owns a mailbox (inbox_list / inbox_send): the owner's words, messages from peer sessions, and the decisions you left for the owner. Inbox text is self-contained — the recipient has no context beyond the message, so write it for a stranger. On a wake, read your inbox first: a fresh message is often the reason for the wake. Send to 'user' to reach the owner (they get a push), or to 'session:<id>' to hand work to a peer (it is woken with your text). A decision you raise (a question, a plan, an approval, or a card parked in Review/Needs-info) is delivered into the owner's inbox with enough context that a human who has read none of your chat can judge it — write the decision body to that standard, and never assume the reader remembers. A snoozed or skipped decision is never dropped: it resurfaces on the next tick. The deciding tap itself stays in the chat UI; the inbox is the channel, not a second decision system.
 
 Full design: ORCHESTRATOR_MCP.md.
 
@@ -1258,6 +1301,142 @@ def notes_delete_for_session(session_id):
     meta). Returns how many notes were removed."""
     with _db() as cur:
         cur.execute("DELETE FROM notes WHERE session_id = %s", (session_id,))
+        return cur.rowcount
+
+
+# Inbox messages (the owner's and the agents' message ledger) ----------------
+
+INBOX_KINDS = ("message", "question", "plan", "approval", "card")
+
+_DECISION_KINDS = ("question", "plan", "approval", "card")
+
+
+def inbox_create(sender_type, sender_id, recipient_type, recipient_id, body,
+                 kind="message", ref_id="", in_reply_to=0,
+                 session_id="", project_id=None):
+    """One inbox row. Decision kinds with a ref_id upsert on (kind, ref_id):
+    re-delivering an open item refreshes the existing message — and puts it
+    back to 'sent' unless the owner snoozed it (a snoozed item stays out of
+    sight until its grace period lapses, then resurfaces; see inbox_list)."""
+    if kind not in INBOX_KINDS:
+        kind = "message"
+    now = _now()
+    if kind in _DECISION_KINDS and ref_id:
+        sql = ("INSERT INTO inbox_messages(session_id, project_id, sender_type, "
+               "sender_id, recipient_type, recipient_id, body, kind, ref_id, "
+               "in_reply_to, status, archived, created_at, updated_at) "
+               "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'sent',FALSE,%s,%s) "
+               "ON CONFLICT (kind, ref_id) WHERE ref_id <> '' DO UPDATE SET "
+               "body = EXCLUDED.body, "
+               "status = CASE WHEN inbox_messages.status = 'snoozed' "
+               "THEN 'snoozed' ELSE 'sent' END, "
+               "updated_at = EXCLUDED.updated_at RETURNING *")
+    else:
+        sql = ("INSERT INTO inbox_messages(session_id, project_id, sender_type, "
+               "sender_id, recipient_type, recipient_id, body, kind, ref_id, "
+               "in_reply_to, status, archived, created_at, updated_at) "
+               "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'sent',FALSE,%s,%s) RETURNING *")
+    with _db() as cur:
+        cur.execute(sql, (session_id, project_id, sender_type, sender_id,
+                          recipient_type, recipient_id, body, kind, ref_id,
+                          int(in_reply_to or 0), now, now))
+        return dict(cur.fetchone())
+
+
+def inbox_list(session_id=None, project_id=None, kind=None,
+               unread_only=False, archived=False, limit=200):
+    """The owner's inbox as a filtered VIEW. `session_id` narrows to one chat
+    (its messages in both directions), `project_id` to a project, `kind` to one
+    of the five kinds, `unread_only` to messages that need the owner's eye
+    (status 'sent' and any snooze lapsed). Newest first."""
+    clauses, params = ["archived = %s"], [bool(archived)]
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    if kind is not None and kind in INBOX_KINDS:
+        clauses.append("kind = %s"); params.append(kind)
+    if unread_only:
+        clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
+        params.append(_now())
+    with _db() as cur:
+        cur.execute("SELECT * FROM inbox_messages WHERE " + " AND ".join(clauses) +
+                    " ORDER BY created_at DESC, id DESC LIMIT %s",
+                    (*params, int(limit)))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def inbox_get(message_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM inbox_messages WHERE id = %s", (message_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_mark_read(message_id):
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = %s AND status = 'snoozed' RETURNING *",
+                    (_now(), message_id))
+        row = cur.fetchone()
+    if row:
+        return dict(row)
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = %s AND status = 'sent' RETURNING *",
+                    (_now(), message_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_snooze(message_id, until):
+    """Snooze a message out of the owner's sight until `until` (epoch). It
+    resurfaces automatically when the clock passes `until` (inbox_list and
+    inbox_unread_count both treat a lapsed snooze as unread again) — a skipped
+    question is never silently dropped, it waits and comes back."""
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'snoozed', "
+                    "snoozed_until = %s, updated_at = %s WHERE id = %s "
+                    "RETURNING *", (float(until or 0), _now(), message_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_unread_count(session_id=None, project_id=None, kind=None):
+    """How many messages need the owner's eye right now: 'sent' (or a snooze
+    that has lapsed), not archived. The tab's badge number. `kind` narrows the
+    badge to one list view (the UI passes the active filter through)."""
+    clauses, params = ["archived = FALSE"], []
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    if kind is not None:
+        clauses.append("kind = %s"); params.append(kind)
+    clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
+    params.append(_now())
+    with _db() as cur:
+        cur.execute("SELECT count(*) AS n FROM inbox_messages WHERE " +
+                    " AND ".join(clauses), params)
+        row = cur.fetchone()
+    return int(row["n"]) if row else 0
+
+
+def inbox_archive_for_session(session_id, archived):
+    """Archiving a chat shelves its inbox messages; unarchiving brings them
+    back (the notes rule, applied to messages). Returns how many changed."""
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET archived = %s, updated_at = %s "
+                    "WHERE session_id = %s AND archived <> %s",
+                    (bool(archived), _now(), session_id, bool(archived)))
+        return cur.rowcount
+
+
+def inbox_delete_for_session(session_id):
+    """A deleted chat takes its inbox messages with it (same lifecycle as its
+    notes, loops and meta). Returns how many were removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM inbox_messages WHERE session_id = %s", (session_id,))
         return cur.rowcount
 
 

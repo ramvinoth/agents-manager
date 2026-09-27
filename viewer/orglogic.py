@@ -187,6 +187,8 @@ _MIN_LEVEL = {
     "note_create": "ic",           # one's own notes: the knowledge ledger next to cards
     "note_update": "ic",           # (archive/unarchive is a reversible field write)
     "note_delete": "ic",           # irreversible → red, so an agent's delete queues
+    "inbox_send": "ic",           # one's own messages: the ledger next to the notes;
+                                  # green — a message is communication, never a mutation
     "task_done": "ic",
     "board_list": "ic",
     "card_list": "ic",

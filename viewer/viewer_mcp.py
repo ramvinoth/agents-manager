@@ -65,6 +65,7 @@ _TOOLS = {
     "note":             ("GET", "/api/org/note"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
+    "inbox_list":       ("GET", "/api/inbox"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
@@ -80,6 +81,7 @@ _TOOLS = {
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
     "session_mode_set": ("POST", "/api/session/mode"),
+    "inbox_send":    ("POST", "/api/inbox/send"),
     # ── Schedule recurring work (writes; gated + self-mutation rail server-side)
     "loop_create":   ("POST", "/api/org/loops"),
     "loop_update":   ("POST", "/api/org/loops/update"),
@@ -232,6 +234,17 @@ _TOOL_LIST = [
      "description": "Mark another session read for you, up to now — clears its unread flag in your view. Target it by `id` from session_list.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "string", "description": "Target session id from session_list."}}}},
+    # ── Inbox: your message ledger (you ↔ owner, you ↔ peers) ───────────────
+    {"name": "inbox_list",
+     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Filter with kind.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "kind": {"type": "string", "enum": ["message", "question", "plan", "approval", "card"]}}}},
+    {"name": "inbox_send",
+     "description": "Send a message: to='user' reaches the owner (he gets a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "body"], "properties": {
+         "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session)."},
+         "body": {"type": "string", "description": "The message — self-contained: the recipient has no context beyond this text."},
+         "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
     # ── Schedule recurring work ─────────────────────────────────────────────
     {"name": "loop_create",
      "description": "Schedule work for ANOTHER session (a worker you manage): a RECURRING prompt (cron expression OR interval like 30s/5m/1h), or a ONE-SHOT task via `at` that fires once at that time and then retires — plan ahead by ending a run by creating its next wake. You cannot schedule your OWN session. Whether harman-scheduled loops actually FIRE is governed separately by the loop-control mode.",

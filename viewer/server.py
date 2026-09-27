@@ -67,12 +67,13 @@ from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
 from viewer.routes.orchestrator import OrchestratorMixin
 from viewer.routes.drives import DrivesMixin
+from viewer.routes.inbox import InboxMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin, DrivesMixin,
+    OrchestratorMixin, DrivesMixin, InboxMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -386,6 +387,8 @@ class SessionViewerHandler(
         "/api/org/skills": "_g_org_skills",
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
+        "/api/inbox": "_g_inbox",
+        "/api/inbox/msg": "_g_inbox_msg",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -478,6 +481,9 @@ class SessionViewerHandler(
         "/api/org/loops/update": "_p_org_loops_update",
         "/api/org/loops/delete": "_p_org_loops_delete",
         "/api/org/skills/propose": "_p_org_skills_propose",
+        "/api/inbox/send": "_p_inbox_send",
+        "/api/inbox/read": "_p_inbox_read",
+        "/api/inbox/snooze": "_p_inbox_snooze",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),

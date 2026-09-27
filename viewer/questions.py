@@ -107,6 +107,18 @@ def record(session_id, pending, host="local", run_id=""):
                 board_wake.wake_on_open_question(session_id, summary)
     except Exception:
         pass
+    # And mirror it into the owner's inbox — the delivery surface: the
+    # pending_questions row above stays the one source, the inbox row carries
+    # the cold-reader context and a reply path. Exception-safe by contract:
+    # never lose a question over a delivery hiccup.
+    try:
+        from viewer import inbox
+        inbox.deliver_decision(session_id, "question",
+                               pending.get("tool_use_id") or "",
+                               inbox.format_question(inbox._label(session_id),
+                                                     pending.get("questions") or []))
+    except Exception:
+        pass
     return revision
 
 
@@ -149,6 +161,16 @@ def record_plan(session_id, pending, host="local"):
             if plan:
                 board_wake.wake_on_open_question(session_id,
                                                 f"plan awaiting approval: {plan[:260]}")
+    except Exception:
+        pass
+    # Mirror the open plan into the owner's inbox (delivery surface, not a
+    # second decision system — pending_plans stays the one source).
+    try:
+        from viewer import inbox
+        inbox.deliver_decision(session_id, "plan",
+                               pending.get("tool_use_id") or "",
+                               inbox.format_plan(inbox._label(session_id),
+                                                 pending.get("plan") or ""))
     except Exception:
         pass
 

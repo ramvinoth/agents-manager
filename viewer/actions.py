@@ -160,6 +160,29 @@ def _task_done(a, *, by_agent=False):
                         a.get("position", 1.0)) or {"error": "not found"}
 
 
+def _inbox_send(a):
+    """Send one free inbox message. The sender is the intent's stamped sender
+    (the resolved principal — never the body); `to` is "user" (the owner) or
+    "session:<id>". The handler persists (inbox.deliver_message), then wakes
+    the recipient session or pushes the owner — all exception-safe, so this
+    Green action can never strand a decision it is carrying context for."""
+    from viewer import inbox
+    to = str(a.get("to", ""))
+    if to.startswith("session:"):
+        rtype, rid = "session", to.split(":", 1)[1]
+        if not rid:
+            return {"error": "bad recipient"}
+    elif to == "user":
+        rtype, rid = "user", ""
+    else:
+        return {"error": "bad recipient"}
+    row = inbox.deliver_message(a.get("sender_type") or "user",
+                                a.get("sender_id") or "",
+                                rtype, rid, a.get("body") or "",
+                                int(a.get("in_reply_to") or 0))
+    return row or {"error": "send failed"}
+
+
 def _card_comment(a):
     """Post a comment on a card's discussion thread (db.card_comments).
     The author is stamped by the route from the resolved principal — never
@@ -449,6 +472,7 @@ ACTIONS = {
     "note_update": _note_update,
     "note_delete": _note_delete,
     "card_comment": _card_comment,
+    "inbox_send": _inbox_send,
     "card_dep_add": _card_dep_add,
     "card_dep_remove": _card_dep_remove,
     "task_done": _task_done,
@@ -500,6 +524,33 @@ _BOARD_ACTIONS = ("card_create", "card_move", "card_update", "card_comment",
                   "card_dep_add", "card_dep_remove", "task_done")
 
 
+def _card_inbox_delivery(card, action, args, agent):
+    """Surface a card parked in a decision column (Review/Needs-info) in the
+    owner's inbox. The card's COLUMN stays the one source of truth — the inbox
+    row carries only its context (the card's own comment thread) so the owner
+    can decide cold, and it derives open-at-read-time against the live card.
+    Fires on an agent's move INTO the column (including a self-move — that is
+    how a worker requests the call) and on an agent's comment while it sits
+    there. Exception-safe by contract; a lost delivery is a missed convenience,
+    never a lost decision (the queue also lists it)."""
+    if not agent or action not in ("card_move", "card_comment") or not card:
+        return
+    try:
+        cols = db.board_columns_list(card["project_id"]) if card.get("project_id") else []
+        col = next((c for c in cols if c["id"] == card.get("column_id")), None)
+        if (col or {}).get("name", "").lower() not in ("review", "needs-info"):
+            return
+        from viewer import inbox
+        comment = ((args.get("body") or "").strip()
+                   if action == "card_comment"
+                   else (inbox.last_session_comment(card["id"]) or ""))
+        inbox.deliver_decision(card.get("session_id") or "", "card",
+                               str(card["id"]),
+                               inbox.format_card(card, comment))
+    except Exception:
+        pass
+
+
 def _board_followup(action, args, actor, session_level, acting_session, payload=None):
     """After a successful board event, wake the card's own session (boardwatch)
     and — when an AGENT comments — push the owner. Never fails the action: the
@@ -532,10 +583,20 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         from viewer.loops import AGENT_ORIGIN, USER_ORIGIN
 
         card = payload if action == "card_create" else db.card_get(args.get("card_id"))
+        # A card parked in Review/Needs-info is a decision the owner must see:
+        # surface it in their inbox. This runs BEFORE the session_id guard on
+        # purpose — a card with no bound session (owner-created) still parks in
+        # those columns and still needs the delivery. Never raises.
+        _card_inbox_delivery(card, action, args, bool(session_level))
         if not card or not card.get("id") or not card.get("session_id"):
             return
         agent = bool(session_level)
         own = agent and card.get("session_id") == (acting_session or "")
+        # The card's column, resolved once for the move-event text.
+        col = None
+        if action == "card_move" and card.get("project_id"):
+            cols = db.board_columns_list(card["project_id"])
+            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
         # The sweep's ledger: a foreign event marks the card as having news for
         # its session; the session's own write means it has read the board.
         db.card_mark_attention(card["id"], by_own_session=own)
@@ -561,9 +622,6 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
             event = (f"new card assigned to you by {actor}: \"{body[:300]}\"" if body
                      else f"new card assigned to you by {actor}")
         elif action == "card_move":
-            cols = db.board_columns_list(card["project_id"]) \
-                if card.get("project_id") else []
-            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
             event = f"moved to '{(col or {}).get('name') or card.get('column_id')}' by {actor}"
         elif action == "task_done":
             event = f"marked done by {actor}"

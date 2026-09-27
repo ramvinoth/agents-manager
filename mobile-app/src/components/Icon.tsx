@@ -75,6 +75,8 @@ export type IconName =
   | "clipboard"
   | "shield"
   | "calculator"
+  | "mail"
+  | "mailFilled"
 
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
@@ -143,6 +145,8 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   clipboard: "clipboard-outline",
   shield: "shield-checkmark-outline",
   calculator: "calculator-outline",
+  mail: "mail-outline",
+  mailFilled: "mail",
 }
 
 export default function Icon({

@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2 } from "lucide-react"
+import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
 import { KanbanDialog } from "@/components/kanban/KanbanDialog"
 import { NotesDialog } from "@/components/notes/NotesDialog"
+import { InboxDialog } from "@/components/inbox/InboxDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
@@ -50,6 +51,8 @@ export function SessionList() {
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
+  const [inboxFor, setInboxFor] = useState<Group | null>(null)
+  const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
 
   const groups = useMemo(() => groupSessions(sessions), [sessions])
@@ -164,6 +167,20 @@ export function SessionList() {
                   <span className="flex-1 font-medium">Notes</span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                 </button>,
+                // Fixed "Inbox" row — the project's message ledger: every
+                // message between the owner and its sessions, and the decisions
+                // waiting on the owner, in one place (like the board, shared by
+                // every session in this dir; per-chat mailboxes open from a
+                // session's details).
+                <button
+                  key="inbox"
+                  onClick={() => setInboxFor(active)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Mail className="size-4 shrink-0 text-primary" />
+                  <span className="flex-1 font-medium">Inbox</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </button>,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -173,6 +190,7 @@ export function SessionList() {
                       current={s.path === currentSessionPath}
                       providerName={providerName}
                       onOpen={() => loadSession(s.path)}
+                      onOpenInbox={(id, title) => setInboxSession({ id, title })}
                     />
                   )),
               ]}
@@ -194,6 +212,24 @@ export function SessionList() {
           onClose={() => setNotesFor(null)}
         />
       )}
+      {inboxFor && (
+        <InboxDialog
+          host={currentHost}
+          cwd={inboxFor.project || inboxFor.dir}
+          name={projectName(inboxFor.project || inboxFor.dir)}
+          onClose={() => setInboxFor(null)}
+        />
+      )}
+      {inboxSession && (
+        <InboxDialog
+          host={currentHost}
+          cwd={inboxFor?.project || inboxFor?.dir || ""}
+          name={inboxSession.title}
+          session={inboxSession.id}
+          sessionTitle={inboxSession.title}
+          onClose={() => setInboxSession(null)}
+        />
+      )}
       <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
   )
@@ -210,11 +246,15 @@ function SessionRow({
   current,
   providerName,
   onOpen,
+  onOpenInbox,
 }: {
   s: SessionListItem
   current: boolean
   providerName: (id?: string) => string
   onOpen: () => void
+  /** Opens this chat's mailbox (its inbox) — the per-session entry point,
+   *  the board's folder-icon analogue. */
+  onOpenInbox?: (id: string, title: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
@@ -308,6 +348,14 @@ function SessionRow({
                 <span className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70">
                   {detail.capabilities.mcp.length} MCP
                 </span>
+                {onOpenInbox && (s as { id?: string }).id && (
+                  <button
+                    onClick={() => onOpenInbox((s as unknown as { id: string }).id, s.title || (s as unknown as { id: string }).id.slice(0, 8))}
+                    className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-px font-medium text-primary hover:bg-primary/20"
+                  >
+                    <Mail className="size-3" /> Inbox
+                  </button>
+                )}
                 {detail.meta.effort && (
                   <span className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70">
                     {detail.meta.effort}

@@ -20,7 +20,6 @@ already render. So:
 import pytest
 
 from viewer import decisions
-from viewer.routes import chat
 from viewer.routes.chat import ChatMixin
 
 NOW = 1_000_000.0
@@ -135,13 +134,16 @@ class TestRoute:
 
     def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=()):
         import viewer.db as vdb
-        import viewer.engine as eng
         import viewer.questions as q
+        import viewer.routes.inbox as vinbox
         monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
-        monkeypatch.setattr(chat, "pending_approvals_all_public", lambda: arows)
-        monkeypatch.setattr(eng, "_push_label",
+        # The route (chat._g_decisions_open) delegates the gather to the inbox
+        # module's open_decisions_items — patch the source names where THAT
+        # module holds its references.
+        monkeypatch.setattr(vinbox, "pending_approvals_all_public", lambda: arows)
+        monkeypatch.setattr(vinbox, "_push_label",
                             labeler or (lambda sid, cwd="": ""))
 
     def test_lists_all_three_sources(self, monkeypatch):

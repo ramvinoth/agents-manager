@@ -9,11 +9,13 @@ import FilesTab from "./FilesTab"
 import AgentsScreen from "./AgentsScreen"
 import ProfileScreen from "./ProfileScreen"
 import NotesScreen from "./NotesScreen"
+import InboxScreen from "./InboxScreen"
 import Icon, { type IconName } from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
 
 export type HomeTabParamList = {
   Chats: undefined
+  Inbox: undefined
   Files: undefined
   Notes: undefined
   Agents: undefined
@@ -25,6 +27,7 @@ const Tab = createMaterialTopTabNavigator<HomeTabParamList>()
 // Outline when inactive, filled when active — the WhatsApp convention.
 const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> = {
   Chats: { on: "chatFilled", off: "chat" },
+  Inbox: { on: "mailFilled", off: "mail" },
   Files: { on: "file", off: "file" },
   Notes: { on: "book", off: "book" },
   Agents: { on: "sparkle", off: "sparkle" },
@@ -74,7 +77,9 @@ export default function HomeTabs({ navigation }: Props) {
         tabBarIcon: ({ color, focused }) => {
           const spec = TAB_ICON[route.name]
           return (
-            <View style={{ alignItems: "center", justifyContent: "center", width: 64 }}>
+            // 58, not 64: six tabs must fit a 375pt screen without the tab bar
+            // scrolling (6×64=384 would).
+            <View style={{ alignItems: "center", justifyContent: "center", width: 58 }}>
               {/* No pill/enclosure behind the icon: the active tab is already
                   marked by the icon+label recoloring to the accent, so a tinted
                   background would be redundant. */}
@@ -93,6 +98,7 @@ export default function HomeTabs({ navigation }: Props) {
       })}
     >
       <Tab.Screen name="Chats">{() => <ChatsScreen navigation={navigation} />}</Tab.Screen>
+      <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Files">{() => <FilesTab navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Notes">{() => <NotesScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Agents">{() => <AgentsScreen navigation={navigation} />}</Tab.Screen>

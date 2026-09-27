@@ -276,9 +276,11 @@ class SessionsMixin:
             return
         meta = db.session_meta_patch(sid, fields) if fields else db.session_meta_get(sid)
         if "archived" in fields:
-            # A chat's notes live and die with it: archiving shelves them,
-            # unarchiving brings them back (the notes view reads the shelf flag).
+            # A chat's notes and inbox messages live and die with it: archiving
+            # shelves them, unarchiving brings them back (the views read the
+            # shelf flag).
             db.notes_archive_for_session(sid, fields["archived"])
+            db.inbox_archive_for_session(sid, fields["archived"])
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
@@ -560,6 +562,7 @@ class SessionsMixin:
                 return
             db.session_meta_delete(full.stem)
             db.notes_delete_for_session(full.stem)
+            db.inbox_delete_for_session(full.stem)
             from viewer import questions
             questions.clear(full.stem)
             questions.clear_plan(full.stem)
@@ -574,6 +577,7 @@ class SessionsMixin:
                 db.loop_delete_for_session(sid)
                 db.session_meta_delete(sid)
                 db.notes_delete_for_session(sid)
+                db.inbox_delete_for_session(sid)
             self.send_json(r)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
@@ -595,6 +599,7 @@ class SessionsMixin:
         db.loop_delete_for_session(sid)
         db.session_meta_delete(sid)
         db.notes_delete_for_session(sid)
+        db.inbox_delete_for_session(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
     def split_at_uuid(self, full_path, cut_uuid):
