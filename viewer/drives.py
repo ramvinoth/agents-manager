@@ -288,11 +288,13 @@ class GoogleDrive(BaseDrive):
     token_expiry}. The OAuth client (id/secret) is a viewer-level secret shared
     by all google drives. A 401 on any call forces one refresh + retry.
 
-    The 7-day constraint (Phase 0 facts): Google's *testing-mode* apps get a
-    7-day refresh token for the restricted `drive` scope. So _refresh() failing
-    is an expected lifecycle event, not a bug — it is surfaced as a 403 the UI
-    turns into a one-click re-authorize, and we never design a feature that
-    assumes the refresh token outlives a week.
+    Refresh-token lifetime: only *testing-mode* GCP projects cap the restricted
+    `drive` scope at 7 days. The shared client here belongs to a project in
+    production (its calendar/gmail tokens carry no refresh_token_expires_in
+    since 2026-09-08), so the token lives until revoked. _refresh() failing is
+    still an expected lifecycle event (revocation, password change, an unused
+    token pruned after 6 months) — surfaced as a 403 the UI turns into a
+    one-click re-authorize, never a silent failure.
     """
 
     kind = "google"
@@ -332,7 +334,7 @@ class GoogleDrive(BaseDrive):
                                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                                 data=form)
         if status != 200:
-            # 7-day testing-mode expiry (or revoked) → the owner must re-consent.
+            # Revoked or expired refresh token → the owner must re-consent.
             raise DriveError("Google authorization expired — re-authorize this drive", 403)
         j = json.loads(body)
         now = time.time()
