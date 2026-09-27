@@ -953,10 +953,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
         viewabilityConfig={viewabilityConfig}
         // Lazy-render: only mount rows near the viewport instead of the whole
         // transcript, so long sessions open fast and scroll smoothly.
+        // removeClippedSubviews is deliberately NOT set: it is off by default on
+        // iOS, saves no memory (views detach, not deallocate), and RN documents
+        // it as buggy on iOS under transforms — `inverted` is a scaleY(-1)
+        // transform, and Show more/less resizes rows in place.
         initialNumToRender={12}
         maxToRenderPerBatch={10}
         windowSize={11}
-        removeClippedSubviews
         onScrollToIndexFailed={(info) => {
           // Rows are lazily measured; approximate, then retry once settled.
           listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false })
