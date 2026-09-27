@@ -24,6 +24,8 @@ import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import ProvidersScreen from "./src/screens/ProvidersScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import CardDetailScreen from "./src/screens/CardDetailScreen"
+import NotesScreen from "./src/screens/NotesScreen"
+import NoteEditorScreen from "./src/screens/NoteEditorScreen"
 import OrgScreen from "./src/screens/OrgScreen"
 import AuditScreen from "./src/screens/AuditScreen"
 import AuditEntryScreen from "./src/screens/AuditEntryScreen"
@@ -43,6 +45,8 @@ export type RootStackParamList = {
   Providers: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
+  Notes: { session?: string; project?: number; title?: string } | undefined
+  NoteEditor: { id: number }
   Org: undefined
   Audit: undefined
   AuditEntry: { entry: AuditEntry }
@@ -189,6 +193,10 @@ export default function App() {
             <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
+            <Stack.Screen name="Notes" options={{ title: "Notes" }}>
+              {({ navigation, route }) => <NotesScreen navigation={navigation} filter={route.params} title={route.params?.title} />}
+            </Stack.Screen>
+            <Stack.Screen name="NoteEditor" component={NoteEditorScreen} options={{ title: "Note" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />
             <Stack.Screen name="AuditEntry" component={AuditEntryScreen} options={{ title: "Recorded action" }} />

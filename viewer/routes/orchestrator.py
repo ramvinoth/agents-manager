@@ -169,6 +169,48 @@ class OrchestratorMixin:
                         "dependencies": db.card_deps_batch([card["id"]]).get(card["id"], []),
                         "columns": db.board_columns_list(int(project)) if project else []})
 
+    # ── notes (the knowledge ledger; scoped like cards) ───────────────────────
+    def _g_org_notes(self, req):
+        """Notes as a filtered VIEW, the board's rule applied to knowledge: a
+        session's notes, a project's notes, or (no filter) everything the caller
+        can see. `archived=1` opens the shelf a chat's archive put them on."""
+        session = (req.query.get("session") or [None])[0]
+        project = (req.query.get("project") or [None])[0]
+        archived = (req.query.get("archived") or ["0"])[0] in ("1", "true")
+        self.send_json({"notes": db.note_list(
+            session_id=session, project_id=int(project) if project else None,
+            archived=archived)})
+
+    def _g_org_note(self, req):
+        nid = (req.query.get("id") or [None])[0]
+        if not nid:
+            self.send_json({"error": "id required"}, status=400); return
+        note = db.note_get(int(nid))
+        if not note:
+            self.send_json({"error": "not found"}, status=404); return
+        self.send_json({"note": note})
+
+    def _p_org_notes(self, req):
+        body = self.read_body() or {}
+        # A note written inside a chat belongs to that chat's project too, so the
+        # project-wide notes view sees it — same birth rule as a card.
+        if not body.get("project_id") and body.get("session"):
+            body["project_id"] = self._board_project(None, body.get("session"))
+        self._org_send(req, "note_create",
+                       {**body, "created_by": req.principal["actor"]})
+
+    def _p_org_notes_update(self, req):
+        body = self.read_body() or {}
+        if not body.get("note_id"):
+            self.send_json({"error": "note_id required"}, status=400); return
+        self._org_send(req, "note_update", body)
+
+    def _p_org_notes_delete(self, req):
+        body = self.read_body() or {}
+        if not body.get("note_id"):
+            self.send_json({"error": "note_id required"}, status=400); return
+        self._org_send(req, "note_delete", body)
+
     def _g_org_card_deps(self, req):
         """One card's dependency edges — the read side of the dual control: the
         owner's UI and the agents' MCP read the same rows through the same gate."""

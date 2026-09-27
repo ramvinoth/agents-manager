@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, Sparkles, Loader2 } from "lucide-react"
+import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
 import { KanbanDialog } from "@/components/kanban/KanbanDialog"
+import { NotesDialog } from "@/components/notes/NotesDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
@@ -48,6 +49,7 @@ export function SessionList() {
   const [dir, setDir] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
+  const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
 
   const groups = useMemo(() => groupSessions(sessions), [sessions])
@@ -151,6 +153,17 @@ export function SessionList() {
                   <span className="flex-1 font-medium">Tasks</span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                 </button>,
+                // Fixed "Notes" row — the project's notes ledger, the same one
+                // agents in these sessions write through their note_* tools.
+                <button
+                  key="notes"
+                  onClick={() => setNotesFor(active)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <NotebookPen className="size-4 shrink-0 text-primary" />
+                  <span className="flex-1 font-medium">Notes</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </button>,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -171,6 +184,14 @@ export function SessionList() {
           cwd={tasksFor.project || tasksFor.dir}
           name={projectName(tasksFor.project || tasksFor.dir)}
           onClose={() => setTasksFor(null)}
+        />
+      )}
+      {notesFor && (
+        <NotesDialog
+          host={currentHost}
+          cwd={notesFor.project || notesFor.dir}
+          name={projectName(notesFor.project || notesFor.dir)}
+          onClose={() => setNotesFor(null)}
         />
       )}
       <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />

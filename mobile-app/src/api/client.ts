@@ -123,6 +123,11 @@ export type Card = { id: number; title: string; body: string; column_id: number 
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
+// A note: the org's knowledge ledger next to the board (server: viewer/db notes).
+// `kind` is its template; `archived` follows the owning chat's archive flag.
+export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist"
+export type Note = { id: number; title: string; body: string; kind: NoteKind; project_id: number | null; session_id: string | null; pinned: boolean; archived: boolean; created_by: string; created_at: number; updated_at: number }
+export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
  *  viewer/actions.py execute). Any org write can return this, so writes whose
@@ -662,6 +667,23 @@ export const api = {
     req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[] }>("GET", `/api/org/card?id=${id}`),
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
+  // ---- notes (the knowledge ledger; scoped like cards) ----
+  orgNotes: (filter: NoteFilter = {}) => {
+    const p = new URLSearchParams()
+    if (filter.session !== undefined) p.set("session", filter.session)
+    if (filter.project !== undefined) p.set("project", String(filter.project))
+    if (filter.archived) p.set("archived", "1")
+    const q = p.toString()
+    return req<{ notes: Note[] }>("GET", `/api/org/notes${q ? "?" + q : ""}`)
+  },
+  orgNote: (id: number) => req<{ note: Note }>("GET", `/api/org/note?id=${id}`),
+  orgCreateNote: (body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) =>
+    req<Note>("POST", "/api/org/notes", body),
+  orgUpdateNote: (body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) =>
+    req<Note>("POST", "/api/org/notes/update", body),
+  // `note_delete` is Red: an agent's delete queues; the owner's runs.
+  orgDeleteNote: (body: { note_id: number }) =>
+    req<{ deleted?: boolean } | Queued>("POST", "/api/org/notes/delete", body),
   orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   // The cross-session decision queue (card #60): every open durable question/
   // plan + live tool approval, oldest first, with a total count. Read-only —

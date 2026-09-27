@@ -369,6 +369,23 @@ export interface CardComment {
   created_at: number
 }
 export type CardFilter = { session?: string; project?: number; assignee?: number }
+/** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared
+ *  by the owner and every agent session's note_* MCP tools. */
+export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist"
+export interface Note {
+  id: number
+  title: string
+  body: string
+  kind: NoteKind
+  project_id: number | null
+  session_id: string | null
+  pinned: boolean
+  archived: boolean
+  created_by: string
+  created_at: number
+  updated_at: number
+}
+export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
  *  viewer/actions.py execute). Writes whose action is Red are typed `T | Queued`

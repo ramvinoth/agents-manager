@@ -8,12 +8,14 @@ import ChatsScreen from "./ChatsScreen"
 import FilesTab from "./FilesTab"
 import AgentsScreen from "./AgentsScreen"
 import ProfileScreen from "./ProfileScreen"
+import NotesScreen from "./NotesScreen"
 import Icon, { type IconName } from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
 
 export type HomeTabParamList = {
   Chats: undefined
   Files: undefined
+  Notes: undefined
   Agents: undefined
   Profile: undefined
 }
@@ -24,6 +26,7 @@ const Tab = createMaterialTopTabNavigator<HomeTabParamList>()
 const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> = {
   Chats: { on: "chatFilled", off: "chat" },
   Files: { on: "file", off: "file" },
+  Notes: { on: "book", off: "book" },
   Agents: { on: "sparkle", off: "sparkle" },
   Profile: { on: "userFilled", off: "user" },
 }
@@ -91,6 +94,7 @@ export default function HomeTabs({ navigation }: Props) {
     >
       <Tab.Screen name="Chats">{() => <ChatsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Files">{() => <FilesTab navigation={navigation} />}</Tab.Screen>
+      <Tab.Screen name="Notes">{() => <NotesScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Agents">{() => <AgentsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>

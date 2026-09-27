@@ -109,6 +109,25 @@ def _card_delete(a):
     return {"deleted": bool(db.card_delete(a.get("card_id")))}
 
 
+# Notes: the knowledge ledger next to the work ledger (cards). Every write runs
+# through here — HTTP, MCP, approval replay — so scope/risk policy is applied
+# once (orglogic) and there is no second create path in any client.
+def _note_create(a):
+    return db.note_create(a.get("title", ""), a.get("body", ""), a.get("kind", "note"),
+                          a.get("project_id"), a.get("session"),
+                          a.get("created_by", ""), bool(a.get("pinned", False)))
+
+
+def _note_update(a):
+    fields = {k: v for k, v in a.items()
+              if k in ("title", "body", "kind", "project_id", "pinned", "archived")}
+    return db.note_update(a.get("note_id"), **fields) or {"error": "not found"}
+
+
+def _note_delete(a):
+    return {"deleted": bool(db.note_delete(a.get("note_id")))}
+
+
 def _task_done(a, *, by_agent=False):
     """Move a card to the Done column of its own project's board.
 
@@ -426,6 +445,9 @@ ACTIONS = {
     "card_move": _card_move,
     "card_assign": _card_assign,
     "card_delete": _card_delete,
+    "note_create": _note_create,
+    "note_update": _note_update,
+    "note_delete": _note_delete,
     "card_comment": _card_comment,
     "card_dep_add": _card_dep_add,
     "card_dep_remove": _card_dep_remove,

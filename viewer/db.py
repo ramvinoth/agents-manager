@@ -201,6 +201,28 @@ def init_db():
               created_at DOUBLE PRECISION NOT NULL,
               UNIQUE (card_id, depends_on)
             );
+            -- Notes: the org's knowledge ledger, next to cards (its work ledger).
+            -- A note is markdown owned by whoever wrote it (`created_by` is the
+            -- same principal string audit_log carries), scoped like a card: to a
+            -- project and/or the chat session it was written in. `kind` is the
+            -- note's template (note / journal / meeting / ...); `archived`
+            -- follows the owning session's archive flag (routes/sessions) and a
+            -- deleted session takes its notes with it.
+            CREATE TABLE IF NOT EXISTS notes (
+              id         SERIAL PRIMARY KEY,
+              title      TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL DEFAULT '',
+              kind       TEXT NOT NULL DEFAULT 'note',
+              project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              session_id TEXT,
+              pinned     BOOLEAN NOT NULL DEFAULT FALSE,
+              archived   BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
+            CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
             CREATE TABLE IF NOT EXISTS approvals (
               id          SERIAL PRIMARY KEY,
               kind        TEXT NOT NULL,
@@ -1157,6 +1179,86 @@ def card_delete(card_id):
     with _db() as cur:
         cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
         return cur.rowcount > 0
+
+
+# Notes (the ONLY note store) -------------------------------------------------
+
+NOTE_KINDS = ("note", "journal", "meeting", "idea", "checklist")
+
+
+def note_create(title="", body="", kind="note", project_id=None, session_id=None,
+                created_by="", pinned=False):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO notes(title, body, kind, project_id, session_id, pinned, "
+            "created_by, created_at, updated_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (title, body, kind if kind in NOTE_KINDS else "note", project_id, session_id,
+             bool(pinned), created_by, _now(), _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def note_list(session_id=None, project_id=None, archived=False):
+    """Notes narrowed by any combination of filters (AND). `archived` selects
+    the shelf: live notes by default, the archive when True. Pinned first, then
+    most recently edited — the reading order of every notes app."""
+    clauses, params = ["archived = %s"], [bool(archived)]
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    with _db() as cur:
+        cur.execute("SELECT * FROM notes WHERE " + " AND ".join(clauses) +
+                    " ORDER BY pinned DESC, updated_at DESC, id DESC", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def note_get(note_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM notes WHERE id = %s", (note_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_update(note_id, **fields):
+    allowed = ("title", "body", "kind", "project_id", "pinned", "archived")
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if "kind" in sets and sets["kind"] not in NOTE_KINDS:
+        del sets["kind"]
+    if not sets:
+        return note_get(note_id)
+    sets["updated_at"] = _now()
+    cols = ", ".join(f"{k} = %s" for k in sets)
+    with _db() as cur:
+        cur.execute(f"UPDATE notes SET {cols} WHERE id = %s RETURNING *",
+                    (*sets.values(), note_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_delete(note_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+        return cur.rowcount > 0
+
+
+def notes_archive_for_session(session_id, archived):
+    """Archiving a chat shelves its notes; unarchiving brings them back. Returns
+    how many notes changed shelf."""
+    with _db() as cur:
+        cur.execute("UPDATE notes SET archived = %s, updated_at = %s "
+                    "WHERE session_id = %s AND archived <> %s",
+                    (bool(archived), _now(), session_id, bool(archived)))
+        return cur.rowcount
+
+
+def notes_delete_for_session(session_id):
+    """A deleted chat takes its notes with it (same lifecycle as its loops and
+    meta). Returns how many notes were removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM notes WHERE session_id = %s", (session_id,))
+        return cur.rowcount
 
 
 # Card comments (the discussion thread on a card) ----------------------------

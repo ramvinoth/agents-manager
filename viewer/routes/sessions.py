@@ -275,6 +275,10 @@ class SessionsMixin:
             self.send_json({"error": "AI settings are saved via /api/session/ai"}, status=400)
             return
         meta = db.session_meta_patch(sid, fields) if fields else db.session_meta_get(sid)
+        if "archived" in fields:
+            # A chat's notes live and die with it: archiving shelves them,
+            # unarchiving brings them back (the notes view reads the shelf flag).
+            db.notes_archive_for_session(sid, fields["archived"])
         self.send_json({"saved": True, "goal": meta.get("goal", ""),
                         "systemPrompt": meta.get("systemPrompt", ""),
                         "avatar": meta.get("avatar", ""),
@@ -555,6 +559,7 @@ class SessionsMixin:
                 self.send_json({"error": str(e)}, status=500)
                 return
             db.session_meta_delete(full.stem)
+            db.notes_delete_for_session(full.stem)
             from viewer import questions
             questions.clear(full.stem)
             questions.clear_plan(full.stem)
@@ -568,6 +573,7 @@ class SessionsMixin:
             if not r.get("error"):
                 db.loop_delete_for_session(sid)
                 db.session_meta_delete(sid)
+                db.notes_delete_for_session(sid)
             self.send_json(r)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
@@ -588,6 +594,7 @@ class SessionsMixin:
         # session_busy guard above 409s while a run is in progress.
         db.loop_delete_for_session(sid)
         db.session_meta_delete(sid)
+        db.notes_delete_for_session(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
     def split_at_uuid(self, full_path, cut_uuid):

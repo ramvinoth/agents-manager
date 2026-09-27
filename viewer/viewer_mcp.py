@@ -61,6 +61,8 @@ _TOOLS = {
     "card":             ("GET", "/api/org/card"),
     "card_comments":    ("GET", "/api/org/card_comments"),
     "card_deps":        ("GET", "/api/org/card_deps"),
+    "note_list":        ("GET", "/api/org/notes"),
+    "note":             ("GET", "/api/org/note"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
@@ -72,6 +74,9 @@ _TOOLS = {
     "card_dep_add":  ("POST", "/api/org/card_dep_add"),
     "card_dep_remove": ("POST", "/api/org/card_dep_remove"),
     "task_done":     ("POST", "/api/org/cards/done"),
+    "note_create":   ("POST", "/api/org/notes"),
+    "note_update":   ("POST", "/api/org/notes/update"),
+    "note_delete":   ("POST", "/api/org/notes/delete"),
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
     "session_mode_set": ("POST", "/api/session/mode"),
@@ -90,7 +95,7 @@ _PATH_ARG = {"session_read": "session"}
 # board stays inside the project it is working in. card_create is NOT here: the
 # create route resolves the card's project from the session itself (the one rule
 # in routes.orchestrator), so the MCP never carries a second copy of it.
-_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project"}
+_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project"}
 
 _HOST_ARG = {"type": "string",
              "description": "Host id from host_list; omit for this machine."}
@@ -172,6 +177,24 @@ _TOOL_LIST = [
     {"name": "loop_control_get",
      "description": "The current loop-firing mode (user/harman/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    # ── Notes (the knowledge ledger next to the board) ──────────────────────
+    {"name": "note_list", "description": "List notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass session to see one chat's notes, archived=true for the shelf. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"}}}},
+    {"name": "note", "description": "Read one note in full (markdown body).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "integer"}}}},
+    {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
+         "title": {"type": "string"}, "body": {"type": "string"}, "kind": {"type": "string"},
+         "project_id": {"type": "integer"}, "pinned": {"type": "boolean"}}}},
+    {"name": "note_update", "description": "Edit a note's title/body/kind, pin it, or archive/unarchive it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
+         "note_id": {"type": "integer"}, "title": {"type": "string"}, "body": {"type": "string"},
+         "kind": {"type": "string"}, "pinned": {"type": "boolean"}, "archived": {"type": "boolean"}}}},
+    {"name": "note_delete", "description": "Delete a note. Irreversible, so it queues for the owner's approval; prefer note_update archived=true.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
+         "note_id": {"type": "integer"}}}},
     # ── Act on the board ────────────────────────────────────────────────────
     {"name": "card_create", "description": "Create a card on the board (title required). Board cards are the durable work ledger: park deferred, handed-off, or follow-up work here so it survives this session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {

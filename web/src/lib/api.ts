@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Queued, SessionDetail, OpenDecision, Drive } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 
@@ -236,6 +236,24 @@ class ApiClient {
   // an approval back, not a deletion — hence the union.
   orgDeleteCard(cardId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/cards/delete", { card_id: cardId })
+  }
+  orgNotes(filter: NoteFilter = {}) {
+    const p = new URLSearchParams()
+    if (filter.session) p.set("session", filter.session)
+    if (filter.project != null) p.set("project", String(filter.project))
+    if (filter.archived) p.set("archived", "1")
+    const q = p.toString()
+    return this.getJSON<{ notes: Note[] }>(`/api/org/notes${q ? "?" + q : ""}`)
+  }
+  orgCreateNote(body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) {
+    return this.postJSON<Note>("/api/org/notes", body)
+  }
+  orgUpdateNote(body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) {
+    return this.postJSON<Note>("/api/org/notes/update", body)
+  }
+  // `note_delete` is Red like card_delete: an agent's delete queues for the owner.
+  orgDeleteNote(noteId: number) {
+    return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/notes/delete", { note_id: noteId })
   }
   // A card with its full comment thread and dependency edges — the discussion
   // and the dual-control blocker state between the owner and the card's session.

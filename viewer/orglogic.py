@@ -88,6 +88,7 @@ _RED_ACTIONS = {
     # irreversible data loss
     "delete_session", "delete_transcript", "git_reset_hard", "git_force_push",
     "delete_provider", "delete_file", "delete_employee", "delete_project", "card_delete",
+    "note_delete",
     # overwriting shared team knowledge: skill_propose writes a NEW skill (green);
     # skill_promote overwrites one the team already relies on (red). The same write,
     # different risk — which is why they are two actions over one handler.
@@ -183,6 +184,9 @@ _MIN_LEVEL = {
     "card_dep_add": "ic",          # dependency edges are work-shaping on one's own
     "card_dep_remove": "ic",       # cards (add+remove are both reversible) — green
     "card_assign_self": "ic",
+    "note_create": "ic",           # one's own notes: the knowledge ledger next to cards
+    "note_update": "ic",           # (archive/unarchive is a reversible field write)
+    "note_delete": "ic",           # irreversible → red, so an agent's delete queues
     "task_done": "ic",
     "board_list": "ic",
     "card_list": "ic",
