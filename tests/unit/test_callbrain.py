@@ -79,9 +79,13 @@ class TestRenderSnapshot:
     def test_clock_speaker_board_and_waiting_cards(self):
         s = callbrain.render_snapshot(NOW, "user:ram", "Harman", COLS, self.cards, 2, "The work session is idle.")
         assert s.startswith("Now: Saturday, September 26, 2026, 3:04 PM PDT.\nSpeaking with: user:ram.")
-        assert "Board 'Harman': 1 Todo, 1 Doing, 1 Review, 1 Needs-info, 1 Done." in s
-        assert 'Waiting on the owner: Review — #53 "Call mode" (2 hours). Needs-info — #61 "Decision loop" (1 minute).' in s
-        assert 'In motion: Doing — #30 "Drives" (2 days).' in s
+        # Counts are stated verbatim (total + per-column key:value): a small
+        # model must only echo, never derive, any number in the answer.
+        assert "Board 'Harman': 4 open cards." in s
+        assert "Counts by column — Todo: 1 open; Doing: 1 open; Review: 1 open; Needs-info: 1 open." in s
+        assert ('Waiting on the owner: Review: 1 open — #53 "Call mode" (2 hours). '
+               'Needs-info: 1 open — #61 "Decision loop" (1 minute).') in s
+        assert 'In motion: Doing: 1 open — #30 "Drives" (2 days).' in s
         assert "Open tool approvals waiting on the owner in the app: 2." in s
         assert s.endswith("The work session is idle.")
         assert "old" not in s
@@ -89,8 +93,19 @@ class TestRenderSnapshot:
     def test_per_column_cap_and_more(self):
         many = [{"id": i, "column_id": 3, "title": f"c{i}", "updated_at": T - i} for i in range(5)]
         s = callbrain.render_snapshot(NOW, "u", "P", COLS, many, 0, "idle", per_column=3)
-        assert "and 2 more" in s and "#4" in s and "#0" not in s, "oldest first, capped"
+        assert "plus 2 others in that column" in s and "#4" in s and "#0" not in s, "oldest first, capped"
         assert "approvals" not in s
+
+    def test_total_and_per_column_counts_are_verbatim(self):
+        """The 2026-09-26 incident: a 27B model said '9' for a column that had 10.
+        With 10 in Review and 3 in Doing, every number a correct answer needs
+        must appear as a stated fact — '10 open', '3 open', '13 open cards'."""
+        many = ([{"id": i, "column_id": 3, "title": f"r{i}", "updated_at": T - i} for i in range(10)]
+                + [{"id": j + 100, "column_id": 2, "title": f"d{j}", "updated_at": T - j} for j in range(3)])
+        s = callbrain.render_snapshot(NOW, "u", "P", COLS, many, 0, "idle")
+        assert "Board 'P': 13 open cards." in s
+        assert "Counts by column — Doing: 3 open; Review: 10 open." in s
+        assert "Review: 10 open —" in s and "Doing: 3 open —" in s
 
     def test_no_board(self):
         s = callbrain.render_snapshot(NOW, "u", "", None, None, 0, "idle")
@@ -309,7 +324,9 @@ def test_snapshot_composes_live_data(board, monkeypatch):
     s = callbrain.snapshot("sess", PRINCIPAL, now=NOW)
     assert "Now: Saturday, September 26, 2026, 3:04 PM PDT." in s
     assert "Speaking with: user:ram." in s
-    assert "Board 'Harman': 1 Review." in s and '#53 "Call mode" (1 minute)' in s
+    assert "Board 'Harman': 1 open card." in s
+    assert "Counts by column — Review: 1 open." in s
+    assert 'Review: 1 open — #53 "Call mode" (1 minute)' in s
     assert "approvals waiting on the owner in the app: 1." in s
 
 

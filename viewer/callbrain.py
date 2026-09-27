@@ -187,9 +187,18 @@ def render_snapshot(now, speaker, project_name, columns, cards, approvals_open, 
     if columns is None:
         lines.append("Board: this call's session has no board attached; delegate is unavailable.")
     else:
+        # Small models slip on arithmetic over prose, so every count the answer
+        # needs is stated verbatim here: the total, and per-column key:value.
+        # The model may echo a number from these lines; it must never derive one.
         groups = _by_column(columns, cards)
-        counts = [f"{len(mine)} {col['name']}" for col, mine in groups if mine]
-        lines.append(f"Board '{project_name}': " + (", ".join(counts) if counts else "empty") + ".")
+        open_groups = [(col, mine) for col, mine in groups if mine and col["name"].lower() != "done"]
+        total = sum(len(mine) for _, mine in open_groups)
+        lines.append(f"Board '{project_name}': "
+                     + (f"{total} open card" + ("" if total == 1 else "s") + "." if total else "empty."))
+        if total:
+            lines.append("Counts by column — "
+                         + "; ".join(f"{col['name']}: {len(mine)} open" for col, mine in open_groups)
+                         + ".")
         ts = now.timestamp()
         for label, names in (("Waiting on the owner", _WAITING_ON_OWNER), ("In motion", _IN_MOTION)):
             parts = []
@@ -198,8 +207,9 @@ def render_snapshot(now, speaker, project_name, columns, cards, approvals_open, 
                     continue
                 mine = sorted(mine, key=lambda c: float(c.get("updated_at") or 0))
                 shown = "; ".join(_card_line(c, ts) for c in mine[:per_column])
-                more = f" and {len(mine) - per_column} more" if len(mine) > per_column else ""
-                parts.append(f"{col['name']} — {shown}{more}")
+                more = (f" plus {len(mine) - per_column} others in that column"
+                        if len(mine) > per_column else "")
+                parts.append(f"{col['name']}: {len(mine)} open — {shown}{more}")
             if parts:
                 lines.append(f"{label}: " + ". ".join(parts) + ".")
     if approvals_open:
