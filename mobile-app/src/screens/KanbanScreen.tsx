@@ -9,6 +9,7 @@ import { boardScopeFilter, groupByColumn, nextPosition } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
+import DecisionCockpit from "../components/DecisionCockpit"
 import { useTheme } from "../lib/useTheme"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
@@ -67,6 +68,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // the ceiling that makes a tall column scroll vertically instead of
   // overflowing off-screen. Re-measured when the band/error banner toggles.
   const [viewportH, setViewportH] = useState(0)
+  // The decision cockpit walks a FROZEN snapshot of the queue (captured at the
+  // moment of the tap) so the 4s poll can't reshuffle the item under the
+  // reader's thumb. null = closed. New/skipped items reappear on the next open.
+  const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; index: number } | null>(null)
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
   const { columns, cards, employees, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
@@ -137,22 +142,30 @@ export default function KanbanScreen({ route, navigation }: Props) {
   )
 
   const openCard = useCallback(
-    (card: Card) => { if (isCurrent()) navigation.navigate("CardDetail", { id: card.id }) },
+    (id: number) => { if (!isCurrent()) return; setCockpit(null); navigation.navigate("CardDetail", { id }) },
     [navigation, isCurrent]
   )
 
-  // Open the session that owns a queued decision — the same Thread route push
-  // taps use (App.tsx's navToSession), resolved id → path on the decision's
-  // host. Best-effort: a session that is no longer listed (or on an unreachable
-  // host) no-ops rather than throwing.
-  const openDecision = useCallback(
+  // Open the cockpit at the tapped item, freezing the queue as it stands now so
+  // the 4s poll can't shift the item mid-decision. The cockpit decides in place;
+  // its escape hatches (below) close it before navigating away.
+  const openCockpit = useCallback(
+    (index: number) => {
+      if (!isCurrent()) return
+      setCockpit({ snapshot: decisions.slice(), index })
+    },
+    [isCurrent, decisions]
+  )
+
+  // The cockpit's "open chat" escape hatch (review-needed): jump to the session
+  // that owns a queued decision — the same Thread route push taps use, resolved
+  // id → path on the decision's host. Best-effort: a session no longer listed
+  // (or on an unreachable host) surfaces a hint rather than throwing; the item
+  // stays in the queue either way.
+  const openThread = useCallback(
     async (d: OpenDecision) => {
       if (!isCurrent()) return
-      // A card parked for the owner IS the decision surface — open the card.
-      if (d.kind === "card" && d.card) {
-        navigation.navigate("CardDetail", { id: d.card })
-        return
-      }
+      setCockpit(null)
       const host = d.host || "local"
       try {
         const sessions = await api.sessions(host)
@@ -232,7 +245,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
         <Text style={{ color: t.danger, padding: 12 }}>{error}</Text>
       ) : null}
       {decisions.length ? (
-        <DecisionBand decisions={decisions} theme={t} onOpen={openDecision} />
+        <DecisionBand decisions={decisions} theme={t} onOpen={openCockpit} />
       ) : null}
       <ScrollView
         horizontal
@@ -290,7 +303,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
                   colBounds={colBounds}
                   columns={columns}
                   onDropColumn={(colId) => moveCard(card, colId, 9999)}
-                  onTap={() => openCard(card)}
+                  onTap={() => openCard(card.id)}
                   onLongPress={() => promptAssign(card)}
                 />
               ))}
@@ -301,18 +314,29 @@ export default function KanbanScreen({ route, navigation }: Props) {
           </View>
         ))}
       </ScrollView>
+      {cockpit ? (
+        <DecisionCockpit
+          decisions={cockpit.snapshot}
+          startIndex={cockpit.index}
+          onClose={() => setCockpit(null)}
+          onResolved={load}
+          onOpenThread={openThread}
+          onOpenCard={openCard}
+        />
+      ) : null}
     </View>
   )
 }
 
 /**
  * The board's decision band (card #60): every OPEN decision across all
- * sessions — questions, plan approvals, tool Allow/Deny — oldest first, with
- * the total count. Read-only here: tapping an item opens the owning session's
- * thread, where the existing decision UI (race-safe via the decisions gate)
- * performs the actual decision. This screen never writes a decision.
- * Rendered only when non-empty — an empty queue shows nothing, so the board
- * stays clean for the common case.
+ * sessions — questions, plan approvals, tool Allow/Deny, cards parked for the
+ * owner — oldest first, with the total count. Tapping an item opens the
+ * DecisionCockpit at that item, where the owner decides IN PLACE (approve/deny,
+ * answer, skip, browse) without leaving the board. The cockpit uses the same
+ * race-safe per-session routes the thread does — the band and cockpit are
+ * delivery surfaces, never a second decision store. Rendered only when
+ * non-empty, so the board stays clean for the common case.
  */
 const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard"> = {
   question: "help",
@@ -328,7 +352,7 @@ function DecisionBand({
 }: {
   decisions: OpenDecision[]
   theme: ReturnType<typeof useTheme>
-  onOpen: (d: OpenDecision) => void
+  onOpen: (index: number) => void
 }) {
   return (
     <View style={{ backgroundColor: t.surface, borderBottomWidth: 1, borderBottomColor: t.border, paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
@@ -337,11 +361,11 @@ function DecisionBand({
         <Text style={{ color: t.textMuted, fontWeight: "400" }}> · tap to decide</Text>
       </Text>
       <ScrollView style={{ maxHeight: 140 }} contentContainerStyle={{ gap: 4 }}>
-        {decisions.map((d) => (
+        {decisions.map((d, i) => (
           <Pressable
             key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.run_id}`}
             testID={`decision-${d.kind}-${d.session}`}
-            onPress={() => onOpen(d)}
+            onPress={() => onOpen(i)}
             style={{
               flexDirection: "row",
               alignItems: "center",

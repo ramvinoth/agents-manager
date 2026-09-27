@@ -47,7 +47,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     "react-native-gesture-handler": {}, "react-native-reanimated": {},
     "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
-    "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) },
+    "../components/Icon": { default: "Icon" }, "../components/DecisionCockpit": { default: "DecisionCockpit" }, "../lib/useTheme": { useTheme: () => ({}) },
   }
   const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/KanbanScreen.tsx"), "utf8")
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
