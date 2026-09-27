@@ -17,9 +17,6 @@ import secrets
 from viewer import db, drive_oauth
 from viewer.drives import DriveError
 
-_KINDS = frozenset({"google", "dropbox", "onedrive"})
-
-
 def _public_view(d):
     """What the UI may see about a drive. The config (per-user tokens, the
     vendor client) is deliberately NOT returned — a list endpoint leaking

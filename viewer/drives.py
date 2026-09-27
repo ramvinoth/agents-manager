@@ -12,121 +12,68 @@ Shape: adding a vendor = implement BaseDrive (the nine methods the fs
 routes already call, with the same response shapes the local/SSH legs
 produce) and add one ADAPTERS entry. Nothing else — the app, the MCP layer,
 the routes — learns the vendor's name; they address drives by id through
-adapter_for().
+adapter_for(). The three built adapters share _OAuthDrive: one token
+lifecycle (cached access token → refresh grant → persist; a 401 forces one
+refresh + retry) and one client-side zip walker over vendor-neutral nodes.
 
-Vendor facts. VERIFIED against the primary docs 2026-09-19, RE-VERIFIED
-against the same primary docs 2026-09-26 (card #32 comment 19 required a
-recheck before resuming; the recheck corrected two entries — marked ✗):
-  google   : an unverified app using sensitive scopes (e.g. `drive`) shows
-             an "unverified app" warning before the consent screen and is
-             capped at 100 NEW users; verification is only required before
-             a public launch, and an internal/personal use case is exempt.
-             For a single-owner self-hosted app that is just a warning.
-             Web (authorization-code) flow only — no device flow for
-             Drive. (support.google.com/cloud/answer/7454865)
-             [2026-09-26] Scopes are tiered (api-specific-auth, updated
-             2026-09-03): non-sensitive (drive.appdata, drive.appfolder,
-             drive.file, drive.install), sensitive (drive.apps.readonly),
-             restricted (drive, drive.readonly, drive.activity.*, …).
-             drive.file = per-file, shared ONLY through the Picker — it
-             cannot browse. Restricted-scope apps get category + security
-             assessment review before production. Testing-mode (external
-             user type): refresh tokens EXPIRE IN 7 DAYS unless the app
-             uses only name/email/profile/OpenID scopes, and a Google
-             account holds at most 100 refresh tokens per client (oldest
-             auto-invalidated, no warning). Uploads: media (binary body),
-             multipart, resumable (session) — max file 5,120 GB (5 TB)
-             per file, any MIME type.
-             (developers.google.com: /workspace/drive/api/guides/
-             api-specific-auth, /identity/protocols/oauth2, /workspace/
-             drive/api/guides/manage-uploads, /workspace/drive/api/
-             reference/rest/v3/files/create)
-  dropbox  : PKCE is the public-client flow — no client secret needed.
-             A refresh token is ONLY returned when the authorize URL
-             carries token_access_type=offline; refresh tokens are
-             long-lived ("a user's approval remains valid until
-             explicitly revoked" — the old ~30-day-expiry claim is not in
-             the current docs, so don't design around it; surface a failed
-             refresh so the user can re-authorize). Access tokens are
-             opaque and may exceed 1 KB. Data calls go to
-             api.dropboxapi.com / content.dropboxapi.com; only the
-             /oauth2/authorize page lives on www.dropbox.com. Business
-             teams can have a monthly "data transport calls" cap — the
-             failure carries a user_message to show the user.
-             [2026-09-26] Docs moved: /get-started/authorization and
-             /oauth → docs.dropboxapi.com/dropbox-api/docs/oauth and
-             /developer-resources/developer-guide (the old /developers-v2/
-             tree is 404). Single /files/upload caps at 150 MB; above
-             that, /files/upload_session/{start,append_v2,finish} in
-             4 MB-multiple chunks, ≤1000 appends per batch, 429
-             too_many_write_operations when saturated.
-             ✗ CORRECTION — server-side zip DOES exist: POST /2/files/
-             download-zip (Dropbox-API-Arg: JSON {"paths":[…]}/{"ids":[…]})
-             makes the vendor zip up to 10,000 files and returns a temp
-             path (metadata + size + timestamp). The temp zip must be
-             DOWNLOADED WITHIN 30 MINUTES or it is deleted; the temp path
-             cannot be listed/moved/renamed/deleted; any single file it
-             cannot include → 400; a long build can time out; a large zip
-             can be throttled (429). → build_zip is NATIVE on Dropbox
-             (Phase 6 no longer "off the table" for this vendor, with
-             those caps); the original card assumption was wrong.
-             Data-access level is an app-level console choice: App folder
-             (dedicated folder under the user's Apps folder; read/write
-             there only) vs Full Dropbox (everything); scopes control
-             WHAT actions, the access level controls WHICH content.
-             Least-privilege is reviewed at production approval.
-             (docs.dropboxapi.com: /dropbox-api/docs/oauth, /dropbox-api/
-             docs/performance, /dropbox-api/docs/file-access, /dropbox-
-             api/api-reference/user-endpoints/files/download-zip,
-             /dropbox-api/docs/developer-resources/developer-guide)
-  onedrive : personal (consumer) Microsoft accounts are supported by the
-             device code flow via the /consumers tenant — the best
-             onboarding path for a self-hosted box (user types a code).
-             Simple upload (PUT /content) accepts up to 250 MB; above
-             that use a resumable upload session. There is NO API to
-             download a folder as a zip (it exists only in the web UI;
-             an April-2024 feature request is still Status: NEW) — so
-             build_zip/compress for OneDrive is download→zip→upload or
-             capability-hidden, NOT a native call.
-             [2026-09-26] Device flow detail: the /devicecode response
-             carries the poll `interval` and an `expires_in` defaulting
-             to 15 minutes for the user to sign in; polling errors are
-             authorization_pending / slow_down / expired_token /
-             bad_verification_code. ✗ QUIRK — a PERSONAL account signed
-             in via /common or /consumers is asked to sign in AGAIN on
-             the other device (the code device has no cookies); work or
-             school accounts are not. The onboarding UI must expect a
-             second sign-in and say so.
-             ✗ CORRECTION — upload-session chunk rules (current docs):
-             max 60 MiB per request (the older 32 MiB number is out of
-             date); fragments must be a MULTIPLE OF 320 KiB (327,680
-             bytes) and are uploaded SEQUENTIALLY (out-of-order → error);
-             recommended fragment size 5–10 MiB. The session's
-             expirationDateTime extends with each fragment; a dropped
-             mid-request upload discards only that request's bytes and
-             resumes from the last completed fragment (nextExpectedRanges
-             tells you where). Total file length is known up front.
-             The folder-zip line above stands, sharpened: current v1.0
-             AND beta /content docs say "only driveItems with the file
-             property can be downloaded" — a March-2025 Q&A (official
-             responder) reports folder /content DID return a zip, so the
-             behavior may exist undocumented; treat it as unverified and
-             live-test against a real OneDrive before relying on it.
-             (learn.microsoft.com: /entra/identity-platform/
-             v2-oauth2-device-code, /graph/api/driveitem-put-content,
-             /graph/api/driveitem-createuploadsession, /graph/api/
-             resources/uploadsession, /graph/api/driveitem-get-content;
-             learn.microsoft.com/answers/questions/2201182;
-             techcommunity.microsoft.com idea 4116936)
+Vendor facts, VERIFIED against the primary docs on 2026-09-19, 2026-09-26
+and 2026-09-27 (the date of each fact's last check is what the adapters
+were built against):
+  google   : Drive v3, id-addressed (paths are walked one segment at a
+             time). Web authorization-code flow only. The `drive` scope is
+             restricted: an unverified app shows a warning and is capped
+             at 100 users; refresh tokens of a TESTING-mode project expire
+             in 7 days (this client's project is in production). Uploads:
+             multipart with a metadata part so the file gets its NAME.
+             (developers.google.com/workspace/drive/api/guides/
+             api-specific-auth, /identity/protocols/oauth2)
+  dropbox  : path-addressed RPC (api.dropboxapi.com/2, JSON body; root is
+             the EMPTY string) + content endpoints (content.dropboxapi.com/
+             2, args in the Dropbox-API-Arg header, non-ASCII \\uXXXX
+             escaped). PKCE S256 is the public-client flow: the token
+             request carries code_verifier INSTEAD OF a client secret. A
+             refresh_token is issued ONLY when the authorize URL carries
+             token_access_type=offline; approval stays valid until revoked.
+             redirect_uri must EXACTLY match one registered in the App
+             Console (port included — no RFC 8252 port wildcard is
+             documented, so the client file registers a fixed loopback
+             port). files/upload ≤150 MB per call; files/download_zip
+             zips ONE folder server-side (<20 GB, <4 GB per file, <10,000
+             entries). delete_v2 moves to the Dropbox trash. Path errors
+             come back as 409 with an error_summary such as
+             path/not_found/.. [2026-09-27]
+             (docs.dropboxapi.com/dropbox-api/docs/get-started/
+             authorization, /api-reference/user-endpoints/files/*)
+  onedrive : Microsoft Graph v1.0, path-addressed via /me/drive/root:/
+             {path}: (root children at /me/drive/root/children). Personal
+             accounts through the /consumers tenant. PKCE public client on
+             the "Mobile and desktop applications" platform; for a
+             `localhost` redirect the PORT IS IGNORED when matching (RFC
+             8252), so the loopback flow works unchanged; IPv6 [::1] is not
+             supported. Refresh tokens need the offline_access scope,
+             default 90-day lifetime, rotated on every refresh (store the
+             new one), revocable any time → re-authorize. Download: GET
+             /content answers 302 to a pre-authenticated URL — we read the
+             item's @microsoft.graph.downloadUrl and fetch it WITHOUT the
+             bearer header instead (urllib would forward our Authorization
+             header across the redirect). Simple PUT /content ≤250 MB;
+             DELETE → recycle bin; mkdir POST /children with
+             conflictBehavior=fail. No folder-zip API — zips are built
+             client-side. [2026-09-27]
+             (learn.microsoft.com/entra/identity-platform/reply-url,
+             /v2-oauth2-auth-code-flow, /refresh-tokens; /graph/api/
+             driveitem-*)
 """
 
 import datetime
+import io
 import json
 import secrets
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 from viewer import db
 from viewer import config as _config
@@ -196,42 +143,6 @@ class BaseDrive:
         return {"ok": True, "account": self.config.get("account") or ""}
 
 
-class _Pending(BaseDrive):
-    """A recognized vendor kind whose adapter isn't built yet: the registry
-    accepts the kind, but every op answers 501 until its phase lands.
-    Replacing its ADAPTERS entry ships the vendor."""
-
-    def _not_yet(self, op):
-        raise DriveError(f"{self.drive.get('kind')}: {op} is not available yet", 501)
-
-    def fs_list(self, path, show_hidden=False):
-        self._not_yet("list")
-
-    def read_bytes(self, path):
-        self._not_yet("read")
-
-    def upload(self, path, files):
-        self._not_yet("upload")
-
-    def mkdir(self, path, name):
-        self._not_yet("mkdir")
-
-    def rename(self, path, name):
-        self._not_yet("rename")
-
-    def delete(self, path):
-        self._not_yet("delete")
-
-    def compress(self, path, names, archive):
-        self._not_yet("compress")
-
-    def build_zip(self, path, names):
-        self._not_yet("zip")
-
-    def status(self):
-        return {"ok": False, "account": "", "error": "adapter not built yet"}
-
-
 def _http(method, url, headers=None, data=None, timeout=60):
     """One stdlib HTTP call (the single network seam every adapter shares, so a
     test can monkeypatch it and drive an adapter with canned vendor responses —
@@ -252,13 +163,15 @@ def _http(method, url, headers=None, data=None, timeout=60):
         raise DriveError(f"Vendor unreachable: {e}", 502)
 
 
-def _vendor_client(kind):
+def _vendor_client(kind, public=False):
     """The viewer's OAuth client for `kind` — ONE shared client per vendor
     (per-user tokens live in the drive row). Read from DRIVES_OAUTH_FILE as
-    {kind: {client_id, client_secret, redirect_uris?}}. Shared by the adapter
-    (_google_client) and the loopback OAuth flow (drive_oauth). Missing or
-    incomplete → 403 with guidance, so a first run says exactly what to do
-    instead of failing opaquely."""
+    {kind: {client_id, client_secret?, redirect_uris?}}. Shared by the
+    adapters (token refresh) and the loopback OAuth flow (drive_oauth). A
+    `public` client (PKCE — Dropbox, OneDrive) needs only client_id; a
+    confidential one (Google) needs the secret too. Missing or incomplete →
+    403 with guidance, so a first run says exactly what to do instead of
+    failing opaquely."""
     path = _config.DRIVES_OAUTH_FILE
     try:
         data = json.loads(path.read_text())
@@ -267,51 +180,43 @@ def _vendor_client(kind):
     except Exception:
         raise DriveError(f"{kind} OAuth client file is not valid JSON", 403)
     c = data.get(kind) or {}
-    if not c.get("client_id") or not c.get("client_secret"):
+    if not c.get("client_id"):
+        raise DriveError(f"{kind} OAuth client is incomplete (needs client_id)", 403)
+    if not public and not c.get("client_secret"):
         raise DriveError(f"{kind} OAuth client is incomplete (needs client_id and client_secret)", 403)
     return c
 
 
-def _google_client():
-    """The viewer's own Google OAuth client (one shared client; per-user
-    tokens live in the drive row)."""
-    return _vendor_client("google")
+class _OAuthDrive(BaseDrive):
+    """What the three OAuth-backed adapters share, so a vendor adapter is only
+    its REST dialect:
 
+    Tokens — config holds {account, access_token, refresh_token, token_expiry}.
+    _access_token() serves the cached token until 60 s before expiry, else
+    runs the refresh grant at _TOKEN and persists the new token(s) to the
+    drive row. A refresh failure is a normal lifecycle event (revoked,
+    password change, unused token pruned) surfaced as a 403 the UI turns into
+    a one-click re-authorize. _req() adds the bearer and, on a 401, forces one
+    refresh + retry.
 
-class GoogleDrive(BaseDrive):
-    """Google Drive v3 adapter (Phase 2). The vendor addresses files by id, but
-    the fs routes and UI speak paths, so a path like /a/b/c.docx is resolved by
-    walking from the root folder one segment at a time. Every method returns the
-    exact shape the local/SSH legs produce (see the BaseDrive contract above).
+    Paths — the routes speak POSIX-ish paths; _norm/_parent_path/_join are
+    the one path grammar every vendor maps onto its own addressing.
 
-    Tokens: the drive's config JSONB holds {account, access_token, refresh_token,
-    token_expiry}. The OAuth client (id/secret) is a viewer-level secret shared
-    by all google drives. A 401 on any call forces one refresh + retry.
-
-    Refresh-token lifetime: only *testing-mode* GCP projects cap the restricted
-    `drive` scope at 7 days. The shared client here belongs to a project in
-    production (its calendar/gmail tokens carry no refresh_token_expires_in
-    since 2026-09-08), so the token lives until revoked. _refresh() failing is
-    still an expected lifecycle event (revocation, password change, an unused
-    token pruned after 6 months) — surfaced as a 403 the UI turns into a
-    one-click re-authorize, never a silent failure.
+    Zip — _zip() builds a real zip in memory by walking vendor-neutral NODES:
+    a subclass answers _node(path) → (node, is_dir), _node_children(node) →
+    [(child_node, name, is_dir)] and _node_read(node) → bytes. Google's node
+    is a file id, Dropbox's a path, OneDrive's an item dict.
     """
 
-    kind = "google"
+    _TOKEN = ""          # the vendor's token endpoint (refresh grant)
+    _PUBLIC = False      # PKCE public client → no client_secret anywhere
     caps = {"list": True, "read": True, "upload": True, "mkdir": True,
             "rename": True, "delete": True, "compress": True, "zip": True}
 
-    _API = "https://www.googleapis.com/drive/v3"
-    _UPLOAD = "https://www.googleapis.com/upload/drive/v3"
-    _TOKEN = "https://oauth2.googleapis.com/token"
-    _FOLDER = "application/vnd.google-apps.folder"
-
-    def __init__(self, drive):
-        super().__init__(drive)
-        self._meta_cache = {}  # id -> metadata, memoized for one request
-        self._root_id = ""     # the root folder id, memoized
-
     # ---- tokens -----------------------------------------------------------
+
+    def _client(self):
+        return _vendor_client(self.kind, public=self._PUBLIC)
 
     def _access_token(self):
         cfg = self.config
@@ -319,32 +224,30 @@ class GoogleDrive(BaseDrive):
         if at and time.time() < exp - 60:
             return at
         if not cfg.get("refresh_token"):
-            raise DriveError("Drive is not authorized — run the Google OAuth flow", 403)
+            raise DriveError("Drive is not authorized — run the sign-in flow", 403)
         return self._refresh()
 
     def _refresh(self):
-        client = _google_client()
-        form = urllib.parse.urlencode({
+        client = self._client()
+        form = {
             "grant_type": "refresh_token",
             "refresh_token": self.config.get("refresh_token"),
             "client_id": client["client_id"],
-            "client_secret": client["client_secret"],
-        }).encode()
+        }
+        if client.get("client_secret"):
+            form["client_secret"] = client["client_secret"]
         status, _, body = _http("POST", self._TOKEN,
                                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                                data=form)
+                                data=urllib.parse.urlencode(form).encode())
         if status != 200:
             # Revoked or expired refresh token → the owner must re-consent.
-            raise DriveError("Google authorization expired — re-authorize this drive", 403)
+            raise DriveError(f"{self.kind} authorization expired — re-authorize this drive", 403)
         j = json.loads(body)
-        now = time.time()
         self.config["access_token"] = j["access_token"]
         self.config["refresh_token"] = j.get("refresh_token") or self.config.get("refresh_token")
-        self.config["token_expiry"] = now + int(j.get("expires_in") or 3600)
+        self.config["token_expiry"] = time.time() + int(j.get("expires_in") or 3600)
         db.drive_upsert(self.drive["id"], self.drive)
         return j["access_token"]
-
-    # ---- transport --------------------------------------------------------
 
     def _req(self, method, url, data=None, headers=None):
         """An authenticated request. Adds the Bearer token; on a 401 (stale
@@ -360,6 +263,135 @@ class GoogleDrive(BaseDrive):
                 h.update(headers)
             status, _, body = _http(method, url, headers=h, data=data)
         return status, body
+
+    # ---- path grammar -----------------------------------------------------
+
+    @staticmethod
+    def _norm(path):
+        p = (path or "~").strip().replace("\\", "/")
+        if p in ("", "~", "/", "~/"):
+            return "/"
+        if p.startswith("~"):
+            p = p[1:]
+        if not p.startswith("/"):
+            p = "/" + p
+        return "/" + "/".join(s for s in p.split("/") if s)
+
+    @staticmethod
+    def _parent_path(path):
+        p = path if path.startswith("/") else "/" + path
+        if p in ("/", "~"):
+            return None
+        parent = p.rsplit("/", 1)[0]
+        return parent if parent else "/"
+
+    @staticmethod
+    def _join(path, name):
+        p = path if path.startswith("/") else "/" + path
+        return (p + "/" + name) if p != "/" else "/" + name
+
+    @staticmethod
+    def _ts(s):
+        if not s:
+            return 0
+        try:
+            dt = datetime.datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return 0
+
+    def _listing(self, path, entries, truncated):
+        p = self._norm(path)
+        return {"path": p, "parent": self._parent_path(p), "entries": entries,
+                "home": "/", "truncated": truncated}
+
+    # ---- zip over vendor-neutral nodes -------------------------------------
+
+    def _node(self, path):
+        raise NotImplementedError
+
+    def _node_children(self, node):
+        raise NotImplementedError
+
+    def _node_read(self, node):
+        raise NotImplementedError
+
+    @staticmethod
+    def _arcname(names, archive):
+        arc = (archive or "").strip()
+        arcname = arc if arc else (names[0] + ".zip" if len(names) == 1 else "Archive.zip")
+        return arcname if arcname.endswith(".zip") else arcname + ".zip"
+
+    def _zip(self, path, names, archive):
+        arcname = self._arcname(names, archive)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for n in names:
+                node, is_dir = self._node(self._join(path, n))
+                self._zip_node(z, node, is_dir, n)
+        return buf.getvalue(), arcname
+
+    def _zip_node(self, z, node, is_dir, prefix):
+        if not is_dir:
+            z.writestr(prefix, self._node_read(node))
+            return
+        for child, name, cdir in self._node_children(node):
+            self._zip_node(z, child, cdir, f"{prefix}/{name}")
+
+    def build_zip(self, path, names):
+        return self._zip(path, names, None)
+
+    def compress(self, path, names, archive):
+        data, arcname = self._zip(path, names, archive)
+        self._put_file(path, arcname, data)
+        return {"created": self._join(path, arcname)}
+
+    def _put_file(self, folder, name, data):
+        """Store `data` as `name` inside `folder` (the compress leg). Raises
+        DriveError; the vendor's single-call size cap applies."""
+        raise NotImplementedError
+
+    # ---- account ----------------------------------------------------------
+
+    def whoami(self):
+        """The signed-in account's e-mail (or login name) — stored into config
+        by the consent flow so the picker can say WHOSE drive this is."""
+        raise NotImplementedError
+
+    def status(self):
+        account = self.config.get("account") or ""
+        if not self.config.get("refresh_token"):
+            return {"ok": False, "account": account, "error": "not authorized"}
+        try:
+            return {"ok": True, "account": self.whoami() or account}
+        except DriveError as e:
+            return {"ok": False, "account": account, "error": str(e)}
+
+
+class GoogleDrive(_OAuthDrive):
+    """Google Drive v3 adapter (Phase 2). The vendor addresses files by id, but
+    the fs routes and UI speak paths, so a path like /a/b/c.docx is resolved by
+    walking from the root folder one segment at a time. Every method returns the
+    exact shape the local/SSH legs produce (see the BaseDrive contract above).
+
+    Refresh-token lifetime: only *testing-mode* GCP projects cap the restricted
+    `drive` scope at 7 days. The shared client here belongs to a project in
+    production (its calendar/gmail tokens carry no refresh_token_expires_in
+    since 2026-09-08), so the token lives until revoked.
+    """
+
+    kind = "google"
+    _TOKEN = "https://oauth2.googleapis.com/token"
+    _API = "https://www.googleapis.com/drive/v3"
+    _UPLOAD = "https://www.googleapis.com/upload/drive/v3"
+    _FOLDER = "application/vnd.google-apps.folder"
+
+    def __init__(self, drive):
+        super().__init__(drive)
+        self._meta_cache = {}  # id -> metadata, memoized for one request
+        self._root_id = ""     # the root folder id, memoized
+
+    # ---- transport --------------------------------------------------------
 
     def _get_json(self, path):
         status, body = self._req("GET", self._API + path)
@@ -382,18 +414,9 @@ class GoogleDrive(BaseDrive):
         with Google's message and a mapped status."""
         if status == 200:
             return json.loads(body)
-        err = {}
-        try:
-            err = (json.loads(body).get("error") or {})
-        except Exception:
-            pass
-        msg = err.get("message") or f"Google returned HTTP {status}"
-        if status == 404:
-            raise DriveError(msg, 404)
-        if status == 403:
-            raise DriveError(msg, 403)
-        if status == 400:
-            raise DriveError(msg, 400)
+        msg = self._msg(status, body)
+        if status in (400, 403, 404):
+            raise DriveError(msg, status)
         if status == 429:
             raise DriveError("Google is rate-limiting right now — try again shortly", 502)
         raise DriveError(msg, 502)
@@ -440,8 +463,7 @@ class GoogleDrive(BaseDrive):
         folder (a path to a file whose prefix names a file is a 404)."""
         p = self._norm(path)
         if p == "/":
-            m = self._get_json("/files/root?fields=id,name,mimeType")
-            return m["id"], True, "/"
+            return self._root(), True, "/"
         segs = [s for s in p.split("/") if s]
         cur = self._root()
         name, is_dir = "/", True
@@ -455,49 +477,16 @@ class GoogleDrive(BaseDrive):
             cur = fid
         return cur, is_dir, name
 
-    def _norm(self, path):
-        p = (path or "~").strip().replace("\\", "/")
-        if p in ("", "~", "/", "~/"):
-            return "/"
-        if p.startswith("~"):
-            p = p[1:]
-        if not p.startswith("/"):
-            p = "/" + p
-        return "/" + "/".join(s for s in p.split("/") if s)
-
-    @staticmethod
-    def _parent_path(path):
-        p = path if path.startswith("/") else "/" + path
-        if p in ("/", "~"):
-            return None
-        parent = p.rsplit("/", 1)[0]
-        return parent if parent else "/"
-
-    @staticmethod
-    def _join(path, name):
-        p = path if path.startswith("/") else "/" + path
-        return (p + "/" + name) if p != "/" else "/" + name
-
-    def _ts(self, s):
-        if not s:
-            return 0
-        try:
-            dt = datetime.datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
-            return dt.timestamp()
-        except Exception:
-            return 0
-
     def _list_dir(self, fid):
         q = f"'{fid}' in parents and trashed = false"
         j = self._get_json(f"/files?q={urllib.parse.quote(q)}&fields=files(id,name,mimeType)&pageSize=1000")
-        return [{"id": f["id"], "name": f["name"],
-                 "dir": f.get("mimeType") == self._FOLDER} for f in (j.get("files") or [])]
+        return [(f["id"], f["name"], f.get("mimeType") == self._FOLDER) for f in (j.get("files") or [])]
 
     def _read_raw(self, fid):
         status, body = self._req("GET", f"{self._API}/files/{fid}?alt=media")
         if status != 200:
             raise DriveError(self._msg(status, body), 502)
-        return body, self._meta(fid).get("name") or ""
+        return body
 
     def _upload(self, parent_id, name, mime, data):
         """Create a file with a NAME via multipart/related. A bare media upload
@@ -518,7 +507,25 @@ class GoogleDrive(BaseDrive):
             raise DriveError(self._msg(status, r), 502)
         return json.loads(r)
 
-    # ---- the nine operations (BaseDrive contract) -------------------------
+    # ---- zip nodes (a node is a file id) ---------------------------------
+
+    def _node(self, path):
+        fid, is_dir, _ = self._resolve(path)
+        return fid, is_dir
+
+    def _node_children(self, node):
+        return self._list_dir(node)
+
+    def _node_read(self, node):
+        return self._read_raw(node)
+
+    def _put_file(self, folder, name, data):
+        pid, is_dir, _ = self._resolve(folder)
+        if not is_dir:
+            raise DriveError("Target is not a folder", 400)
+        self._upload(pid, name, "application/zip" if name.endswith(".zip") else "application/octet-stream", data)
+
+    # ---- the operations ---------------------------------------------------
 
     def fs_list(self, path, show_hidden=False):
         fid, is_dir, _ = self._resolve(path)
@@ -542,14 +549,13 @@ class GoogleDrive(BaseDrive):
                 "size": int(f.get("size") or 0),
                 "mtime": self._ts(f.get("modifiedTime")),
             })
-        return {"path": self._norm(path), "parent": self._parent_path(self._norm(path)),
-                "entries": entries, "home": "/", "truncated": truncated}
+        return self._listing(path, entries, truncated)
 
     def read_bytes(self, path):
         fid, is_dir, name = self._resolve(path)
         if is_dir:
             raise DriveError("Path is a folder — download it as a zip instead", 400)
-        return self._read_raw(fid)
+        return self._read_raw(fid), name
 
     def upload(self, path, files):
         pid, is_dir, _ = self._resolve(path)
@@ -582,61 +588,352 @@ class GoogleDrive(BaseDrive):
         self._post_json(f"/files/{fid}/trash?fields=id", {})
         return {"deleted": self._norm(path), "trash": "google-drive"}
 
-    def compress(self, path, names, archive):
-        pid, is_dir, _ = self._resolve(path)
-        if not is_dir:
-            raise DriveError("Compress target is not a folder", 400)
-        data, arcname = self._zip(path, names, archive)
-        self._upload(pid, arcname, "application/zip", data)
-        return {"created": self._join(path, arcname)}
+    def whoami(self):
+        j = self._get_json("/about?fields=user(emailAddress)")
+        return (j.get("user") or {}).get("emailAddress") or ""
+
+
+class DropboxDrive(_OAuthDrive):
+    """Dropbox adapter (Phase 3). Path-addressed: the vendor speaks the same
+    /a/b/c paths the routes do, with the root spelled as the empty string.
+    Metadata ops are JSON RPC on api.dropboxapi.com; bytes move through
+    content.dropboxapi.com with the arguments in the Dropbox-API-Arg header.
+    A public PKCE client — no client secret exists for this vendor."""
+
+    kind = "dropbox"
+    _PUBLIC = True
+    _TOKEN = "https://api.dropboxapi.com/oauth2/token"
+    _API = "https://api.dropboxapi.com/2"
+    _CONTENT = "https://content.dropboxapi.com/2"
+    _UPLOAD_CAP = 150 * 1024 * 1024   # files/upload single-call limit
+
+    # ---- transport --------------------------------------------------------
+
+    @staticmethod
+    def _dbx(path):
+        """Our normalized path in Dropbox's spelling (root = "")."""
+        p = _OAuthDrive._norm(path)
+        return "" if p == "/" else p
+
+    def _rpc(self, endpoint, arg):
+        status, body = self._req("POST", f"{self._API}/{endpoint}",
+                                 data=json.dumps(arg).encode(),
+                                 headers={"Content-Type": "application/json"})
+        return self._decode(status, body)
+
+    def _content(self, endpoint, arg, data=None):
+        """A content endpoint call: args ride in the header (json.dumps'
+        default ensure_ascii gives the \\uXXXX escaping the header needs)."""
+        headers = {"Dropbox-API-Arg": json.dumps(arg)}
+        if data is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        status, body = self._req("POST", f"{self._CONTENT}/{endpoint}", data=data, headers=headers)
+        if status != 200:
+            raise self._error(status, body)
+        return body
+
+    def _decode(self, status, body):
+        if status == 200:
+            return json.loads(body) if body else {}
+        raise self._error(status, body)
+
+    @staticmethod
+    def _error(status, body):
+        """Dropbox reports endpoint errors as 409 + error_summary (e.g.
+        'path/not_found/..', 'to/conflict/folder/...'); map the summaries
+        the UI acts on to 404/400, everything else to the vendor's own
+        status or 502."""
+        summary, user_msg = "", ""
+        try:
+            j = json.loads(body)
+            summary = j.get("error_summary") or ""
+            user_msg = (j.get("user_message") or {}).get("text") if isinstance(j.get("user_message"), dict) else (j.get("user_message") or "")
+        except Exception:
+            pass
+        msg = user_msg or summary or f"Dropbox returned HTTP {status}"
+        if status == 409:
+            if "not_found" in summary:
+                return DriveError("Path not found", 404)
+            if "not_folder" in summary:
+                return DriveError("Path is a file, not a folder", 400)
+            if "not_file" in summary:
+                return DriveError("Path is a folder — download it as a zip instead", 400)
+            if "conflict" in summary:
+                return DriveError("A file or folder with that name already exists", 400)
+            return DriveError(msg, 400)
+        if status in (400, 403):
+            return DriveError(msg, status)
+        if status == 429:
+            return DriveError("Dropbox is rate-limiting right now — try again shortly", 502)
+        return DriveError(msg, 502)
+
+    # ---- listing ----------------------------------------------------------
+
+    def _entries(self, path):
+        """Every entry of a folder, following the cursor until has_more is
+        false. Raises 400 when `path` is a file, 404 when it is missing."""
+        j = self._rpc("files/list_folder", {"path": self._dbx(path), "include_deleted": False, "limit": 1000})
+        out = list(j.get("entries") or [])
+        while j.get("has_more"):
+            j = self._rpc("files/list_folder/continue", {"cursor": j["cursor"]})
+            out.extend(j.get("entries") or [])
+        return out
+
+    def _metadata(self, path):
+        return self._rpc("files/get_metadata", {"path": self._dbx(path)})
+
+    # ---- zip nodes (a node is a path) -------------------------------------
+
+    def _node(self, path):
+        m = self._metadata(path)
+        return self._norm(path), m.get(".tag") == "folder"
+
+    def _node_children(self, node):
+        return [(self._join(node, e["name"]), e["name"], e.get(".tag") == "folder")
+                for e in self._entries(node)]
+
+    def _node_read(self, node):
+        return self._content("files/download", {"path": self._dbx(node)})
+
+    def _put_file(self, folder, name, data):
+        if len(data) > self._UPLOAD_CAP:
+            raise DriveError("File is over 150 MB — Dropbox's single-call upload cap", 400)
+        self._content("files/upload",
+                      {"path": self._join(self._norm(folder), name), "mode": "add", "autorename": False},
+                      data=data)
+
+    # ---- the operations ---------------------------------------------------
+
+    def fs_list(self, path, show_hidden=False):
+        entries, truncated = [], False
+        rows = sorted(self._entries(path), key=lambda e: (e.get(".tag") != "folder", (e.get("name") or "").lower()))
+        for e in rows:
+            name = e.get("name") or ""
+            if not show_hidden and name.startswith("."):
+                continue
+            if len(entries) >= 800:
+                truncated = True
+                break
+            entries.append({
+                "name": name,
+                "dir": e.get(".tag") == "folder",
+                "size": int(e.get("size") or 0),
+                "mtime": self._ts(e.get("server_modified")),
+            })
+        return self._listing(path, entries, truncated)
+
+    def read_bytes(self, path):
+        p = self._norm(path)
+        if p == "/":
+            raise DriveError("Path is a folder — download it as a zip instead", 400)
+        return self._content("files/download", {"path": p}), p.rsplit("/", 1)[-1]
+
+    def upload(self, path, files):
+        uploaded = []
+        for name, content in files:
+            try:
+                self._put_file(path, name, content)
+                uploaded.append({"name": name, "size": len(content), "path": self._join(self._norm(path), name)})
+            except DriveError as e:
+                uploaded.append({"name": name, "error": str(e)})
+        return {"uploaded": uploaded}
+
+    def mkdir(self, path, name):
+        target = self._join(self._norm(path), name)
+        self._rpc("files/create_folder_v2", {"path": target, "autorename": False})
+        return {"created": target}
+
+    def rename(self, path, name):
+        p = self._norm(path)
+        if p == "/":
+            raise DriveError("The root folder cannot be renamed", 400)
+        target = self._join(self._parent_path(p) or "/", name)
+        self._rpc("files/move_v2", {"from_path": p, "to_path": target, "autorename": False})
+        return {"renamed": target}
+
+    def delete(self, path):
+        p = self._norm(path)
+        if p == "/":
+            raise DriveError("The root folder cannot be deleted", 400)
+        self._rpc("files/delete_v2", {"path": p})
+        return {"deleted": p, "trash": "dropbox"}
 
     def build_zip(self, path, names):
-        data, arcname = self._zip(path, names, None)
-        return data, arcname
+        """One folder → the vendor zips it server-side (files/download_zip:
+        <20 GB, <10,000 entries); anything else is built client-side."""
+        if len(names) == 1:
+            target = self._join(self._norm(path), names[0])
+            if self._metadata(target).get(".tag") == "folder":
+                return self._content("files/download_zip", {"path": target}), names[0] + ".zip"
+        return self._zip(path, names, None)
 
-    def _zip(self, path, names, archive):
-        import io
-        import zipfile
-        arc = (archive or "").strip()
-        arcname = arc if arc else (names[0] + ".zip" if len(names) == 1 else "Archive.zip")
-        if not arcname.endswith(".zip"):
-            arcname += ".zip"
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for n in names:
-                fid, is_dir, _ = self._resolve(self._join(path, n))
-                self._zip_one(z, fid, is_dir, n)
-        return buf.getvalue(), arcname
+    def whoami(self):
+        j = self._rpc("users/get_current_account", None)
+        return j.get("email") or ""
 
-    def _zip_one(self, z, fid, is_dir, prefix):
-        if not is_dir:
-            data, _ = self._read_raw(fid)
-            z.writestr(prefix, data)
-            return
-        for c in self._list_dir(fid):
-            sub = f"{prefix}/{c['name']}"
-            if c["dir"]:
-                self._zip_one(z, c["id"], True, sub)
-            else:
-                data, _ = self._read_raw(c["id"])
-                z.writestr(sub, data)
 
-    def status(self):
-        account = self.config.get("account") or ""
-        if not self.config.get("refresh_token"):
-            return {"ok": False, "account": account, "error": "not authorized"}
+class OneDriveDrive(_OAuthDrive):
+    """OneDrive adapter (Phase 3) over Microsoft Graph v1.0, personal
+    accounts (the /consumers tenant). Path-addressed with Graph's
+    `root:/{path}:` grammar, so no id walk is needed; item ids appear only
+    inside responses. A public PKCE client — no client secret."""
+
+    kind = "onedrive"
+    _PUBLIC = True
+    _TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+    _GRAPH = "https://graph.microsoft.com/v1.0"
+    _API = _GRAPH + "/me/drive"
+    _UPLOAD_CAP = 250 * 1024 * 1024   # simple PUT /content limit
+    _SELECT = "$select=id,name,size,lastModifiedDateTime,folder,file"
+
+    # ---- transport --------------------------------------------------------
+
+    @staticmethod
+    def _item(path):
+        """The Graph address of a path: /root for the root, else
+        /root:/{url-encoded path}: — both accept a /children or /content
+        suffix by plain concatenation."""
+        p = _OAuthDrive._norm(path)
+        return "/root" if p == "/" else "/root:" + urllib.parse.quote(p, safe="/") + ":"
+
+    def _call(self, method, url, body=None, headers=None):
+        data = json.dumps(body).encode() if body is not None else None
+        h = dict(headers or {})
+        if data is not None:
+            h["Content-Type"] = "application/json"
+        status, raw = self._req(method, url, data=data, headers=h)
+        return self._decode(status, raw)
+
+    def _decode(self, status, body):
+        if 200 <= status < 300:
+            return json.loads(body) if body else {}
+        msg = f"OneDrive returned HTTP {status}"
         try:
-            self._root()
-            return {"ok": True, "account": account}
-        except DriveError as e:
-            return {"ok": False, "account": account, "error": str(e)}
+            msg = (json.loads(body).get("error") or {}).get("message") or msg
+        except Exception:
+            pass
+        if status in (400, 403, 404):
+            raise DriveError(msg, status)
+        if status == 429:
+            raise DriveError("OneDrive is rate-limiting right now — try again shortly", 502)
+        raise DriveError(msg, 502)
+
+    def _children(self, path):
+        """Every child of a folder, following @odata.nextLink. Graph answers
+        400 for /children on a file, which _decode passes through as 400."""
+        url = f"{self._API}{self._item(path)}/children?{self._SELECT}&$top=1000"
+        out = []
+        while url:
+            j = self._call("GET", url)
+            out.extend(j.get("value") or [])
+            url = j.get("@odata.nextLink")
+        return out
+
+    def _meta(self, path):
+        return self._call("GET", f"{self._API}{self._item(path)}")
+
+    def _download(self, meta):
+        """Fetch a file's bytes through its pre-authenticated download URL —
+        deliberately WITHOUT the bearer header (that URL is unauthenticated,
+        and urllib would otherwise forward our token across the 302)."""
+        url = meta.get("@microsoft.graph.downloadUrl")
+        if not url:
+            raise DriveError("OneDrive did not offer a download URL for this file", 502)
+        status, _, body = _http("GET", url)
+        if status != 200:
+            raise DriveError(f"OneDrive download failed (HTTP {status})", 502)
+        return body
+
+    # ---- zip nodes (a node is an item's metadata) -------------------------
+
+    def _node(self, path):
+        m = self._meta(path)
+        m["_path"] = self._norm(path)
+        return m, "folder" in m
+
+    def _node_children(self, node):
+        out = []
+        for c in self._children(node["_path"]):
+            c["_path"] = self._join(node["_path"], c["name"])
+            out.append((c, c["name"], "folder" in c))
+        return out
+
+    def _node_read(self, node):
+        return self._download(node)
+
+    def _put_file(self, folder, name, data):
+        if len(data) > self._UPLOAD_CAP:
+            raise DriveError("File is over 250 MB — OneDrive's simple-upload cap", 400)
+        target = self._item(self._join(self._norm(folder), name))
+        status, body = self._req("PUT", f"{self._API}{target}/content", data=data,
+                                 headers={"Content-Type": "application/octet-stream"})
+        self._decode(status, body)
+
+    # ---- the operations ---------------------------------------------------
+
+    def fs_list(self, path, show_hidden=False):
+        entries, truncated = [], False
+        rows = sorted(self._children(path), key=lambda c: ("folder" not in c, (c.get("name") or "").lower()))
+        for c in rows:
+            name = c.get("name") or ""
+            if not show_hidden and name.startswith("."):
+                continue
+            if len(entries) >= 800:
+                truncated = True
+                break
+            entries.append({
+                "name": name,
+                "dir": "folder" in c,
+                "size": int(c.get("size") or 0),
+                "mtime": self._ts(c.get("lastModifiedDateTime")),
+            })
+        return self._listing(path, entries, truncated)
+
+    def read_bytes(self, path):
+        m = self._meta(path)
+        if "folder" in m:
+            raise DriveError("Path is a folder — download it as a zip instead", 400)
+        return self._download(m), m.get("name") or self._norm(path).rsplit("/", 1)[-1]
+
+    def upload(self, path, files):
+        uploaded = []
+        for name, content in files:
+            try:
+                self._put_file(path, name, content)
+                uploaded.append({"name": name, "size": len(content), "path": self._join(self._norm(path), name)})
+            except DriveError as e:
+                uploaded.append({"name": name, "error": str(e)})
+        return {"uploaded": uploaded}
+
+    def mkdir(self, path, name):
+        self._call("POST", f"{self._API}{self._item(path)}/children",
+                   {"name": name, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"})
+        return {"created": self._join(self._norm(path), name)}
+
+    def rename(self, path, name):
+        p = self._norm(path)
+        if p == "/":
+            raise DriveError("The root folder cannot be renamed", 400)
+        self._call("PATCH", f"{self._API}{self._item(p)}", {"name": name})
+        return {"renamed": self._join(self._parent_path(p) or "/", name)}
+
+    def delete(self, path):
+        p = self._norm(path)
+        if p == "/":
+            raise DriveError("The root folder cannot be deleted", 400)
+        self._call("DELETE", f"{self._API}{self._item(p)}")
+        return {"deleted": p, "trash": "onedrive"}
+
+    def whoami(self):
+        j = self._call("GET", f"{self._GRAPH}/me?$select=mail,userPrincipalName")
+        return j.get("mail") or j.get("userPrincipalName") or ""
 
 
 # kind → adapter class. The ONLY place vendor names exist in the backend.
 ADAPTERS = {
-    "google": GoogleDrive,   # Phase 2: Drive v3 adapter (loopback OAuth below)
-    "dropbox": _Pending,     # Phase 3: PKCE web flow, no client secret
-    "onedrive": _Pending,    # Phase 3: consumer device flow
+    "google": GoogleDrive,
+    "dropbox": DropboxDrive,
+    "onedrive": OneDriveDrive,
 }
 
 

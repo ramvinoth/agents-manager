@@ -77,7 +77,7 @@ class TestList:
         assert d == {"id": "dr-1", "label": "Work Drive", "kind": "google",
                      "status": "active", "hidden": False,
                      "authorized": True}
-        assert data["vendors"] == ["google"]
+        assert data["vendors"] == ["dropbox", "google", "onedrive"]
 
     def test_secrets_never_leak_into_the_response(self, monkeypatch):
         _fake_db(monkeypatch, {
@@ -138,7 +138,7 @@ class TestCreate:
 
     def test_kind_without_a_built_flow_is_501(self, monkeypatch):
         _fake_db(monkeypatch)
-        h = _Handler(body={"label": "X", "kind": "dropbox"})
+        h = _Handler(body={"label": "X", "kind": "icloud"})
         h._p_drives_create(_Req())
         assert h.sent[1] == 501
 

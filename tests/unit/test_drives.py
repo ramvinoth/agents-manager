@@ -1,7 +1,8 @@
 """Unit tests for the cloud-drive spine (Phase 1 of storage integrations):
 - viewer.drives: the plugin-lifecycle gate (adapter_for) — unknown 404,
-  hidden/paused 403, unknown kind 501 — and the _Pending adapter whose every
-  op is a clean 501 until its vendor's phase lands.
+  hidden/paused 403, unknown kind 501 — and the three vendor adapters
+  (Google, Dropbox, OneDrive), each driven through the single _http seam by
+  an in-memory fake of its REST dialect.
 - routes/fs._resolve_location: exactly one of drive/host; no params means
   local (the pre-drive behavior); drive comes from the query (GET) or the
   JSON body (POST).
@@ -22,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from viewer import drives
-from viewer.drives import BaseDrive, DriveError, GoogleDrive, _Pending, adapter_for
+from viewer.drives import ADAPTERS, BaseDrive, DriveError, DropboxDrive, GoogleDrive, OneDriveDrive, adapter_for
 from viewer.routes.fs import _resolve_location
 
 FOLDER = "application/vnd.google-apps.folder"
@@ -94,36 +95,6 @@ def test_unknown_kind_is_501(db):
     assert err.status == 501
 
 
-# --- _Pending: every op is a clean 501 until its phase lands --------------
-# (google is Phase 2 = built; the still-ungated vendors are dropbox/onedrive.)
-
-def _pending(db):
-    db.rows["d1"] = _row(kind="onedrive")
-    return adapter_for("d1")
-
-
-def test_pending_ops_are_501_with_kind(db):
-    a = _pending(db)
-    for call in (
-        lambda: a.fs_list("~"),
-        lambda: a.read_bytes("/x"),
-        lambda: a.upload("/x", [("n", b"data")]),
-        lambda: a.mkdir("/x", "n"),
-        lambda: a.rename("/x", "n"),
-        lambda: a.delete("/x"),
-        lambda: a.compress("/x", ["a", "b"], ""),
-        lambda: a.build_zip("/x", ["a"]),
-    ):
-        err = pytest.raises(DriveError, call).value
-        assert err.status == 501
-        assert "onedrive" in str(err)
-
-
-def test_pending_status_reports_not_built(db):
-    s = _pending(db).status()
-    assert s["ok"] is False and "not built" in s["error"]
-
-
 # --- the interface contract: routes call exactly the nine BaseDrive ops ---
 
 def test_route_call_sites_match_the_interface():
@@ -140,11 +111,12 @@ def test_route_call_sites_match_the_interface():
         "delete", "compress", "build_zip",
     }
     assert called | {"status"} <= implemented
-    # A _Pending subclass must override every op the routes can call, or a
-    # vendor phase that forgets one would 501 with the base message instead
-    # of the pending one.
-    pending = {m for m in _Pending.__dict__ if not m.startswith("_") and m != "kind"}
-    assert called <= pending
+    # Every shipped adapter must implement every op the routes call (through
+    # its own class or the shared _OAuthDrive), never fall through to the
+    # BaseDrive 501 — a vendor that forgot one would look "not supported".
+    for cls in ADAPTERS.values():
+        for m in called:
+            assert getattr(cls, m) is not getattr(BaseDrive, m), f"{cls.kind} lacks {m}"
 
 
 # --- _resolve_location: exactly one of drive/host -------------------------
@@ -245,6 +217,8 @@ class _FakeGoogle:
             return 200, {}, json.dumps(
                 {"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}).encode()
         if u.netloc == "www.googleapis.com":
+            if u.path == "/drive/v3/about":
+                return 200, {}, json.dumps({"user": {"emailAddress": "ram@example.com"}}).encode()
             if u.path == "/drive/v3/files/root":
                 return 200, {}, json.dumps(
                     {"id": "root", "name": "Drive", "mimeType": FOLDER}).encode()
@@ -312,7 +286,7 @@ def _gdrive(db, monkeypatch, files=None):
         }
     fake = _FakeGoogle(files)
     monkeypatch.setattr(drives, "_http", fake._http)
-    monkeypatch.setattr(drives, "_google_client", lambda: {"client_id": "cid", "client_secret": "csec"})
+    monkeypatch.setattr(drives, "_vendor_client", lambda kind, public=False: {"client_id": "cid", "client_secret": "csec"})
     db.rows["d1"] = _row(kind="google")
     db.rows["d1"]["config"] = {
         "account": "ram@example.com", "access_token": "AT0",
@@ -445,3 +419,372 @@ def test_google_401_forces_one_refresh_and_retry(db, monkeypatch):
     data, name = a.read_bytes("/Docs/a.txt")  # resolves (200) then the media call 401s once
     assert data == b"abc" and name == "a.txt"
     assert fake.refresh_calls == 1            # the 401 triggered exactly one refresh
+
+
+# --- DropboxDrive (Phase 3): path-addressed RPC + content endpoints ---------
+
+class _FakeDropbox:
+    """A just-enough Dropbox v2 behind _http: `tree` maps lower-cased paths
+    ("" is the root) to {"tag": file|folder, "content", "modified"}. RPC calls
+    carry a JSON body; content calls carry Dropbox-API-Arg. Errors come back
+    the way Dropbox sends them: 409 + error_summary."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.refresh_forms = []
+
+    @staticmethod
+    def _409(summary):
+        return 409, {}, json.dumps({"error_summary": summary, "error": {}}).encode()
+
+    def _children(self, path):
+        prefix = path.lower() + "/"
+        return [(p, e) for p, e in self.tree.items()
+                if p and p.startswith(prefix) and "/" not in p[len(prefix):]]
+
+    def _entry(self, p, e):
+        name = p.rsplit("/", 1)[-1]
+        out = {".tag": e["tag"], "name": name, "path_display": p, "path_lower": p.lower()}
+        if e["tag"] == "file":
+            out["size"] = len(e.get("content", b""))
+            out["server_modified"] = e.get("modified", "2026-09-27T01:02:03Z")
+        return out
+
+    def _http(self, method, url, headers=None, data=None, timeout=60):
+        import urllib.parse as up
+        u = up.urlparse(url)
+        headers = headers or {}
+        if u.path == "/oauth2/token":
+            form = up.parse_qs(data.decode())
+            self.refresh_forms.append(form)
+            return 200, {}, json.dumps({"access_token": "AT1", "expires_in": 14400}).encode()
+        if u.netloc == "api.dropboxapi.com":
+            arg = json.loads(data) if data else None
+            ep = u.path[len("/2/"):]
+            if ep == "users/get_current_account":
+                return 200, {}, json.dumps({"email": "ram@dropbox.test"}).encode()
+            if ep == "files/list_folder":
+                p = arg["path"].lower()
+                e = self.tree.get(p)
+                if e is None:
+                    return self._409("path/not_found/..")
+                if e["tag"] != "folder":
+                    return self._409("path/not_folder/..")
+                return 200, {}, json.dumps(
+                    {"entries": [self._entry(cp, ce) for cp, ce in self._children(p)],
+                     "has_more": False, "cursor": "c"}).encode()
+            if ep == "files/get_metadata":
+                p = arg["path"].lower()
+                e = self.tree.get(p)
+                if e is None:
+                    return self._409("path/not_found/..")
+                return 200, {}, json.dumps(self._entry(p, e)).encode()
+            if ep == "files/create_folder_v2":
+                p = arg["path"].lower()
+                if p in self.tree:
+                    return self._409("path/conflict/folder/..")
+                self.tree[p] = {"tag": "folder"}
+                return 200, {}, json.dumps({"metadata": self._entry(p, self.tree[p])}).encode()
+            if ep == "files/move_v2":
+                src, dst = arg["from_path"].lower(), arg["to_path"].lower()
+                if src not in self.tree:
+                    return self._409("from_lookup/not_found/..")
+                self.tree[dst] = self.tree.pop(src)
+                return 200, {}, json.dumps({"metadata": self._entry(dst, self.tree[dst])}).encode()
+            if ep == "files/delete_v2":
+                p = arg["path"].lower()
+                if p not in self.tree:
+                    return self._409("path_lookup/not_found/..")
+                self.tree.pop(p)["trashed"] = True
+                return 200, {}, json.dumps({"metadata": {}}).encode()
+        if u.netloc == "content.dropboxapi.com":
+            arg = json.loads(headers["Dropbox-API-Arg"])
+            ep = u.path[len("/2/"):]
+            p = arg["path"].lower()
+            if ep == "files/download":
+                e = self.tree.get(p)
+                if e is None:
+                    return self._409("path/not_found/..")
+                if e["tag"] != "file":
+                    return self._409("path/not_file/..")
+                return 200, {}, e["content"]
+            if ep == "files/upload":
+                assert headers.get("Content-Type") == "application/octet-stream"
+                self.tree[p] = {"tag": "file", "content": data}
+                return 200, {}, json.dumps(self._entry(p, self.tree[p])).encode()
+            if ep == "files/download_zip":
+                buf = BytesIO()
+                with zipfile.ZipFile(buf, "w") as z:
+                    z.writestr("native-marker", p)
+                return 200, {}, buf.getvalue()
+        return 500, {}, b"unexpected route"
+
+
+def _dbx(db, monkeypatch):
+    fake = _FakeDropbox({
+        "": {"tag": "folder"},
+        "/docs": {"tag": "folder"},
+        "/docs/a.txt": {"tag": "file", "content": b"abc", "modified": "2026-09-26T06:00:00Z"},
+        "/docs/sub": {"tag": "folder"},
+        "/docs/sub/b.md": {"tag": "file", "content": b"hi"},
+    })
+    monkeypatch.setattr(drives, "_http", fake._http)
+    monkeypatch.setattr(drives, "_vendor_client", lambda kind, public=False: {"client_id": "cid"})
+    db.rows["d1"] = _row(kind="dropbox")
+    db.rows["d1"]["config"] = {"access_token": "AT0", "refresh_token": "RT0",
+                               "token_expiry": time.time() + 3600}
+    a = adapter_for("d1")
+    a.config = db.rows["d1"]["config"]
+    assert isinstance(a, DropboxDrive)
+    return a, fake
+
+
+def test_dropbox_list_root_and_folder(db, monkeypatch):
+    a, _ = _dbx(db, monkeypatch)
+    root = a.fs_list("~")
+    assert root["path"] == "/" and root["parent"] is None
+    assert [e["name"] for e in root["entries"]] == ["docs"]
+    d = a.fs_list("/docs")
+    assert d["parent"] == "/"
+    assert [(e["name"], e["dir"]) for e in d["entries"]] == [("sub", True), ("a.txt", False)]
+    assert {e["name"]: e["size"] for e in d["entries"]}["a.txt"] == 3
+
+
+def test_dropbox_errors_map_to_http(db, monkeypatch):
+    a, _ = _dbx(db, monkeypatch)
+    assert pytest.raises(DriveError, a.fs_list, "/nope").value.status == 404
+    assert pytest.raises(DriveError, a.fs_list, "/docs/a.txt").value.status == 400
+    assert pytest.raises(DriveError, a.read_bytes, "/docs").value.status == 400
+    assert pytest.raises(DriveError, a.mkdir, "/docs", "sub").value.status == 400
+
+
+def test_dropbox_read_upload_mkdir_rename_delete(db, monkeypatch):
+    a, fake = _dbx(db, monkeypatch)
+    assert a.read_bytes("/docs/a.txt") == (b"abc", "a.txt")
+    r = a.upload("/docs", [("up.bin", b"xyz")])
+    assert r["uploaded"] == [{"name": "up.bin", "size": 3, "path": "/docs/up.bin"}]
+    assert fake.tree["/docs/up.bin"]["content"] == b"xyz"
+    assert a.mkdir("/docs", "Reports") == {"created": "/docs/Reports"}
+    assert a.rename("/docs/a.txt", "c.txt") == {"renamed": "/docs/c.txt"}
+    assert "/docs/c.txt" in fake.tree and "/docs/a.txt" not in fake.tree
+    assert a.delete("/docs/c.txt") == {"deleted": "/docs/c.txt", "trash": "dropbox"}
+    assert pytest.raises(DriveError, a.delete, "/").value.status == 400
+
+
+def test_dropbox_upload_over_cap_is_per_file_error(db, monkeypatch):
+    a, _ = _dbx(db, monkeypatch)
+    monkeypatch.setattr(DropboxDrive, "_UPLOAD_CAP", 4)
+    r = a.upload("/docs", [("big", b"12345"), ("ok", b"1")])
+    assert "error" in r["uploaded"][0] and r["uploaded"][1]["size"] == 1
+
+
+def test_dropbox_zip_one_folder_is_native_else_client(db, monkeypatch):
+    a, _ = _dbx(db, monkeypatch)
+    data, name = a.build_zip("/docs", ["sub"])
+    assert name == "sub.zip"
+    with zipfile.ZipFile(BytesIO(data)) as z:
+        assert z.namelist() == ["native-marker"]
+    data, name = a.build_zip("/docs", ["a.txt", "sub"])
+    assert name == "Archive.zip"
+    with zipfile.ZipFile(BytesIO(data)) as z:
+        assert sorted(z.namelist()) == ["a.txt", "sub/b.md"]
+        assert z.read("sub/b.md") == b"hi"
+
+
+def test_dropbox_compress_uploads_zip(db, monkeypatch):
+    a, fake = _dbx(db, monkeypatch)
+    assert a.compress("/docs", ["a.txt"], "bundle") == {"created": "/docs/bundle.zip"}
+    with zipfile.ZipFile(BytesIO(fake.tree["/docs/bundle.zip"]["content"])) as z:
+        assert z.namelist() == ["a.txt"]
+
+
+def test_dropbox_refresh_is_public_client(db, monkeypatch):
+    a, fake = _dbx(db, monkeypatch)
+    a.config["token_expiry"] = 0
+    assert a._access_token() == "AT1"
+    form = fake.refresh_forms[0]
+    assert form["grant_type"] == ["refresh_token"] and form["client_id"] == ["cid"]
+    assert "client_secret" not in form
+    assert a.config["refresh_token"] == "RT0"   # Dropbox does not rotate it
+    assert db.upserts
+
+
+def test_dropbox_status(db, monkeypatch):
+    a, _ = _dbx(db, monkeypatch)
+    assert a.status() == {"ok": True, "account": "ram@dropbox.test"}
+
+
+# --- OneDriveDrive (Phase 3): Graph root:/path: addressing -----------------
+
+class _FakeGraph:
+    """A just-enough Microsoft Graph behind _http: `tree` maps "/a/b" paths
+    ("/" is the root) to {"folder": bool, "content"}. Downloads go through a
+    pre-authenticated URL that must arrive WITHOUT a bearer header."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.next_id = 1
+        self.ids = {}
+        self.refresh_forms = []
+        self.download_headers = []
+
+    def _id(self, p):
+        if p not in self.ids:
+            self.ids[p] = f"item{self.next_id}"
+            self.next_id += 1
+        return self.ids[p]
+
+    def _item(self, p):
+        e = self.tree[p]
+        name = "root" if p == "/" else p.rsplit("/", 1)[-1]
+        out = {"id": self._id(p), "name": name, "lastModifiedDateTime": "2026-09-26T06:00:00Z"}
+        if e.get("folder"):
+            out["folder"] = {"childCount": 0}
+            out["size"] = 0
+        else:
+            out["file"] = {}
+            out["size"] = len(e.get("content", b""))
+            out["@microsoft.graph.downloadUrl"] = "https://dl.test/" + self._id(p)
+        return out
+
+    def _children(self, p):
+        prefix = "/" if p == "/" else p + "/"
+        return [c for c in self.tree if c != "/" and c.startswith(prefix) and "/" not in c[len(prefix):]]
+
+    @staticmethod
+    def _err(status, code, msg):
+        return status, {}, json.dumps({"error": {"code": code, "message": msg}}).encode()
+
+    @staticmethod
+    def _path(rest):
+        import urllib.parse as up
+        # "/root" | "/root:/a/b:"  (+ optional "/children" | "/content")
+        if rest.startswith("/root:"):
+            body = rest[len("/root:"):]
+            p, _, tail = body.partition(":")
+            return up.unquote(p) or "/", tail
+        return "/", rest[len("/root"):]
+
+    def _http(self, method, url, headers=None, data=None, timeout=60):
+        import urllib.parse as up
+        u = up.urlparse(url)
+        headers = headers or {}
+        if u.netloc == "login.microsoftonline.com":
+            self.refresh_forms.append(up.parse_qs(data.decode()))
+            return 200, {}, json.dumps({"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}).encode()
+        if u.netloc == "dl.test":
+            self.download_headers.append(headers)
+            for p, iid in self.ids.items():
+                if url.endswith("/" + iid):
+                    return 200, {}, self.tree[p]["content"]
+            return 404, {}, b""
+        if u.path == "/v1.0/me":
+            return 200, {}, json.dumps({"userPrincipalName": "ram@outlook.test"}).encode()
+        if u.path.startswith("/v1.0/me/drive"):
+            p, tail = self._path(u.path[len("/v1.0/me/drive"):])
+            e = self.tree.get(p)
+            if tail == "/content" and method == "PUT":
+                # PUT targets the not-yet-existing path: create it.
+                self.tree[p] = {"content": data}
+                return 201, {}, json.dumps(self._item(p)).encode()
+            if e is None:
+                return self._err(404, "itemNotFound", "The resource could not be found.")
+            if tail == "/children" and method == "GET":
+                if not e.get("folder"):
+                    return self._err(400, "invalidRequest", "not a folder")
+                return 200, {}, json.dumps({"value": [self._item(c) for c in self._children(p)]}).encode()
+            if tail == "/children" and method == "POST":
+                body = json.loads(data)
+                target = ("/" if p == "/" else p + "/") + body["name"]
+                if target in self.tree:
+                    return self._err(409, "nameAlreadyExists", "exists")
+                self.tree[target] = {"folder": True}
+                return 201, {}, json.dumps(self._item(target)).encode()
+            if tail == "" and method == "GET":
+                return 200, {}, json.dumps(self._item(p)).encode()
+            if tail == "" and method == "PATCH":
+                new = p.rsplit("/", 1)[0] + "/" + json.loads(data)["name"]
+                self.tree[new.replace("//", "/")] = self.tree.pop(p)
+                return 200, {}, json.dumps(self._item(new.replace("//", "/"))).encode()
+            if tail == "" and method == "DELETE":
+                self.tree.pop(p)
+                return 204, {}, b""
+        return 500, {}, b"unexpected route"
+
+
+def _odrive(db, monkeypatch):
+    fake = _FakeGraph({
+        "/": {"folder": True},
+        "/Docs": {"folder": True},
+        "/Docs/a.txt": {"content": b"abc"},
+        "/Docs/Sub": {"folder": True},
+        "/Docs/Sub/b.md": {"content": b"hi"},
+    })
+    monkeypatch.setattr(drives, "_http", fake._http)
+    monkeypatch.setattr(drives, "_vendor_client", lambda kind, public=False: {"client_id": "cid"})
+    db.rows["d1"] = _row(kind="onedrive")
+    db.rows["d1"]["config"] = {"access_token": "AT0", "refresh_token": "RT0",
+                               "token_expiry": time.time() + 3600}
+    a = adapter_for("d1")
+    a.config = db.rows["d1"]["config"]
+    assert isinstance(a, OneDriveDrive)
+    return a, fake
+
+
+def test_onedrive_path_addressing():
+    assert OneDriveDrive._item("~") == "/root"
+    assert OneDriveDrive._item("/Docs/My File.txt") == "/root:/Docs/My%20File.txt:"
+
+
+def test_onedrive_list(db, monkeypatch):
+    a, _ = _odrive(db, monkeypatch)
+    assert [e["name"] for e in a.fs_list("/")["entries"]] == ["Docs"]
+    d = a.fs_list("/Docs")
+    assert d["parent"] == "/"
+    assert [(e["name"], e["dir"], e["size"]) for e in d["entries"]] == [("Sub", True, 0), ("a.txt", False, 3)]
+    assert pytest.raises(DriveError, a.fs_list, "/nope").value.status == 404
+    assert pytest.raises(DriveError, a.fs_list, "/Docs/a.txt").value.status == 400
+
+
+def test_onedrive_read_uses_download_url_without_bearer(db, monkeypatch):
+    a, fake = _odrive(db, monkeypatch)
+    assert a.read_bytes("/Docs/a.txt") == (b"abc", "a.txt")
+    assert fake.download_headers and "Authorization" not in fake.download_headers[0]
+    assert pytest.raises(DriveError, a.read_bytes, "/Docs").value.status == 400
+
+
+def test_onedrive_upload_mkdir_rename_delete(db, monkeypatch):
+    a, fake = _odrive(db, monkeypatch)
+    r = a.upload("/Docs", [("up.bin", b"xyz")])
+    assert r["uploaded"] == [{"name": "up.bin", "size": 3, "path": "/Docs/up.bin"}]
+    assert fake.tree["/Docs/up.bin"]["content"] == b"xyz"
+    assert a.mkdir("/Docs", "Reports") == {"created": "/Docs/Reports"}
+    assert pytest.raises(DriveError, a.mkdir, "/Docs", "Sub").value.status == 502  # 409 → vendor failure
+    assert a.rename("/Docs/a.txt", "c.txt") == {"renamed": "/Docs/c.txt"}
+    assert "/Docs/c.txt" in fake.tree
+    assert a.delete("/Docs/c.txt") == {"deleted": "/Docs/c.txt", "trash": "onedrive"}
+    assert "/Docs/c.txt" not in fake.tree
+
+
+def test_onedrive_zip_is_client_side(db, monkeypatch):
+    a, fake = _odrive(db, monkeypatch)
+    data, name = a.build_zip("/Docs", ["Sub"])
+    assert name == "Sub.zip"
+    with zipfile.ZipFile(BytesIO(data)) as z:
+        assert z.namelist() == ["Sub/b.md"]
+    assert a.compress("/Docs", ["a.txt", "Sub"], "") == {"created": "/Docs/Archive.zip"}
+    with zipfile.ZipFile(BytesIO(fake.tree["/Docs/Archive.zip"]["content"])) as z:
+        assert sorted(z.namelist()) == ["Sub/b.md", "a.txt"]
+
+
+def test_onedrive_refresh_rotates_token_publicly(db, monkeypatch):
+    a, fake = _odrive(db, monkeypatch)
+    a.config["token_expiry"] = 0
+    assert a._access_token() == "AT1"
+    assert "client_secret" not in fake.refresh_forms[0]
+    assert a.config["refresh_token"] == "RT1"   # Microsoft rotates it — the new one is kept
+
+
+def test_onedrive_status(db, monkeypatch):
+    a, _ = _odrive(db, monkeypatch)
+    assert a.status() == {"ok": True, "account": "ram@outlook.test"}

@@ -25,13 +25,20 @@ from viewer.drives import DriveError
 
 # --- fixtures ------------------------------------------------------------
 
-def _client_file(tmp_path):
+def _client_file(tmp_path, dropbox_port=0):
     f = tmp_path / "drives-oauth.json"
-    f.write_text(json.dumps({"google": {
-        "client_id": "test-client-id.apps.googleusercontent.com",
-        "client_secret": "test-secret",
-        "redirect_uris": ["http://localhost"],
-    }}))
+    dbx = {"client_id": "dbx-app-key"}
+    if dropbox_port:
+        dbx["redirect_uris"] = ["http://localhost:%d" % dropbox_port]
+    f.write_text(json.dumps({
+        "google": {
+            "client_id": "test-client-id.apps.googleusercontent.com",
+            "client_secret": "test-secret",
+            "redirect_uris": ["http://localhost"],
+        },
+        "dropbox": dbx,
+        "onedrive": {"client_id": "entra-app-id"},
+    }))
     return f  # a Path — _vendor_client calls .read_text() on it
 
 
@@ -48,8 +55,8 @@ class _FakeOAuthDB:
         self.rows[did] = entry
 
 
-def _row():
-    return {"id": "drive1", "label": "My Drive", "kind": "google",
+def _row(kind="google"):
+    return {"id": "drive1", "label": "My Drive", "kind": kind,
             "config": {}, "status": "active", "hidden": False, "created_at": 0.0}
 
 
@@ -120,10 +127,29 @@ def test_build_auth_url_has_all_params_and_no_secret():
     assert "client_secret" not in q  # the secret never leaves the viewer
 
 
+def test_build_auth_url_speaks_each_vendors_offline_dialect():
+    url, _ = drive_oauth._build_auth_url("dropbox", {"client_id": "K"}, 53682, "S", "V", "C")
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+    assert url.startswith("https://www.dropbox.com/oauth2/authorize?")
+    assert q["token_access_type"] == "offline" and "access_type" not in q
+    assert q["redirect_uri"] == "http://localhost:53682"
+    assert "files.content.write" in q["scope"]
+    url, _ = drive_oauth._build_auth_url("onedrive", {"client_id": "E"}, 8123, "S", "V", "C")
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+    assert url.startswith("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?")
+    assert "offline_access" in q["scope"] and "access_type" not in q
+
+
+def test_redirect_target_honors_a_registered_port():
+    assert drive_oauth._redirect_target({}) == ("localhost", 0)
+    assert drive_oauth._redirect_target({"redirect_uris": ["http://localhost"]}) == ("localhost", 0)
+    assert drive_oauth._redirect_target({"redirect_uris": ["http://127.0.0.1:53682"]}) == ("127.0.0.1", 53682)
+
+
 # --- pre-flight rejections (no socket opened) ----------------------------
 
 def test_unknown_vendor_is_501(env):
-    err = pytest.raises(DriveError, drive_oauth.start, "dropbox", "drive1").value
+    err = pytest.raises(DriveError, drive_oauth.start, "icloud", "drive1").value
     assert err.status == 501
 
 
@@ -203,3 +229,38 @@ def test_token_exchange_error_is_failed(env, monkeypatch):
     st = _wait_status(pid)
     assert st["status"] == "failed"
     assert "Invalid Code" in st["error"]
+
+
+def test_public_client_exchange_sends_no_secret(env):
+    """Dropbox/OneDrive are PKCE public clients: the token request proves
+    itself with code_verifier only — no client_secret field at all."""
+    env["db"].rows["drive1"] = _row("dropbox")
+    r = drive_oauth.start("dropbox", "drive1")
+    assert r["url"].startswith("https://www.dropbox.com/oauth2/authorize?")
+    pid = r["pending"]
+    _redirect(pid, "?code=DBX-CODE&state=%s" % drive_oauth._PENDING[pid]["state"])
+    assert _wait_status(pid)["status"] == "authorized"
+    method, url, data = [c for c in env["http_calls"] if c[1].endswith("/oauth2/token")][-1]
+    assert url == "https://api.dropboxapi.com/oauth2/token"
+    form = dict(urllib.parse.parse_qsl(data.decode()))
+    assert form["client_id"] == "dbx-app-key" and form["code_verifier"]
+    assert "client_secret" not in form
+
+
+def test_registered_port_is_the_one_bound(tmp_path, monkeypatch, env):
+    """Dropbox matches redirect_uri exactly, port included, so a registered
+    'http://localhost:PORT' makes the listener bind THAT port and the
+    redirect_uri we send equals the registration verbatim."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr("viewer.config.DRIVES_OAUTH_FILE", _client_file(tmp_path, dropbox_port=port))
+    env["db"].rows["drive1"] = _row("dropbox")
+    pid = drive_oauth.start("dropbox", "drive1")["pending"]
+    p = drive_oauth._PENDING[pid]
+    assert p["port"] == port and p["redirect_uri"] == "http://localhost:%d" % port
+    # A second sign-in while that port is held is a clear 409, not a crash.
+    err = pytest.raises(DriveError, drive_oauth.start, "dropbox", "drive1").value
+    assert err.status == 409
+    _redirect(pid, "?error=access_denied&state=%s" % p["state"])
+    assert _wait_status(pid)["status"] == "failed"
