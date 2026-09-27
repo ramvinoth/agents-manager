@@ -19,8 +19,8 @@ this same gate answers it later via the resume path.
 from viewer import db
 
 
-def open_decisions(question_rows, plan_rows, approval_rows, labels, now):
-    """Shape the three decision sources into ONE queue — the kanban decision
+def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None):
+    """Shape the decision sources into ONE queue — the kanban decision
     list (card #60).
 
     Pure: no db, no clock, no network. The route gathers the raw rows (the
@@ -81,6 +81,23 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now):
             "summary": str(r.get("preview") or r.get("tool_name") or "")[:120],
             "tool_name": r.get("tool_name") or "",
             "id": r.get("id") or "",
+        })
+    for r in card_rows or []:
+        # A board card left in Review / Needs-info: the owner's call is the
+        # blocker. The summary names the card by number and title so the
+        # reader knows what it is without opening it (the "which card is 53?"
+        # failure), and `card` lets a tap open that card, not a thread.
+        sid = r.get("session_id") or ""
+        cid = r.get("id")
+        items.append({
+            "kind": "card",
+            "session": sid,
+            "host": "local",
+            "label": label(sid),
+            "waiting_s": int(max(0, now - float(r.get("waiting_since") or now))),
+            "summary": f"#{cid} {r.get('title') or ''}"[:120],
+            "card": cid,
+            "column": r.get("column_name") or "",
         })
     items.sort(key=lambda i: i["waiting_s"], reverse=True)
     return {"count": len(items), "decisions": items}

@@ -1251,6 +1251,25 @@ def card_mark_attention(card_id, by_own_session):
                     (0 if by_own_session else _now(), card_id))
 
 
+def cards_awaiting_owner():
+    """Open cards parked in a column whose NAME says the owner's call is needed
+    (Review, Needs-info), with the column name and the time of the last write
+    on the card (its newest comment, else its last update) — the moment the
+    wait began. The decision queue's fourth source: a card an agent left for
+    the owner is a decision exactly like a question or a plan, and it must
+    surface in the same one place, not depend on the owner scanning columns."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
+            "bc.name AS column_name, "
+            "coalesce((SELECT max(created_at) FROM card_comments cc "
+            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since "
+            "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE lower(bc.name) IN ('review', 'needs-info') "
+            "ORDER BY waiting_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
+
+
 def cards_needing_attention():
     """Open cards (not in a Done-named column) whose last board event came from
     someone other than their own session, with that column's name, oldest

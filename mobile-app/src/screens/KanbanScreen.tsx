@@ -148,6 +148,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const openDecision = useCallback(
     async (d: OpenDecision) => {
       if (!isCurrent()) return
+      // A card parked for the owner IS the decision surface — open the card.
+      if (d.kind === "card" && d.card) {
+        navigation.navigate("CardDetail", { id: d.card })
+        return
+      }
       const host = d.host || "local"
       try {
         const sessions = await api.sessions(host)
@@ -309,10 +314,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
  * Rendered only when non-empty — an empty queue shows nothing, so the board
  * stays clean for the common case.
  */
-const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield"> = {
+const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard"> = {
   question: "help",
   plan: "file",
   approval: "shield",
+  card: "clipboard",
 }
 
 function DecisionBand({
@@ -328,7 +334,7 @@ function DecisionBand({
     <View style={{ backgroundColor: t.surface, borderBottomWidth: 1, borderBottomColor: t.border, paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
       <Text style={{ color: t.text, fontWeight: "700", fontSize: 13 }}>
         Decisions <Text style={{ color: t.accent, fontWeight: "700" }}>{decisions.length}</Text>
-        <Text style={{ color: t.textMuted, fontWeight: "400" }}> · tap to open its thread</Text>
+        <Text style={{ color: t.textMuted, fontWeight: "400" }}> · tap to decide</Text>
       </Text>
       <ScrollView style={{ maxHeight: 140 }} contentContainerStyle={{ gap: 4 }}>
         {decisions.map((d) => (
@@ -350,11 +356,13 @@ function DecisionBand({
             <Icon name={DECISION_ICON[d.kind] || "help"} size={16} color={t.accent} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: t.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>
-                {d.label || d.session.slice(0, 8)}
+                {d.kind === "card" ? d.summary : d.label || d.session.slice(0, 8)}
                 {d.host !== "local" ? ` · ${d.host}` : ""}
               </Text>
               <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
-                {d.summary || "waiting for a decision"}
+                {d.kind === "card"
+                  ? `${d.column} · ${d.label || "agent"} is waiting on you`
+                  : d.summary || "waiting for a decision"}
               </Text>
             </View>
             <Text style={{ color: t.textMuted, fontSize: 12, flexShrink: 0 }}>

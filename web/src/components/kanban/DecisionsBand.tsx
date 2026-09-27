@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { HelpCircle, FileText, ShieldCheck, RefreshCw } from "lucide-react"
+import { HelpCircle, FileText, ShieldCheck, ClipboardList, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
@@ -11,19 +11,27 @@ const KIND_META = {
   question: { icon: HelpCircle, label: "Question" },
   plan: { icon: FileText, label: "Plan" },
   approval: { icon: ShieldCheck, label: "Approval" },
+  card: { icon: ClipboardList, label: "Card" },
 } as const
 
 /**
  * DecisionsBand — the cross-session decision queue on the board (card #60):
- * every open durable question, plan and live tool approval, oldest first, with
- * a total count. A READ surface — it lists, it never decides: opening an item
- * goes to the session that owns the decision (its thread renders the actual
- * decision card). The queue is one read of the existing sources
+ * every open durable question, plan, live tool approval and board card parked
+ * in Review/Needs-info, oldest first, with a total count. A READ surface — it
+ * lists, it never decides: opening an item goes to the session that owns the
+ * decision (its thread renders the actual decision card), or to the card
+ * itself when the card is the decision. The queue is one read of the existing sources
  * (/api/decisions/open), no parallel store. A viewer that predates the route
  * (404, e.g. before a restart) makes the band hide itself entirely; other
  * failures show inline.
  */
-export function DecisionsBand({ onOpenSession }: { onOpenSession?: (d: OpenDecision) => boolean }) {
+export function DecisionsBand({
+  onOpenSession,
+  onOpenCard,
+}: {
+  onOpenSession?: (d: OpenDecision) => boolean
+  onOpenCard?: (id: number) => boolean
+}) {
   const [items, setItems] = useState<OpenDecision[] | null>(null)
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
@@ -81,16 +89,22 @@ export function DecisionsBand({ onOpenSession }: { onOpenSession?: (d: OpenDecis
           {items.map((d) => {
             const meta = KIND_META[d.kind] || KIND_META.question
             const Icon = meta.icon
+            const isCard = d.kind === "card" && !!d.card
+            const open = isCard
+              ? onOpenCard && (() => onOpenCard(d.card!))
+              : onOpenSession && (() => onOpenSession(d))
             return (
-              <li key={`${d.kind}:${d.session}:${d.tool_use_id || d.id}`}>
+              <li key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.card}`}>
                 <button
-                  disabled={!onOpenSession}
-                  onClick={() => onOpenSession && onOpenSession(d)}
+                  disabled={!open}
+                  onClick={open || undefined}
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent disabled:cursor-default"
                 >
                   <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="shrink-0 font-medium">{d.label || d.session.slice(0, 8)}</span>
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{d.summary || meta.label}</span>
+                  <span className="shrink-0 font-medium">{isCard ? d.summary : d.label || d.session.slice(0, 8)}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {isCard ? `${d.column} · ${d.label || "an agent"} is waiting on you` : d.summary || meta.label}
+                  </span>
                   <Badge variant="outline" className="shrink-0 text-[10px]">{meta.label}</Badge>
                   {d.host !== "local" && <Badge variant="outline" className="shrink-0 text-[10px]">{d.host}</Badge>}
                   <span className="shrink-0 text-xs text-muted-foreground">

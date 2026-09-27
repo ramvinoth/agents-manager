@@ -341,7 +341,7 @@ export interface Card {
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
 export interface OpenDecision {
-  kind: "question" | "plan" | "approval"
+  kind: "question" | "plan" | "approval" | "card"
   session: string
   host: string
   /** The session's human-readable name (its title/goal/project), "" if unknown. */
@@ -357,6 +357,9 @@ export interface OpenDecision {
   tool_name?: string
   /** The approval's id (only for kind "approval"). */
   id?: string
+  /** kind "card": the board card parked in Review/Needs-info for the owner, and its column. */
+  card?: number
+  column?: string
 }
 export interface CardComment {
   id: number

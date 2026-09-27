@@ -96,6 +96,12 @@ class TestOpenDecisions:
                         "summary": "Approve Bash? — git status",
                         "tool_name": "Bash", "id": "pid1"}
 
+    def test_card_waits_from_its_last_write(self):
+        (d,) = decisions.open_decisions([], [], [], {}, NOW, card_rows=[
+            {"id": 7, "title": "T", "session_id": "", "column_name": "Needs-info",
+             "waiting_since": NOW - 60}])["decisions"]
+        assert d["waiting_s"] == 60 and d["label"] == "" and d["column"] == "Needs-info"
+
     def test_future_created_at_clamps_to_zero(self):
         (d,) = decisions.open_decisions([_q("s1", NOW + 500)], [], [], {}, NOW)["decisions"]
         assert d["waiting_s"] == 0
@@ -127,9 +133,11 @@ class TestRoute:
     """The route gathers the three sources and passes labels through; the
     pure function does the shaping (covered above)."""
 
-    def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None):
+    def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=()):
+        import viewer.db as vdb
         import viewer.engine as eng
         import viewer.questions as q
+        monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
         monkeypatch.setattr(chat, "pending_approvals_all_public", lambda: arows)
@@ -151,6 +159,23 @@ class TestRoute:
         assert payload["decisions"][0]["label"] == "Question chat"
         assert payload["decisions"][1]["label"] == "Plan chat"
         assert payload["decisions"][2]["label"] == ""
+
+    def test_a_card_parked_for_the_owner_is_a_decision(self, monkeypatch):
+        """A card in Review/Needs-info is the fourth source: it lists with the
+        card number AND title (readable cold), the column, and a `card` id a
+        tap can open — and its session label resolves like the others."""
+        self._fakes(monkeypatch, [], [], [],
+                    labeler=lambda sid, cwd="": {"sc": "Worker"}.get(sid, ""),
+                    crows=[{"id": 53, "title": "Phone calls", "session_id": "sc",
+                            "project_id": 15, "updated_at": NOW - 900,
+                            "column_name": "Review", "waiting_since": NOW - 60}])
+        h = _Handler()
+        h._g_decisions_open(None)
+        (d,) = h.sent[0]["decisions"]
+        d.pop("waiting_s")  # the route uses the real clock
+        assert d == {"kind": "card", "session": "sc", "host": "local",
+                     "label": "Worker", "summary": "#53 Phone calls",
+                     "card": 53, "column": "Review"}
 
     def test_empty_system_is_an_empty_queue(self, monkeypatch):
         self._fakes(monkeypatch, [], [], [])

@@ -103,7 +103,7 @@ export type BoardColumn = { id: number; name: string; position: number }
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
 export type OpenDecision = {
-  kind: "question" | "plan" | "approval"
+  kind: "question" | "plan" | "approval" | "card"
   session: string
   host: string
   label: string
@@ -115,6 +115,9 @@ export type OpenDecision = {
   revision?: number
   tool_name?: string
   id?: string
+  /** kind "card": the board card parked in Review/Needs-info for the owner. */
+  card?: number
+  column?: string
 }
 export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }

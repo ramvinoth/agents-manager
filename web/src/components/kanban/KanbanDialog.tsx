@@ -227,7 +227,15 @@ export function KanbanDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <DecisionsBand onOpenSession={openDecision} />
+        <DecisionsBand
+          onOpenSession={openDecision}
+          onOpenCard={(id) => {
+            const c = cards.find((x) => x.id === id)
+            if (!c) return false
+            setEditing(c)
+            return true
+          }}
+        />
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground">

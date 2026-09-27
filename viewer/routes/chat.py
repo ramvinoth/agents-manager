@@ -221,25 +221,28 @@ class ChatMixin:
 
     def _g_decisions_open(self, req):
         """The cross-session decision queue (card #60): every open durable
-        question, durable plan and live tool approval — one read of the three
-        EXISTING sources (no parallel store), oldest first, with a total count.
+        question, durable plan, live tool approval, and board card parked in
+        Review/Needs-info — one read of the EXISTING sources (no parallel
+        store), oldest first, with a total count.
         This route only lists; deciding an item goes through the existing
         per-session routes, which are race-safe via the decisions gate."""
-        from viewer import decisions, questions
+        from viewer import db, decisions, questions
         from viewer.engine import _push_label
         qrows = questions.get_open_all()
         prows = questions.get_open_plan_all()
         arows = pending_approvals_all_public()
+        crows = db.cards_awaiting_owner()
         now = time.time()
         labels = {}
         for sid in ({r["session_id"] for r in qrows}
                     | {r["session_id"] for r in prows}
-                    | {r["session"] for r in arows}):
+                    | {r["session"] for r in arows}
+                    | {r["session_id"] for r in crows if r.get("session_id")}):
             try:
                 labels[sid] = _push_label(sid, "")
             except Exception:
                 labels[sid] = ""
-        self.send_json(decisions.open_decisions(qrows, prows, arows, labels, now))
+        self.send_json(decisions.open_decisions(qrows, prows, arows, labels, now, crows))
 
     def _p_chat_permission(self, req):
         """Internal (called by permission_mcp.py, authed by a per-run token):
