@@ -42,10 +42,12 @@ def questions_from_input(tinput):
     return []
 
 
-def answer_message(questions, picks):
+def answer_message(questions, picks, note=""):
     """Compose the message fed back to the resumed session. `picks` is a list of
-    selected option labels, positionally aligned with `questions`. Server-side and
-    authoritative (the client sends only the picks, not free text).
+    selected option labels, positionally aligned with `questions`; `note` is the
+    owner's free text — the follow-up when none of the offered options fits, or
+    a condition attached to a pick ("A, but only after the tests pass"). Either
+    alone is a complete answer. Server-side and authoritative.
     """
     parts = []
     for i, q in enumerate(questions):
@@ -54,8 +56,14 @@ def answer_message(questions, picks):
             continue
         header = (q.get("header") or q.get("question") or "").strip()
         parts.append(f'{header}: {chosen}' if header else chosen)
-    body = "\n".join(parts) if parts else "(no selection)"
-    return f"My answer to your question — {body}"
+    note = (note or "").strip()
+    if not parts and not note:
+        return "My answer to your question — (no selection)"
+    if not parts:
+        return ("My answer to your question — none of the offered options; instead: "
+                f"{note}")
+    body = "\n".join(parts)
+    return f"My answer to your question — {body}" + (f"\nAdditional note: {note}" if note else "")
 
 
 # ---- thin DB wrappers (single source of truth = viewer.db) ----------------------

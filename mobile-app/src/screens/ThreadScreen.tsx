@@ -778,11 +778,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
   /** Answer a parked AskUserQuestion (async): the server resolves the pending row
    *  and RESUMES the session with the picks. The run had already ended, so this
    *  starts a fresh (resumed) turn — nothing was held while we waited. */
-  function answerPendingQuestion(picks: string[]) {
+  function answerPendingQuestion(picks: string[], note: string) {
     setPendingQuestion(null) // optimistic clear
     setBusy(true)
     api
-      .chatQuestionAnswer({ session: path || sessionId, picks, ...sendPrefs() })
+      .chatQuestionAnswer({ session: path || sessionId, picks, note, ...sendPrefs() })
       .then((res) => {
         const sid = res.session || sessionId
         if (res.session) setSessionId(res.session)

@@ -262,7 +262,11 @@ class ChatMixin:
         self.send_json({"ok": ok})
 
     def _p_chat_question_answer(self, req):
-        """UI answers an AskUserQuestion. Body: {session, picks:[label,...]}.
+        """UI answers an AskUserQuestion. Body: {session, picks:[label,...],
+        note?}. `note` is the owner's own words — the follow-up path when no
+        offered option fits (picks may then be empty) or a condition on a pick;
+        it rides the same race-safe consume as a pick, so a follow-up is an
+        answer, never a queued chat message stuck behind the blocked run.
         The decision goes through decisions.accept_answer: the exact row is
         consumed first-writer-wins (a racing second tap gets 409, never a
         double resume), then — only if the consume won — a live blocked waiter
@@ -274,13 +278,17 @@ class ChatMixin:
         body = self.read_body() or {}
         rel = body.get("session", "")
         picks = body.get("picks") or []
+        note = str(body.get("note") or "")
+        if not any(picks) and not note.strip():
+            self.send_json({"error": "Pick an option or write a reply"}, status=400)
+            return
         sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
         pending = questions.get_open(sid) if sid else None
         if not pending:
             self.send_json({"error": "No question is awaiting an answer"}, status=409)
             return
         host = pending.get("host") or "local"
-        message = questions.answer_message(pending["questions"], picks)
+        message = questions.answer_message(pending["questions"], picks, note)
         accepted, delivered = decisions.accept_answer(
             sid, pending["tool_use_id"], message, host,
             pending.get("run_id") or "", pending.get("revision") or 0)

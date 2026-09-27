@@ -222,7 +222,7 @@ interface AppState {
   steerMessage: (msg: string) => Promise<string | undefined>
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
-  answerQuestion: (picks: string[]) => Promise<void>
+  answerQuestion: (picks: string[], note?: string) => Promise<void>
   decidePlan: (decision: "approve" | "deny", feedback?: string) => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
@@ -1271,7 +1271,7 @@ export const useStore = create<AppState>((set, get) => {
     // unblocks the waiting call or resumes the session), NOT sendChat — a normal
     // chat message just gets QUEUED behind the still-blocked run, which is exactly
     // the "it adds to the queue instead of answering" bug.
-    answerQuestion: async (picks) => {
+    answerQuestion: async (picks, note = "") => {
       const { currentSessionPath, permMode, model } = get()
       if (!currentSessionPath) return
       set({ chatRunning: true, chatStatus: null })
@@ -1279,6 +1279,7 @@ export const useStore = create<AppState>((set, get) => {
         const res = await api.chatQuestionAnswer({
           session: currentSessionPath,
           picks,
+          note,
           mode: permMode,
           model,
         })

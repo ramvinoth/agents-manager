@@ -359,8 +359,9 @@ export const api = {
     req("POST", "/api/chat/permission/decide", body),
   // Answer a parked AskUserQuestion (async): the server resolves the pending row
   // and RESUMES the session with the picks. `picks` are option labels aligned to
-  // the questions. Returns {resumed:true} once the resumed run starts.
-  chatQuestionAnswer: (body: { session: string; picks: string[]; mode?: string; model?: string }) =>
+  // the questions; `note` is the owner's typed reply (alone or with picks).
+  // Returns {resumed:true} once the resumed run starts.
+  chatQuestionAnswer: (body: { session: string; picks: string[]; note?: string; mode?: string; model?: string }) =>
     req<{ resumed?: boolean; answered?: boolean; session?: string; error?: string }>("POST", "/api/chat/question/answer", body),
   // Approve or deny a proposed plan (ExitPlanMode). Deny may carry revision
   // feedback the agent uses to re-plan. Same-turn (the run is blocked waiting).

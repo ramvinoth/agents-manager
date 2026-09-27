@@ -48,6 +48,21 @@ class TestAnswerMessage:
         assert answer_message([{"header": "Drink"}, {"header": "Size"}], ["Tea"]) == \
             "My answer to your question — Drink: Tea"
 
+    def test_note_without_picks_is_a_complete_answer(self):
+        # The follow-up path: none of the offered options fit, the owner writes.
+        assert answer_message([{"header": "Drink"}], [], "neither — water") == \
+            "My answer to your question — none of the offered options; instead: neither — water"
+
+    def test_note_with_a_pick_is_appended_as_a_condition(self):
+        msg = answer_message([{"header": "Drink"}], ["Tea"], " only if it is green ")
+        assert msg == "My answer to your question — Drink: Tea\nAdditional note: only if it is green"
+
+    def test_blank_note_changes_nothing(self):
+        assert answer_message([{"header": "Drink"}], ["Tea"], "   ") == \
+            "My answer to your question — Drink: Tea"
+        assert answer_message([{"header": "Drink"}], [], "") == \
+            "My answer to your question — (no selection)"
+
 
 class TestRecordCountsTheInterruption:
     """`record` is the ONE place a question becomes durable, so it is where the

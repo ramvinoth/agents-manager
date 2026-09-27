@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { allAnswered, composeAnswer, isInstant, parseQuestions, pickOption } from "./auq.ts"
+import { allAnswered, isInstant, parseQuestions, pickOption } from "./auq.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -65,51 +65,11 @@ test("instant answer only for a lone single-select question", () => {
   )
 })
 
-test("composeAnswer: single question embeds the question text", () => {
-  const qs = parseQuestions(REAL_INPUT)
-  assert.equal(
-    composeAnswer(qs, { 0: ["API key"] }),
-    'You asked: "How should I authenticate the TestFlight upload?" → API key'
-  )
-})
-
-test("composeAnswer: multiple questions each embed their question", () => {
-  const qs = parseQuestions({
-    questions: [
-      { question: "Auth?", options: ["key"] },
-      { question: "Bundle?", options: ["com.suhai.agents"] },
-    ],
-  })
-  const out = composeAnswer(qs, { 0: ["key"], 1: ["com.suhai.agents"] })
-  assert.equal(out, 'You asked: "Auth?" → key\nYou asked: "Bundle?" → com.suhai.agents')
-})
-
 test("allAnswered gates the submit button", () => {
   const qs = parseQuestions({ questions: [{ question: "a", options: ["x"] }, { question: "b", options: ["y"] }] })
   assert.equal(allAnswered(qs, { 0: ["x"] }), false)
   assert.equal(allAnswered(qs, { 0: ["x"], 1: ["y"] }), true)
   assert.equal(allAnswered([], {}), false)
-})
-
-test("composeAnswer: multi-select joins picks with a comma", () => {
-  const qs = parseQuestions({ questions: [{ question: "Which features?", multiSelect: true, options: ["a", "b", "c"] }] })
-  assert.equal(composeAnswer(qs, { 0: ["a", "c"] }), 'You asked: "Which features?" → a, c')
-})
-
-test("composeAnswer: multi-select across multiple questions", () => {
-  const qs = parseQuestions({
-    questions: [
-      { question: "Sources?", multiSelect: true, options: ["docs", "photos"] },
-      { question: "Mode?", multiSelect: false, options: ["safe"] },
-    ],
-  })
-  const out = composeAnswer(qs, { 0: ["docs", "photos"], 1: ["safe"] })
-  assert.equal(out, 'You asked: "Sources?" → docs, photos\nYou asked: "Mode?" → safe')
-})
-
-test("composeAnswer: skips a question with no pick", () => {
-  const qs = parseQuestions({ questions: [{ question: "A?", options: ["x"] }, { question: "B?", options: ["y"] }] })
-  assert.equal(composeAnswer(qs, { 0: ["x"] }), 'You asked: "A?" → x')
 })
 
 test("parses input delivered as a JSON STRING (streaming transport)", () => {

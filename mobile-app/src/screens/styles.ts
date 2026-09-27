@@ -180,6 +180,18 @@ function buildStyles(t: Theme) {
     auqChipText: { fontSize: 13.5, fontWeight: "600", color: "#3e3626" },
     auqChipTextPicked: { color: "#fff" },
     auqDesc: { fontSize: 12, color: "#8a7a58", marginTop: 6 },
+    auqNote: {
+      marginTop: 10,
+      minHeight: 40,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: "#fff",
+      borderWidth: 1,
+      borderColor: "#d0c09a",
+      fontSize: 13.5,
+      color: "#3e3626",
+    },
     auqSubmit: {
       marginTop: 10,
       paddingVertical: 9,

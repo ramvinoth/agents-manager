@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { HelpCircle, Check, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
 import type { ToolUseBlock } from "@/lib/types"
@@ -23,6 +24,7 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
   const questions = input?.questions || []
   const answered = block.result != null
   const [picks, setPicks] = useState<Record<number, string[]>>({})
+  const [note, setNote] = useState("")
   const [sent, setSent] = useState(false)
   // Once answered, fold to the header — a stack of answered questions otherwise
   // pushes the live conversation off screen. The card stays mounted across the
@@ -40,19 +42,25 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
 
   const optionsOf = (q: Question): Option[] =>
     (q.options || []).map((o) => (typeof o === "string" ? { label: o } : o))
-  const needsSubmit = !answered && (questions.length > 1 || questions.some((q) => q.multiSelect))
+  // A typed reply is the follow-up path: when no offered option fits, or a
+  // pick needs a condition, the owner's words ARE the answer. It goes through
+  // the same answer endpoint (same race-safe consume), so it can never queue
+  // behind the run that is blocked on this very question.
+  const hasNote = note.trim().length > 0
+  const needsSubmit = !answered && (questions.length > 1 || questions.some((q) => q.multiSelect) || hasNote)
 
   function send(p: Record<number, string[]>) {
     if (sent) return
-    // Every question must have a pick before we answer.
-    if (questions.some((_, qi) => !(p[qi] || []).length)) return
+    // Every question must have a pick before we answer — unless the owner wrote
+    // a reply, which stands on its own.
+    if (!hasNote && questions.some((_, qi) => !(p[qi] || []).length)) return
     setSent(true)
     // One comma-joined label string per question, positionally aligned — the
     // server composes the answer text from these. This goes to the dedicated
     // question-answer endpoint (unblocks the waiting run / resumes it), NOT the
     // chat queue.
     const out = questions.map((_, qi) => (p[qi] || []).join(", "))
-    answerQuestion(out)
+    answerQuestion(out, note.trim())
   }
 
   function pick(qi: number, label: string, multi: boolean) {
@@ -61,8 +69,10 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
     const next = multi ? (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]) : [label]
     const updated = { ...picks, [qi]: next }
     setPicks(updated)
-    // A lone single-select question: the click IS the answer.
-    if (questions.length === 1 && !questions[0].multiSelect) send(updated)
+    // A lone single-select question: the click IS the answer — unless a reply
+    // is being written, in which case the pick waits for the Send button so the
+    // note travels with it.
+    if (questions.length === 1 && !questions[0].multiSelect && !hasNote) send(updated)
   }
 
   const answeredText = answered
@@ -123,9 +133,19 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
             </div>
           </div>
         ))}
+      {open && !answered && (
+        <Textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          disabled={sent}
+          rows={2}
+          placeholder="Or write your own reply — none of these fit, a condition, a question back…"
+          className="mb-2 text-sm"
+        />
+      )}
       {open && needsSubmit && (
         <Button size="sm" disabled={sent} onClick={() => send(picks)}>
-          Send answer{questions.length > 1 ? "s" : ""}
+          {hasNote && !Object.values(picks).some((p) => p.length) ? "Send reply" : `Send answer${questions.length > 1 ? "s" : ""}`}
         </Button>
       )}
       {answered && <div className="mt-1 text-xs text-muted-foreground">Answered: {answeredText}</div>}
