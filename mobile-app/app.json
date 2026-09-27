@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.suhai.agents",
-      "buildNumber": "1790518235",
+      "buildNumber": "1790518236",
       "infoPlist": {
         "CFBundleDisplayName": "Harman",
         "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode.",
