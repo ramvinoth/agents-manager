@@ -5,6 +5,7 @@ import urllib.parse
 import urllib.request
 
 from viewer import ai, db, providers
+from viewer.routes import require_human
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -38,10 +39,7 @@ def _draft_connection(body):
 
 class ProvidersMixin:
     def _ai_human(self, req):
-        if not (getattr(req, "principal", None) or {}).get("user"):
-            self.send_json({"error": "Human authentication required"}, status=403)
-            return False
-        return True
+        return require_human(self, req)
 
     def _g_providers(self, req):
         self.send_json({"providers": providers.list_presets()})

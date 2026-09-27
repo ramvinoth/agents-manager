@@ -2431,6 +2431,42 @@ def setting_set(key, value):
         )
 
 
+# Cloud-drive OAuth CLIENTS: the viewer's own identity to each vendor (a
+# vendor's per-user tokens live in the drives table). settings['drive_clients']
+# = {kind: {client_id, client_secret?}}. Edited from the app's Integrations
+# dialog; the secret is read only by the token exchange/refresh, never listed.
+
+def drive_clients_load():
+    return setting_get("drive_clients", {}) or {}
+
+
+def drive_client_get(kind):
+    return drive_clients_load().get(kind)
+
+
+def drive_client_set(kind, client_id, client_secret=None):
+    """Store one vendor client. `client_secret=None` keeps the secret already
+    on record (the UI never has it to send back); '' clears it."""
+    clients = drive_clients_load()
+    prev = clients.get(kind) or {}
+    entry = {"client_id": client_id}
+    secret = prev.get("client_secret") if client_secret is None else client_secret
+    if secret:
+        entry["client_secret"] = secret
+    clients[kind] = entry
+    setting_set("drive_clients", clients)
+    return entry
+
+
+def drive_client_delete(kind):
+    clients = drive_clients_load()
+    if kind not in clients:
+        return False
+    del clients[kind]
+    setting_set("drive_clients", clients)
+    return True
+
+
 # Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
 # per plan/license without a deploy; falls back to the seeded defaults when the
 # row is missing or a value is malformed (never returns junk the purge can't use).
@@ -2541,4 +2577,14 @@ def migrate_legacy_files():
             merged = dict(cur_cfg)
             merged.update(data)
             setting_set("harman", merged)
+        _retire(p)
+
+    # cloud-drive vendor clients -> settings['drive_clients']
+    p = _LEGACY_DIR / ".viewer-drives-oauth.json"
+    data = _read_json(p)
+    if isinstance(data, dict):
+        if not drive_clients_load():
+            for kind, c in data.items():
+                if isinstance(c, dict) and c.get("client_id"):
+                    drive_client_set(kind, c["client_id"], c.get("client_secret") or "")
         _retire(p)

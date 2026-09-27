@@ -277,14 +277,6 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)|\x1b[(
 
 CREDENTIALS_FILE = Path.home() / ".claude" / ".credentials.json"
 VIEWER_TOKEN_FILE = Path.home() / ".claude" / ".viewer-oauth-token"
-# Cloud-drive OAuth CLIENTS (the viewer's own identity to each vendor; a
-# vendor's per-user tokens live in the drives table, not here). One JSON file
-# mapping vendor -> {client_id, client_secret, ...}: {"google": {...}}. It is a
-# ~/.claude dotfile, so the FS browser's secret guard already shields it, and
-# 0600 like the other secrets. An env override points a test/CI at a fixture.
-DRIVES_OAUTH_FILE = (Path(os.environ["DRIVES_OAUTH_FILE"])
-                    if os.environ.get("DRIVES_OAUTH_FILE")
-                    else Path.home() / ".claude" / ".viewer-drives-oauth.json")
 
 # ===== Remote hosts (SSH) =====
 # Full remote parity: switch to a host and view/tail its sessions, chat (runs

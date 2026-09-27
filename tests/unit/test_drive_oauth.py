@@ -8,8 +8,8 @@ exchange + persist run against a faked _http seam and an in-memory db — so
 "does a redirect actually become stored tokens" is covered, not just the shape
 of the URL.
 
-No Postgres, no network to any vendor. The db module and the _http seam are
-monkeypatched, the client file is a temp fixture pointed at by DRIVES_OAUTH_FILE.
+No Postgres, no network to any vendor. The db module (drive rows AND the
+vendor-client store) and the _http seam are monkeypatched.
 """
 import base64
 import hashlib
@@ -19,7 +19,7 @@ import urllib.parse
 
 import pytest
 
-from viewer import drive_oauth
+from viewer import drive_oauth, drives
 from viewer.drives import DriveError
 
 ORIGIN = "https://life.example.test"
@@ -28,22 +28,20 @@ CALLBACK = ORIGIN + "/api/drive/oauth/callback"
 
 # --- fixtures ------------------------------------------------------------
 
-def _client_file(tmp_path):
-    f = tmp_path / "drives-oauth.json"
-    f.write_text(json.dumps({
-        "google": {
-            "client_id": "test-client-id.apps.googleusercontent.com",
-            "client_secret": "test-secret",
-        },
-        "dropbox": {"client_id": "dbx-app-key"},
-        "onedrive": {"client_id": "entra-app-id"},
-    }))
-    return f  # a Path — _vendor_client calls .read_text() on it
+_CLIENTS = {
+    "google": {
+        "client_id": "test-client-id.apps.googleusercontent.com",
+        "client_secret": "test-secret",
+    },
+    "dropbox": {"client_id": "dbx-app-key"},
+    "onedrive": {"client_id": "entra-app-id"},
+}
 
 
 class _FakeOAuthDB:
-    def __init__(self, rows):
+    def __init__(self, rows, clients=None):
         self.rows = rows
+        self.clients = dict(_CLIENTS if clients is None else clients)
         self.upserts = []
 
     def drive_get(self, did):
@@ -52,6 +50,9 @@ class _FakeOAuthDB:
     def drive_upsert(self, did, entry):
         self.upserts.append((did, entry))
         self.rows[did] = entry
+
+    def drive_client_get(self, kind):
+        return self.clients.get(kind)
 
 
 def _row(kind="google"):
@@ -63,7 +64,7 @@ def _row(kind="google"):
 def env(tmp_path, monkeypatch):
     fake_db = _FakeOAuthDB({"drive1": _row()})
     monkeypatch.setattr(drive_oauth, "db", fake_db)
-    monkeypatch.setattr("viewer.config.DRIVES_OAUTH_FILE", _client_file(tmp_path))
+    monkeypatch.setattr(drives, "db", fake_db)   # _vendor_client reads the client store here
     monkeypatch.setattr(drive_oauth, "_PENDING", {})
     calls = []
 
@@ -145,12 +146,21 @@ def test_unknown_drive_is_404(env):
     assert err.status == 404
 
 
-def test_missing_client_file_is_403(tmp_path, monkeypatch):
-    monkeypatch.setattr(drive_oauth, "db", _FakeOAuthDB({"drive1": _row()}))
-    monkeypatch.setattr("viewer.config.DRIVES_OAUTH_FILE",
-                        tmp_path / "does-not-exist.json")  # a Path that doesn't exist
+def test_missing_client_is_403(monkeypatch):
+    fake_db = _FakeOAuthDB({"drive1": _row()}, clients={})
+    monkeypatch.setattr(drive_oauth, "db", fake_db)
+    monkeypatch.setattr(drives, "db", fake_db)
     err = pytest.raises(DriveError, drive_oauth.start, "google", "drive1", ORIGIN).value
     assert err.status == 403
+    assert "Integrations" in str(err)
+
+
+def test_confidential_client_without_secret_is_403(monkeypatch):
+    fake_db = _FakeOAuthDB({"drive1": _row()}, clients={"google": {"client_id": "CID"}})
+    monkeypatch.setattr(drive_oauth, "db", fake_db)
+    monkeypatch.setattr(drives, "db", fake_db)
+    err = pytest.raises(DriveError, drive_oauth.start, "google", "drive1", ORIGIN).value
+    assert err.status == 403 and "secret" in str(err)
 
 
 def test_status_unknown_pid_is_404():

@@ -1,8 +1,8 @@
 """viewer.drive_oauth — the hosted OAuth consent flow for cloud-drive adapters.
 
 The viewer is the OAuth *client*: it holds the vendor's client id (and, for a
-confidential client such as Google, its secret) in one shared DRIVES_OAUTH_FILE
-and performs the PKCE code exchange itself. The user's browser may be on ANY
+confidential client such as Google, its secret) in settings['drive_clients'],
+entered once from the app's Integrations dialog, and performs the PKCE code exchange itself. The user's browser may be on ANY
 device — a phone reaching the viewer through its public hostname — so the
 vendor redirects back to the viewer's own HTTPS callback
 (`<origin>/api/drive/oauth/callback`), never to a loopback port on the server
@@ -78,6 +78,12 @@ _VENDORS = {
         "public": True,
     },
 }
+
+
+def vendor(kind):
+    """The public facts about one vendor's flow (label, public-client flag)
+    the Integrations UI shows; KeyError for a kind outside available_vendors()."""
+    return {"label": _VENDORS[kind]["label"], "public": _VENDORS[kind]["public"]}
 
 
 def available_vendors():

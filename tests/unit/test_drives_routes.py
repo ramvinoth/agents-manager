@@ -36,9 +36,10 @@ class _Handler(DrivesMixin):
 
 
 class _Req:
-    def __init__(self, query=None, host="local"):
+    def __init__(self, query=None, host="local", human=True):
         self.query = query or {}
         self.host = host
+        self.principal = {"user": "ram" if human else None}
 
 
 def _fake_db(monkeypatch, rows=None):
@@ -182,6 +183,103 @@ class TestDelete:
         assert h.sent[1] == 400
 
 
+# --- vendor clients -----------------------------------------------------------
+
+def _fake_clients(monkeypatch, clients=None):
+    """In-memory settings['drive_clients'] + the three db helpers over it."""
+    state = {"clients": dict(clients or {})}
+    monkeypatch.setattr(db, "drive_clients_load", lambda: state["clients"])
+
+    def set_(kind, client_id, client_secret=None):
+        prev = state["clients"].get(kind) or {}
+        entry = {"client_id": client_id}
+        secret = prev.get("client_secret") if client_secret is None else client_secret
+        if secret:
+            entry["client_secret"] = secret
+        state["clients"][kind] = entry
+        return entry
+    monkeypatch.setattr(db, "drive_client_set", set_)
+    monkeypatch.setattr(db, "drive_client_delete",
+                        lambda kind: state["clients"].pop(kind, None) is not None)
+    return state
+
+
+class TestClients:
+    def test_list_covers_every_vendor_and_never_the_secret(self, monkeypatch):
+        _fake_clients(monkeypatch, {
+            "google": {"client_id": "G-ID", "client_secret": "G-SECRET"},
+            "dropbox": {"client_id": "D-ID"},
+        })
+        h = _Handler()
+        h._g_drive_clients(_Req())
+        data, status = h.sent
+        assert status == 200
+        # The redirect URI is derived from THIS request's origin — the one
+        # string the owner must paste into each vendor console.
+        assert data["redirect_uri"] == "https://h.example.test/api/drive/oauth/callback"
+        by = {c["kind"]: c for c in data["clients"]}
+        assert set(by) == {"google", "dropbox", "onedrive"}
+        assert by["google"] == {"kind": "google", "label": "Google Drive", "public": False,
+                                "client_id": "G-ID", "has_secret": True, "configured": True}
+        assert by["dropbox"]["configured"] is True      # public client: id alone is enough
+        assert by["onedrive"]["configured"] is False and by["onedrive"]["client_id"] == ""
+        assert "G-SECRET" not in str(data)
+
+    def test_confidential_vendor_is_unconfigured_without_secret(self, monkeypatch):
+        _fake_clients(monkeypatch, {"google": {"client_id": "G-ID"}})
+        h = _Handler()
+        h._g_drive_clients(_Req())
+        g = [c for c in h.sent[0]["clients"] if c["kind"] == "google"][0]
+        assert g["configured"] is False and g["has_secret"] is False
+
+    def test_save_stores_id_and_secret(self, monkeypatch):
+        state = _fake_clients(monkeypatch)
+        h = _Handler(body={"kind": "google", "client_id": " G-ID ", "client_secret": "S"})
+        h._p_drive_clients(_Req())
+        assert h.sent[1] == 200
+        assert state["clients"]["google"] == {"client_id": "G-ID", "client_secret": "S"}
+
+    def test_save_without_secret_keeps_the_stored_one(self, monkeypatch):
+        state = _fake_clients(monkeypatch, {"google": {"client_id": "OLD", "client_secret": "S"}})
+        h = _Handler(body={"kind": "google", "client_id": "NEW"})
+        h._p_drive_clients(_Req())
+        assert state["clients"]["google"] == {"client_id": "NEW", "client_secret": "S"}
+
+    def test_empty_secret_clears_it(self, monkeypatch):
+        state = _fake_clients(monkeypatch, {"google": {"client_id": "G", "client_secret": "S"}})
+        h = _Handler(body={"kind": "google", "client_id": "G", "client_secret": ""})
+        h._p_drive_clients(_Req())
+        assert state["clients"]["google"] == {"client_id": "G"}
+
+    def test_agent_principal_cannot_write(self, monkeypatch):
+        state = _fake_clients(monkeypatch)
+        h = _Handler(body={"kind": "google", "client_id": "G", "client_secret": "S"})
+        h._p_drive_clients(_Req(human=False))
+        assert h.sent[1] == 403
+        assert state["clients"] == {}
+        h = _Handler(body={"kind": "google"})
+        h._p_drive_clients_delete(_Req(human=False))
+        assert h.sent[1] == 403
+
+    def test_unknown_vendor_is_404_and_missing_id_is_400(self, monkeypatch):
+        _fake_clients(monkeypatch)
+        h = _Handler(body={"kind": "icloud", "client_id": "X"})
+        h._p_drive_clients(_Req())
+        assert h.sent[1] == 404
+        h = _Handler(body={"kind": "google"})
+        h._p_drive_clients(_Req())
+        assert h.sent[1] == 400
+
+    def test_delete_forgets_the_client(self, monkeypatch):
+        state = _fake_clients(monkeypatch, {"google": {"client_id": "G"}})
+        h = _Handler(body={"kind": "google"})
+        h._p_drive_clients_delete(_Req())
+        assert h.sent[1] == 200 and "google" not in state["clients"]
+        h = _Handler(body={"kind": "google"})
+        h._p_drive_clients_delete(_Req())
+        assert h.sent[1] == 404
+
+
 # --- consent flow ------------------------------------------------------------
 
 class TestOAuthStart:
@@ -288,3 +386,13 @@ def test_oauth_callback_is_reachable_without_a_session():
     must be public — gated only by the one-time state inside drive_oauth."""
     assert "/api/drive/oauth/callback" in server.SessionViewerHandler.PUBLIC_API
     assert server.SessionViewerHandler.GET_ROUTES["/api/drive/oauth/callback"] == "_g_drive_oauth_callback"
+
+
+def test_vendor_client_routes_are_gated_not_public():
+    """The client store is credentials: readable only with a session, and the
+    writes additionally demand a human principal (checked in the handler)."""
+    H = server.SessionViewerHandler
+    assert H.GET_ROUTES["/api/drive/clients"] == "_g_drive_clients"
+    assert H.POST_ROUTES["/api/drive/clients"] == "_p_drive_clients"
+    assert H.POST_ROUTES["/api/drive/clients/delete"] == "_p_drive_clients_delete"
+    assert not any(p.startswith("/api/drive/clients") for p in H.PUBLIC_API)

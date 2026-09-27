@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, InboxFilter, InboxMessage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, DriveClient, InboxFilter, InboxMessage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 
@@ -562,6 +562,23 @@ class ApiClient {
   /** Remove a drive (and its stored tokens). */
   driveDelete(id: string) {
     return this.postJSON<{ ok?: boolean } | { error?: string }>("/api/drives/delete", { drive: id })
+  }
+  /** Per-vendor OAuth client status plus the redirect URI this deployment
+   *  needs registered with each vendor (derived from the origin in use). */
+  driveClients() {
+    return this.getJSON<{ clients: DriveClient[]; redirect_uri: string }>("/api/drive/clients")
+  }
+  /** Save a vendor client. Omit client_secret to keep the stored one; send ""
+   *  to clear it. Human-only on the server. */
+  driveClientSave(body: { kind: string; client_id: string; client_secret?: string }) {
+    return this.postJSON<{ clients: DriveClient[]; redirect_uri: string } | { error?: string }>(
+      "/api/drive/clients", body
+    )
+  }
+  driveClientDelete(kind: string) {
+    return this.postJSON<{ clients: DriveClient[]; redirect_uri: string } | { error?: string }>(
+      "/api/drive/clients/delete", { kind }
+    )
   }
   /** Begin the hosted consent flow for a drive → the vendor URL to open + the
    *  pending handle to poll with driveOAuthStatus(). The vendor redirects the

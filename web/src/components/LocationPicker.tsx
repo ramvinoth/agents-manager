@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Check, ChevronDown, Cloud, HardDrive, Loader2, Plus, Trash2 } from "lucide-react"
+import { Check, ChevronDown, Cloud, HardDrive, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+import { IntegrationsDialog } from "@/components/IntegrationsDialog"
 import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "@/lib/location"
 import type { Drive } from "@/lib/types"
 
@@ -20,7 +21,10 @@ import type { Drive } from "@/lib/types"
  * server can connect. Picking an unauthorized drive (never connected, or its
  * token was revoked) runs the consent flow before selecting it: the server
  * hands back a URL to open in a new tab and a handle to poll; the tab closes
- * itself on consent and the poll flips to `authorized`.
+ * itself on consent and the poll flips to `authorized`. A vendor with no
+ * client on record cannot start consent (the server refuses with guidance);
+ * that refusal opens the Integrations dialog where the client is entered, and
+ * the same dialog is one menu entry away for later edits.
  *
  * Owns only the picker's transient state (the drive list, the in-flight
  * connect). The selected location belongs to the browser, which threads it
@@ -43,6 +47,7 @@ export function LocationPicker({
 }) {
   const [connecting, setConnecting] = useState<string | null>(null) // drive id mid-consent
   const [error, setError] = useState<string | null>(null)
+  const [integrations, setIntegrations] = useState(false)
   const pollTimer = useRef<number | null>(null)
 
   useEffect(() => () => { if (pollTimer.current) window.clearTimeout(pollTimer.current) }, [])
@@ -61,7 +66,12 @@ export function LocationPicker({
     setConnecting(drive.id)
     try {
       const r = await api.driveOAuthStart(drive.id)
-      if ("error" in r && r.error) throw new Error(r.error)
+      if ("error" in r && r.error) {
+        // "No <vendor> OAuth client configured …" — a setup gap, not a consent
+        // failure: send the user to the form that fixes it.
+        if (/OAuth client/.test(r.error)) setIntegrations(true)
+        throw new Error(r.error)
+      }
       if (!("url" in r)) throw new Error("No consent URL returned")
       window.open(r.url, "_blank", "noopener")
       const pending = r.pending
@@ -171,9 +181,14 @@ export function LocationPicker({
               <Plus className="size-3.5" /> Add {vendorLabel(k)}
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setIntegrations(true)} className="gap-1.5 text-muted-foreground">
+            <KeyRound className="size-3.5" /> Integrations…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {error && <span className="truncate text-xs text-destructive" title={error}>{error}</span>}
+      {integrations && <IntegrationsDialog onClose={() => setIntegrations(false)} />}
     </div>
   )
 }

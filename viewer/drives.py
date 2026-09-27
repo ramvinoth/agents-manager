@@ -75,7 +75,6 @@ import urllib.request
 import zipfile
 
 from viewer import db
-from viewer import config as _config
 
 
 class DriveError(Exception):
@@ -164,25 +163,17 @@ def _http(method, url, headers=None, data=None, timeout=60):
 
 def _vendor_client(kind, public=False):
     """The viewer's OAuth client for `kind` — ONE shared client per vendor
-    (per-user tokens live in the drive row). Read from DRIVES_OAUTH_FILE as
-    {kind: {client_id, client_secret?}}. Shared by the
-    adapters (token refresh) and the hosted OAuth flow (drive_oauth). A
-    `public` client (PKCE — Dropbox, OneDrive) needs only client_id; a
-    confidential one (Google) needs the secret too. Missing or incomplete →
-    403 with guidance, so a first run says exactly what to do instead of
-    failing opaquely."""
-    path = _config.DRIVES_OAUTH_FILE
-    try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        raise DriveError(f"No {kind} OAuth client configured — put one in {path}", 403)
-    except Exception:
-        raise DriveError(f"{kind} OAuth client file is not valid JSON", 403)
-    c = data.get(kind) or {}
+    (per-user tokens live in the drive row), stored in settings['drive_clients']
+    and entered from the app's Integrations dialog. Shared by the adapters
+    (token refresh) and the hosted OAuth flow (drive_oauth). A `public` client
+    (PKCE — Dropbox, OneDrive) needs only client_id; a confidential one
+    (Google) needs the secret too. Missing or incomplete → 403 with guidance,
+    so a first run says exactly what to do instead of failing opaquely."""
+    c = db.drive_client_get(kind) or {}
     if not c.get("client_id"):
-        raise DriveError(f"{kind} OAuth client is incomplete (needs client_id)", 403)
+        raise DriveError(f"No {kind} OAuth client configured — add its client id in Integrations", 403)
     if not public and not c.get("client_secret"):
-        raise DriveError(f"{kind} OAuth client is incomplete (needs client_id and client_secret)", 403)
+        raise DriveError(f"{kind} OAuth client is incomplete — add its client secret in Integrations", 403)
     return c
 
 

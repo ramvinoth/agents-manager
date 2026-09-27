@@ -460,3 +460,15 @@ export interface Drive {
   hidden: boolean
   authorized: boolean
 }
+
+/** One vendor's OAuth client as the Integrations dialog sees it — the secret
+ *  itself is never returned; `has_secret` is a presence flag. `public` marks a
+ *  PKCE public client (Dropbox, OneDrive) that needs no secret at all. */
+export interface DriveClient {
+  kind: string
+  label: string
+  public: boolean
+  client_id: string
+  has_secret: boolean
+  configured: boolean
+}
