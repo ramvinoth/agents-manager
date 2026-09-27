@@ -388,7 +388,6 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
-        "/api/inbox/msg": "_g_inbox_msg",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),

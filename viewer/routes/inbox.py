@@ -79,23 +79,6 @@ class InboxMixin:
             out["queue"] = qview
         self.send_json(out)
 
-    def _g_inbox_msg(self, req):
-        """One message in full. A session principal may read only the rows in
-        its own mailbox; the owner reads any."""
-        p = req.principal
-        mid = (req.query.get("id") or [None])[0]
-        if not mid:
-            self.send_json({"error": "id required"}, status=400)
-            return
-        msg = db.inbox_get(int(mid))
-        if not msg:
-            self.send_json({"error": "not found"}, status=404)
-            return
-        if p["kind"] == "mcp" and msg.get("session_id") != p["session"]:
-            self.send_json({"error": "not in your inbox"}, status=403)
-            return
-        items = open_decisions_items()["decisions"]
-        self.send_json({"message": inbox.attach_state([msg], items)[0]})
 
     def _p_inbox_send(self, req):
         """Send a message. The SENDER is stamped from the resolved principal

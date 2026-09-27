@@ -736,8 +736,6 @@ export const api = {
     return req<{ messages: InboxMessage[]; unread?: number; queue?: { count: number; items: InboxMessage[] } }>(
       "GET", `/api/inbox${q ? "?" + q : ""}`)
   },
-  inboxMsg: (id: number) =>
-    req<{ message: InboxMessage }>("GET", `/api/inbox/msg?id=${id}`),
   inboxSend: (body: { to: string; body: string; in_reply_to?: number }) =>
     req<InboxMessage>("POST", "/api/inbox/send", body),
   // Owner surface only: mark read / snooze (a snooze is "later", never delete).
