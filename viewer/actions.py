@@ -524,8 +524,14 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
             excerpt = ""
         if agent and action == "card_comment":
             from viewer import push
-            push.notify_all(f"Board · {card.get('title', '')}",
-                            f"{actor}: {excerpt}"[:300])
+            # The owner reads this cold, possibly hours later: the title must
+            # identify the card by number AND name, and the payload must carry
+            # the card id so a tap opens that card (App.tsx openFromNotification),
+            # not just the app. A bare "Board · <title>" push left the owner
+            # asking "which card is that?" (card 53, 2026-09-26).
+            push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
+                            f"{actor}: {excerpt}"[:300],
+                            data={"card": card["id"]})
         if own:
             return
         if action == "card_create":

@@ -63,11 +63,17 @@ export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 // after a warm tap). Bailing on !isReady() was why the tap only foregrounded the app.
 let pendingNav: Record<string, unknown> | null = null
 
-// Resolve a push payload {session, host} to its session PATH and open the Thread.
-// The payload carries the session id, but Thread navigates by `path` (unique;
-// id is not), so we look the session up on its host. Best-effort — a stale id or
-// offline host just no-ops rather than throwing.
-async function navToSession(data: Record<string, unknown>): Promise<void> {
+// Resolve a push payload to a screen. Two shapes exist, matching the two
+// things the server pushes about: `{card}` (a board card the owner was asked
+// about) opens that card; `{session, host}` (a chat turn) opens the Thread. Thread
+// navigates by `path` (unique; id is not), so the session is looked up on its
+// host. Best-effort — a stale id or offline host just no-ops rather than throwing.
+async function navToTarget(data: Record<string, unknown>): Promise<void> {
+  const card = Number(data.card)
+  if (Number.isInteger(card) && card > 0) {
+    navigationRef.navigate("CardDetail", { id: card })
+    return
+  }
   const session = typeof data.session === "string" ? data.session : ""
   const host = typeof data.host === "string" ? data.host : "local"
   if (!session) return
@@ -85,9 +91,8 @@ async function navToSession(data: Record<string, unknown>): Promise<void> {
 // Handle a tap: if the tree is ready, navigate now; otherwise stash it so
 // flushPendingNav can complete the jump once the container mounts.
 function openFromNotification(data: Record<string, unknown>): void {
-  const session = typeof data.session === "string" ? data.session : ""
-  if (!session) return
-  if (navigationRef.isReady()) void navToSession(data)
+  if (!data.card && !data.session) return
+  if (navigationRef.isReady()) void navToTarget(data)
   else pendingNav = data
 }
 
@@ -95,7 +100,7 @@ function openFromNotification(data: Record<string, unknown>): void {
 function flushPendingNav(): void {
   const data = pendingNav
   pendingNav = null
-  if (data && navigationRef.isReady()) void navToSession(data)
+  if (data && navigationRef.isReady()) void navToTarget(data)
 }
 
 export default function App() {

@@ -230,8 +230,8 @@ def board(monkeypatch):
         wakes.append((dict(card), event, origin))
         return "bw42"
 
-    def _push(title, body):
-        pushes.append((title, body))
+    def _push(title, body, data=None):
+        pushes.append((title, body, data))
 
     monkeypatch.setattr(boardwatch, "schedule_wake", _wake)
     monkeypatch.setattr(push, "notify_all", _push)
@@ -297,7 +297,10 @@ def test_agent_comment_on_its_own_card_pushes_but_wakes_nothing(board):
                          "author": "employee:bob"}, "employee:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert board.wakes == []
-    assert board.pushes == [("Board · Fix login", "employee:bob: Stuck on the API")]
+    # The owner reads the push cold: the title names the card by number and
+    # title, and the payload carries the card id so a tap opens THAT card.
+    assert board.pushes == [("Card 42 · Fix login", "employee:bob: Stuck on the API",
+                             {"card": 42})]
     assert board.db.comments[0]["body"] == "Stuck on the API", "stored stripped"
     assert board.db.comments[0]["author"] == "employee:bob", "stamped, not forged"
 
@@ -310,7 +313,8 @@ def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
     _, event, origin = board.wakes[0]
     assert origin == "harman"
     assert "new comment by employee:bob" in event
-    assert board.pushes == [("Board · Fix login", "employee:bob: needs your call")]
+    assert board.pushes == [("Card 42 · Fix login", "employee:bob: needs your call",
+                             {"card": 42})]
 
 
 def test_human_comment_wakes_without_push(board):
