@@ -735,6 +735,28 @@ The exclusion is deliberate: wrapping `fs/*` and `git/*` duplicates Read/Write/G
 which is the duplicate-implementation trap CLAUDE.md forbids. The MCP exposes what Claude
 *cannot* do — act on the system running it.
 
+### 8A. Shipped manifest (as of 2026-09-27 — `viewer/viewer_mcp.py`, 45 tools)
+
+The table above is the plan. This is what an agent session actually holds today; every
+tool is dumb transport to one `/api/*` route, gated server-side by `orglogic._MIN_LEVEL`
+and the Green/Red risk class. The system preamble (`settings.system_preamble`) names the
+same list, and `docs_read system-status` shows the live posture.
+
+| Tier | Tools |
+|---|---|
+| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list` |
+| **Act on the board** (Green at ic) | `card_create/move/update/comment`, `card_dep_add/remove`, `task_done`, `note_create/update`, `session_seen`, `inbox_send`, `skill_propose` (overlap → `skill_promote`, Red) |
+| **Shape work** (lead) | `card_assign`, `loop_create/update`, `loop_delete` (Red) |
+| **Org control** (manager) | `loop_control_set` |
+| **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote` |
+| **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `fs/*`, `git/*` |
+
+Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,
+`capability_*`, `observation_list`, `accountability`, `skill_grant/revoke/materialize`,
+`mcp_grant`, `employee_create`, `project_create`, `approval_resolve` as an agent tool
+(the owner resolves approvals from the app; separation of duties). Add a row here when one
+ships — the preamble, this table, and `_TOOLS` must agree.
+
 ---
 
 ## 9. Build order
