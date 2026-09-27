@@ -17,6 +17,8 @@ already render. So:
   through the existing per-session routes (race-safe via the decisions gate),
   so the board never becomes a second approval system.
 """
+import time
+
 import pytest
 
 from viewer import decisions
@@ -132,11 +134,13 @@ class TestRoute:
     """The route gathers the three sources and passes labels through; the
     pure function does the shaping (covered above)."""
 
-    def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=()):
+    def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=(),
+               inbox_rows=()):
         import viewer.db as vdb
         import viewer.questions as q
         import viewer.routes.inbox as vinbox
         monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
+        monkeypatch.setattr(vdb, "inbox_decision_refs", lambda: list(inbox_rows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
         # The route (chat._g_decisions_open) delegates the gather to the inbox
@@ -177,7 +181,29 @@ class TestRoute:
         d.pop("waiting_s")  # the route uses the real clock
         assert d == {"kind": "card", "session": "sc", "host": "local",
                      "label": "Worker", "summary": "#53 Phone calls",
-                     "card": 53, "column": "Review"}
+                     "card": 53, "column": "Review",
+                     "inbox_id": 0, "snoozed_until": 0}
+
+    def test_a_snoozed_item_is_held_back_until_it_lapses(self, monkeypatch):
+        """One snooze, every surface: the owner snoozed the plan in the Inbox
+        (its inbox row is 'snoozed' with a future deadline), so the board
+        queue must not show it either — while the lapsed snooze on the
+        question is over and the question is back, carrying its inbox id so
+        the cockpit can snooze it again."""
+        far = time.time() + 3600
+        self._fakes(monkeypatch, [_q("sq", NOW - 100, tool="tq")],
+                    [_p("sp", NOW - 50)], [],
+                    inbox_rows=[{"kind": "plan", "ref_id": "tp", "id": 7,
+                                 "status": "snoozed", "snoozed_until": far},
+                                {"kind": "question", "ref_id": "tq", "id": 8,
+                                 "status": "snoozed", "snoozed_until": 5.0}])
+        h = _Handler()
+        h._g_decisions_open(None)
+        payload, status = h.sent
+        assert status == 200
+        assert payload["count"] == 1
+        (d,) = payload["decisions"]
+        assert d["kind"] == "question" and d["inbox_id"] == 8 and d["snoozed_until"] == 0
 
     def test_empty_system_is_an_empty_queue(self, monkeypatch):
         self._fakes(monkeypatch, [], [], [])

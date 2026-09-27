@@ -118,6 +118,10 @@ export type OpenDecision = {
   /** kind "card": the board card parked in Review/Needs-info for the owner. */
   card?: number
   column?: string
+  /** The item's inbox row (0 when none was delivered) — the handle a snooze
+   *  takes. The queue already omits items whose snooze is live. */
+  inbox_id: number
+  snoozed_until: number
 }
 export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }

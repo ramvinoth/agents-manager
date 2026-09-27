@@ -27,9 +27,11 @@ from viewer import questions
 def open_decisions_items():
     """The cross-session decision queue — the SAME sources /api/decisions/open
     reads (durable questions, durable plans, the live approval registry, cards
-    in Review/Needs-info), shaped by decisions.open_decisions. The inbox's
-    derived open-state and the decision queue must come from one gather, so
-    both routes call this."""
+    in Review/Needs-info), shaped by decisions.open_decisions and joined to
+    each item's inbox row (inbox_id, snoozed_until) so ONE snooze holds on
+    every surface. Returns EVERY open item, snoozed included: the inbox's
+    derived open-state needs the full set (a snoozed item is deferred, not
+    decided); a human-facing queue applies inbox.visible_queue last."""
     qrows = questions.get_open_all()
     prows = questions.get_open_plan_all()
     arows = pending_approvals_all_public()
@@ -44,7 +46,8 @@ def open_decisions_items():
             labels[sid] = _push_label(sid, "")
         except Exception:
             labels[sid] = ""
-    return decisions.open_decisions(qrows, prows, arows, labels, now, crows)
+    items = decisions.open_decisions(qrows, prows, arows, labels, now, crows)["decisions"]
+    return inbox.attach_snooze(items, db.inbox_decision_refs(), now)
 
 
 class InboxMixin:
@@ -68,7 +71,7 @@ class InboxMixin:
         rows = db.inbox_list(session_id=session,
                              project_id=int(project) if project else None,
                              kind=kind, unread_only=unread_only, archived=archived)
-        items = open_decisions_items()["decisions"]
+        items = open_decisions_items()
         messages = inbox.attach_state(rows, items)
         unread = db.inbox_unread_count(session_id=session,
                                        project_id=int(project) if project else None,

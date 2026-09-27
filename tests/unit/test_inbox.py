@@ -158,3 +158,48 @@ def test_format_card_without_comment():
     body = inbox.format_card(card)
     assert "the call is yours" in body
     assert body.count("\n") <= 1  # no dangling context section
+
+
+# ---- attach_snooze / visible_queue (one snooze, every surface) ---------------
+
+def _item(kind, ref):
+    key = inbox.REF_FIELD[kind]
+    return {"kind": kind, "session": "s1", key: ref, "summary": "x"}
+
+
+def test_attach_snooze_joins_inbox_id_and_live_snooze():
+    items = [_item("question", "tq"), _item("card", 53), _item("approval", "a1")]
+    rows = [{"kind": "question", "ref_id": "tq", "id": 7, "status": "snoozed",
+             "snoozed_until": NOW + 60},
+            {"kind": "card", "ref_id": "53", "id": 9, "status": "sent", "snoozed_until": 0}]
+    out = inbox.attach_snooze(items, rows, NOW)
+    assert [(i["inbox_id"], i["snoozed_until"]) for i in out] == [
+        (7, NOW + 60),   # live snooze → held
+        (9, 0),          # delivered, not snoozed
+        (0, 0),          # no inbox row at all (delivery failed) → never snoozed
+    ]
+
+
+def test_attach_snooze_lapsed_snooze_is_over():
+    (i,) = inbox.attach_snooze([_item("plan", "tp")],
+                               [{"kind": "plan", "ref_id": "tp", "id": 3,
+                                 "status": "snoozed", "snoozed_until": NOW - 1}], NOW)
+    assert i["inbox_id"] == 3 and i["snoozed_until"] == 0
+
+
+def test_attach_snooze_does_not_mutate_input():
+    src = [_item("question", "tq")]
+    inbox.attach_snooze(src, [], NOW)
+    assert "inbox_id" not in src[0]
+
+
+def test_visible_queue_hides_live_snoozes_but_attach_state_keeps_them_open():
+    items = inbox.attach_snooze(
+        [_item("question", "tq"), _item("plan", "tp")],
+        [{"kind": "question", "ref_id": "tq", "id": 1, "status": "snoozed",
+          "snoozed_until": NOW + 60}], NOW)
+    shown = inbox.visible_queue(items)
+    assert shown["count"] == 1 and shown["decisions"][0]["kind"] == "plan"
+    # The snoozed question is deferred, not decided: its inbox row still reads open.
+    (row,) = inbox.attach_state([_row("question", "tq", "snoozed", NOW + 60)], items, NOW)
+    assert row["open"] is True and row["snoozed"] is True

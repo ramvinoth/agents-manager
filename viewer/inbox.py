@@ -49,21 +49,19 @@ def effective_status(row, now=None):
     return status
 
 
+def decision_ref(item):
+    """The 'kind:ref' key of one decision-queue item (decisions.open_decisions
+    output) — the same key its inbox row carries as (kind, ref_id). "" when
+    the item has no ref."""
+    kind = item.get("kind") or ""
+    ref = item.get(REF_FIELD.get(kind, ""))
+    return f"{kind}:{ref}" if ref else ""
+
+
 def open_ref_set(open_items):
-    """The decision queue's items (decisions.open_decisions output) as a set of
-    'kind:ref' strings — the match key for attach_state."""
-    out = set()
-    for it in open_items or []:
-        kind = it.get("kind") or ""
-        if kind == "card":
-            ref = it.get("card")
-        elif kind == "approval":
-            ref = it.get("id")
-        else:  # question / plan
-            ref = it.get("tool_use_id")
-        if ref:
-            out.add(f"{kind}:{ref}")
-    return out
+    """The decision queue's items as a set of 'kind:ref' strings — the match
+    key for attach_state."""
+    return {k for k in (decision_ref(it) for it in open_items or []) if k}
 
 
 def attach_state(rows, open_items, now=None):
@@ -88,6 +86,36 @@ def attach_state(rows, open_items, now=None):
         item["snoozed"] = item["effective_status"] == "snoozed"
         out.append(item)
     return out
+
+
+def attach_snooze(items, ref_rows, now=None):
+    """Annotate decision-queue items with their inbox row: `inbox_id` (the
+    handle a client snoozes by) and `snoozed_until` (epoch while a snooze is
+    live, 0 otherwise — a lapsed snooze is over, exactly as effective_status
+    reads it). Items with no inbox row (delivery failed, or a pre-inbox
+    decision) get inbox_id 0 and are never snoozed. Pure."""
+    now = time.time() if now is None else float(now)
+    by_ref = {}
+    for r in ref_rows or []:
+        by_ref[f"{r.get('kind')}:{r.get('ref_id')}"] = r
+    out = []
+    for it in items or []:
+        item = dict(it)
+        row = by_ref.get(decision_ref(item))
+        item["inbox_id"] = int(row.get("id") or 0) if row else 0
+        item["snoozed_until"] = (float(row.get("snoozed_until") or 0)
+                                 if row and effective_status(row, now) == "snoozed" else 0)
+        out.append(item)
+    return out
+
+
+def visible_queue(items):
+    """The queue a human is shown right now: every open item whose snooze is
+    not live. Snoozed items stay open in the source (attach_state still reads
+    them open) — they are deferred, not decided — so this is a view, applied
+    last, and only on the surfaces a human scans. With the count."""
+    shown = [it for it in items or [] if not it.get("snoozed_until")]
+    return {"count": len(shown), "decisions": shown}
 
 
 def action_queue(rows, open_items, now=None):

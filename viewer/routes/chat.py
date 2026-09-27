@@ -210,7 +210,7 @@ class ChatMixin:
                 "returncode": job["returncode"],
                 "stderr": job["stderr"],
                 "started": job["started"],
-                "queue": [q[:200] for q in job.get("queue", [])],
+                "queue": list(job.get("queue", [])),
                 "turns": job.get("turns", 0),
                 "steered": job.get("steered", 0),
                 "interrupted": job.get("interrupted", False),
@@ -223,11 +223,13 @@ class ChatMixin:
         """The cross-session decision queue (card #60): every open durable
         question, durable plan, live tool approval, and board card parked in
         Review/Needs-info — one read of the EXISTING sources (no parallel
-        store), oldest first, with a total count.
+        store), oldest first, with a total count. Items the owner snoozed
+        (Inbox or cockpit — one snooze) are held back until the snooze lapses.
         This route only lists; deciding an item goes through the existing
         per-session routes, which are race-safe via the decisions gate."""
+        from viewer import inbox
         from viewer.routes.inbox import open_decisions_items
-        self.send_json(open_decisions_items())
+        self.send_json(inbox.visible_queue(open_decisions_items()))
 
     def _p_chat_permission(self, req):
         """Internal (called by permission_mcp.py, authed by a per-run token):

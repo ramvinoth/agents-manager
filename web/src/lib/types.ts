@@ -357,6 +357,10 @@ export interface OpenDecision {
   tool_name?: string
   /** The approval's id (only for kind "approval"). */
   id?: string
+  /** The item's inbox row (0 when none was delivered) — the handle a snooze
+   *  takes. The queue already omits items whose snooze is live. */
+  inbox_id: number
+  snoozed_until: number
   /** kind "card": the board card parked in Review/Needs-info for the owner, and its column. */
   card?: number
   column?: string

@@ -1408,6 +1408,18 @@ def inbox_snooze(message_id, until):
     return dict(row) if row else None
 
 
+def inbox_decision_refs():
+    """Every live decision row's (kind, ref_id) → its inbox id and snooze
+    deadline. The decision queue joins this onto its items so a snooze taken
+    anywhere (Inbox or board cockpit) hides the item everywhere until it
+    lapses, and so a client can snooze an item by its inbox id."""
+    with _db() as cur:
+        cur.execute("SELECT kind, ref_id, id, status, snoozed_until FROM inbox_messages "
+                    "WHERE kind IN %s AND ref_id <> '' AND archived = FALSE",
+                    (_DECISION_KINDS,))
+        return [dict(r) for r in cur.fetchall()]
+
+
 def inbox_unread_count(session_id=None, project_id=None, kind=None):
     """How many messages need the owner's eye right now: 'sent' (or a snooze
     that has lapsed), not archived. The tab's badge number. `kind` narrows the

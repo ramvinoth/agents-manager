@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native"
 import { api, type ChatStatus, type OpenDecision } from "../api/client"
 import { fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
+import { SNOOZE_OPTIONS } from "../lib/inbox"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
 import Icon from "./Icon"
 import QuestionCard from "./QuestionCard"
 import PlanCard from "./PlanCard"
+import SheetModal from "./SheetModal"
 
 const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard"> = {
   question: "help",
@@ -28,6 +30,9 @@ const KIND_LABEL: Record<OpenDecision["kind"], string> = {
  * running underneath but must NOT reshuffle the item under the reader's thumb,
  * so the cockpit walks its own copy. New items simply appear on the next open;
  * a skipped item's durable row is untouched, so it resurfaces next tick.
+ * "Postpone" is the Inbox's snooze, taken from here: ONE snooze on the item's
+ * inbox row (d.inbox_id) holds it out of every surface — Inbox, band, cockpit —
+ * until it lapses, then it is back. Deferred, never dropped.
  *
  * Full cold-reader context per kind, from the RIGHT source:
  *  - question / plan → the human-facing content the index truncates to 120 chars
@@ -68,6 +73,7 @@ export default function DecisionCockpit({
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState("")
   const [busy, setBusy] = useState(false)
+  const [postponing, setPostponing] = useState(false)
 
   const len = decisions.length
   const d = decisions[idx]
@@ -127,6 +133,20 @@ export default function DecisionCockpit({
     setIdx(next)
     bump()
   }, [idx, len, resolved, onClose])
+
+  const postpone = useCallback(
+    (hours: number) => {
+      setPostponing(false)
+      if (busy || !d || !d.inbox_id) return
+      setBusy(true)
+      api
+        .inboxSnooze(d.inbox_id, hours)
+        .then(() => goResolved()) // out of sight for now; the board's queue re-reads without it
+        .catch((e) => setLoadError((e as Error).message))
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
 
   const step = (dir: 1 | -1) => {
     const next = stepDecision(len, idx, dir, resolved)
@@ -292,21 +312,41 @@ export default function DecisionCockpit({
           ) : null}
         </ScrollView>
 
-        {/* Footer: browse (‹ ›) and skip. Skip leaves the row durable → it comes
-            back next tick; ‹ › browse without acting, no wrap. */}
+        {/* Footer: browse (‹ ›), skip, postpone. Skip leaves the row durable →
+            it comes back next tick; Postpone snoozes it (hidden everywhere until
+            the snooze lapses); ‹ › browse without acting, no wrap. An item with
+            no inbox row cannot be snoozed — only skipped. */}
         <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 10, borderTopWidth: 1, borderTopColor: t.border }}>
           <TouchableOpacity testID="cockpit-prev" onPress={() => step(-1)} disabled={busy} style={[styles.permDeny, { marginLeft: 0, flexDirection: "row", alignItems: "center", gap: 4 }]}>
             <Icon name="chevronLeft" size={16} color={t.text} />
             <Text style={styles.permDenyText}>Prev</Text>
           </TouchableOpacity>
           <TouchableOpacity testID="cockpit-skip" onPress={skip} disabled={busy} style={[styles.permDeny, { flex: 1, marginLeft: 0, alignItems: "center" }]}>
-            <Text style={styles.permDenyText}>Skip for now</Text>
+            <Text style={styles.permDenyText}>Skip</Text>
           </TouchableOpacity>
+          {d.inbox_id ? (
+            <TouchableOpacity testID="cockpit-postpone" onPress={() => setPostponing(true)} disabled={busy} style={[styles.permDeny, { flex: 1, marginLeft: 0, alignItems: "center" }]}>
+              <Text style={styles.permDenyText}>Postpone</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity testID="cockpit-next" onPress={() => step(1)} disabled={busy} style={[styles.permDeny, { marginLeft: 0, flexDirection: "row", alignItems: "center", gap: 4 }]}>
             <Text style={styles.permDenyText}>Next</Text>
             <Icon name="chevronRight" size={16} color={t.text} />
           </TouchableOpacity>
         </View>
+
+        <SheetModal visible={postponing} onClose={() => setPostponing(false)}>
+          <Text style={styles.sheetTitle}>Postpone — bring it back in</Text>
+          {SNOOZE_OPTIONS.map((o) => (
+            <TouchableOpacity key={o.hours} testID={`cockpit-postpone-${o.hours}`} onPress={() => postpone(o.hours)}
+              style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
+              <Text style={{ color: t.text, fontSize: 16, fontWeight: "600" }}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <Text style={{ color: t.textMuted, fontSize: 13, paddingHorizontal: 18, paddingBottom: 8 }}>
+            Hidden from the Inbox and the board until then — never dropped.
+          </Text>
+        </SheetModal>
       </SafeAreaView>
     </Modal>
   )
