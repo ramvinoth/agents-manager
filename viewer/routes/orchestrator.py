@@ -365,7 +365,25 @@ class OrchestratorMixin:
 
     # ── Organizational learning: an employee/CEO proposes a skill ─────────────
     def _g_org_skills(self, req):
-        self.send_json({"skills": db.skill_learned_list()})
+        """The team's skill library: every SKILL.md the CLI will load as /<name>
+        (disk is the truth for what exists), joined with the learned-skill ledger
+        for provenance. A ledger row whose file is gone shows as 'missing'."""
+        from viewer import skills
+        self.send_json({"skills": skills.library(db.skill_learned_list())})
+
+    def _g_org_skill_read(self, req):
+        """One skill's full SKILL.md by NAME (from skill_list). Name-resolved
+        through skills.skills_base, never a caller path, so there is no
+        traversal surface; an unknown name is simply not found."""
+        from viewer import skills
+        name = (req.query.get("name") or [""])[0].strip()
+        if not skills.valid_name(name):
+            self.send_json({"error": "Bad skill name"}, status=400); return
+        p = skills.skills_base() / name / "SKILL.md"
+        if not p.is_file():
+            self.send_json({"error": "Skill not found"}, status=404); return
+        self.send_json({"name": name, "path": str(p),
+                        "content": p.read_text(errors="replace")})
 
     def _p_org_skills_propose(self, req):
         """Propose a learned skill. The proposal is ONE write either way; overlap

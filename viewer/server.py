@@ -385,6 +385,7 @@ class SessionViewerHandler(
         "/api/org/loop-control": "_g_org_loop_control",
         "/api/org/system-preamble": "_g_org_system_preamble",
         "/api/org/skills": "_g_org_skills",
+        "/api/org/skills/read": "_g_org_skill_read",
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",

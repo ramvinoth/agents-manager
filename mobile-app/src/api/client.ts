@@ -182,7 +182,10 @@ export type HarmanConfig = { automation_enabled?: boolean; enabled: boolean; int
  *  NOT start Harman's manager tick (that is `automation_enabled`). */
 export type LoopMode = "user" | "harman" | "both" | "none"
 export type LoopControl = { mode: LoopMode }
-export type LearnedSkill = { id: number; name: string; path: string; origin_employee: number | null; origin_card: number | null; origin_session: string | null; status: string; created_at: number }
+/** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
+ *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
+ *  status "missing" means a ledger row whose file is gone. */
+export type LearnedSkill = { id?: number; name: string; path: string; description?: string; origin_employee?: number | null; origin_card?: number | null; origin_session?: string | null; status: string; created_at?: number }
 export type ChatStatus = {
   running?: boolean
   idle?: boolean

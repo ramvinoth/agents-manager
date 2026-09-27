@@ -24,6 +24,9 @@ export default function OrgScreen({ navigation }: Props) {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
+  // The library route returns every skill on disk; this section is about what the
+  // TEAM learned, so it shows only rows with ledger provenance (an id).
+  const learned = skills.filter((s) => s.id != null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [editEmp, setEditEmp] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -333,10 +336,13 @@ export default function OrgScreen({ navigation }: Props) {
       </TouchableOpacity>
 
       <Section title="Skills learned">
-        {skills.length ? skills.map((s) => (
-          <View key={s.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
+        {learned.length ? learned.map((s) => (
+          <View key={s.name} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
             <Icon name={s.status === "active" ? "sparkle" : "clock"} size={14} color={s.status === "active" ? t.accent : t.textMuted} />
-            <Text style={{ color: t.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{s.name}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: t.text, fontSize: 13 }} numberOfLines={1}>{s.name}</Text>
+              {s.description ? <Text style={{ color: t.textMuted, fontSize: 11 }} numberOfLines={2}>{s.description}</Text> : null}
+            </View>
             <Text style={{ color: t.textMuted, fontSize: 11 }}>{s.status}</Text>
           </View>
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing learned yet.</Text>}
