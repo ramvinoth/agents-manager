@@ -266,7 +266,7 @@ function buildStyles(t: Theme) {
     drawerItemText: { fontSize: 15, fontWeight: "600", color: t.text },
     drawerItemMuted: { fontSize: 15, color: t.textMuted },
     // Theme switch (System / Light / Dark) segmented control
-    segRow: { flexDirection: "row", gap: 6, paddingHorizontal: 16, marginTop: 6 },
+    segRow: { flexDirection: "row", gap: 6, paddingHorizontal: 18, marginTop: 6 },
     seg: {
       flex: 1,
       alignItems: "center",

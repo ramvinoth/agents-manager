@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
+import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type InboxKind, type InboxMessage } from "../api/client"
@@ -47,9 +48,11 @@ type Props = {
 export default function InboxScreen({ navigation, filter, title, host, path, isTab }: Props) {
   const t = useTheme()
   const styles = useStyles()
+  const headerHeight = useHeaderHeight()
   const scope = useMemo(() => inboxScopeFilter(filter), [filter])
   const [messages, setMessages] = useState<InboxMessage[]>([])
   const [queue, setQueue] = useState<{ count: number; items: InboxMessage[] } | null>(null)
+  const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [kind, setKind] = useState<"all" | InboxKind>("all")
@@ -73,6 +76,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
       reads.current.applied = request
       setMessages(r.messages || [])
       setQueue(r.queue || null)
+      setUnread(r.unread || 0)
       setError("")
     } catch (err) {
       if (request < reads.current.applied) return
@@ -92,13 +96,16 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
   }, [load]))
 
   // The shared stack header: a pushed (scoped) view gets its title; the tab
-  // re-asserts its own on focus (sibling tabs share the header).
+  // re-asserts its own on focus (sibling tabs share the header). The unread
+  // count rides in the title so Ram sees "how many wait on me" at a glance —
+  // the same number the tab badge shows.
   useFocusEffect(useCallback(() => {
+    const base = title || (filter?.session ? "Chat inbox" : "Inbox")
     navigation.setOptions({
-      title: title || (filter?.session ? "Chat inbox" : "Inbox"),
+      title: unread > 0 ? `${base} (${unread})` : base,
       headerLeft: isTab ? () => null : undefined,
     })
-  }, [navigation, title, filter?.session, isTab]))
+  }, [navigation, title, filter?.session, isTab, unread]))
 
   // The tab's composer needs a target to message: this host's chats, chips.
   useEffect(() => {
@@ -172,7 +179,11 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: t.bg }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={headerHeight}
+    >
       {error ? <Text style={{ color: t.danger, paddingHorizontal: 16, paddingTop: 8 }}>{error}</Text> : null}
 
       {showBand ? (
@@ -443,6 +454,6 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
           Snoozed is not dropped — it resurfaces when the snooze lapses.
         </Text>
       </SheetModal>
-    </View>
+    </KeyboardAvoidingView>
   )
 }

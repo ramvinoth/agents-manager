@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { Text, View } from "react-native"
 import { createMaterialTopTabNavigator } from "@react-navigation/material-top-tabs"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -11,6 +11,7 @@ import ProfileScreen from "./ProfileScreen"
 import NotesScreen from "./NotesScreen"
 import InboxScreen from "./InboxScreen"
 import Icon, { type IconName } from "../components/Icon"
+import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
 
 export type HomeTabParamList = {
@@ -49,6 +50,25 @@ export default function HomeTabs({ navigation }: Props) {
   const t = useTheme()
   const insets = useSafeAreaInsets()
 
+  // The Inbox badge: how many messages/decisions wait on this reader. It has to
+  // update while ANOTHER tab is showing (that's the point of a badge), so the
+  // count is polled here at the navigator level — not inside InboxScreen, which
+  // only mounts/refreshes when the Inbox tab itself is focused. Cheap unscoped
+  // list; a failure just leaves the last count (no error surface on a badge).
+  const [inboxUnread, setInboxUnread] = useState(0)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    const poll = () => {
+      api.inboxList({})
+        .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
+        .catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 15000)
+    return () => { alive.current = false; clearInterval(id) }
+  }, [])
+
   return (
     <Tab.Navigator
       tabBarPosition="bottom"
@@ -76,6 +96,7 @@ export default function HomeTabs({ navigation }: Props) {
         tabBarIndicatorStyle: { height: 0 },
         tabBarIcon: ({ color, focused }) => {
           const spec = TAB_ICON[route.name]
+          const badge = route.name === "Inbox" && inboxUnread > 0 ? inboxUnread : 0
           return (
             // 58, not 64: six tabs must fit a 375pt screen without the tab bar
             // scrolling (6×64=384 would).
@@ -85,6 +106,20 @@ export default function HomeTabs({ navigation }: Props) {
                   background would be redundant. */}
               <View style={{ width: 48, height: 26, alignItems: "center", justifyContent: "center" }}>
                 <Icon name={focused ? spec.on : spec.off} size={20} color={color} />
+                {badge ? (
+                  <View
+                    testID="inbox-tab-badge"
+                    style={{
+                      position: "absolute", top: -2, right: 6, minWidth: 16, height: 16,
+                      borderRadius: 8, paddingHorizontal: 4, backgroundColor: t.danger,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>
+                      {badge > 99 ? "99+" : badge}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
               <Text
                 style={{ fontSize: 11, fontWeight: "600", color, marginTop: 2, textAlign: "center" }}

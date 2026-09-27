@@ -5,6 +5,14 @@ import { aiError, modelChoices, sameAI, switchAIProvider, type AIConfig, type AI
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
 
+// Display labels for the two FIXED enum sets the server hands us (viewer/ai.py:
+// conversationModes, EFFORTS). The set of valid values is the server's truth —
+// we only iterate what `caps` returns — but how each value READS is a client
+// presentation concern. Keyed by the raw value; an unknown future value falls
+// back to its raw string, so a new server effort/mode still renders.
+const CONVMODE_LABEL: Record<string, string> = { agent: "Agent", chat: "Chat" }
+const EFFORT_LABEL: Record<string, string> = { "": "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" }
+
 /** One staged transaction for all three scopes. Mounted afresh on each open. */
 export default function ProviderPicker({ config, scope, providers, title, localOnly, onSave, onClose }: {
   config: AIConfig; scope: { id?: string; host: string; agent?: string }; providers: Provider[]; title: string; localOnly?: boolean
@@ -71,9 +79,26 @@ export default function ProviderPicker({ config, scope, providers, title, localO
   }
   const row = (id: string, label: string, selected: boolean, action: () => void, disabled = false) => (
     <TouchableOpacity key={id} testID={id} accessibilityRole="radio" accessibilityState={{selected, disabled: disabled || busy}} disabled={disabled || busy}
-      onPress={action} style={{minHeight: 48, padding: 12, backgroundColor: selected ? t.chipBg : t.surface, opacity: disabled ? .5 : 1}}>
+      onPress={action} style={{minHeight: 48, paddingHorizontal: 18, paddingVertical: 12, backgroundColor: selected ? t.chipBg : t.surface, opacity: disabled ? .5 : 1}}>
       <Text style={{color: selected ? t.accent : t.text}}>{selected ? "✓ " : ""}{label}</Text>
     </TouchableOpacity>
+  )
+  // A fixed small enum (conversation mode, effort) reads as ONE control the eye
+  // scans left-to-right — a segmented row — not a stack of radio rows. Same
+  // idiom as the theme/loop pickers (styles.seg*), so the whole app picks small
+  // sets the one way. Each segment keeps its per-value testID for the e2e specs.
+  const segGroup = (testID: string, items: {key: string; id: string; label: string}[], selected: string, onPick: (key: string) => void) => (
+    <View style={styles.segRow} testID={testID}>
+      {items.map(it => {
+        const active = it.key === selected
+        return (
+          <TouchableOpacity key={it.id} testID={it.id} accessibilityRole="radio" accessibilityState={{selected: active, disabled: busy}}
+            disabled={busy} onPress={() => onPick(it.key)} style={[styles.seg, active ? styles.segActive : null]}>
+            <Text style={[styles.segText, active ? styles.segTextActive : null]} numberOfLines={1}>{it.label}</Text>
+          </TouchableOpacity>
+        )
+      })}
+    </View>
   )
   const rows = [{id: "", name: "Built-in (runner default)"}, ...providers].filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
   return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
@@ -92,9 +117,9 @@ export default function ProviderPicker({ config, scope, providers, title, localO
           <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={styles.ssInput} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch}/>
           {rows.map(p => row(`ai-provider-${p.id || "default"}`, p.name, draft.provider === p.id, () => provider(p.id), !!p.id && !caps?.customProviders))}
           <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
-          {caps?.conversationModes.map(m => row(`ai-convmode-${m}`, m, draft.convMode === m, () => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""})))}
+          {caps?.conversationModes.length ? segGroup("ai-convmode", caps.conversationModes.map(m => ({key: m, id: `ai-convmode-${m}`, label: CONVMODE_LABEL[m] || m})), draft.convMode, m => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""})) : null}
           <Text style={styles.sheetSection}>EFFORT</Text>
-          {caps?.efforts.map(e => row(`ai-effort-${e || "default"}`, e || "Runner default", draft.effort === e, () => setDraft({...draft, effort: e})))}
+          {caps?.efforts.length ? segGroup("ai-effort", caps.efforts.map(e => ({key: e, id: `ai-effort-${e || "default"}`, label: EFFORT_LABEL[e] ?? (e || "Auto")})), draft.effort, e => setDraft({...draft, effort: e})) : null}
           <Text style={styles.sheetSection}>MODEL</Text>
           {row("ai-model-default", "Runner / provider default", draft.model?.kind === "default", () => setDraft({...draft, model: {kind: "default"}}))}
           {scope.id ? row("ai-model-legacy", "Remove explicit override (legacy request behavior)", draft.model === null, () => setDraft({...draft, model: null})) : null}

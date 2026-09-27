@@ -265,7 +265,7 @@ export default function ProfileScreen({ navigation }: Props) {
             : "Every scheduled loop fires — yours and the agents'."
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 32 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       <Text style={styles.sheetSection}>AUTOMATION</Text>
       <View style={styles.ssRow}>
         <View style={{ flex: 1 }}>
