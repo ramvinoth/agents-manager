@@ -328,6 +328,20 @@ def test_google_missing_segment_is_404(db, monkeypatch):
     assert err.status == 404
 
 
+def test_google_api_disabled_is_one_setup_sentence(db, monkeypatch):
+    """Consent can succeed while the Drive API is still off in the owner's
+    Cloud project; Google's first-listing 403 is rewritten to the one step
+    that fixes it instead of being shown verbatim."""
+    a, _ = _gdrive(db, monkeypatch)
+    body = json.dumps({"error": {"code": 403, "message": "Google Drive API has not been used in project 1 before or it is disabled. Enable it by visiting https://console...",
+                                 "errors": [{"reason": "accessNotConfigured", "domain": "usageLimits"}]}}).encode()
+    monkeypatch.setattr(drives, "_http", lambda *a_, **k: (403, {}, body))
+    err = pytest.raises(DriveError, a.fs_list, "/").value
+    assert err.status == 403
+    assert "turned off" in str(err) and "Enable" in str(err)
+    assert "console.developers" not in str(err)
+
+
 def test_google_mkdir(db, monkeypatch):
     a, fake = _gdrive(db, monkeypatch)
     r = a.mkdir("/Docs", "Reports")

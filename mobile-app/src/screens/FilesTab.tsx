@@ -60,6 +60,10 @@ export default function FilesTab({ navigation }: Props) {
         setEntries(sortEntries(r.entries || []))
         setParent(r.parent)
       } catch (e) {
+        // A failed listing must not leave the previous place's files on
+        // screen under the error — they'd read as this location's contents.
+        setEntries([])
+        setParent(undefined)
         setError((e as Error).message)
       } finally {
         setLoading(false)

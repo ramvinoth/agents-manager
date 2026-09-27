@@ -413,11 +413,20 @@ class GoogleDrive(_OAuthDrive):
 
     def _msg(self, status, body):
         """The vendor error message, or a bare HTTP code — for per-file results
-        where one bad file must not abort the whole batch."""
+        where one bad file must not abort the whole batch. One case is
+        rewritten: consent succeeds even when the Drive API is switched off in
+        the owner's Google Cloud project, and the first listing then fails with
+        a wall of console prose. That is a setup step, so say it as one."""
         try:
-            return (json.loads(body).get("error") or {}).get("message") or f"HTTP {status}"
+            err = json.loads(body).get("error") or {}
         except Exception:
             return f"HTTP {status}"
+        reasons = {e.get("reason") for e in err.get("errors") or [] if isinstance(e, dict)}
+        if "accessNotConfigured" in reasons or "Drive API has not been used" in (err.get("message") or ""):
+            return ("The Google Drive API is turned off in the Google Cloud project that owns this OAuth client. "
+                    "Open console.cloud.google.com → APIs & Services → Library → Google Drive API → Enable, "
+                    "then pull to refresh (Google can take a minute to apply it).")
+        return err.get("message") or f"HTTP {status}"
 
     # ---- path model -------------------------------------------------------
 
