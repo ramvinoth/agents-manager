@@ -22,6 +22,7 @@ import CallScreen from "./src/screens/CallScreen"
 import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import ProvidersScreen from "./src/screens/ProvidersScreen"
+import IntegrationsScreen from "./src/screens/IntegrationsScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import CardDetailScreen from "./src/screens/CardDetailScreen"
 import NotesScreen from "./src/screens/NotesScreen"
@@ -44,6 +45,7 @@ export type RootStackParamList = {
   SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
   Capabilities: { host?: string; cwd?: string; title?: string } | undefined
   Providers: undefined
+  Integrations: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
   Notes: { session?: string; project?: number; title?: string } | undefined
@@ -193,6 +195,7 @@ export default function App() {
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
             <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
+            <Stack.Screen name="Integrations" component={IntegrationsScreen} options={{ title: "Integrations" }} />
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Notes" options={{ title: "Notes" }}>

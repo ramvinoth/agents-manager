@@ -7,14 +7,16 @@ import * as Sharing from "expo-sharing"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type FileEntry } from "../api/client"
+import { api, type Drive, type FileEntry } from "../api/client"
 import {
   baseName, humanSize, joinPath, sortEntries,
   navInit, navVisit, navBack, navForward, navCurrent, navCanBack, navCanForward,
   type NavHistory,
 } from "../lib/files"
+import { HOST_LOCATION, START_PATH, describeLocation, fsScope, isLiveLocation, type Location } from "../lib/location"
 import { currentHost } from "../state/config"
 import { HostHeaderButton } from "../components/HostPicker"
+import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
 import { useTheme } from "../lib/useTheme"
@@ -22,18 +24,24 @@ import { useTheme } from "../lib/useTheme"
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
 /**
- * Files tab: a host-aware filesystem browser with upload / download / delete.
- * Reads the *current* host from shared state and re-roots to ~ when it changes —
- * so the top-left HostPicker drives it. Tap a folder to descend; tap a file to
- * download+share; long-press any row for delete. Back/forward history + on-screen
- * nav buttons + edge-swipe navigation (see navHistory in lib/files.ts).
+ * Files tab: a location-aware file browser with upload / download / delete.
+ * The files come from one of two places: the *current* host (shared state,
+ * driven by the top-left HostPicker) or a cloud drive chosen here via the
+ * top-right LocationPicker. Either change re-roots to the start folder. Tap a
+ * folder to descend; tap a file to download+share; long-press any row for
+ * delete. Back/forward history + on-screen nav buttons + edge-swipe navigation
+ * (see navHistory in lib/files.ts).
  */
 export default function FilesTab({ navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
   const [host, setHost] = useState(currentHost())
   const [hostLabel, setHostLabel] = useState("This machine")
-  const [hist, setHist] = useState<NavHistory>(() => navInit("~"))
+  const [location, setLocation] = useState<Location>(HOST_LOCATION)
+  const [drives, setDrives] = useState<Drive[]>([])
+  const [locOpen, setLocOpen] = useState(false)
+  const scope = fsScope(host, location)
+  const [hist, setHist] = useState<NavHistory>(() => navInit(START_PATH))
   const path = navCurrent(hist)
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [parent, setParent] = useState<string | undefined>()
@@ -44,11 +52,11 @@ export default function FilesTab({ navigation }: Props) {
   // Load a directory LISTING (no history change). Returns nothing; used by
   // history moves, host re-root, refresh, and post-mutation reloads.
   const fetchDir = useCallback(
-    async (p: string, h: string) => {
+    async (p: string, h: string, loc: Location) => {
       setError("")
       setLoading(true)
       try {
-        const r = await api.fs(h, p)
+        const r = await api.fs(fsScope(h, loc), p)
         setEntries(sortEntries(r.entries || []))
         setParent(r.parent)
       } catch (e) {
@@ -65,15 +73,27 @@ export default function FilesTab({ navigation }: Props) {
   const goBack = useCallback(() => setHist((h) => navBack(h)), [])
   const goForward = useCallback(() => setHist((h) => navForward(h)), [])
 
-  // (Re)load whenever the current history entry or host changes.
+  // (Re)load whenever the current history entry or location changes.
   useEffect(() => {
-    fetchDir(path, host)
-  }, [fetchDir, path, host])
+    fetchDir(path, host, location)
+  }, [fetchDir, path, host, location])
 
-  // Re-root history to ~ whenever the active host changes.
+  // Re-root history whenever the place we look at changes. A host switch also
+  // leaves any drive: the host is the app-wide choice, the drive was local to it.
   useEffect(() => {
-    setHist(navInit("~"))
+    setLocation(HOST_LOCATION)
+    setHist(navInit(START_PATH))
   }, [host])
+  useEffect(() => {
+    setHist(navInit(START_PATH))
+  }, [location])
+  useEffect(() => {
+    api.drives().then((r) => setDrives(r.drives || [])).catch(() => {})
+  }, [])
+  // A drive removed elsewhere must not stay selected as a place.
+  useEffect(() => {
+    if (!isLiveLocation(location, drives)) setLocation(HOST_LOCATION)
+  }, [drives, location])
 
   const canBack = navCanBack(hist)
   const canForward = navCanForward(hist)
@@ -157,8 +177,8 @@ export default function FilesTab({ navigation }: Props) {
     setBusy(true)
     setError("")
     try {
-      await api.fsUpload(host, path, uri, name, mime)
-      await fetchDir(path, host)
+      await api.fsUpload(scope, path, uri, name, mime)
+      await fetchDir(path, host, location)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -185,9 +205,9 @@ export default function FilesTab({ navigation }: Props) {
       if (!n) return
       setBusy(true)
       try {
-        const r = await api.fsMkdir({ path, name: n, host })
+        const r = await api.fsMkdir(scope, { path, name: n })
         if (r?.error) setError(r.error)
-        else await fetchDir(path, host)
+        else await fetchDir(path, host, location)
       } catch (e) {
         setError((e as Error).message)
       } finally {
@@ -201,7 +221,7 @@ export default function FilesTab({ navigation }: Props) {
     setError("")
     try {
       const full = joinPath(path, item.name)
-      const { url, headers } = api.fsDownloadUrl(host, full)
+      const { url, headers } = api.fsDownloadUrl(scope, full)
       const dest = FileSystem.cacheDirectory + encodeURIComponent(item.name)
       const r = await FileSystem.downloadAsync(url, dest, { headers })
       if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
@@ -214,7 +234,7 @@ export default function FilesTab({ navigation }: Props) {
   }
 
   function confirmDelete(item: FileEntry) {
-    Alert.alert("Delete " + item.name + "?", "It will be moved to the server's trash.", [
+    Alert.alert("Delete " + item.name + "?", location === HOST_LOCATION ? "It will be moved to the server's trash." : "It will be moved to the drive's trash.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
@@ -222,9 +242,9 @@ export default function FilesTab({ navigation }: Props) {
         onPress: async () => {
           setBusy(true)
           try {
-            const r = await api.fsDelete({ path: joinPath(path, item.name), host })
+            const r = await api.fsDelete(scope, { path: joinPath(path, item.name) })
             if (r?.error) setError(r.error)
-            else await fetchDir(path, host)
+            else await fetchDir(path, host, location)
           } catch (e) {
             setError((e as Error).message)
           } finally {
@@ -237,22 +257,27 @@ export default function FilesTab({ navigation }: Props) {
 
   // Re-assert this tab's header on FOCUS: swipeable tabs share one parent-stack
   // header and stay mounted, so setting it only on mount lets a sibling tab's
-  // header linger. Files owns the new-folder + upload actions.
+  // header linger. Files owns the location chip + new-folder + upload actions;
+  // the terminal is a host thing, so it hides while a drive is selected.
+  const onDrive = location !== HOST_LOCATION
   useFocusEffect(
     useCallback(() => {
       navigation.setOptions({
         headerLeft: () => <HostHeaderButton navigation={navigation} />,
         headerRight: () => (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 4 }}>
-            <TouchableOpacity
-              testID="files-terminal"
-              accessibilityLabel="open-terminal"
-              onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
-              hitSlop={8}
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-            >
-              <Icon name="terminal" size={21} color={t.accent} />
-            </TouchableOpacity>
+            <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
+            {onDrive ? null : (
+              <TouchableOpacity
+                testID="files-terminal"
+                accessibilityLabel="open-terminal"
+                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
+                hitSlop={8}
+                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
+              >
+                <Icon name="terminal" size={21} color={t.accent} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               testID="files-newfolder"
               onPress={promptNewFolder}
@@ -272,7 +297,7 @@ export default function FilesTab({ navigation }: Props) {
           </View>
         ),
       })
-    }, [navigation, t, path, host, hostLabel]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [navigation, t, path, host, hostLabel, location, drives]) // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   return (
@@ -290,9 +315,17 @@ export default function FilesTab({ navigation }: Props) {
           <Icon name="up" size={20} color={t.text} />
         </TouchableOpacity>
         <Text style={[styles.fsPath, { flex: 1, marginLeft: 4 }]} numberOfLines={1}>
-          {path}
+          {onDrive ? `${describeLocation(location, drives, hostLabel)}: ${path}` : path}
         </Text>
       </View>
+      <LocationPicker
+        visible={locOpen}
+        onClose={() => setLocOpen(false)}
+        value={location}
+        hostLabel={hostLabel}
+        navigation={navigation}
+        onChange={(loc, all) => { setDrives(all); setLocation(loc) }}
+      />
       {busy ? (
         <View style={styles.fsBusy}>
           <ActivityIndicator size="small" />
@@ -307,7 +340,7 @@ export default function FilesTab({ navigation }: Props) {
           testID="filestab-list"
           data={entries}
           keyExtractor={(e) => e.name}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={() => fetchDir(path, host)} />}
+          refreshControl={<RefreshControl refreshing={false} onRefresh={() => fetchDir(path, host, location)} />}
           ListHeaderComponent={
             <>
               {error ? <Text style={[styles.error, { paddingHorizontal: 16 }]}>{error}</Text> : null}

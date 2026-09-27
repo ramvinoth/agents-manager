@@ -323,6 +323,20 @@ export default function ProfileScreen({ navigation }: Props) {
         <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Provider connections</Text>
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
+
+      <Text style={styles.sheetSection}>STORAGE</Text>
+      <TouchableOpacity
+        testID="open-integrations"
+        style={styles.profileInfoRow}
+        onPress={() => navigation.navigate("Integrations")}
+      >
+        <Icon name="cloud" size={18} color={t.accent} />
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <Text style={[styles.profileInfoValue, { color: t.text, textAlign: "left" }]}>Cloud drive integrations</Text>
+          <Text style={styles.ssRowHint}>OAuth clients for Google Drive, Dropbox and OneDrive.</Text>
+        </View>
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
+      </TouchableOpacity>
       {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="New-chat defaults" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
 
       <Text style={styles.sheetSection}>SYSTEM PREAMBLE</Text>

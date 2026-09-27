@@ -51,6 +51,15 @@ export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
 export type FileList = { path: string; parent?: string; entries: FileEntry[]; home?: string; truncated?: boolean }
+/** Where a file call looks: an SSH host, a cloud drive, or (empty) this machine. */
+export type FsScope = { drive: string } | { host: string } | {}
+/** A connected (or connectable) cloud drive. `authorized` is a "has a usable
+ *  token" flag; an unauthorized drive still lists, picking it runs consent. */
+export type Drive = { id: string; label: string; kind: string; status: string; hidden: boolean; authorized: boolean }
+/** One vendor's OAuth client as Integrations sees it — never the secret itself.
+ *  `public` marks a PKCE client (Dropbox, OneDrive) that needs no secret. */
+export type DriveClient = { kind: string; label: string; public: boolean; client_id: string; has_secret: boolean; configured: boolean }
+export type DriveClientList = { clients: DriveClient[]; redirect_uri: string }
 export type SessionSummary = {
   lines: number
   userMessages: number
@@ -528,36 +537,34 @@ export const api = {
       `/api/agents${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
     ),
 
-  // ---- filesystem browser (host-aware) ----
-  fs: (host: string, path: string, hidden = false) =>
+  // ---- filesystem browser (local / SSH host / cloud drive) ----
+  // Every call is scoped by `scope` — {host} for an SSH host, {drive} for a
+  // cloud drive, {} for this machine — built by lib/location.ts#fsScope so the
+  // "exactly one of host/drive" rule the server enforces lives in one place.
+  fs: (scope: FsScope, path: string, hidden = false) =>
     req<FileList>(
       "GET",
-      `/api/fs?path=${encodeURIComponent(path)}&hidden=${hidden ? 1 : 0}` +
-        (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
+      `/api/fs?${new URLSearchParams({ path, hidden: hidden ? "1" : "0", ...scope })}`
     ),
 
   // Create a folder. `name` must be a single segment (server rejects slashes).
-  fsMkdir: (body: { path: string; name: string; host?: string }) =>
-    req<{ error?: string }>("POST", "/api/fs/mkdir", body),
+  fsMkdir: (scope: FsScope, body: { path: string; name: string }) =>
+    req<{ error?: string }>("POST", "/api/fs/mkdir", { ...body, ...scope }),
 
-  // Delete a file/folder (server moves it to a reversible trash dir).
-  fsDelete: (body: { path: string; host?: string }) =>
-    req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", body),
+  // Delete a file/folder (server moves it to a reversible trash dir; a drive
+  // adapter trashes it vendor-side).
+  fsDelete: (scope: FsScope, body: { path: string }) =>
+    req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", { ...body, ...scope }),
 
-  // Rename a single entry in place. `name` is one path segment.
-  fsRename: (body: { path: string; name: string; host?: string }) =>
-    req<{ renamed?: string; error?: string }>("POST", "/api/fs/rename", body),
-
-  // Upload a file to `dir` on `host` via multipart/form-data. RN's FormData
-  // takes a { uri, name, type } object for a file part; the server parses the
+  // Upload a file to `dir` via multipart/form-data. RN's FormData takes a
+  // { uri, name, type } object for a file part; the server parses the
   // multipart body into (filename, bytes) — see _p_fs_upload.
-  fsUpload: async (host: string, dir: string, uri: string, name: string, mime?: string) => {
+  fsUpload: async (scope: FsScope, dir: string, uri: string, name: string, mime?: string) => {
     if (!serverUrl()) throw new Error("No server configured")
     const form = new FormData()
     // @ts-expect-error RN FormData accepts the {uri,name,type} file shape.
     form.append("file", { uri, name, type: mime || "application/octet-stream" })
-    const q = new URLSearchParams({ path: dir })
-    if (host && host !== "local") q.set("host", host)
+    const q = new URLSearchParams({ path: dir, ...scope })
     const res = await fetch(`${serverUrl()}/api/fs/upload?${q.toString()}`, {
       method: "POST",
       // NOTE: do NOT set Content-Type — fetch adds the multipart boundary itself.
@@ -572,11 +579,38 @@ export const api = {
   // The authed URL for downloading a file. RN's fetch/FileSystem can pass the
   // Bearer header (a browser <a> can't), so we return the URL + headers for
   // FileSystem.downloadAsync to save it to disk, then share it.
-  fsDownloadUrl: (host: string, path: string): { url: string; headers: Record<string, string> } => {
-    const q = new URLSearchParams({ path })
-    if (host && host !== "local") q.set("host", host)
+  fsDownloadUrl: (scope: FsScope, path: string): { url: string; headers: Record<string, string> } => {
+    const q = new URLSearchParams({ path, ...scope })
     return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
   },
+
+  // ---- cloud drives (the Files tab's third location) ----
+  // Every drive the location picker can offer (sanitized — no tokens) plus the
+  // vendors a NEW drive may be created for.
+  drives: () => req<{ drives: Drive[]; vendors: string[] }>("GET", "/api/drives"),
+  // Create an empty drive row, then connect it via driveOAuthStart.
+  driveCreate: (body: { label: string; kind: string }) =>
+    req<{ drive: Drive }>("POST", "/api/drives", body),
+  // Remove a drive and its stored tokens; the vendor-side files are untouched.
+  driveDelete: (id: string) => req<{ ok?: boolean; error?: string }>("POST", "/api/drives/delete", { drive: id }),
+  // Begin the hosted consent flow: the vendor URL to open in the system browser
+  // and the pending handle to poll. The vendor sends the browser back to the
+  // server's /api/drive/oauth/callback, which finishes the exchange, so the
+  // app only waits for `status` to flip.
+  driveOAuthStart: (drive: string) =>
+    req<{ url: string; pending: string } | { error: string }>("POST", "/api/drive/oauth/start", { drive }),
+  driveOAuthStatus: (pending: string) =>
+    req<{ status: "waiting" | "authorized" | "failed" | "expired"; error?: string }>(
+      "GET", `/api/drive/oauth/status?pending=${encodeURIComponent(pending)}`
+    ),
+  // Harman's own OAuth client per vendor (Integrations). The secret is
+  // write-only: the list reports has_secret, never the value; a save without
+  // client_secret keeps the stored one.
+  driveClients: () => req<DriveClientList>("GET", "/api/drive/clients"),
+  driveClientSave: (body: { kind: string; client_id: string; client_secret?: string }) =>
+    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients", body),
+  driveClientDelete: (kind: string) =>
+    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients/delete", { kind }),
 
   // ---- voice (call listening + text-to-speech) ----
   // Streaming TTS URL for react-native-track-player: a GET that returns a live
