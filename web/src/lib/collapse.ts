@@ -13,10 +13,9 @@
  * reader. Closing the fence keeps the preview rendering as code.
  *
  * DUPLICATED from mobile-app/src/lib/collapse.ts, deliberately: the two apps
- * have no shared build. Keep them in sync BY HAND — and note the sibling
- * thinking.ts claims to mirror mobile's and no longer does, which is exactly the
- * drift this warning exists to prevent. Both copies are unit-tested; if you
- * change a threshold here, change it there and run both suites.
+ * have no shared build. Keep them in sync BY HAND (same rule as the sibling
+ * thinking.ts). Both copies are unit-tested; if you change a threshold here,
+ * change it there and run both suites.
  */
 
 export type Collapse = {

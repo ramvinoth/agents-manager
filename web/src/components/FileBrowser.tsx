@@ -184,7 +184,7 @@ export function FileBrowser() {
     setActionError(null)
     setBusy("Preparing download…")
     try {
-      const res = await fetch(href)
+      const res = await api.getRes(href)
       if (!res.ok) {
         const d = await res.json().catch(() => null)
         throw new Error(d?.error || `Download failed (HTTP ${res.status})`)

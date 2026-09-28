@@ -8,7 +8,10 @@
  * PREFIX-ONLY by design: the block is only recognized at the very start of the text
  * (after optional whitespace). A real reasoning block always leads the response, and
  * matching inline would corrupt normal prose or code that merely mentions a
- * `<think>` tag. Mirrors mobile-app/src/lib/thinking.ts.
+ * `<think>` tag.
+ *
+ * DUPLICATED from mobile-app/src/lib/thinking.ts, deliberately: the two apps
+ * have no shared build. Keep them in sync BY HAND; both copies are unit-tested.
  */
 export function splitThinking(text: string): { thinking: string; body: string } {
   if (!text) return { thinking: "", body: "" }

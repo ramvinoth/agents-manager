@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { Sparkles, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -7,6 +7,7 @@ import { Markdown } from "./Markdown"
 import { useStore, useAgentLabel } from "@/store"
 import { planText, planDecision, planStateLabel } from "@/lib/plan"
 import type { ToolUseBlock } from "@/lib/types"
+import { useFoldOnDecision } from "./useFoldOnDecision"
 
 /**
  * A proposed plan (ExitPlanMode), with Approve / Request changes while it is
@@ -23,24 +24,11 @@ export function PlanBlock({ block }: { block: ToolUseBlock }) {
   const state = planDecision(block.result)
   const pending = state === "pending"
   const text = planText(block.input)
-  const [open, setOpen] = useState(pending)
+  const [open, toggle] = useFoldOnDecision(pending)
   const [asking, setAsking] = useState(false)
   const [feedback, setFeedback] = useState("")
   const [sent, setSent] = useState(false)
-  // The card is mounted while pending and stays mounted when the decision lands
-  // (the poll fills in `result` on the same block), so the fold has to react to
-  // that transition — not just to the initial state. A reader who opened or shut
-  // it by hand keeps their choice.
-  const touched = useRef(false)
-  useEffect(() => {
-    if (!touched.current) setOpen(pending)
-  }, [pending])
   if (!text) return null
-
-  const toggle = () => {
-    touched.current = true
-    setOpen((o) => !o)
-  }
 
   const decide = (d: "approve" | "deny", note?: string) => {
     if (sent) return

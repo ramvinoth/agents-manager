@@ -27,6 +27,7 @@ import type {
 const TAIL_LINES = 400
 const CHUNK_LINES = 400
 const POLL_MS = 2000
+const CHAT_POLL_MS = 1500
 
 /** Restore scope — mirrors Claude Code's /rewind menu. */
 export type RestoreMode = "conversation" | "code" | "code+conversation"
@@ -411,7 +412,7 @@ export const useStore = create<AppState>((set, get) => {
       } catch {
         /* keep watching */
       }
-    }, 1500)
+    }, CHAT_POLL_MS)
   }
 
   function watchLogin() {

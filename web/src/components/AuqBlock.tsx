@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { HelpCircle, Check, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
 import type { ToolUseBlock } from "@/lib/types"
+import { useFoldOnDecision } from "./useFoldOnDecision"
 
 interface Option {
   label: string
@@ -26,19 +27,7 @@ export function AuqBlock({ block }: { block: ToolUseBlock }) {
   const [picks, setPicks] = useState<Record<number, string[]>>({})
   const [note, setNote] = useState("")
   const [sent, setSent] = useState(false)
-  // Once answered, fold to the header — a stack of answered questions otherwise
-  // pushes the live conversation off screen. The card stays mounted across the
-  // answer (the poll fills in `result`), so this reacts to the transition; an
-  // explicit open/close by the reader wins.
-  const [open, setOpen] = useState(!answered)
-  const touched = useRef(false)
-  useEffect(() => {
-    if (!touched.current) setOpen(!answered)
-  }, [answered])
-  const toggle = () => {
-    touched.current = true
-    setOpen((o) => !o)
-  }
+  const [open, toggle] = useFoldOnDecision(!answered)
 
   const optionsOf = (q: Question): Option[] =>
     (q.options || []).map((o) => (typeof o === "string" ? { label: o } : o))

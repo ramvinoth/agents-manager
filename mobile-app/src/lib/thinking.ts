@@ -17,7 +17,6 @@
 export function splitThinking(text: string): { thinking: string; body: string } {
   if (!text) return { thinking: "", body: "" }
   const lead = text.replace(/^\s+/, "")
-  const ws = text.length - lead.length
 
   // Case A: text opens with a real <think> block.
   if (lead.startsWith("<think>")) {
@@ -46,7 +45,6 @@ export function splitThinking(text: string): { thinking: string; body: string } 
     }
   }
 
-  // No leading think block — return the original text untouched (preserve leading ws).
-  void ws
+  // No leading think block — return the original text untouched.
   return { thinking: "", body: text }
 }
