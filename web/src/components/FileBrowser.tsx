@@ -94,6 +94,7 @@ export function FileBrowser() {
   const [dragOver, setDragOver] = useState(false)
   const [busy, setBusy] = useState<string | null>(null) // upload/compress in flight
   const [status, setStatus] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [marquee, setMarquee] = useState<{ l: number; t: number; w: number; h: number } | null>(null)
   const dragDepth = useRef(0)
   const lastIdx = useRef<number | null>(null)
@@ -104,6 +105,7 @@ export function FileBrowser() {
     async (p: string) => {
       setLoading(true)
       setError(null)
+      setActionError(null)
       setSelected(new Set())
       setMenu(null)
       lastIdx.current = null
@@ -169,13 +171,36 @@ export function FileBrowser() {
     setTimeout(() => setStatus((s) => (s === msg ? null : s)), 3500)
   }
 
-  function triggerDownload(href: string, filename: string) {
-    const a = document.createElement("a")
-    a.href = href
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+  /** An action (download, compress, trash…) failed. The listing is still
+   *  good, so it stays on screen; the message lives in the status bar until
+   *  dismissed or the next action. `error` is only for a listing failure. */
+  function fail(e: any) {
+    setActionError(e?.message || String(e))
+  }
+
+  /** Fetch first, then save: a bare anchor download would write the server's
+   *  JSON error (404, 413 "over 256 MB") to disk under the archive's name. */
+  async function triggerDownload(href: string, filename: string) {
+    setActionError(null)
+    setBusy("Preparing download…")
+    try {
+      const res = await fetch(href)
+      if (!res.ok) {
+        const d = await res.json().catch(() => null)
+        throw new Error(d?.error || `Download failed (HTTP ${res.status})`)
+      }
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      fail(e)
+    }
+    setBusy(null)
   }
 
   function download(entry: FileEntry) {
@@ -195,6 +220,7 @@ export function FileBrowser() {
 
   async function doUpload(files: File[]) {
     if (!files.length) return
+    setActionError(null)
     setBusy("Uploading…")
     try {
       const res = await api.fsUpload(path, files, drive)
@@ -204,7 +230,7 @@ export function FileBrowser() {
       flash(failed.length ? `Uploaded with ${failed.length} error(s)` : `Uploaded ${files.length} item(s)`)
       await load(path)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      fail(e)
     }
     setBusy(null)
   }
@@ -220,7 +246,7 @@ export function FileBrowser() {
       if (d.error) throw new Error(d.error)
       await load(path)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      fail(e)
     }
   }
 
@@ -234,7 +260,7 @@ export function FileBrowser() {
       if (d.error) throw new Error(d.error)
       await load(path)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      fail(e)
     }
   }
 
@@ -248,12 +274,13 @@ export function FileBrowser() {
       flash(names.length === 1 ? `Moved “${names[0]}” to Trash` : `Moved ${names.length} items to Trash`)
       await load(path)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      fail(e)
     }
   }
 
   async function compress(names: string[]) {
     if (!names.length) return
+    setActionError(null)
     setBusy("Compressing…")
     try {
       const res = await api.fsCompress({ path, names }, drive)
@@ -262,7 +289,7 @@ export function FileBrowser() {
       flash(`Compressed ${names.length} item${names.length === 1 ? "" : "s"} → ${d.created.split("/").pop()}`)
       await load(path)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      fail(e)
     }
     setBusy(null)
   }
@@ -588,6 +615,13 @@ export function FileBrowser() {
           {busy ? (
             <span className="flex items-center gap-1.5 text-foreground">
               <Loader2 className="size-3.5 animate-spin" /> {busy}
+            </span>
+          ) : actionError ? (
+            <span className="flex min-w-0 items-center gap-1.5 text-destructive">
+              <span className="truncate" title={actionError}>{actionError}</span>
+              <button className="shrink-0 rounded p-0.5 hover:bg-muted" title="Dismiss" onClick={() => setActionError(null)}>
+                <X className="size-3.5" />
+              </button>
             </span>
           ) : status ? (
             <span className="text-foreground">{status}</span>
