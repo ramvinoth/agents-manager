@@ -5,6 +5,7 @@ import type { RootStackParamList } from "../../App"
 import { addServer, switchServer, token } from "../state/config"
 import { api } from "../api/client"
 import { useStyles } from "./styles"
+import { useTheme } from "../lib/useTheme"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Server">
 
@@ -18,6 +19,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Server">
  */
 export default function ServerScreen({ route, navigation }: Props) {
   const styles = useStyles()
+  const t = useTheme()
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
@@ -77,7 +79,7 @@ export default function ServerScreen({ route, navigation }: Props) {
       </Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <TouchableOpacity testID="server-connect" accessibilityLabel="server-connect" style={styles.button} onPress={connect} disabled={busy || !url}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Connect</Text>}
+        {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Connect</Text>}
       </TouchableOpacity>
     </ScrollView>
   )

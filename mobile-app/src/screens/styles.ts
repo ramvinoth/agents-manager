@@ -8,8 +8,10 @@ import type { Theme } from "../lib/theme"
  * so every screen follows light/dark automatically — this is what stops white
  * pages leaking in dark mode. The palette is intentionally muted/pastel (sage
  * accent, clay danger, warm sand cards) rather than neon so it reads as crafted,
- * not generic. A few intent tints (sand "waiting on you" cards, muted steer/queue
- * chips, translucent scrims) are kept literal because they read on both themes.
+ * not generic. Every colour here is a palette token — including the sand
+ * "waiting on you" cards (attention*) and text on accent fills (onAccent) —
+ * so nothing is hardcoded per screen; the only literals are shadow black and
+ * translucent scrims, which are colour-neutral.
  *
  * Consume via the `useStyles()` hook (below), not a module-level `styles`, so a
  * theme change repaints. makeStyles is memoised per Theme (LIGHT/DARK are stable
@@ -41,17 +43,7 @@ function buildStyles(t: Theme) {
       alignItems: "center",
       marginTop: 20,
     },
-    buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-    headerAction: { color: t.danger, fontSize: 15 },
-    row: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: t.border,
-    },
-    rowTitle: { fontSize: 16, fontWeight: "600", color: t.text },
+    buttonText: { color: t.onAccent, fontSize: 16, fontWeight: "600" },
     rowSub: { fontSize: 12, color: t.textMuted, marginTop: 2 },
     pill: {
       backgroundColor: t.chipBg,
@@ -62,22 +54,6 @@ function buildStyles(t: Theme) {
     },
     pillText: { fontSize: 13, color: t.text, fontWeight: "500" },
     // Tab screens (Hosts / Projects / Profile)
-    hostRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-    },
-    hostName: { fontSize: 16, fontWeight: "500" },
-    tabAddRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      paddingHorizontal: 16,
-      paddingVertical: 16,
-    },
-    tabAddText: { fontSize: 15, fontWeight: "600" },
     profileInfoRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -88,7 +64,6 @@ function buildStyles(t: Theme) {
     },
     profileInfoLabel: { fontSize: 14, color: t.textMuted },
     profileInfoValue: { flex: 1, textAlign: "right", fontSize: 14 },
-    mono: { fontFamily: "Courier", fontSize: 12, color: t.textMuted, marginTop: 8 },
     // WhatsApp-style chat list
     chatRow: {
       flexDirection: "row",
@@ -107,7 +82,6 @@ function buildStyles(t: Theme) {
       alignItems: "center",
       justifyContent: "center",
     },
-    avatarText: { color: "#fff", fontSize: 18, fontWeight: "600" },
     chatName: { fontSize: 16, fontWeight: "600", color: t.text },
     chatSub: { fontSize: 13, color: t.textMuted, marginTop: 2 },
     chatTime: { fontSize: 12, color: t.textMuted },
@@ -116,7 +90,7 @@ function buildStyles(t: Theme) {
     chatMetaCol: { alignItems: "flex-end", gap: 5 },
     unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.accent },
     // Live-run dot: a run is in flight for this session (emerald, matches web).
-    runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#10b981" },
+    runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.success },
     // WhatsApp-style filter chips + archived reveal row (Chats list header).
     filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
     filterChip: {
@@ -127,7 +101,7 @@ function buildStyles(t: Theme) {
     },
     filterChipActive: { backgroundColor: t.accent },
     filterChipText: { fontSize: 13, fontWeight: "600", color: t.textMuted },
-    filterChipTextActive: { color: "#fff" },
+    filterChipTextActive: { color: t.onAccent },
     archivedRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -151,19 +125,19 @@ function buildStyles(t: Theme) {
     },
     projectHeaderText: { flex: 1, fontSize: 13, fontWeight: "700", color: t.textMuted, textTransform: "uppercase", letterSpacing: 0.5 },
     projectHeaderCount: { fontSize: 13, fontWeight: "600", color: t.textMuted },
-    // AskUserQuestion quick-reply card — amber family (kept literal: means
-    // "the agent is waiting on you" and reads on both themes).
+    // AskUserQuestion quick-reply card — attention family ("the agent is
+    // waiting on you").
     auqCard: {
       marginTop: 8,
       padding: 10,
       borderRadius: 10,
-      backgroundColor: "#efe9dd",
+      backgroundColor: t.attentionBg,
       borderWidth: 1,
-      borderColor: "#d6c39a",
+      borderColor: t.attentionBorder,
     },
     auqHeader: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 2 },
-    auqHeaderText: { fontSize: 12, fontWeight: "700", color: "#7a6a45" },
-    auqQuestion: { fontSize: 14.5, fontWeight: "600", color: "#3e3626", marginBottom: 6 },
+    auqHeaderText: { fontSize: 12, fontWeight: "700", color: t.attentionMuted },
+    auqQuestion: { fontSize: 14.5, fontWeight: "600", color: t.attentionText, marginBottom: 6 },
     auqOptions: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
     auqChip: {
       flexDirection: "row",
@@ -172,25 +146,25 @@ function buildStyles(t: Theme) {
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 16,
-      backgroundColor: "#fff",
+      backgroundColor: t.inputBg,
       borderWidth: 1,
-      borderColor: "#d0c09a",
+      borderColor: t.attentionBorder,
     },
     auqChipPicked: { backgroundColor: t.accent, borderColor: t.accent },
-    auqChipText: { fontSize: 13.5, fontWeight: "600", color: "#3e3626" },
-    auqChipTextPicked: { color: "#fff" },
-    auqDesc: { fontSize: 12, color: "#8a7a58", marginTop: 6 },
+    auqChipText: { fontSize: 13.5, fontWeight: "600", color: t.attentionText },
+    auqChipTextPicked: { color: t.onAccent },
+    auqDesc: { fontSize: 12, color: t.attentionMuted, marginTop: 6 },
     auqNote: {
       marginTop: 10,
       minHeight: 40,
       paddingHorizontal: 10,
       paddingVertical: 8,
       borderRadius: 8,
-      backgroundColor: "#fff",
+      backgroundColor: t.inputBg,
       borderWidth: 1,
-      borderColor: "#d0c09a",
+      borderColor: t.attentionBorder,
       fontSize: 13.5,
-      color: "#3e3626",
+      color: t.attentionText,
     },
     auqSubmit: {
       marginTop: 10,
@@ -199,7 +173,7 @@ function buildStyles(t: Theme) {
       backgroundColor: t.accent,
       alignItems: "center",
     },
-    auqSubmitText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+    auqSubmitText: { color: t.onAccent, fontSize: 14, fontWeight: "700" },
     // In-thread search bar
     threadSearchBar: {
       flexDirection: "row",
@@ -219,52 +193,8 @@ function buildStyles(t: Theme) {
       backgroundColor: t.inputBg,
     },
     threadSearchCount: { fontSize: 12, minWidth: 44, textAlign: "center", color: t.textMuted },
-    headerBtn: { fontSize: 22, paddingHorizontal: 4, color: t.accent },
     // Hamburger drawer (the mobile "left-hand column")
-    scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
-    drawer: {
-      position: "absolute",
-      top: 0,
-      left: 0,
-      bottom: 0,
-      backgroundColor: t.surface,
-      paddingTop: 56,
-      shadowColor: "#000",
-      shadowOffset: { width: 2, height: 0 },
-      shadowOpacity: 0.2,
-      shadowRadius: 8,
-      elevation: 16,
-    },
-    drawerBrand: { fontSize: 22, fontWeight: "700", color: t.text, paddingHorizontal: 16, paddingBottom: 4 },
-    drawerSection: {
-      fontSize: 11,
-      fontWeight: "700",
-      color: t.textMuted,
-      letterSpacing: 1,
-      paddingHorizontal: 16,
-      marginTop: 18,
-      marginBottom: 4,
-    },
-    drawerSectionHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingRight: 16,
-      marginTop: 18,
-      marginBottom: 4,
-    },
-    drawerItem: { paddingHorizontal: 16, paddingVertical: 11 },
-    drawerRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingLeft: 16,
-      paddingRight: 12,
-      paddingVertical: 9,
-    },
     drawerCheckRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-    drawerItemText: { fontSize: 15, fontWeight: "600", color: t.text },
-    drawerItemMuted: { fontSize: 15, color: t.textMuted },
     // Theme switch (System / Light / Dark) segmented control
     segRow: { flexDirection: "row", gap: 6, paddingHorizontal: 18, marginTop: 6 },
     seg: {
@@ -278,7 +208,7 @@ function buildStyles(t: Theme) {
     },
     segActive: { backgroundColor: t.accent, borderColor: t.accent },
     segText: { fontSize: 12.5, fontWeight: "600", color: t.textMuted },
-    segTextActive: { color: "#fff", fontWeight: "700" },
+    segTextActive: { color: t.onAccent, fontWeight: "700" },
     // Chat thread (bubbles)
     threadList: { flex: 1, backgroundColor: t.thread },
     // The thread list is `inverted`, which flips the content container — so
@@ -341,7 +271,6 @@ function buildStyles(t: Theme) {
     pinnedBannerLabel: { fontSize: 11, fontWeight: "600" },
     pinnedBannerText: { fontSize: 13 },
     bubbleImage: { width: 220, height: 160, borderRadius: 8, marginTop: 6 },
-    typingText: { fontSize: 12, color: t.textMuted, marginLeft: 16, marginVertical: 6 },
     // Composer
     composerWrap: {
       backgroundColor: t.surface,
@@ -380,11 +309,7 @@ function buildStyles(t: Theme) {
     },
     sendBtn: { backgroundColor: t.accent },
     sendBtnDisabled: { backgroundColor: t.border },
-    sendBtnText: { color: "#fff", fontSize: 19, fontWeight: "700", lineHeight: 22 },
-    stopBtn: { backgroundColor: t.danger },
-    stopBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
     gearBtn: { backgroundColor: t.chipBg },
-    gearBtnText: { fontSize: 17, lineHeight: 20 },
     runBar: {
       flexDirection: "row",
       alignItems: "center",
@@ -398,7 +323,6 @@ function buildStyles(t: Theme) {
       backgroundColor: t.chipBg,
     },
     runText: { flex: 1, fontSize: 13, color: t.textMuted, fontWeight: "500" },
-    runQueued: { fontSize: 12, color: t.textMuted },
     // Floating "jump to latest" button, bottom-right above the composer.
     jumpBtn: {
       position: "absolute",
@@ -447,31 +371,12 @@ function buildStyles(t: Theme) {
       borderRadius: 14,
       backgroundColor: t.surface,
       borderWidth: 1,
-      borderColor: "#e0b4ae",
+      borderColor: t.dangerBg,
     },
     stopGhostText: { color: t.danger, fontSize: 13, fontWeight: "700" },
-    sendModeChip: {
-      alignSelf: "flex-start",
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 7,
-      marginLeft: 56,
-      marginBottom: 6,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 16,
-      backgroundColor: t.chipBg,
-      borderWidth: 1,
-    },
     // Semantic border only — sage = queue (gentle, after), clay = interrupt now.
-    sendModeQueue: { borderColor: t.accent },
-    sendModeSteer: { borderColor: t.danger },
     // Label stays high-contrast so it's readable on both themes; the icon +
     // border carry the colour meaning.
-    sendModeText: { fontSize: 13, fontWeight: "700", color: t.text },
-    sendModeTextQueue: { color: t.text },
-    sendModeTextSteer: { color: t.text },
-    sendModeSwap: { fontSize: 11, color: t.textMuted, fontWeight: "600" },
     // Queue / Interrupt actions embedded in the working pill (between "Working…"
     // and Stop). Neutral, compact chips — the label says what each does; no
     // accent/danger colours (keeps the pill calm, not a traffic light).
@@ -487,7 +392,6 @@ function buildStyles(t: Theme) {
       backgroundColor: t.surface,
     },
     runModeText: { fontSize: 12, fontWeight: "600", color: t.textMuted },
-    steerBtn: { backgroundColor: "#c99a63" },
     statusLine: {
       flexDirection: "row",
       alignItems: "center",
@@ -497,7 +401,6 @@ function buildStyles(t: Theme) {
     },
     statusText: { fontSize: 12, color: t.textMuted },
     // Composer settings bottom sheet (permission mode + model)
-    sheetScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
     sheet: {
       backgroundColor: t.surface,
       borderTopLeftRadius: 20,
@@ -608,16 +511,7 @@ function buildStyles(t: Theme) {
     },
     sheetPillActive: { backgroundColor: t.accent, borderColor: t.accent },
     sheetPillText: { fontSize: 14, color: t.textMuted, fontWeight: "600" },
-    sheetPillTextActive: { color: "#fff", fontWeight: "700" },
-    sheetDone: {
-      marginHorizontal: 18,
-      marginTop: 18,
-      paddingVertical: 13,
-      borderRadius: 10,
-      backgroundColor: t.accent,
-      alignItems: "center",
-    },
-    sheetDoneText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+    sheetPillTextActive: { color: t.onAccent, fontWeight: "700" },
     // Secondary sheet action (Cancel): a muted, themed surface with a border —
     // reads as a soft pastel chip on both light and dark instead of a bright box.
     sheetCancel: {
@@ -632,8 +526,6 @@ function buildStyles(t: Theme) {
     },
     sheetCancelText: { color: t.textMuted, fontSize: 15, fontWeight: "600" },
     // Session settings sheet (system prompt / goal / loops / filter / notify)
-    ssScroll: { maxHeight: 460 },
-    ssScrollContent: { paddingBottom: 24 },
     ssInput: {
       marginHorizontal: 18,
       marginTop: 8,
@@ -658,21 +550,6 @@ function buildStyles(t: Theme) {
     ssRowLabel: { fontSize: 15, color: t.text, fontWeight: "600" },
     ssRowHint: { fontSize: 12, color: t.textMuted, marginTop: 2, maxWidth: 230 },
     // Filter chips (You / Assistant / Tools / System) — grid of toggles
-    ssFilterGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 18, marginTop: 8 },
-    ssFilterChip: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 5,
-      paddingHorizontal: 13,
-      paddingVertical: 8,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: t.border,
-      backgroundColor: t.bg,
-    },
-    ssFilterChipOn: { backgroundColor: t.accent, borderColor: t.accent },
-    ssFilterText: { fontSize: 13, color: t.textMuted, fontWeight: "600" },
-    ssFilterTextOn: { color: "#fff" },
     // Job list rows (scheduled jobs)
     ssJobRow: {
       flexDirection: "row",
@@ -705,20 +582,6 @@ function buildStyles(t: Theme) {
       backgroundColor: t.bg,
     },
     ssLoopPrompt: { flex: 1, fontSize: 13, color: t.text },
-    ssLoopInterval: { fontSize: 12, color: t.textMuted, fontWeight: "700" },
-    ssLoopAddRow: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 18, marginTop: 8 },
-    ssLoopIntervalInput: {
-      width: 56,
-      paddingHorizontal: 10,
-      paddingVertical: 10,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: t.border,
-      backgroundColor: t.inputBg,
-      color: t.text,
-      textAlign: "center",
-      fontSize: 14,
-    },
     ssAddBtn: {
       paddingHorizontal: 16,
       paddingVertical: 10,
@@ -726,7 +589,7 @@ function buildStyles(t: Theme) {
       backgroundColor: t.accent,
       alignItems: "center",
     },
-    ssAddBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+    ssAddBtnText: { color: t.onAccent, fontSize: 14, fontWeight: "700" },
     ssSaved: { fontSize: 11, color: t.accent, fontWeight: "700" },
     // --- Session profile screen ---
     spHeader: { alignItems: "center", paddingTop: 20, paddingBottom: 8, paddingHorizontal: 24 },
@@ -803,7 +666,6 @@ function buildStyles(t: Theme) {
     },
     replyBarAccent: { width: 3, alignSelf: "stretch", backgroundColor: t.accent },
     replyBarText: { flex: 1, fontSize: 12.5, color: t.textMuted },
-    replyBarX: { fontSize: 13, fontWeight: "700", color: t.textMuted },
     swipeHint: {
       position: "absolute",
       left: 16,
@@ -811,7 +673,6 @@ function buildStyles(t: Theme) {
       bottom: 0,
       justifyContent: "center",
     },
-    swipeHintText: { fontSize: 18, color: t.textMuted },
     mdRow: { flexDirection: "row" },
     mdHeadRow: { borderBottomWidth: 1, borderBottomColor: t.border },
     mdCell: {
@@ -861,7 +722,6 @@ function buildStyles(t: Theme) {
       borderColor: t.border,
     },
     queueChipText: { flexShrink: 1, fontSize: 12, color: t.text },
-    queueChipX: { fontSize: 12, color: t.textMuted, fontWeight: "700" },
     // Chat search
     searchWrap: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: t.surface },
     searchInput: {
@@ -889,7 +749,6 @@ function buildStyles(t: Theme) {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: t.border,
     },
-    fsIcon: { fontSize: 16, width: 22 },
     fsName: { flex: 1, fontSize: 15, color: t.text, fontWeight: "500" },
     fsFile: { fontWeight: "400", color: t.textMuted },
     fsSize: { fontSize: 12, color: t.textMuted },
@@ -898,54 +757,29 @@ function buildStyles(t: Theme) {
     statCard: { flexGrow: 1, minWidth: 100, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 12, backgroundColor: t.surface },
     statValue: { fontSize: 22, fontWeight: "700", color: t.text },
     statLabel: { fontSize: 12, marginTop: 2, color: t.textMuted },
-    statPath: { fontSize: 13, paddingHorizontal: 16, fontFamily: mono, color: t.textMuted },
     toolBarRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 4 },
     toolBarName: { width: 110, fontSize: 13, color: t.text },
     toolBarTrack: { flex: 1, height: 8, borderRadius: 4, overflow: "hidden", backgroundColor: t.chipBg },
     toolBarFill: { height: 8, borderRadius: 4, backgroundColor: t.accent },
     toolBarCount: { width: 40, fontSize: 12, textAlign: "right", color: t.textMuted },
     // Composer: mode pills + steer/queue actions
-    modeBar: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingHorizontal: 8,
-      paddingTop: 6,
-      paddingBottom: 2,
-      backgroundColor: t.surface,
-    },
-    modePill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: t.chipBg },
-    modePillActive: { backgroundColor: t.accent },
-    modePillText: { fontSize: 12, color: t.textMuted },
-    modePillTextActive: { color: "#fff" },
-    actionBtn: {
-      marginLeft: 8,
-      borderRadius: 22,
-      height: 44,
-      paddingHorizontal: 14,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: t.accent,
-    },
-    actionBtnAlt: { backgroundColor: t.textMuted },
-    actionBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-    // Permission (Allow/Deny) card — amber, kept literal
+    // Permission (Allow/Deny) card — attention family
     permCard: {
-      backgroundColor: "#efe9dd",
-      borderColor: "#d6c39a",
+      backgroundColor: t.attentionBg,
+      borderColor: t.attentionBorder,
       borderWidth: 1,
       borderRadius: 10,
       marginHorizontal: 10,
       marginVertical: 6,
       padding: 12,
     },
-    permTitle: { fontSize: 14, fontWeight: "700", color: "#7a6a45" },
-    permInput: { fontSize: 11, color: "#8a7a58", marginTop: 4 },
+    permTitle: { fontSize: 14, fontWeight: "700", color: t.attentionMuted },
+    permInput: { fontSize: 11, color: t.attentionMuted, marginTop: 4 },
     permBtnRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 10 },
-    permDeny: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: "#eee", marginLeft: 10 },
+    permDeny: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: t.chipBg, marginLeft: 10 },
     permAllow: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: t.accent, marginLeft: 10 },
-    permDenyText: { color: "#333", fontWeight: "600" },
-    permAllowText: { color: "#fff", fontWeight: "700" },
+    permDenyText: { color: t.text, fontWeight: "600" },
+    permAllowText: { color: t.onAccent, fontWeight: "700" },
     // Collapsible agent "steps" under the final response
     stepsToggle: {
       flexDirection: "row",

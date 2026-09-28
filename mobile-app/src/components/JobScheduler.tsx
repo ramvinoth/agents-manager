@@ -339,7 +339,7 @@ export default function JobScheduler({
                       }}
                       onPress={() => setDom(d)}
                     >
-                      <Text style={{ color: active ? "#fff" : t.text, fontSize: 13, fontWeight: active ? "700" : "400" }}>
+                      <Text style={{ color: active ? t.onAccent : t.text, fontSize: 13, fontWeight: active ? "700" : "400" }}>
                         {d}
                       </Text>
                     </TouchableOpacity>

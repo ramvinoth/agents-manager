@@ -375,7 +375,7 @@ export default function FilesTab({ navigation }: Props) {
               onLongPress={() => confirmDelete(item)}
               delayLongPress={350}
             >
-              <Icon name={item.dir ? "folder" : "file"} size={18} color={item.dir ? "#d6a44e" : t.textMuted} />
+              <Icon name={item.dir ? "folder" : "file"} size={18} color={item.dir ? t.warning : t.textMuted} />
               <Text style={[styles.fsName, !item.dir ? styles.fsFile : null]} numberOfLines={1}>
                 {item.name}
               </Text>

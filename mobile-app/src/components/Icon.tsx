@@ -152,11 +152,11 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
 export default function Icon({
   name,
   size = 20,
-  color = "#333",
+  color,
 }: {
   name: IconName
   size?: number
-  color?: string
+  color: string
 }) {
   return <Ionicons name={MAP[name]} size={size} color={color} />
 }

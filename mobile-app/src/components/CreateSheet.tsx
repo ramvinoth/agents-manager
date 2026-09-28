@@ -97,7 +97,7 @@ export default function CreateSheet({
                     onPress={() => setValues((cur) => ({ ...cur, [f.key]: on && !f.required ? "" : o.value }))}
                     style={{ borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: on ? t.accent : t.chipBg }}
                   >
-                    <Text style={{ color: on ? "#fff" : t.text, fontSize: 13 }}>{o.label}</Text>
+                    <Text style={{ color: on ? t.onAccent : t.text, fontSize: 13 }}>{o.label}</Text>
                   </TouchableOpacity>
                 )
               })}
@@ -140,7 +140,7 @@ export default function CreateSheet({
           disabled={!canSubmit || busy}
           style={{ flex: 1, borderRadius: 10, paddingVertical: 12, alignItems: "center", backgroundColor: t.accent, opacity: !canSubmit || busy ? 0.5 : 1 }}
         >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>{busy ? "…" : submitLabel}</Text>
+          <Text style={{ color: t.onAccent, fontWeight: "700" }}>{busy ? "…" : submitLabel}</Text>
         </TouchableOpacity>
       </View>
     </SheetModal>

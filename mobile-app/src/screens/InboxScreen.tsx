@@ -316,7 +316,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
                             style={[styles.filterChip, { backgroundColor: t.accent }]}
                             hitSlop={8}
                           >
-                            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>Open chat</Text>
+                            <Text style={{ color: t.onAccent, fontSize: 13, fontWeight: "700" }}>Open chat</Text>
                           </TouchableOpacity>
                         ) : null}
                         {m.open && m.kind !== "message" ? (
@@ -367,7 +367,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
                           }}
                           hitSlop={8}
                         >
-                          <Icon name="send" size={18} color="#fff" />
+                          <Icon name="send" size={18} color={t.onAccent} />
                         </TouchableOpacity>
                       </View>
                     ) : null}
@@ -436,7 +436,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
               }}
               hitSlop={8}
             >
-              <Icon name="send" size={18} color="#fff" />
+              <Icon name="send" size={18} color={t.onAccent} />
             </TouchableOpacity>
           </View>
         </View>

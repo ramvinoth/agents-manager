@@ -3,6 +3,7 @@ import { Text, TextInput, TouchableOpacity, View } from "react-native"
 import { allAnswered, isInstant, parseQuestions, pickOption, type AuqQuestion } from "../lib/auq"
 import Icon from "./Icon"
 import { useStyles } from "../screens/styles"
+import { useTheme } from "../lib/useTheme"
 
 /**
  * An agent question rendered as tappable quick-reply chips — the messaging-app
@@ -22,6 +23,7 @@ export default function QuestionCard({ input, onAnswer }: { input: unknown; onAn
   const [note, setNote] = useState("")
   const [sent, setSent] = useState(false)
   const styles = useStyles()
+  const t = useTheme()
   const hasNote = note.trim().length > 0
   // If the server pushes a NEW question set into this same mounted card, reset
   // the positional picks/sent so stale answers don't bleed across.
@@ -61,7 +63,7 @@ export default function QuestionCard({ input, onAnswer }: { input: unknown; onAn
   return (
     <View testID="question-card" style={styles.auqCard}>
       <View style={styles.auqHeader}>
-        <Icon name="help" size={15} color="#7a5b00" />
+        <Icon name="help" size={15} color={t.attentionMuted} />
         <Text style={styles.auqHeaderText}>Claude is asking</Text>
       </View>
 
@@ -79,7 +81,7 @@ export default function QuestionCard({ input, onAnswer }: { input: unknown; onAn
                   onPress={() => tap(qi, o.label, q)}
                   disabled={sent}
                 >
-                  {picked ? <Icon name="check" size={13} color="#fff" /> : null}
+                  {picked ? <Icon name="check" size={13} color={t.onAccent} /> : null}
                   <Text style={[styles.auqChipText, picked ? styles.auqChipTextPicked : null]}>{o.label}</Text>
                 </TouchableOpacity>
               )
@@ -103,7 +105,7 @@ export default function QuestionCard({ input, onAnswer }: { input: unknown; onAn
         editable={!sent}
         multiline
         placeholder="Or write your own reply — none fit, a condition, a question back…"
-        placeholderTextColor="#a0916c"
+        placeholderTextColor={t.attentionMuted}
       />
 
       {!isInstant(questions) || hasNote ? (

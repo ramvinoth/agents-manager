@@ -238,7 +238,7 @@ export default function MermaidView({
           <Text style={btnLabel}>{showCode ? "Diagram" : "Code"}</Text>
         </Pressable>
         <Pressable testID="mermaid-copy" onPress={onCopy} style={btn}>
-          <Text style={{ ...btnLabel, color: copied ? "#16a34a" : t.textMuted }}>{copied ? "Copied" : "Copy"}</Text>
+          <Text style={{ ...btnLabel, color: copied ? t.success : t.textMuted }}>{copied ? "Copied" : "Copy"}</Text>
         </Pressable>
         <Pressable testID="mermaid-download" onPress={onDownload} style={btn} disabled={saving}>
           <Text style={btnLabel}>{saving ? "Saving…" : "Download"}</Text>

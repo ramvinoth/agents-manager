@@ -17,6 +17,7 @@ import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
 import { aiError, aiSummary, newChatAI, type AIConfig } from "../lib/aiSelection"
+import { TEMPLATE_CATEGORIES } from "../lib/builtinTemplates"
 import { describeSchedule } from "../lib/interval"
 import { resolveSessionPath } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
@@ -34,13 +35,6 @@ const MODES = [
 function short(p: string): string {
   const parts = p.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : p
-}
-
-const CATEGORY_COLOR: Record<string, string> = {
-  personal: "#6b8e6b",
-  engineering: "#7a8eb5",
-  design: "#b07aad",
-  business: "#c2884a",
 }
 
 export default function NewChatScreen({ navigation, route }: Props) {
@@ -178,7 +172,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
     setShowAdvanced(false)
   }
 
-  const catColor = template ? (CATEGORY_COLOR[template.category] ?? t.accent) : t.accent
+  const catColor = template ? (TEMPLATE_CATEGORIES[template.category]?.color ?? t.accent) : t.accent
   const iconName = (template?.icon || "sparkle") as IconName
 
   // --- Card wrapper ---
@@ -585,11 +579,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
         >
           {busy ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <ActivityIndicator color="#fff" size="small" />
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "500" }}>{busyText}</Text>
+              <ActivityIndicator color={t.onAccent} size="small" />
+              <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "500" }}>{busyText}</Text>
             </View>
           ) : (
-            <Text style={{ color: "#fff", fontSize: 16, fontWeight: "600" }}>Start chat</Text>
+            <Text style={{ color: t.onAccent, fontSize: 16, fontWeight: "600" }}>Start chat</Text>
           )}
         </TouchableOpacity>
         <Text style={{ fontSize: 11, color: t.textMuted + "80", textAlign: "center", marginTop: 8 }}>

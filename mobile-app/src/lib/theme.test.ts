@@ -42,8 +42,22 @@ for (const [label, t] of [
     }
   })
 
-  test(`${label}: danger colour is distinguishable on its surface`, () => {
-    assert.ok(contrast(t.danger, t.surface) >= 3)
+  test(`${label}: danger, success and warning are distinguishable on the surface (3:1)`, () => {
+    for (const c of [t.danger, t.success, t.warning]) {
+      assert.ok(contrast(c, t.surface) >= 3, `${c} on ${t.surface} = ${contrast(c, t.surface).toFixed(2)}:1`)
+    }
+  })
+
+  test(`${label}: onAccent is legible on the accent fill (3:1, bold button text)`, () => {
+    // The bug this guards: a raw #fff on the dark theme's lighter accent
+    // measured 2.4:1 — every primary button was low-contrast in dark mode.
+    const ratio = contrast(t.onAccent, t.accent)
+    assert.ok(ratio >= 3, `onAccent ${t.onAccent} on accent ${t.accent} = ${ratio.toFixed(2)}:1`)
+  })
+
+  test(`${label}: attention cards keep body text at AA and muted text at 3:1`, () => {
+    assert.ok(contrast(t.attentionText, t.attentionBg) >= 4.5)
+    assert.ok(contrast(t.attentionMuted, t.attentionBg) >= 3)
   })
 
   test(`${label}: text on the danger-tinted surface meets WCAG AA (4.5:1)`, () => {

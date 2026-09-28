@@ -152,7 +152,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           {kinds.map((k) => (
             <TouchableOpacity key={k} testID={`note-kind-${k}`} onPress={() => patchNote({ kind: k })}
               style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: note.kind === k ? t.accent : t.chipBg }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: note.kind === k ? "#fff" : t.textMuted }}>{KIND_LABEL[k]}</Text>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: note.kind === k ? t.onAccent : t.textMuted }}>{KIND_LABEL[k]}</Text>
             </TouchableOpacity>
           ))}
         </View>

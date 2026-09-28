@@ -2,6 +2,7 @@ import React, { useRef } from "react"
 import { Animated, PanResponder, View } from "react-native"
 import Icon from "./Icon"
 import { useStyles } from "../screens/styles"
+import { useTheme } from "../lib/useTheme"
 
 const TRIGGER = 56 // px of drag before the reply fires — comfortably past a scroll jitter
 
@@ -23,6 +24,7 @@ export default function SwipeToReply({
   const x = useRef(new Animated.Value(0)).current
   const fired = useRef(false)
   const styles = useStyles()
+  const t = useTheme()
   // The PanResponder is created ONCE (useRef), so it would capture the first
   // render's onReply forever — in a FlatList that inline closure changes every
   // render, so a swipe after a re-render would reply to the WRONG message. Keep
@@ -61,7 +63,7 @@ export default function SwipeToReply({
   return (
     <View>
       <Animated.View style={[styles.swipeHint, { opacity: hintOpacity }]} pointerEvents="none">
-        <Icon name="reply" size={18} color="#8a8a8a" />
+        <Icon name="reply" size={18} color={t.textMuted} />
       </Animated.View>
       <Animated.View style={{ transform: [{ translateX: x }] }} {...pan.panHandlers}>
         {children}

@@ -107,7 +107,7 @@ export default function LoginScreen({ navigation }: Props) {
         onPress={submit}
         disabled={busy || !username || !password}
       >
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{signupOpen ? "Create account" : "Sign in"}</Text>}
+        {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>{signupOpen ? "Create account" : "Sign in"}</Text>}
       </TouchableOpacity>
 
       {/* Always-available escape hatch: change/switch server. Critical when the

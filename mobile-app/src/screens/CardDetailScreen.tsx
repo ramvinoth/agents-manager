@@ -364,7 +364,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                         paddingVertical: 6,
                       }}
                     >
-                      <Text style={{ color: active ? "#fff" : t.text, fontSize: 12, fontWeight: "600" }}>
+                      <Text style={{ color: active ? t.onAccent : t.text, fontSize: 12, fontWeight: "600" }}>
                         {col.name}
                       </Text>
                     </Pressable>
@@ -470,7 +470,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             onPress={post}
             disabled={posting || !newComment.trim()}
           >
-            {posting ? <ActivityIndicator color="#fff" size="small" /> : <Icon name="send" size={19} color="#fff" />}
+            {posting ? <ActivityIndicator color={t.onAccent} size="small" /> : <Icon name="send" size={19} color={t.onAccent} />}
           </Pressable>
         </View>
       </View>

@@ -344,7 +344,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             style={[styles.sheetPill, { minHeight: 44 }, active ? styles.sheetPillActive : null]}
             onPress={() => onPick(m.v)}
           >
-            {active ? <Icon name="check" size={14} color="#fff" /> : null}
+            {active ? <Icon name="check" size={14} color={t.onAccent} /> : null}
             <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m.label}</Text>
           </TouchableOpacity>
         )
@@ -449,7 +449,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
             {(git.dirty ?? 0) > 0 ? (
-              <Text style={{ color: "#d97706", fontSize: 12 }}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
+              <Text style={{ color: t.warning, fontSize: 12 }}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
             ) : null}
             {git.ahead != null && git.ahead > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↑{git.ahead}</Text> : null}
             {git.behind != null && git.behind > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↓{git.behind}</Text> : null}
@@ -461,8 +461,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             onPress={doSync}
             style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, backgroundColor: t.accent, borderRadius: 8, paddingVertical: 10, opacity: syncing ? 0.6 : 1 }}
           >
-            <Icon name="repeat" size={15} color="#fff" />
-            <Text style={{ color: "#fff", fontWeight: "600" }}>{syncing ? "Syncing…" : "Sync branch"}</Text>
+            <Icon name="repeat" size={15} color={t.onAccent} />
+            <Text style={{ color: t.onAccent, fontWeight: "600" }}>{syncing ? "Syncing…" : "Sync branch"}</Text>
           </TouchableOpacity>
           <Text style={[styles.sheetHint, { marginTop: 8 }]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
         </>) : null}

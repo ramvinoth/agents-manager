@@ -1008,7 +1008,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           style={styles.jumpBtn}
           onPress={jumpToLatest}
         >
-          <Icon name="chevronDown" size={16} color="#fff" />
+          <Icon name="chevronDown" size={16} color={t.onAccent} />
         </TouchableOpacity>
       ) : null}
       </View>
@@ -1205,7 +1205,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             onPress={() => primary()}
             disabled={!input.trim()}
           >
-            <Icon name="send" size={19} color="#fff" />
+            <Icon name="send" size={19} color={t.onAccent} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1511,7 +1511,7 @@ function ToolStep({ block }: { block: Extract<Block, { kind: "tool" }> }) {
         <Icon
           name={block.answered ? "check" : block.isError ? "warning" : "tool"}
           size={13}
-          color={block.answered ? "#2e9e5b" : block.isError ? t.danger : t.textMuted}
+          color={block.answered ? t.success : block.isError ? t.danger : t.textMuted}
         />
         <Text style={[styles.toolChipText, { color: t.text }]} numberOfLines={1} ellipsizeMode="middle">
           {block.answered ? "You answered" : block.name}

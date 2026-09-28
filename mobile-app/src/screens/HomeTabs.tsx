@@ -115,7 +115,7 @@ export default function HomeTabs({ navigation }: Props) {
                       alignItems: "center", justifyContent: "center",
                     }}
                   >
-                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>
+                    <Text style={{ color: t.onAccent, fontSize: 10, fontWeight: "700" }}>
                       {badge > 99 ? "99+" : badge}
                     </Text>
                   </View>

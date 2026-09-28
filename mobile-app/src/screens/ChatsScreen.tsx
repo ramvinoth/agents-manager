@@ -230,7 +230,7 @@ export default function ChatsScreen({ navigation }: Props) {
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4, opacity: selected.size === 0 ? 0.3 : 1 }}
             >
-              <Icon name="trash" size={21} color="#e74c3c" />
+              <Icon name="trash" size={21} color={t.danger} />
             </TouchableOpacity>
           ),
         })
@@ -469,7 +469,7 @@ export default function ChatsScreen({ navigation }: Props) {
                       borderColor: t.textMuted,
                     }}
                   >
-                    {isSelected ? <Icon name="check" size={16} color="#fff" /> : null}
+                    {isSelected ? <Icon name="check" size={16} color={t.onAccent} /> : null}
                   </View>
                 ) : null}
                 <Avatar avatar={item.avatar} seed={item.id} size={46} />

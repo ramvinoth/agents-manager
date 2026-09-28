@@ -8,6 +8,16 @@
  */
 import type { AgentTemplate } from "../api/client"
 
+/** Template categories: display label and identity tint. The tint is a
+ *  per-category identity (like an avatar seed), not a theme role, so it is the
+ *  same in light and dark; every screen that paints a category reads it here. */
+export const TEMPLATE_CATEGORIES: Record<string, { label: string; color: string }> = {
+  personal: { label: "Personal", color: "#6b8e6b" },
+  engineering: { label: "Engineering", color: "#7a8eb5" },
+  design: { label: "Design", color: "#b07aad" },
+  business: { label: "Business", color: "#c2884a" },
+}
+
 const BUILTIN_TEMPLATES: AgentTemplate[] = [
   // Personal
   { id: -1, name: "Writing Coach", description: "Review and improve your writing for clarity, tone, and structure.",

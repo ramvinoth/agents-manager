@@ -22,7 +22,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type AgentTemplate } from "../api/client"
-import BUILTIN_TEMPLATES from "../lib/builtinTemplates"
+import BUILTIN_TEMPLATES, { TEMPLATE_CATEGORIES } from "../lib/builtinTemplates"
 import { useTheme } from "../lib/useTheme"
 import { HostHeaderButton } from "../components/HostPicker"
 import Icon, { type IconName } from "../components/Icon"
@@ -31,26 +31,8 @@ type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof R
 
 const CATEGORIES = [
   { value: "all", label: "All" },
-  { value: "personal", label: "Personal" },
-  { value: "engineering", label: "Engineering" },
-  { value: "design", label: "Design" },
-  { value: "business", label: "Business" },
-] as const
-
-/** Accent colour per category — warm earth palette that reads on both themes. */
-const CATEGORY_COLOR: Record<string, string> = {
-  personal: "#6b8e6b",
-  engineering: "#7a8eb5",
-  design: "#b07aad",
-  business: "#c2884a",
-}
-
-const CATEGORY_LABEL: Record<string, string> = {
-  personal: "Personal",
-  engineering: "Engineering",
-  design: "Design",
-  business: "Business",
-}
+  ...Object.entries(TEMPLATE_CATEGORIES).map(([value, c]) => ({ value, label: c.label })),
+]
 
 export default function AgentsScreen({ navigation }: Props) {
   const t = useTheme()
@@ -88,12 +70,11 @@ export default function AgentsScreen({ navigation }: Props) {
     for (const tmpl of filtered) {
       ;(groups[tmpl.category] ??= []).push(tmpl)
     }
-    const order = ["personal", "engineering", "design", "business"]
-    return order
+    return Object.keys(TEMPLATE_CATEGORIES)
       .filter((cat) => groups[cat]?.length)
       .map((cat) => ({
-        title: CATEGORY_LABEL[cat] ?? cat,
-        color: CATEGORY_COLOR[cat] ?? t.accent,
+        title: TEMPLATE_CATEGORIES[cat]?.label ?? cat,
+        color: TEMPLATE_CATEGORIES[cat]?.color ?? t.accent,
         data: groups[cat],
       }))
   }, [filtered, t.accent])
@@ -112,7 +93,7 @@ export default function AgentsScreen({ navigation }: Props) {
       >
         {CATEGORIES.map((c) => {
           const active = category === c.value
-          const catColor = c.value !== "all" ? CATEGORY_COLOR[c.value] : t.accent
+          const catColor = c.value !== "all" ? TEMPLATE_CATEGORIES[c.value]?.color : t.accent
           const count = c.value === "all"
             ? templates.length
             : templates.filter((x) => x.category === c.value).length
@@ -137,7 +118,7 @@ export default function AgentsScreen({ navigation }: Props) {
                 style={{
                   fontSize: 13,
                   fontWeight: "600",
-                  color: active ? "#fff" : t.textMuted,
+                  color: active ? t.onAccent : t.textMuted,
                 }}
               >
                 {c.label}
@@ -198,7 +179,7 @@ export default function AgentsScreen({ navigation }: Props) {
           </View>
         )}
         renderItem={({ item: tmpl }) => {
-          const catColor = CATEGORY_COLOR[tmpl.category] ?? t.accent
+          const catColor = TEMPLATE_CATEGORIES[tmpl.category]?.color ?? t.accent
           const iconName = (tmpl.icon || "sparkle") as IconName
           return (
             <TouchableOpacity

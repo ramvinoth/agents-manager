@@ -151,7 +151,7 @@ export default function HostEditScreen({ route, navigation }: Props) {
             onPress={save}
             disabled={incomplete || busy}
           >
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save</Text>}
+            {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Save</Text>}
           </TouchableOpacity>
         </View>
         <View style={{ height: 40 }} />

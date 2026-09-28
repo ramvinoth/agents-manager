@@ -199,7 +199,7 @@ export default function OrgScreen({ navigation }: Props) {
                       onPress={() => toggleManaged(p.id)}
                       style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
                     >
-                      <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{p.name}</Text>
+                      <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{p.name}</Text>
                     </TouchableOpacity>
                   )
                 })}
@@ -219,7 +219,7 @@ export default function OrgScreen({ navigation }: Props) {
                         onPress={() => patchHarman({ default_provider: on ? "" : pr.id })}
                         style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
                       >
-                        <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
+                        <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{pr.name}</Text>
                       </TouchableOpacity>
                     )
                   })}
@@ -237,7 +237,7 @@ export default function OrgScreen({ navigation }: Props) {
             <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>{a.kind} · {a.created_by}</Text>
             <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
               <TouchableOpacity testID={`org-approve-${a.id}`} onPress={() => resolve(a, "approved")} style={{ flex: 1, backgroundColor: t.accent, borderRadius: 8, padding: 8, alignItems: "center" }}>
-                <Text style={{ color: "#fff", fontWeight: "600" }}>Approve</Text>
+                <Text style={{ color: t.onAccent, fontWeight: "600" }}>Approve</Text>
               </TouchableOpacity>
               <TouchableOpacity testID={`org-deny-${a.id}`} onPress={() => resolve(a, "denied")} style={{ flex: 1, backgroundColor: t.dangerBg, borderRadius: 8, padding: 8, alignItems: "center" }}>
                 <Text style={{ color: t.danger, fontWeight: "600" }}>Deny</Text>
@@ -277,7 +277,7 @@ export default function OrgScreen({ navigation }: Props) {
                                 }}
                                 style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
                               >
-                                <Text style={{ color: on ? "#fff" : t.text, fontSize: 12 }}>{pr.name}</Text>
+                                <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{pr.name}</Text>
                               </TouchableOpacity>
                             )
                           })}

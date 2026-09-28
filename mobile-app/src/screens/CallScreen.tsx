@@ -114,7 +114,7 @@ export default function CallScreen({ route, navigation }: Props) {
     phase === "speaking" ? t.accent
     : phase === "thinking" || phase === "connecting" ? t.textMuted
     : muted ? t.danger
-    : "#4caf50"
+    : t.success
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32, alignItems: "center", justifyContent: "space-between" }}>
@@ -169,7 +169,7 @@ export default function CallScreen({ route, navigation }: Props) {
               backgroundColor: muted ? t.accent : t.surface, borderWidth: 1, borderColor: t.border,
             }}
           >
-            <Icon name={muted ? "micOff" : "mic"} size={28} color={muted ? "#fff" : t.text} />
+            <Icon name={muted ? "micOff" : "mic"} size={28} color={muted ? t.onAccent : t.text} />
           </Pressable>
           <Text style={{ color: t.textMuted, fontSize: 12 }}>{muted ? "Unmute" : "Mute"}</Text>
         </View>
@@ -182,7 +182,7 @@ export default function CallScreen({ route, navigation }: Props) {
               backgroundColor: t.danger,
             }}
           >
-            <Icon name="phone" size={28} color="#fff" />
+            <Icon name="phone" size={28} color={t.onAccent} />
           </Pressable>
           <Text style={{ color: t.textMuted, fontSize: 12 }}>End</Text>
         </View>
