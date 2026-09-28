@@ -735,7 +735,7 @@ The exclusion is deliberate: wrapping `fs/*` and `git/*` duplicates Read/Write/G
 which is the duplicate-implementation trap CLAUDE.md forbids. The MCP exposes what Claude
 *cannot* do — act on the system running it.
 
-### 8A. Shipped manifest (as of 2026-09-27 — `viewer/viewer_mcp.py`, 45 tools)
+### 8A. Shipped manifest (as of 2026-09-27 — `viewer/viewer_mcp.py`, 50 tools)
 
 The table above is the plan. This is what an agent session actually holds today; every
 tool is dumb transport to one `/api/*` route, gated server-side by `orglogic._MIN_LEVEL`
@@ -749,7 +749,8 @@ same list, and `docs_read system-status` shows the live posture.
 | **Shape work** (lead) | `card_assign`, `loop_create/update`, `loop_delete` (Red) |
 | **Org control** (manager) | `loop_control_set` |
 | **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote` |
-| **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `fs/*`, `git/*` |
+| **Files** (the file browser's own `/api/fs`, scoped by `drive` or `host`) | `drive_list`, `fs_list`, `fs_read`, `fs_write`, `fs_mkdir` — every session sees the drives the owner connected in the app. No `fs_delete`/`fs_rename`: file deletion is Red and the fs routes do not run through the approval queue |
+| **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `git/*` |
 
 Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,
 `capability_*`, `observation_list`, `accountability`, `skill_grant/revoke/materialize`,

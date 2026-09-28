@@ -453,10 +453,36 @@ class FsMixin:
             return
         self.send_json({"created": str(dest)})
 
+    def _p_fs_write(self, req):
+        """JSON write of ONE file: {path, name, content, encoding?, host?|drive?}.
+        The agent MCP speaks JSON only, so this is the same store as the
+        multipart upload (below) behind a body it can produce. `content` is
+        text, or base64 when encoding == "base64"."""
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        if not _safe_name(name):
+            self.send_json({"error": "Invalid file name"}, status=400)
+            return
+        content = body.get("content")
+        if not isinstance(content, str):
+            self.send_json({"error": "content must be a string"}, status=400)
+            return
+        if body.get("encoding") == "base64":
+            import base64
+            try:
+                data = base64.b64decode(content, validate=True)
+            except Exception:
+                self.send_json({"error": "content is not valid base64"}, status=400)
+                return
+        else:
+            data = content.encode()
+        self._fs_store(req, body, body.get("host") or req.host, body.get("path") or "~", [(name, data)])
+
     def _p_fs_upload(self, req):
         # Multipart form-data upload: files go to a target directory (local or SSH).
-        host = req.host
-        path = req.query.get("path", ["~"])[0] or "~"
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self.send_json({"error": "Expected multipart/form-data"}, status=400)
@@ -493,7 +519,13 @@ class FsMixin:
         if not files:
             self.send_json({"error": "No files found in upload"}, status=400)
             return
-        ok, adapter = self._drive_target(req)
+        self._fs_store(req, None, req.host, req.query.get("path", ["~"])[0] or "~", files)
+
+    def _fs_store(self, req, body, host, path, files):
+        """Write (name, bytes) pairs into a directory on whichever disk the
+        request targets — the one store behind both the multipart upload and
+        the JSON write."""
+        ok, adapter = self._drive_target(req, body)
         if ok:
             try:
                 self.send_json(adapter.upload(path, files))

@@ -443,6 +443,7 @@ class SessionViewerHandler(
         "/api/fs/mkdir": "_p_fs_mkdir",
         "/api/fs/delete": "_p_fs_delete",
         "/api/fs/upload": "_p_fs_upload",
+        "/api/fs/write": "_p_fs_write",
         "/api/fs/rename": "_p_fs_rename",
         "/api/fs/compress": "_p_fs_compress",
         "/api/drives": "_p_drives_create",
