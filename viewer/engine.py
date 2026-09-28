@@ -2246,9 +2246,12 @@ def _permission_denied_hint(p):
     except ValueError:
         return "Permission denied"
     if sys.platform == "darwin" and rel.parts and rel.parts[0] in _TCC_GUARDED:
+        exe = sys.executable or "the python interpreter running this server"
         return (f"macOS blocks this server from reading ~/{rel.parts[0]} (privacy consent). "
-                "Grant it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access) "
-                "for the Python that runs Harman, then restart the server.")
+                "Open System Settings → Privacy & Security → Full Disk Access, click +, press ⌘⇧G, "
+                f"and paste this exact path:  {exe}  — it lists under that binary's own name "
+                "(e.g. “Python”), not “Harman”, because that is the interpreter the server runs as. "
+                "Enable it, then restart the server.")
     return "Permission denied"
 
 
