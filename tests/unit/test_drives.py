@@ -223,6 +223,12 @@ class _FakeGoogle:
                 return 200, {}, json.dumps(
                     {"id": "root", "name": "Drive", "mimeType": FOLDER}).encode()
             if u.path == "/drive/v3/files" and q.get("q"):
+                # Live Google answers 400 "Invalid Value" to `orderBy=name,natural`
+                # (verified 2026-09-27); the documented key is `name_natural`.
+                # The fake rejects the same so a typo cannot pass here again.
+                ob = (q.get("orderBy") or [""])[0]
+                if ob and ob not in {"name", "name_natural", "modifiedTime", "createdTime", "folder"}:
+                    return 400, {}, json.dumps({"error": {"code": 400, "message": "Invalid Value"}}).encode()
                 return 200, {}, json.dumps({"files": self._match(q["q"][0])}).encode()
             if u.path == "/drive/v3/files" and method == "POST":
                 body = json.loads(data)

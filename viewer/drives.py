@@ -533,7 +533,7 @@ class GoogleDrive(_OAuthDrive):
         q = f"'{fid}' in parents and trashed = false"
         j = self._get_json(
             f"/files?q={urllib.parse.quote(q)}"
-            "&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=1000&orderBy=name,natural")
+            "&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=1000&orderBy=name_natural")
         entries, truncated = [], False
         for f in (j.get("files") or []):
             name = f.get("name") or ""
