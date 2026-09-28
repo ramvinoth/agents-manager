@@ -76,10 +76,11 @@ import zipfile
 
 from viewer import db
 
-# Drive zips are built in the viewer's memory (no vendor has a generic
-# multi-item zip; see the facts table), so one runaway selection would take
-# the server hosting every session with it. Uncompressed bytes per zip.
-ZIP_BUDGET = 256 * 1024 * 1024
+# Every drive byte passes through the viewer's memory — a single download is
+# resp.read() and a zip is built in a BytesIO (no vendor has a generic
+# multi-item zip; see the facts table) — so one runaway file or selection
+# would take the server hosting every session with it. Bytes per request.
+MEMORY_BUDGET = 256 * 1024 * 1024
 
 
 class DriveError(Exception):
@@ -157,7 +158,12 @@ def _http(method, url, headers=None, data=None, timeout=60):
         req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, dict(resp.headers), resp.read()
+            body = resp.read(MEMORY_BUDGET + 1)
+            if len(body) > MEMORY_BUDGET:
+                raise DriveError(
+                    f"File is over {MEMORY_BUDGET // (1024 * 1024)} MB — too large to pass "
+                    "through Harman; open it in the vendor's own app", 413)
+            return resp.status, dict(resp.headers), body
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read()
     except DriveError:
@@ -320,7 +326,7 @@ class _OAuthDrive(BaseDrive):
     def _zip(self, path, names, archive):
         arcname = self._arcname(names, archive)
         buf = io.BytesIO()
-        budget = [ZIP_BUDGET]
+        budget = [MEMORY_BUDGET]
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for n in names:
                 node, is_dir = self._node(self._join(path, n))
@@ -333,7 +339,7 @@ class _OAuthDrive(BaseDrive):
             budget[0] -= len(data)
             if budget[0] < 0:
                 raise DriveError(
-                    f"Selection is over {ZIP_BUDGET // (1024 * 1024)} MB — zip fewer items, "
+                    f"Selection is over {MEMORY_BUDGET // (1024 * 1024)} MB — zip fewer items, "
                     "or download the large files one at a time", 413)
             z.writestr(prefix, data)
             return

@@ -406,10 +406,10 @@ def test_google_compress_uploads_zip(db, monkeypatch):
 
 
 def test_zip_over_budget_is_413_before_upload(db, monkeypatch):
-    """The zip is built in server memory; a selection over ZIP_BUDGET must
+    """The zip is built in server memory; a selection over MEMORY_BUDGET must
     stop at the first byte past the line, and nothing may be uploaded."""
     a, fake = _gdrive(db, monkeypatch)
-    monkeypatch.setattr(drives, "ZIP_BUDGET", 4)
+    monkeypatch.setattr(drives, "MEMORY_BUDGET", 4)
     with pytest.raises(drives.DriveError) as ei:
         a.compress("/Docs", ["a.txt", "b.md"], "bundle")
     assert ei.value.status == 413 and "fewer items" in str(ei.value)
@@ -827,3 +827,27 @@ def test_onedrive_refresh_rotates_token_publicly(db, monkeypatch):
 def test_onedrive_status(db, monkeypatch):
     a, _ = _odrive(db, monkeypatch)
     assert a.status() == {"ok": True, "account": "ram@outlook.test"}
+
+
+def test_http_refuses_a_body_over_the_memory_budget(monkeypatch):
+    """Every drive byte is resp.read() into server memory, so the seam itself
+    stops at the budget — a 10 GB video never reaches an adapter."""
+    import io
+
+    class _Resp(io.BytesIO):
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(drives, "MEMORY_BUDGET", 8)
+    monkeypatch.setattr(drives.urllib.request, "urlopen", lambda req, timeout=0: _Resp(b"x" * 9))
+    with pytest.raises(drives.DriveError) as ei:
+        drives._http("GET", "https://vendor.test/blob")
+    assert ei.value.status == 413 and "too large" in str(ei.value)
+    monkeypatch.setattr(drives.urllib.request, "urlopen", lambda req, timeout=0: _Resp(b"x" * 8))
+    assert drives._http("GET", "https://vendor.test/blob")[2] == b"x" * 8
