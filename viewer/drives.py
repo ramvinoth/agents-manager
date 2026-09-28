@@ -493,13 +493,15 @@ class GoogleDrive(_OAuthDrive):
         make every `created`/`path` we report a lie — so the metadata part always
         carries the name and MIME type. Returns the created file resource."""
         boundary = "harman-" + secrets.token_hex(16)
-        meta = json.dumps({"name": name, "mimeType": mime}).encode()
+        # `parents` rides in the metadata part, like every File field: as a
+        # URL query it is silently ignored and the file lands in the root.
+        meta = json.dumps({"name": name, "mimeType": mime, "parents": [parent_id]}).encode()
         body = (
             f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
             + meta.decode()
             + f"\r\n--{boundary}\r\nContent-Type: {mime}\r\n\r\n"
         ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
-        url = f"{self._UPLOAD}/files?uploadType=multipart&parents={parent_id}&fields=id,name"
+        url = f"{self._UPLOAD}/files?uploadType=multipart&fields=id,name,parents"
         status, r = self._req("POST", url, data=body,
                               headers={"Content-Type": f"multipart/related; boundary={boundary}"})
         if status != 200:

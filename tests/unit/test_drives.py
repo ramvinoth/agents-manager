@@ -237,7 +237,8 @@ class _FakeGoogle:
                                      "parents": body.get("parents", []), "size": 0, "content": b""}
                 return 200, {}, json.dumps({"id": newid, "name": body.get("name")}).encode()
             if u.path == "/upload/drive/v3/files":
-                parent = (q.get("parents") or [""])[0]
+                # Like Google: a `parents` URL query is ignored (the real API
+                # places the file in the root); only the metadata part counts.
                 boundary = (headers or {}).get("Content-Type", "").split("boundary=")[-1].strip()
                 meta, content = b"", b""
                 if boundary:
@@ -249,7 +250,8 @@ class _FakeGoogle:
                 name = meta.get("name") or "upload"
                 newid = f"u{len(self.files) + 1}"
                 self.files[newid] = {"name": name, "mime": meta.get("mimeType", "application/octet-stream"),
-                                     "parents": [parent], "size": len(content), "content": content}
+                                     "parents": meta.get("parents") or ["root"],
+                                     "size": len(content), "content": content}
                 return 200, {}, json.dumps({"id": newid, "name": name}).encode()
             m = re.match(r"^/drive/v3/files/(.+)$", u.path)
             if m:
@@ -359,6 +361,9 @@ def test_google_upload(db, monkeypatch):
     a, _ = _gdrive(db, monkeypatch)
     r = a.upload("/Docs", [("up.bin", b"xyz")])
     assert r["uploaded"][0] == {"name": "up.bin", "size": 3, "path": "/Docs/up.bin"}
+    # The reported path must be where the file actually is (2026-09-27: a
+    # `parents` URL query was silently dropped and every upload hit the root).
+    assert "up.bin" in {e["name"] for e in a.fs_list("/Docs")["entries"]}
 
 
 def test_google_upload_to_file_is_400(db, monkeypatch):
