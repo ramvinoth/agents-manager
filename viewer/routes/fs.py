@@ -83,10 +83,18 @@ class FsMixin:
             self.send_json({"error": str(e)}, status=e.status)
             return None, None
 
+    def _send_attachment(self, data, name, ctype="application/octet-stream"):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", content_disposition(name))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _g_fs_download(self, req):
         fpath = (req.query.get("path") or [""])[0]
         if not fpath:
-            self.send_error(400, "Missing path")
+            self.send_json({"error": "Missing path"}, status=400)
             return
         ok, adapter = self._drive_target(req)
         if ok:
@@ -95,12 +103,7 @@ class FsMixin:
             except DriveError as e:
                 self.send_json({"error": str(e)}, status=e.status)
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Content-Disposition", content_disposition(name))
-            self.end_headers()
-            self.wfile.write(data)
+            self._send_attachment(data, name)
             return
         if ok is None:
             return
@@ -120,26 +123,14 @@ class FsMixin:
                 self.send_json({"error": r["error"]}, status=400)
                 return
             data, name = r["bytes"], r["name"]
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Content-Disposition", content_disposition(name))
-            self.end_headers()
-            self.wfile.write(data)
+            self._send_attachment(data, name)
             return
         try:
             target = Path(os.path.expanduser(fpath)).resolve()
             if not target.is_file():
-                self.send_error(404, "File not found or is a directory")
+                self.send_json({"error": "File not found or is a directory"}, status=404)
                 return
-            # Stream file with proper Content-Disposition header
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(target.stat().st_size))
-            self.send_header("Content-Disposition", content_disposition(target.name))
-            self.end_headers()
-            with open(target, "rb") as f:
-                self.wfile.write(f.read())
+            self._send_attachment(target.read_bytes(), target.name)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
@@ -215,12 +206,7 @@ class FsMixin:
             except DriveError as e:
                 self.send_json({"error": str(e)}, status=e.status)
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Content-Disposition", content_disposition(arcname))
-            self.end_headers()
-            self.wfile.write(data)
+            self._send_attachment(data, arcname, "application/zip")
             return
         if ok is None:
             return
@@ -249,12 +235,7 @@ class FsMixin:
                     self.send_json({"error": rb["error"]}, status=400)
                     return
                 data = rb["bytes"]
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("Content-Disposition", content_disposition(arcname))
-                self.end_headers()
-                self.wfile.write(data)
+                self._send_attachment(data, arcname, "application/zip")
             finally:
                 try:
                     remote_unlink(req.host, tmp)
