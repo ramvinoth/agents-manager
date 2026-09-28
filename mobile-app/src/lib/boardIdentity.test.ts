@@ -89,7 +89,8 @@ function screen(initial: Route) {
     "../state/config": { draftFor: () => "", composerPrefs: () => ({}), setDraft: async () => {} },
     "../lib/useTheme": { useTheme: () => ({}) }, "./styles": { useStyles: () => ({}) },
     "../lib/boardSwipe": boardSwipe,
-    ...Object.fromEntries(["MessageActions", "SwipeToReply", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Markdown", "Collapsible", "Icon"].map(n => [`../components/${n}`, { default: n }])),
+    ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon"].map(n => [`../components/${n}`, { default: n }])),
+    "../components/ThreadItems": { ItemView: "ItemView", WorkingBubble: "WorkingBubble" },
   }
   const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/ThreadScreen.tsx"), "utf8")
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
