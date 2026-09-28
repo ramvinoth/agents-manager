@@ -257,10 +257,9 @@ class _FakeGoogle:
             if m:
                 rest = m.group(1)
                 if rest.endswith("/trash"):
-                    fid = rest[: -len("/trash")]
-                    if fid in self.files:
-                        self.files[fid]["trashed"] = True
-                    return 200, {}, json.dumps({"id": fid}).encode()
+                    # Drive v2's method; v3 has no such route (verified live
+                    # 2026-09-27). Trashing is PATCH {"trashed": true} below.
+                    return 404, {}, b"Not Found"
                 if self.first_401 and url.startswith(self.first_401) and not getattr(self, "_retried", False):
                     self._retried = True
                     return 401, {}, b'{"error":{"code":401,"message":"Invalid Credentials"}}'
@@ -268,10 +267,14 @@ class _FakeGoogle:
                     return 200, {}, self.files.get(rest, {}).get("content", b"")
                 if method == "PATCH":
                     body = json.loads(data)
-                    if rest in self.files:
-                        self.files[rest]["name"] = body.get("name")
+                    f = self.files.get(rest)
+                    if f is not None:
+                        if "name" in body:
+                            f["name"] = body["name"]
+                        if "trashed" in body:
+                            f["trashed"] = body["trashed"]
                     return 200, {}, json.dumps(
-                        {"id": rest, "name": body.get("name"),
+                        {"id": rest, "name": body.get("name"), "trashed": body.get("trashed", False),
                          "mimeType": self.files.get(rest, {}).get("mime", "")}).encode()
                 f = self.files.get(rest, {})
                 return 200, {}, json.dumps(

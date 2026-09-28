@@ -586,7 +586,9 @@ class GoogleDrive(_OAuthDrive):
 
     def delete(self, path):
         fid, _, _ = self._resolve(path)
-        self._post_json(f"/files/{fid}/trash?fields=id", {})
+        # v3 has no /trash method (that is v2): trashing is an update that
+        # sets the `trashed` flag. Verified live 2026-09-27 — the v2 path 404s.
+        self._patch_json(f"/files/{fid}?fields=id,trashed", {"trashed": True})
         return {"deleted": self._norm(path), "trash": "google-drive"}
 
     def whoami(self):
