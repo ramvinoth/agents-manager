@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Markdown } from "@/components/Markdown"
 import { cn } from "@/lib/utils"
+import { TONE_CLASS, columnTone } from "@/lib/tone"
 import { api } from "@/lib/api"
 import { fmtAgo } from "@/lib/format"
 import { decisionActions, formatActor, nextPosition, type ActorKind, type DecisionAction } from "@/lib/board"
@@ -306,19 +307,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const STATUS_TONE: Record<string, string> = {
-  review: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  approved: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  done: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  declined: "bg-red-500/15 text-red-700 dark:text-red-400",
-  blocked: "bg-red-500/15 text-red-700 dark:text-red-400",
-  "needs-info": "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  doing: "bg-primary/15 text-primary",
-}
-
 function StatusBadge({ name }: { name?: string }) {
   if (!name) return <Badge variant="outline" className="h-5">No column</Badge>
-  return <Badge className={cn("h-5 border-transparent", STATUS_TONE[name.trim().toLowerCase()] || "bg-secondary text-secondary-foreground")}>{name}</Badge>
+  return <Badge className={cn("h-5 border-transparent", TONE_CLASS[columnTone(name)])}>{name}</Badge>
 }
 
 /**

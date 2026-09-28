@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { formatActor, type ActorKind } from "@/lib/board"
+import { TONE_CLASS, type Tone } from "@/lib/tone"
 import {
   AUDIT_FILTERS,
   auditError,
@@ -156,12 +157,8 @@ export function AuditDialog({
   )
 }
 
-const TONE_CLASS: Record<ResultTone, string> = {
-  quiet: "bg-muted text-muted-foreground",
-  attention: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  danger: "bg-destructive/10 text-destructive",
-  muted: "bg-muted text-muted-foreground",
-}
+/** Loudness → colour: "quiet" never renders a chip, so it has no tone. */
+const RESULT_TONE: Record<Exclude<ResultTone, "quiet">, Tone> = { attention: "warning", danger: "danger", muted: "neutral" }
 
 /** Initial-letter avatar: humans get the primary tint, agents the neutral one. */
 function ActorBadge({ name, kind, className }: { name: string; kind: ActorKind; className?: string }) {
@@ -216,7 +213,7 @@ function AuditRow({
           </div>
           <div className="truncate text-sm">{subject}</div>
           {tone !== "quiet" && (
-            <span className={cn("mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium", TONE_CLASS[tone])}>{entry.result.label}</span>
+            <span className={cn("mt-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-medium", TONE_CLASS[RESULT_TONE[tone]])}>{entry.result.label}</span>
           )}
         </div>
       </button>
@@ -225,7 +222,7 @@ function AuditRow({
           <div className="rounded-md border border-border bg-background p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Recorded result</span>
-              <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", TONE_CLASS[tone])}>{entry.result.label}</span>
+              <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", tone !== "quiet" && TONE_CLASS[RESULT_TONE[tone]])}>{entry.result.label}</span>
             </div>
             <p className="mt-1.5 leading-relaxed">{entry.result.explanation}</p>
             <p className="mt-1 text-xs text-muted-foreground">A record of what happened then, not the card’s state now.</p>

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { TONE_CLASS } from "@/lib/tone"
 import { useStore } from "@/store"
 
 interface Tab {
@@ -244,7 +245,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#1a1a1a]">
+    <div className="flex h-full flex-col bg-canvas">
       {/* tab strip */}
       {tabs.length > 0 && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-border/40 bg-black/20 px-1 py-1">
@@ -326,10 +327,10 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
 
       {/* headless warning + Xvfb upgrade */}
       {status.display_mode === "headless" && (
-        <div className="flex flex-wrap items-center gap-2 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-200">
+        <div className={cn("flex flex-wrap items-center gap-2 px-3 py-1.5 text-xs", TONE_CLASS.warning)}>
           <span>⚠ {status.headless_note || "Running headless — sign-in on Google & similar is blocked."}</span>
           {status.can_install_xvfb && (
-            <Button size="sm" variant="outline" className="ml-auto h-6 text-xs text-amber-950" onClick={installXvfb}>
+            <Button size="sm" variant="outline" className="ml-auto h-6 text-xs" onClick={installXvfb}>
               Install Xvfb &amp; relaunch headed
             </Button>
           )}

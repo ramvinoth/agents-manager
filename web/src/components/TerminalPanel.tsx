@@ -5,6 +5,8 @@ import "@xterm/xterm/css/xterm.css"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 
+const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
 export function TerminalPanel({ onState }: { onState?: (s: string) => void }) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const termInit = useStore((s) => s.termInit)
@@ -17,10 +19,12 @@ export function TerminalPanel({ onState }: { onState?: (s: string) => void }) {
       fontSize: 13,
       scrollback: 5000,
       fontFamily: "var(--font-mono, ui-monospace, Menlo, Consolas, monospace)",
+      // xterm paints a <canvas>, so it cannot read CSS variables itself:
+      // resolve the canvas tokens once at mount.
       theme: {
-        background: "#0d1117",
-        foreground: "#c9d1d9",
-        cursor: "#58a6ff",
+        background: cssVar("--canvas"),
+        foreground: cssVar("--canvas-foreground"),
+        cursor: cssVar("--info"),
         selectionBackground: "rgba(88,166,255,0.3)",
       },
     })
@@ -90,5 +94,5 @@ export function TerminalPanel({ onState }: { onState?: (s: string) => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onState])
 
-  return <div ref={bodyRef} className="h-full w-full bg-[#0d1117] p-1" />
+  return <div ref={bodyRef} className="h-full w-full bg-canvas p-1" />
 }
