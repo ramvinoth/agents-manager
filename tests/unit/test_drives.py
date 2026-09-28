@@ -405,6 +405,17 @@ def test_google_compress_uploads_zip(db, monkeypatch):
     assert created and created[0]["parents"] == ["d1"]
 
 
+def test_zip_over_budget_is_413_before_upload(db, monkeypatch):
+    """The zip is built in server memory; a selection over ZIP_BUDGET must
+    stop at the first byte past the line, and nothing may be uploaded."""
+    a, fake = _gdrive(db, monkeypatch)
+    monkeypatch.setattr(drives, "ZIP_BUDGET", 4)
+    with pytest.raises(drives.DriveError) as ei:
+        a.compress("/Docs", ["a.txt", "b.md"], "bundle")
+    assert ei.value.status == 413 and "fewer items" in str(ei.value)
+    assert not [f for f in fake.files.values() if f["name"] == "bundle.zip"]
+
+
 def test_google_status_authorized(db, monkeypatch):
     a, _ = _gdrive(db, monkeypatch)
     s = a.status()

@@ -76,6 +76,11 @@ import zipfile
 
 from viewer import db
 
+# Drive zips are built in the viewer's memory (no vendor has a generic
+# multi-item zip; see the facts table), so one runaway selection would take
+# the server hosting every session with it. Uncompressed bytes per zip.
+ZIP_BUDGET = 256 * 1024 * 1024
+
 
 class DriveError(Exception):
     """An adapter failure. `status` is the HTTP status the fs route answers
@@ -315,18 +320,25 @@ class _OAuthDrive(BaseDrive):
     def _zip(self, path, names, archive):
         arcname = self._arcname(names, archive)
         buf = io.BytesIO()
+        budget = [ZIP_BUDGET]
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for n in names:
                 node, is_dir = self._node(self._join(path, n))
-                self._zip_node(z, node, is_dir, n)
+                self._zip_node(z, node, is_dir, n, budget)
         return buf.getvalue(), arcname
 
-    def _zip_node(self, z, node, is_dir, prefix):
+    def _zip_node(self, z, node, is_dir, prefix, budget):
         if not is_dir:
-            z.writestr(prefix, self._node_read(node))
+            data = self._node_read(node)
+            budget[0] -= len(data)
+            if budget[0] < 0:
+                raise DriveError(
+                    f"Selection is over {ZIP_BUDGET // (1024 * 1024)} MB — zip fewer items, "
+                    "or download the large files one at a time", 413)
+            z.writestr(prefix, data)
             return
         for child, name, cdir in self._node_children(node):
-            self._zip_node(z, child, cdir, f"{prefix}/{name}")
+            self._zip_node(z, child, cdir, f"{prefix}/{name}", budget)
 
     def build_zip(self, path, names):
         return self._zip(path, names, None)
