@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import time
+import zipfile
 from pathlib import Path
 from viewer.drives import DriveError, adapter_for
 from viewer.engine import (
@@ -40,6 +41,20 @@ def _is_secret_path(name: str) -> bool:
     norm = os.path.normpath(os.path.expanduser(name))
     claude = os.path.normpath(os.path.expanduser("~/.claude"))
     return os.path.dirname(norm) == claude and base.startswith(".")
+
+
+def _zip_local(base, names, dest):
+    """Zip `names` (files or whole directories) from `base` into `dest`;
+    entries keep their paths relative to `base`."""
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in names:
+            src = base / n
+            if src.is_dir():
+                for f in src.rglob("*"):
+                    if f.is_file():
+                        z.write(f, f.relative_to(base))
+            elif src.is_file():
+                z.write(src, src.relative_to(base))
 
 
 def _resolve_location(req, body=None):
@@ -244,7 +259,6 @@ class FsMixin:
             return
 
         import tempfile
-        import zipfile
         tmp_path = None
         try:
             base = Path(os.path.expanduser(path)).resolve()
@@ -253,15 +267,7 @@ class FsMixin:
                 return
             fd, tmp_path = tempfile.mkstemp(suffix=".zip")
             os.close(fd)
-            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
-                for n in names:
-                    src = base / n
-                    if src.is_dir():
-                        for f in src.rglob("*"):
-                            if f.is_file():
-                                z.write(f, f.relative_to(base))
-                    elif src.is_file():
-                        z.write(src, src.relative_to(base))
+            _zip_local(base, names, tmp_path)
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Length", str(os.path.getsize(tmp_path)))
@@ -406,7 +412,6 @@ class FsMixin:
                 self.send_json({"error": f"SSH: {e}"}, status=502)
             return
         try:
-            import zipfile
             base = Path(os.path.expanduser(path)).resolve()
             if not base.is_dir():
                 self.send_json({"error": "Target is not a directory"}, status=400)
@@ -420,15 +425,7 @@ class FsMixin:
             while dest.exists():
                 dest = base / f"{stem} {i}.zip"
                 i += 1
-            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
-                for n in names:
-                    src = base / n
-                    if src.is_dir():
-                        for f in src.rglob("*"):
-                            if f.is_file():
-                                z.write(f, f.relative_to(base))
-                    elif src.is_file():
-                        z.write(src, src.relative_to(base))
+            _zip_local(base, names, dest)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
             return
