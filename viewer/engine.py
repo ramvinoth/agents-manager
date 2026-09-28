@@ -2213,6 +2213,26 @@ def session_analysis(hid, rel, refresh=False):
 # route handlers; RemoteHost delegates to the proven remote_* helpers over SSH.
 # Handlers do `host = get_host(hid); host.<method>()` — no `if hid == "local"`.
 
+_TCC_GUARDED = ("Desktop", "Documents", "Downloads")
+
+
+def _permission_denied_hint(p):
+    """The 403 text for a folder this server's process may not read. On macOS,
+    Desktop/Documents/Downloads under the home folder are gated per app by
+    privacy consent (TCC), not by unix mode bits — the owner can `ls` them in
+    Terminal while a launchd-started python cannot. Name the switch to flip;
+    elsewhere the plain unix answer is the truth."""
+    try:
+        rel = p.relative_to(Path.home())
+    except ValueError:
+        return "Permission denied"
+    if sys.platform == "darwin" and rel.parts and rel.parts[0] in _TCC_GUARDED:
+        return (f"macOS blocks this server from reading ~/{rel.parts[0]} (privacy consent). "
+                "Grant it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access) "
+                "for the Python that runs Harman, then restart the server.")
+    return "Permission denied"
+
+
 class Host:
     """Interface (documented via LocalHost/RemoteHost). Methods return plain
     data or raise; the HTTP layer turns that into a response."""
@@ -2254,7 +2274,7 @@ class LocalHost(Host):
                     truncated = True
                     break
         except PermissionError:
-            return {"error": "Permission denied", "status": 403}
+            return {"error": _permission_denied_hint(p), "status": 403}
         return {"path": str(p), "parent": str(p.parent) if p != Path(p.anchor) else None,
                 "entries": entries, "home": str(Path.home()), "truncated": truncated}
 

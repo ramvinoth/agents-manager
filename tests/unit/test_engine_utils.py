@@ -47,3 +47,28 @@ class TestFrontmatterDescription:
         p = tmp_path / "s.md"
         p.write_text("---\nname: only-name\n---\n")
         assert frontmatter_description(str(p)) == ""
+
+
+class TestPermissionDeniedHint:
+    """The local fs 403 text: names the macOS privacy switch for the three
+    consent-gated home folders, stays the plain unix answer everywhere else."""
+
+    def test_tcc_folder_names_the_switch(self, monkeypatch):
+        from pathlib import Path
+        from viewer import engine
+        monkeypatch.setattr(engine.sys, "platform", "darwin")
+        msg = engine._permission_denied_hint(Path.home() / "Downloads")
+        assert "~/Downloads" in msg and "Privacy & Security" in msg
+
+    def test_other_paths_stay_plain(self, monkeypatch):
+        from pathlib import Path
+        from viewer import engine
+        monkeypatch.setattr(engine.sys, "platform", "darwin")
+        assert engine._permission_denied_hint(Path("/root")) == "Permission denied"
+        assert engine._permission_denied_hint(Path.home() / "srv" / "Downloads") == "Permission denied"
+
+    def test_not_a_mac_stays_plain(self, monkeypatch):
+        from pathlib import Path
+        from viewer import engine
+        monkeypatch.setattr(engine.sys, "platform", "linux")
+        assert engine._permission_denied_hint(Path.home() / "Downloads") == "Permission denied"
