@@ -46,36 +46,55 @@ from viewer import db, orglogic
 
 def _session_title(session_id):
     """The session's display name, matching the chat list: a custom title if set,
-    else the agent name, else the first user message, else ''. Best-effort."""
+    else the agent name, else the first user message, else ''. Best-effort.
+
+    Cached per transcript (mtime, size): the decision feed asks for every
+    open decision's session title on a 4 s poll from every open board, and a
+    parse of the transcript head per call is an N+1 disk read on that hot
+    path. An idle session's file never changes, so its title is read once."""
     try:
         path = transcript_path(session_id)
         if not path:
             return ""
-        title = first_user = ""
-        with open(path, errors="replace") as f:
-            for i, line in enumerate(f):
-                if i > 200 or title:
-                    break
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                t = obj.get("type")
-                if t == "custom-title" and obj.get("customTitle"):
-                    title = obj["customTitle"]
-                elif t == "agent-name" and obj.get("agentName"):
-                    title = obj["agentName"]
-                elif not first_user and t == "user":
-                    msg = (obj.get("message") or {}).get("content")
-                    if isinstance(msg, str):
-                        first_user = msg
-                    elif isinstance(msg, list):
-                        first_user = " ".join(
-                            b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
-                        )
-        return " ".join((title or first_user).split())[:60]
+        st = os.stat(path)
+        stamp = (st.st_mtime, st.st_size)
+        hit = _TITLE_CACHE.get(session_id)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        title = _read_session_title(path)
+        _TITLE_CACHE[session_id] = (stamp, title)
+        return title
     except Exception:
         return ""
+
+
+_TITLE_CACHE = {}
+
+
+def _read_session_title(path):
+    title = first_user = ""
+    with open(path, errors="replace") as f:
+        for i, line in enumerate(f):
+            if i > 200 or title:
+                break
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            t = obj.get("type")
+            if t == "custom-title" and obj.get("customTitle"):
+                title = obj["customTitle"]
+            elif t == "agent-name" and obj.get("agentName"):
+                title = obj["agentName"]
+            elif not first_user and t == "user":
+                msg = (obj.get("message") or {}).get("content")
+                if isinstance(msg, str):
+                    first_user = msg
+                elif isinstance(msg, list):
+                    first_user = " ".join(
+                        b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
+                    )
+    return " ".join((title or first_user).split())[:60]
 
 
 def _project_label(session_id):
