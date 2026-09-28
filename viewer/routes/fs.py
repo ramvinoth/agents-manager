@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -98,12 +99,15 @@ class FsMixin:
             self.send_json({"error": str(e)}, status=e.status)
             return None, None
 
-    def _send_attachment(self, data, name, ctype="application/octet-stream"):
+    def _begin_attachment(self, name, length, ctype="application/octet-stream"):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(length))
         self.send_header("Content-Disposition", content_disposition(name))
         self.end_headers()
+
+    def _send_attachment(self, data, name, ctype="application/octet-stream"):
+        self._begin_attachment(name, len(data), ctype)
         self.wfile.write(data)
 
     def _g_fs_download(self, req):
@@ -258,38 +262,26 @@ class FsMixin:
                     pass
             return
 
-        import tempfile
-        tmp_path = None
+        # Local is the one leg that can stream: a home-folder selection may be
+        # gigabytes, so the archive goes to a temp file and never fully into
+        # memory (the drive and SSH legs are byte-bound by their transports).
+        base = Path(os.path.expanduser(path)).resolve()
+        if not base.is_dir():
+            self.send_json({"error": "Target is not a directory"}, status=400)
+            return
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
         try:
-            base = Path(os.path.expanduser(path)).resolve()
-            if not base.is_dir():
-                self.send_json({"error": "Target is not a directory"}, status=400)
-                return
-            fd, tmp_path = tempfile.mkstemp(suffix=".zip")
-            os.close(fd)
-            _zip_local(base, names, tmp_path)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Length", str(os.path.getsize(tmp_path)))
-            self.send_header("Content-Disposition", content_disposition(arcname))
-            self.end_headers()
-            with open(tmp_path, "rb") as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except Exception as e:
             try:
+                _zip_local(base, names, tmp_path)
+            except Exception as e:
                 self.send_json({"error": str(e)}, status=500)
-            except Exception:
-                pass
+                return
+            self._begin_attachment(arcname, os.path.getsize(tmp_path), "application/zip")
+            with open(tmp_path, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
         finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+            os.unlink(tmp_path)
 
     def _p_fs_rename(self, req):
         body = self.read_body()
