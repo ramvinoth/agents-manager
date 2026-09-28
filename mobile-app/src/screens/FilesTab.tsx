@@ -208,6 +208,7 @@ export default function FilesTab({ navigation }: Props) {
       const n = (name || "").trim()
       if (!n) return
       setBusy(true)
+      setError("")
       try {
         const r = await api.fsMkdir(scope, { path, name: n })
         if (r?.error) setError(r.error)
@@ -228,7 +229,15 @@ export default function FilesTab({ navigation }: Props) {
       const { url, headers } = api.fsDownloadUrl(scope, full)
       const dest = FileSystem.cacheDirectory + encodeURIComponent(item.name)
       const r = await FileSystem.downloadAsync(url, dest, { headers })
-      if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
+      if (r.status >= 400) {
+        // The body on disk is the server's JSON error, not the file: surface
+        // its message and don't leave it in the cache under the file's name.
+        const body = await FileSystem.readAsStringAsync(r.uri).catch(() => "")
+        await FileSystem.deleteAsync(r.uri, { idempotent: true }).catch(() => {})
+        let msg = `Download failed (HTTP ${r.status})`
+        try { msg = JSON.parse(body).error || msg } catch {}
+        throw new Error(msg)
+      }
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(r.uri)
     } catch (e) {
       setError((e as Error).message)
@@ -245,6 +254,7 @@ export default function FilesTab({ navigation }: Props) {
         style: "destructive",
         onPress: async () => {
           setBusy(true)
+          setError("")
           try {
             const r = await api.fsDelete(scope, { path: joinPath(path, item.name) })
             if (r?.error) setError(r.error)
