@@ -1185,14 +1185,60 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     return {"behavior": "deny", "message": answer}
 
 
+def _plan_text(session_id, tinput):
+    """The plan to show in the approval card.
+
+    Older CLIs put the markdown straight in ExitPlanMode's `plan` argument. Newer
+    ones build the plan in a *plan file* and call ExitPlanMode with `{}` (measured
+    against claude-opus-5.5: input keys == []), which would leave the card blank.
+    So fall back: the plan file named by the session's plan_mode attachment, then
+    the last assistant text before the call — which is where the CLI has already
+    printed the plan. Best-effort throughout; "" is still a valid answer."""
+    if isinstance(tinput, dict):
+        for key in ("plan", "plan_md", "content"):
+            v = tinput.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        plan_file, last_text = "", ""
+        with open(matches[0], errors="replace") as f:
+            for line in f:
+                if '"plan' not in line and '"text"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pf = (obj.get("attachment") or {}).get("planFilePath")
+                if pf:
+                    plan_file = pf
+                content = (obj.get("message") or {}).get("content")
+                if obj.get("type") == "assistant" and isinstance(content, list):
+                    txt = "\n".join(b.get("text", "") for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text").strip()
+                    if txt:
+                        last_text = txt
+        if plan_file:
+            try:
+                body = Path(plan_file).read_text(errors="replace").strip()
+                if body:
+                    return body
+            except OSError:
+                pass
+        return last_text
+    except Exception:
+        return ""
+
+
 def _await_plan_decision(session_id, tinput, tool_use_id):
     """Block a driven claude's ExitPlanMode until the user approves or denies with
     feedback. Persists a durable pending_plans row so the app renders the plan card
     and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
     from viewer import questions
-    plan_md = ""
-    if isinstance(tinput, dict):
-        plan_md = tinput.get("plan") or ""
+    plan_md = _plan_text(session_id, tinput)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
