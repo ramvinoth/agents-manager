@@ -223,6 +223,11 @@ class CapabilitiesMixin:
             caps = h.capabilities(cwd)
         except Exception as e:
             return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
+        # Models the host's Claude gateway serves, so the picker tracks the
+        # gateway instead of a hardcoded alias list. [] (no gateway) leaves the
+        # UI on its built-in aliases.
+        from viewer.claude_models import claude_models
+        caps["models"] = claude_models(host)
         # The chat's Harman plugins and its own extras ride --plugin-dir on local
         # claude runs only (engine), from folders the host scanner never reads —
         # merge them for exactly that case so this stays the true per-session view.

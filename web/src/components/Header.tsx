@@ -37,11 +37,7 @@ import { useStore } from "@/store"
 import { EnvDialog, IntegrationsDialog, ProfileDialog } from "@/components/lazyDialogs"
 
 function useTheme() {
-  // Dark is the default, not light: this is a transcript reader that sits beside
-  // a terminal and a browser, and it was the only one of the three that opened
-  // bright. Only an explicit stored choice moves it — "light" means the user
-  // picked light, whereas an absent key means they have never expressed one.
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light")
+  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark")
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
     localStorage.setItem("theme", dark ? "dark" : "light")
