@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin, transcript_path,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -1521,7 +1521,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "stdin_open": False, "mode": mode, "model": model, "cwd": cwd,
                "interrupted": False, "host": host,
                "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
-               "pending_approvals": [], "perm_token": ""}
+               "pending_approvals": [], "perm_token": "", "version_gate": ""}
         CHAT_JOBS[session_id] = job
 
     binary = "claude" if remote else claude_bin()
@@ -1720,6 +1720,15 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             stream_user_message(proc, message)
 
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
+                # Provider verdict "this model needs a newer claude CLI" arrives
+                # as an API-error event on the stream. Detect on the raw line
+                # (the code + human sentence survive JSON escaping) so it works
+                # regardless of the event's exact shape, and record the actionable
+                # message once — the finalizer self-heals the cache and surfaces it.
+                if not job["version_gate"]:
+                    gate = claude_version_gate(line)
+                    if gate:
+                        job["version_gate"] = gate
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
@@ -1780,6 +1789,15 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 rc = job.get("returncode")
                 interrupted = job.get("interrupted")
                 last_result = job.get("last_result", "")
+                version_gate = job.get("version_gate", "")
+            # Self-heal the stale half of the 2.1.84 incident: the provider
+            # rejected this run for a too-old CLI, so force the next run to
+            # re-resolve the binary from disk — if the user has since run
+            # `claude update`, the retry picks it up immediately (no restart,
+            # no hour-long cache wait). Skipped for remote runs, which spawn a
+            # bare `claude` on the host and never consult this cache.
+            if version_gate and job.get("host", "local") == "local":
+                invalidate_claude_bin_cache()
             # Messages queued in the closing race get a fresh resumed run.
             if leftovers and job["returncode"] == 0:
                 first, rest = leftovers[0], leftovers[1:]
@@ -1803,6 +1821,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     if rc == 0 and last_result:
                         body = push_preview(last_result)
                         notify_all(label, body, data={"session": session_id, "host": phost})
+                    elif version_gate:
+                        # Actionable, self-contained: a human reading this on a
+                        # phone with no context knows exactly what to do.
+                        notify_all(label, version_gate, data={"session": session_id, "host": phost})
                     else:
                         body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
                         notify_all(label, body, data={"session": session_id, "host": phost})

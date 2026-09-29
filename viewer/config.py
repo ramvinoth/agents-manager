@@ -217,6 +217,64 @@ def claude_bin():
     return best
 
 
+def invalidate_claude_bin_cache():
+    """Force the next claude_bin() to re-resolve from disk instead of serving
+    the hourly cache. Called when a run is rejected for a too-old CLI: if the
+    user has since installed/updated a newer claude (`claude update`), the very
+    next run must pick it up — waiting up to an hour, or for a server restart,
+    is the stale-cache half of the 2.1.84 incident (card 18)."""
+    _CLAUDE_BIN_CACHE.update({"at": 0.0, "bin": ""})
+
+
+# The provider (not the viewer) owns the model->minimum-CLI-version mapping and
+# states it in its own rejection. LiteLLM/Copilot tags the machine-readable code
+# `claude_code_version_too_old`; the raw Anthropic gate is the human sentence.
+# Matching the provider's OWN words keeps this model-agnostic and future-proof:
+# no {model: version} table in the viewer to go stale when the next model ships.
+_VERSION_GATE_CODE = "claude_code_version_too_old"
+_VERSION_GATE_RE = re.compile(
+    r"(?:Claude Code|version)\s+[\d.]+\s+does not support this model"
+    r"|version\s+([\d.]+)\s+or newer is required",
+    re.IGNORECASE,
+)
+
+
+def claude_version_gate(text):
+    """If `text` is a provider rejection for a too-old claude CLI, return a
+    short, self-contained, actionable message a human with no context can act
+    on; otherwise None. Model-agnostic: it reads the provider's own verdict
+    rather than predicting which model needs which version.
+
+    Detection is by the machine-readable error_code first, the human sentence
+    as fallback (a provider that changes wording but keeps the code, or vice
+    versa, still trips exactly one of the two)."""
+    if not text or not isinstance(text, str):
+        return None
+    if _VERSION_GATE_CODE not in text and not _VERSION_GATE_RE.search(text):
+        return None
+    required = ""
+    m = re.search(r"version\s+([\d.]+)\s+or newer is required", text, re.IGNORECASE)
+    if m:
+        required = m.group(1)
+    have = ""
+    m = re.search(r"Claude Code\s+([\d.]+)\s+does not support", text, re.IGNORECASE)
+    if m:
+        have = m.group(1)
+    model = ""
+    m = re.search(r"Model Group=([\w.\-]+)", text)
+    if m:
+        model = m.group(1)
+    parts = ["This model needs a newer Claude Code CLI than the one running."]
+    if model:
+        parts[0] = f"The model {model} needs a newer Claude Code CLI than the one running."
+    if have and required:
+        parts.append(f"Installed: {have}; required: {required} or newer.")
+    elif required:
+        parts.append(f"Required: {required} or newer.")
+    parts.append("Run `claude update` (or install a newer claude), then retry.")
+    return " ".join(parts)
+
+
 def read_back_f(f, end_off, n_lines):
     """read_back on an already-open binary file object (local or SFTP)."""
     pos = end_off
