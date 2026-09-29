@@ -1185,20 +1185,25 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     return {"behavior": "deny", "message": answer}
 
 
-def _plan_text(session_id, tinput):
+def _plan_text(session_id, tinput, live_text="", started=0):
     """The plan to show in the approval card.
 
     Older CLIs put the markdown straight in ExitPlanMode's `plan` argument. Newer
     ones build the plan in a *plan file* and call ExitPlanMode with `{}` (measured
     against claude-opus-5.5: input keys == []), which would leave the card blank.
-    So fall back: the plan file named by the session's plan_mode attachment, then
-    the last assistant text before the call — which is where the CLI has already
-    printed the plan. Best-effort throughout; "" is still a valid answer."""
+
+    Order matters. `live_text` is the assistant text captured from the run's own
+    stream and is the only ordering-safe source: the transcript file is written
+    asynchronously, so reading it back here can return the PREVIOUS turn's text
+    (measured). The file scan stays as the fallback for a plan that arrives
+    without live text. Best-effort throughout; "" is still a valid answer."""
     if isinstance(tinput, dict):
         for key in ("plan", "plan_md", "content"):
             v = tinput.get(key)
             if isinstance(v, str) and v.strip():
                 return v
+    if isinstance(live_text, str) and live_text.strip():
+        return live_text.strip()
     try:
         matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
         if not matches:
@@ -1222,10 +1227,14 @@ def _plan_text(session_id, tinput):
                     if txt:
                         last_text = txt
         if plan_file:
+            # Only if it belongs to THIS call — a plan file left over from an
+            # earlier run would be exactly the staleness live_text exists to avoid.
             try:
-                body = Path(plan_file).read_text(errors="replace").strip()
-                if body:
-                    return body
+                p = Path(plan_file)
+                if p.stat().st_mtime >= started:
+                    body = p.read_text(errors="replace").strip()
+                    if body:
+                        return body
             except OSError:
                 pass
         return last_text
@@ -1238,7 +1247,11 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
     feedback. Persists a durable pending_plans row so the app renders the plan card
     and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
     from viewer import questions
-    plan_md = _plan_text(session_id, tinput)
+    with CHAT_LOCK:
+        _j = CHAT_JOBS.get(session_id) or {}
+        live = _j.get("last_assistant_text", "")
+        started = _j.get("started", 0)
+    plan_md = _plan_text(session_id, tinput, live, started)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
@@ -1779,6 +1792,19 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Remember the newest assistant text as it streams. The plan card
+                # needs the text that immediately precedes ExitPlanMode, and the
+                # transcript file is written asynchronously — reading it back at
+                # approval time can still show the PREVIOUS turn's text (measured:
+                # a stale "ACKNOWLEDGED" from the prior run). The stream is the
+                # only ordering-safe source.
+                if ev.get("type") == "assistant":
+                    blocks = ((ev.get("message") or {}).get("content")) or []
+                    if isinstance(blocks, list):
+                        txt = "\n".join(b.get("text", "") for b in blocks
+                                        if isinstance(b, dict) and b.get("type") == "text").strip()
+                        if txt:
+                            job["last_assistant_text"] = txt
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
