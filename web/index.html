@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Harman</title>
+    <script>
+      // Applied here, before the first paint, rather than in React. The theme
+      // class is otherwise set in an effect that runs after mount, so a dark
+      // default would still flash a white page on every load — the one thing a
+      // dark default is supposed to prevent. Kept deliberately in sync with
+      // useTheme() in components/Header.tsx: absent key means dark, only an
+      // explicit "light" means light.
+      try {
+        document.documentElement.classList.toggle(
+          "dark",
+          localStorage.getItem("theme") !== "light"
+        )
+      } catch (e) {
+        // Storage can be unavailable (private mode, blocked cookies). The app
+        // still works; React's effect settles the class a moment later.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
