@@ -149,3 +149,76 @@ class TestCache:
         config._CLAUDE_BIN_CACHE["at"] = _t.time() - 3601
         config.claude_bin()
         assert len(probe.calls) == 2  # the hour passed: probed again
+
+    def test_invalidate_forces_immediate_re_resolve(self, monkeypatch, tmp_path):
+        """A too-old-CLI rejection self-heals: invalidate_claude_bin_cache()
+        makes the very NEXT claude_bin() re-probe from disk, so a user who ran
+        `claude update` is picked up at once — not after the hour, not after a
+        restart (the stale half of the 2.1.84 incident)."""
+        which_path = _mk(tmp_path, "usr/claude")
+        monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
+        monkeypatch.setattr(config.shutil, "which",
+                            lambda name: which_path if name == "claude" else None)
+        probe = _Probe({which_path: (2, 1, 84)})
+        monkeypatch.setattr(config, "_claude_version", probe)
+        config.claude_bin()
+        config.claude_bin()
+        assert len(probe.calls) == 1  # cached
+        config.invalidate_claude_bin_cache()
+        config.claude_bin()
+        assert len(probe.calls) == 2  # invalidation forced a fresh probe
+
+
+# The exact raw stream line captured from the Ngram session's 400 (a real
+# Copilot/LiteLLM rejection). Ground truth for the detector: it must survive
+# the double JSON-escaping the CLI writes into the transcript/stream.
+_REAL_GATE_LINE = (
+    r'{"type":"assistant","message":{"content":[{"type":"text","text":'
+    r'"API Error: 400 {\"error\":{\"message\":\"litellm.BadRequestError: '
+    r'Github_copilotException - {\\\"type\\\":\\\"error\\\",\\\"error\\\":'
+    r'{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"Claude '
+    r"Code 2.1.84 does not support this model; version 2.1.280 or newer is "
+    r"required. Run 'claude update', or update the Claude desktop app, then "
+    r'try again.\\\",\\\"details\\\":{\\\"error_code\\\":\\\"'
+    r'claude_code_version_too_old\\\"}}}. Received Model Group=claude-opus-5.5'
+    r'"}]}}'
+)
+
+
+class TestVersionGate:
+    def test_none_on_ordinary_output(self):
+        assert config.claude_version_gate("") is None
+        assert config.claude_version_gate(None) is None
+        assert config.claude_version_gate('{"type":"result","result":"ok"}') is None
+        # A generic 400 that is NOT the version gate must not trip it.
+        assert config.claude_version_gate(
+            'API Error: 400 rate_limit_exceeded') is None
+
+    def test_detects_real_transcript_line(self):
+        msg = config.claude_version_gate(_REAL_GATE_LINE)
+        assert msg is not None
+        # Actionable + self-contained for a human with no context.
+        assert "claude-opus-5.5" in msg
+        assert "2.1.84" in msg
+        assert "2.1.280" in msg
+        assert "claude update" in msg
+
+    def test_detects_by_error_code_alone(self):
+        """Provider keeps the machine-readable code but reworded the sentence."""
+        assert config.claude_version_gate(
+            '{"details":{"error_code":"claude_code_version_too_old"}}') is not None
+
+    def test_detects_by_human_sentence_alone(self):
+        """Raw Anthropic gate (no LiteLLM error_code wrapper)."""
+        msg = config.claude_version_gate(
+            "Claude Code 2.1.84 does not support this model; "
+            "version 2.1.280 or newer is required. Run 'claude update'.")
+        assert msg is not None
+        assert "2.1.280" in msg
+
+    def test_message_degrades_without_extractable_numbers(self):
+        """Code present, but no parseable versions/model: still actionable."""
+        msg = config.claude_version_gate(
+            'error_code":"claude_code_version_too_old')
+        assert msg is not None
+        assert "claude update" in msg
