@@ -443,14 +443,13 @@ class ApiClient {
   chatQuestionAnswer(body: Body) {
     return this.postRes("/api/chat/question/answer", this.wh(body))
   }
+  // Approve / request-changes on a blocked ExitPlanMode. Same-turn: the run is
+  // parked inside the permission tool waiting on this, so it is NOT a chat message.
+  chatPlanDecide(body: Body) {
+    return this.postRes("/api/chat/plan/decide", this.wh(body))
+  }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
-  }
-  // Approve or send changes back on a live (blocked) ExitPlanMode. Same-turn:
-  // the run is parked waiting on this, so approving resumes it rather than
-  // starting a new one.
-  chatPlanDecide(body: Body) {
-    return this.postRes("/api/chat/plan/decide", body)
   }
 
   // ---- loops ----

@@ -70,7 +70,7 @@ export function Header() {
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
-  // so showing New/Harman/host/panels here would only open dialogs that then 401.
+  // so showing New/host/panels here would only open dialogs that then 401.
   if (needsAuth) {
     return (
       <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3">

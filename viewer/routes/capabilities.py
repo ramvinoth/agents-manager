@@ -208,9 +208,16 @@ class CapabilitiesMixin:
             except Exception:
                 cwd = ""
         try:
-            return h.capabilities(cwd), None
+            caps = h.capabilities(cwd)
         except Exception as e:
             return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
+        # Models the host's Claude gateway serves, so the picker tracks the
+        # gateway instead of a hardcoded alias list. Injected here rather than in
+        # LocalHost.capabilities/remote_capabilities so local and remote hosts get
+        # it from one place. [] (no gateway) leaves the UI on its built-in aliases.
+        from viewer.claude_models import claude_models
+        caps["models"] = claude_models(host)
+        return caps, None
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""

@@ -46,6 +46,12 @@ export interface PermApproval {
   tool_name: string
   input: unknown
 }
+/** A blocked ExitPlanMode awaiting the user's approval (see PlanPrompt). */
+export interface PendingPlan {
+  tool_use_id: string
+  plan: string
+  host?: string
+}
 
 // Non-reactive timers (module-level so they never trigger re-renders).
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -95,6 +101,7 @@ interface AppState {
   chatStatus: ChatStatus | null
   queue: string[]
   pendingApprovals: PermApproval[]
+  pendingPlan: PendingPlan | null
   stash: string[]
   permMode: string
   model: string
@@ -377,11 +384,15 @@ export const useStore = create<AppState>((set, get) => {
       try {
         const d: any = await api.chatStatus(sessionId)
         if (d.running) {
-          set({ queue: d.queue || [], pendingApprovals: d.pending_approvals || [] })
+          set({
+            queue: d.queue || [],
+            pendingApprovals: d.pending_approvals || [],
+            pendingPlan: d.pending_plan || null,
+          })
           return
         }
         if (chatTimer) { clearInterval(chatTimer); chatTimer = null }
-        set({ chatRunning: false, queue: [], pendingApprovals: [] })
+        set({ chatRunning: false, queue: [], pendingApprovals: [], pendingPlan: null })
         await pollTick()
         get().loadGitStatus() // the run may have committed / switched branches
         // Refresh the full-session summary (fresh user-message count) without a
@@ -518,6 +529,7 @@ export const useStore = create<AppState>((set, get) => {
     chatStatus: null,
     queue: [],
     pendingApprovals: [],
+    pendingPlan: null,
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
     permMode: localStorage.getItem("permMode") || "acceptEdits",
     model: localStorage.getItem("model") || "",
@@ -1294,22 +1306,24 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
-    // Approve / request changes on a live ExitPlanMode. Like answerQuestion this
-    // must hit the dedicated endpoint: the run is BLOCKED on the decision, so a
-    // normal chat message would only queue behind it. Approving continues the
-    // same turn, hence chatRunning stays true and we re-watch rather than start.
-    decidePlan: async (decision, feedback) => {
+    // Decide a blocked ExitPlanMode. approve -> the agent executes; deny ->
+    // it revises using `feedback`. Both resume the SAME turn, so the chat goes
+    // back to running rather than needing a new message. Clearing pendingPlan
+    // first dismisses the card immediately; the run is already blocked on this
+    // decision, so there is nothing to race with.
+    decidePlan: async (decision, feedback = "") => {
       const { currentSessionPath } = get()
       if (!currentSessionPath) return
-      set({ chatRunning: true, chatStatus: null })
+      set({ pendingPlan: null })
       try {
-        const res = await api.chatPlanDecide({ session: currentSessionPath, decision, feedback: feedback || "" })
+        const res = await api.chatPlanDecide({ session: currentSessionPath, decision, feedback })
         const d = await res.json().catch(() => ({}))
         if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+        set({ chatRunning: true })
         await pollTick()
         watchChat(d.session || sessionIdOf(currentSessionPath))
       } catch (e: any) {
-        set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to decide: " + (e?.message || e) } })
+        set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to decide plan: " + (e?.message || e) } })
       }
     },
 

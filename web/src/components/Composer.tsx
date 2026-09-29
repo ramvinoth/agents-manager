@@ -28,12 +28,17 @@ const PERM_MODES_COPILOT = [
   { v: "autopilot", label: "Autopilot" },
   { v: "plan", label: "Plan" },
 ]
-const MODELS_CLAUDE = [
+// Fallback only: what Claude offers when no gateway is configured, so the
+// picker still works on a plain Anthropic login. When caps.models is non-empty
+// these aliases are DROPPED — a gateway serves full ids like "claude-opus-5.5"
+// and does not answer to "opus", so offering them would be offering dead entries.
+const MODELS_CLAUDE_FALLBACK = [
   { v: "default", label: "Default model" },
   { v: "opus", label: "Opus" },
   { v: "sonnet", label: "Sonnet" },
   { v: "haiku", label: "Haiku" },
 ]
+const CLAUDE_ALIASES = ["opus", "sonnet", "haiku"]
 // Copilot's selectable models are fetched dynamically per-plan from its /models
 // API (see caps.models) — a Pro/Pro+ account's Opus/GPT-5 appear automatically,
 // a free plan returns none (only Default + Auto apply). "Custom model ID…" is
@@ -185,33 +190,42 @@ export function Composer() {
   // the backend also validates, so a stale value can never break a run.
   const isCopilot = currentAgent === "copilot"
   const permModes = isCopilot ? PERM_MODES_COPILOT : PERM_MODES_CLAUDE
+  // Both agents build their list the same way: Default, then whatever the host
+  // actually serves (caps.models), then the custom-id escape hatch. New models
+  // therefore appear with no code change.
+  const capsModels = Array.isArray(caps?.models) ? caps.models : []
   const copilotModels = useMemo(
-    () => [
-      ...MODELS_COPILOT_BASE,
-      ...(Array.isArray(caps?.models) ? caps.models : []),
-      { v: CUSTOM_MODEL, label: "Custom model ID…" },
-    ],
-    [caps]
+    () => [...MODELS_COPILOT_BASE, ...capsModels, { v: CUSTOM_MODEL, label: "Custom model ID…" }],
+    [capsModels]
   )
-  const models = isCopilot ? copilotModels : MODELS_CLAUDE
+  const claudeModels = useMemo(
+    () =>
+      capsModels.length
+        ? [MODELS_CLAUDE_FALLBACK[0], ...capsModels, { v: CUSTOM_MODEL, label: "Custom model ID…" }]
+        : [...MODELS_CLAUDE_FALLBACK, { v: CUSTOM_MODEL, label: "Custom model ID…" }],
+    [capsModels]
+  )
+  const models = isCopilot ? copilotModels : claudeModels
   const permVal = permModes.some((m) => m.v === permMode) ? permMode : permModes[0].v
   const modelSel = model || "default"
   const modelVal = models.some((m) => m.v === modelSel) ? modelSel : "default"
 
-  // Copilot only: a typed model id (not in the shortcut list) shows as "Custom".
+  // A typed model id (not in the list) shows as "Custom" — for either agent.
   const [customModel, setCustomModel] = useState(false)
   const curatedModelVals = models.filter((m) => m.v !== CUSTOM_MODEL).map((m) => m.v)
-  const showCustomModel = isCopilot && (customModel || (!!model && !curatedModelVals.includes(model)))
+  const showCustomModel = customModel || (!!model && !curatedModelVals.includes(model))
 
   useEffect(() => {
     // Normalise the stored value to the current agent on switch, without wiping
-    // a legitimate Copilot custom model id (so it survives reloads too).
+    // a legitimate custom/gateway model id (so it survives reloads too).
     if (!permModes.some((m) => m.v === permMode)) setPermMode(permModes[0].v)
     if (isCopilot) {
       // Only strip a leftover Claude alias; keep "", "auto", and custom ids.
-      if (["opus", "sonnet", "haiku"].includes(model)) setModel("")
-    } else if (!models.some((m) => m.v === (model || "default"))) {
-      // Entering a fixed-list agent: drop a Copilot "auto"/custom id it can't use.
+      if (CLAUDE_ALIASES.includes(model)) setModel("")
+    } else if (model === "auto") {
+      // Entering Claude: drop Copilot's "auto", which it cannot use. Any other
+      // id is left alone — with a gateway, a full model id is valid here and
+      // clearing it would silently demote the user's choice to Default.
       setModel("")
     }
     setCustomModel(false)
@@ -446,8 +460,8 @@ export function Composer() {
                       autoFocus
                       value={model}
                       onChange={(e) => setModel(e.target.value.trim())}
-                      placeholder="model id (e.g. claude-opus-4.8)"
-                      title="Copilot model id — passed to --model"
+                      placeholder="model id (e.g. claude-opus-5.5)"
+                      title="Model id — passed to --model"
                       className="h-7 w-48 rounded-md border border-input bg-transparent px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     />
                     <button

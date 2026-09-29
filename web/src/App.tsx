@@ -6,6 +6,7 @@ import { LeftPanel } from "@/components/LeftPanel"
 import { Transcript } from "@/components/Transcript"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
+import { PlanPrompt } from "@/components/PlanPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
 import { SearchBar } from "@/components/SearchBar"
@@ -300,6 +301,7 @@ function App() {
             <LoginPanel />
           ) : (
             <>
+              <PlanPrompt />
               <PermissionPrompt />
               <Composer />
             </>

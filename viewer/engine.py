@@ -2290,6 +2290,62 @@ class Host:
     def session_summary(self, rel): raise NotImplementedError
     def analysis(self, rel, refresh=False): return session_analysis(self.hid, rel, refresh)
     def resolve(self, sid): raise NotImplementedError
+    @staticmethod
+    def _decode_pdir(pdir):
+        """Claude's project-dir name back to a path — LOSSY, use only as a fallback.
+
+        The encoding maps every "/" to "-", but "." and "-" in the real path
+        become "-" too, so the mapping is not reversible: a directory named
+        "vcode.work" and one named "vcode/work" encode identically. Decoding
+        "-Users-me-Documents-vcode-work" therefore yields ".../vcode/work" and
+        the UI shows the last segment as "work". Prefer the cwd recorded inside
+        the session file (_project_for); this is only for files that have none.
+        """
+        if pdir.startswith(_HOME_ENC + "-"):
+            pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
+        return pdir.replace("--", "/").replace("-", "/")
+
+    @staticmethod
+    def _project_for(jsonl_file, cache):
+        """The session's real working directory, read from the file itself.
+
+        Every Claude session record carries "cwd". Reading it is what the Codex/
+        Pi/Copilot listers already do (viewer.adapters._peek), and it is the only
+        way to get a project name that matches the directory on disk. Cached per
+        parent dir so this costs one short read per PROJECT, not per session.
+        """
+        pdir = str(jsonl_file.parent.name)
+        if pdir in cache:
+            return cache[pdir]
+        cwd = ""
+        try:
+            with open(jsonl_file, errors="replace") as fh:
+                for i, line in enumerate(fh):
+                    if i > 40:
+                        break
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("cwd"):
+                        cwd = obj["cwd"]
+                        break
+        except OSError:
+            pass
+        # Shorten the home prefix for display, matching the fallback's "~/…".
+        if cwd:
+            home = str(Path.home())
+            if cwd == home:
+                cwd = "~"
+            elif cwd.startswith(home + "/"):
+                cwd = "~/" + cwd[len(home) + 1:]
+        else:
+            cwd = LocalHost._decode_pdir(pdir)
+        # Only cache a real answer: a file with no cwd must not pin the whole
+        # directory to the lossy fallback when a later session records one.
+        cache[pdir] = cwd
+        return cwd
+
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
 
@@ -2453,6 +2509,10 @@ class LocalHost(Host):
 
     def list_sessions(self):
         sessions = []
+        # cwd per project DIRECTORY, not per session: every session inside one of
+        # Claude's project dirs shares the same working directory, so the first
+        # file that records one answers for all of them.
+        cwd_by_pdir = {}
         for jsonl_file in CLAUDE_DIR.rglob("*.jsonl"):
             if "subagents" in str(jsonl_file):
                 continue
@@ -2494,10 +2554,7 @@ class LocalHost(Host):
                                 preview = p
             except Exception:
                 pass
-            pdir = str(jsonl_file.parent.name)
-            if pdir.startswith(_HOME_ENC + "-"):
-                pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
-            project = pdir.replace("--", "/").replace("-", "/")
+            project = self._project_for(jsonl_file, cwd_by_pdir)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,

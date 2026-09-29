@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail } from "lucide-react"
+import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Loader2, Mail, GitBranch } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
-import { HarmanDialog } from "@/components/HarmanDialog"
 import { KanbanDialog } from "@/components/kanban/KanbanDialog"
 import { NotesDialog } from "@/components/notes/NotesDialog"
 import { InboxDialog } from "@/components/inbox/InboxDialog"
@@ -44,16 +43,13 @@ export function SessionList() {
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const currentHost = useStore((s) => s.currentHost)
   const loadSession = useStore((s) => s.loadSession)
-  // The master switch decides whether the orchestrator exists for this app at
-  // all: OFF → no pinned Harman entry, the plain chat-session system it is.
-  const automationOn = useStore((s) => s.automationOn)
+  const git = useStore((s) => s.git)
   const [dir, setDir] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
-  const [harmanOpen, setHarmanOpen] = useState(false)
 
   const groups = useMemo(() => groupSessions(sessions), [sessions])
   const active = dir ? groups.find((g) => g.dir === dir) : null
@@ -63,13 +59,6 @@ export function SessionList() {
   // to "Custom" if the preset was deleted). "" means the harness default — no chip.
   const providerName = (id?: string) =>
     id ? providers.find((p) => p.id === id)?.name || "Custom" : ""
-
-  // Harman: open the existing orchestrator session if one exists, else set one up.
-  const openHarman = () => {
-    const existing = sessions.find((s) => s.title === "Harman")
-    if (existing) loadSession(existing.path)
-    else setHarmanOpen(true)
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -86,22 +75,6 @@ export function SessionList() {
         <div className="space-y-0.5 p-2 pt-0">
           {!active
             ? [
-                // Pinned Harman entry — the orchestrator's home, above the project
-                // groups. Only when automation is on; otherwise it doesn't exist here.
-                ...(automationOn && (!filter || "harman".includes(filter))
-                  ? [
-                      <button
-                        key="harman"
-                        onClick={openHarman}
-                        title="Harman — Harness Manager orchestrator"
-                        className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                      >
-                        <Sparkles className="size-4 shrink-0 text-primary" />
-                        <span className="flex-1 font-medium">Harman</span>
-                        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                      </button>,
-                    ]
-                  : []),
                 ...groups
                   .filter((g) => !filter || g.project.toLowerCase().includes(filter))
                   .map((g) => (
@@ -141,10 +114,31 @@ export function SessionList() {
                 <button
                   key="back"
                   onClick={() => setDir(null)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
                 >
                   <ArrowLeft className="size-4" /> All projects
                 </button>,
+                // Which project am I in? The back link alone doesn't say. Branch
+                // comes from the store's existing git state (the same state
+                // GitSection renders) — a second read, not a second fetch, so it
+                // is simply absent when the cwd isn't a repo.
+                <div
+                  key="header"
+                  className="mb-1 flex items-center gap-1.5 border-b border-border px-2 pb-1.5"
+                  title={active.project}
+                >
+                  <Folder className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium">{projectName(active.project)}</span>
+                  {git?.branch && (
+                    <span
+                      className="flex min-w-0 items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                      title={git.branch}
+                    >
+                      <GitBranch className="size-3 shrink-0" />
+                      <span className="truncate">{git.branch}</span>
+                    </span>
+                  )}
+                </div>,
                 // Fixed "Tasks" row — always first under a project. Opens the
                 // project's Kanban board, shared by every session in this dir.
                 <button
@@ -230,7 +224,6 @@ export function SessionList() {
           onClose={() => setInboxSession(null)}
         />
       )}
-      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
   )
 }
