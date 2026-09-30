@@ -34,19 +34,28 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
 import { describeHost } from "@/lib/host"
+import { prefersDark, applyTheme, writeThemeChoice } from "@/lib/theme"
 import type { HostInfo } from "@/lib/types"
 
 function useTheme() {
-  // Dark is the default, not light: this is a transcript reader that sits beside
-  // a terminal and a browser, and it was the only one of the three that opened
-  // bright. Only an explicit stored choice moves it — "light" means the user
-  // picked light, whereas an absent key means they have never expressed one.
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light")
+  // Dark is the default; only an explicit "light" moves it. See lib/theme.ts for
+  // why that lives behind a helper and a versioned key.
+  const [dark, setDark] = useState(prefersDark)
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark)
-    localStorage.setItem("theme", dark ? "dark" : "light")
+    // Apply only. Persisting from here is what broke the dark default before:
+    // this effect also runs on mount, so it stamped the *default* into storage
+    // as though the user had chosen it. Writes now happen in toggle(), which
+    // only a click reaches.
+    applyTheme(dark)
   }, [dark])
-  return { dark, toggle: () => setDark((d) => !d) }
+  return {
+    dark,
+    toggle: () =>
+      setDark((d) => {
+        writeThemeChoice(!d ? "dark" : "light")
+        return !d
+      }),
+  }
 }
 
 export function Header() {

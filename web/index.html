@@ -9,13 +9,17 @@
       // Applied here, before the first paint, rather than in React. The theme
       // class is otherwise set in an effect that runs after mount, so a dark
       // default would still flash a white page on every load — the one thing a
-      // dark default is supposed to prevent. Kept deliberately in sync with
-      // useTheme() in components/Header.tsx: absent key means dark, only an
+      // dark default is supposed to prevent.
+      //
+      // Deliberately duplicated from src/lib/theme.ts rather than imported: this
+      // must run before the module bundle is fetched and evaluated, so it cannot
+      // be an import without reintroducing the flash. Keep the key and the rule
+      // identical to that file — absent or unreadable means dark, only an
       // explicit "light" means light.
       try {
         document.documentElement.classList.toggle(
           "dark",
-          localStorage.getItem("theme") !== "light"
+          localStorage.getItem("theme.choice") !== "light"
         )
       } catch (e) {
         // Storage can be unavailable (private mode, blocked cookies). The app

@@ -4,6 +4,7 @@ import { describeHost } from "./lib/host"
 import { SessionParser } from "./lib/parser"
 import { isQueued } from "./lib/types"
 import type { AIConfig } from "./lib/aiSelection"
+import { writeThemeChoice, applyTheme } from "./lib/theme"
 import type {
   AgentInfo,
   Capabilities,
@@ -289,9 +290,15 @@ export const useStore = create<AppState>((set, get) => {
     get().loadProviders() // global provider library — session-independent
     get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
     api.getPrefs().then((p: any) => {
-      if (p && p.theme) {
-        localStorage.setItem("theme", p.theme)
-        document.documentElement.classList.toggle("dark", p.theme === "dark")
+      // A server-side theme is a real cross-device preference, so it still wins
+      // — but only when it says something. `p.theme` absent leaves the local
+      // choice (or the dark default) exactly as the pre-paint script set it.
+      // Nothing in this app writes prefs.theme today; this path exists for a
+      // preference set elsewhere, and treating a missing value as "light" is
+      // what a naive read here would do.
+      if (p && (p.theme === "dark" || p.theme === "light")) {
+        writeThemeChoice(p.theme)
+        applyTheme(p.theme === "dark")
       }
     }).catch(() => {})
     set({ loading: true })
