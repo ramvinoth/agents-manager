@@ -156,7 +156,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
       stopTimers()
       api.setHost(hid)
       localStorage.setItem("currentHost", hid)
-      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null })
+      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null, mcpProbes: {} })
       get().loadAgents() // install state is per-host
       try {
         const { hosts, sessions } = await reloadForHost()

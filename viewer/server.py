@@ -533,6 +533,7 @@ class SessionViewerHandler(
         "/api/market/mcp/signin/submit": "_p_market_mcp_signin_submit",
         "/api/market/mcp/signin/cancel": "_p_market_mcp_signin_cancel",
         "/api/mcp/delete": "_p_mcp_delete",
+        "/api/mcp/probe": "_p_mcp_probe",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",
         "/api/session/backup-restore": "_p_session_backup_restore",

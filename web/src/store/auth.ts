@@ -105,7 +105,7 @@ export const createAuthSlice: Slice<AuthSlice> = (set, get, rt) => {
       set({
         needsAuth: true, authUser: null, error: null,
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
-        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
+        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] }, mcpProbes: {},
         meta: null, sessionAI: null, git: null, loops: [], fullSummary: null,
         harman: null, loopControl: null, automationOn: false, systemPreamble: null,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,

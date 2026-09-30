@@ -26,6 +26,7 @@ import { useStore } from "@/store"
 import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Plugin, Skill } from "@/lib/types"
 import { MarketplaceDialog } from "@/components/lazyDialogs"
+import { McpPanel } from "@/components/McpPanel"
 
 /** "This chat" scope (and per-chat plugins) exist only for an open Claude chat on
  *  this machine: the engine passes them as --plugin-dir on local Claude runs only. */
@@ -412,41 +413,7 @@ export function RhsPanel() {
         </TabsContent>
 
         <TabsContent value="mcp" className="min-h-0 flex-1">
-          <div className="flex items-center justify-between px-2 pb-1">
-            <span className="text-xs text-muted-foreground">{caps.mcp.length} servers</span>
-            <div className="flex">
-              {local && (
-                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("mcp")}>
-                  <Store className="size-3.5" /> Browse
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMcpEdit(null)}>
-                <Plus className="size-3.5" /> Add
-              </Button>
-            </div>
-          </div>
-          <div className="h-full overflow-y-auto">
-            <div className="space-y-1 px-2 pb-4">
-              {caps.mcp.map((m, i) => (
-                <button
-                  key={i}
-                  onClick={() => setMcpEdit(m)}
-                  className="w-full rounded-md border border-border p-2 text-left hover:bg-accent"
-                >
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate font-medium">{m.name}</span>
-                    <Badge
-                      variant={m.editable ? "secondary" : "outline"}
-                      className="shrink-0 px-1.5 text-[10px] font-normal"
-                    >
-                      {m.scope}
-                    </Badge>
-                  </div>
-                  {m.target && <div className="mt-1 truncate text-xs text-muted-foreground">{m.target}</div>}
-                </button>
-              ))}
-            </div>
-          </div>
+          <McpPanel onEdit={setMcpEdit} onBrowse={local ? () => setMarket("mcp") : undefined} />
         </TabsContent>
 
         <TabsContent value="plugins" className="min-h-0 flex-1">
