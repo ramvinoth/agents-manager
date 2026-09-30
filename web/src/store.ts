@@ -372,7 +372,14 @@ export const useStore = create<AppState>((set, get) => {
       }
       // ~30s cadence on the 2s poll: refresh the git bar so branch switches
       // made outside the viewer (terminal, agent) show up without a reload.
-      if (++gitTick % 15 === 0 && get().git?.repo) get().loadGitStatus()
+      //
+      // When there is NO repo yet, re-check too, just four times slower. The
+      // old guard skipped that case entirely, so a repo cloned during the
+      // session stayed invisible until a reload — and with the workspace-root
+      // layout (repo discovered one level down) cloning into the workspace is
+      // exactly how a session acquires its repo. The slower cadence keeps the
+      // discovery `find` off the hot path on remote hosts.
+      if (++gitTick % (get().git?.repo ? 15 : 60) === 0) get().loadGitStatus()
     } catch {
       /* transient; retry next tick */
     } finally {

@@ -265,6 +265,13 @@ export interface GitStatus {
   dirty?: number
   ahead?: number | null
   behind?: number | null
+  /** True when the repo was found BELOW the session cwd rather than at/above
+   *  it — the workspace-root layout. The UI flags this so "master" isn't read
+   *  as the branch of the directory the session is actually sitting in. */
+  discovered?: boolean
+  /** Absolute path of the discovered work tree. Anything that runs git must use
+   *  this, not the session cwd, which is the parent directory. */
+  cwd?: string
 }
 export interface Loop {
   id: string
