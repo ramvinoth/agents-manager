@@ -3,6 +3,7 @@
  *  module-level so they never trigger re-renders. */
 import { api } from "../lib/api"
 import { describeHost } from "../lib/host"
+import { applyTheme, writeThemeChoice } from "../lib/theme"
 import type { GetState, SetState } from "./types"
 import { pickOpen, reloadForHost, sessionIdOf } from "./helpers"
 
@@ -37,9 +38,12 @@ export function createRuntime(set: SetState, get: GetState) {
     get().loadProviders() // global provider library — session-independent
     get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
     api.getPrefs().then((p: any) => {
-      if (p && p.theme) {
-        localStorage.setItem("theme", p.theme)
-        document.documentElement.classList.toggle("dark", p.theme === "dark")
+      // A server-side theme is a cross-device preference, so it wins, but only
+      // when it says something: absent leaves the local choice (or the dark
+      // default) as the pre-paint script set it.
+      if (p && (p.theme === "dark" || p.theme === "light")) {
+        writeThemeChoice(p.theme)
+        applyTheme(p.theme === "dark")
       }
     }).catch(() => {})
     set({ loading: true })

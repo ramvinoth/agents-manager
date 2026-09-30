@@ -35,14 +35,25 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
 import { EnvDialog, IntegrationsDialog, ProfileDialog } from "@/components/lazyDialogs"
+import { prefersDark, applyTheme, writeThemeChoice } from "@/lib/theme"
 
 function useTheme() {
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark")
+  // Dark is the default; only an explicit "light" moves it. See lib/theme.ts for
+  // why that lives behind a helper and a versioned key.
+  const [dark, setDark] = useState(prefersDark)
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark)
-    localStorage.setItem("theme", dark ? "dark" : "light")
+    // Apply only: this effect also runs on mount, so persisting here would stamp
+    // the default into storage as though the user had chosen it.
+    applyTheme(dark)
   }, [dark])
-  return { dark, toggle: () => setDark((d) => !d) }
+  return {
+    dark,
+    toggle: () =>
+      setDark((d) => {
+        writeThemeChoice(!d ? "dark" : "light")
+        return !d
+      }),
+  }
 }
 
 export function Header() {
