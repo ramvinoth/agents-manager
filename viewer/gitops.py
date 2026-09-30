@@ -284,7 +284,19 @@ def _scrub(text, token):
 
 
 # One shell round-trip: every field on a GIT| line so remote pty noise (\r,
-# login-shell banners) can't break parsing. Exit 3/4 = not a dir / not a repo.
+# login-shell banners) can't break parsing. Exit 3 = not a dir.
+#
+# TWO DIRECTIONS, NOT ONE. `git rev-parse` only ever looks UPWARD, which covers
+# a session started inside a repo or any subdirectory of one. It does not cover
+# the layout vcode actually creates: the session opens at the workspace root and
+# the repo is a CHILD of it —
+#
+#     /workspace/<user-id>/<env>/          <- cwd, not a repo
+#     └── sase-gms/                        <- the repo, one level down
+#
+# rev-parse is right to say "not a repo" there, so the bar simply never
+# appeared. When the upward walk finds nothing we look one level down and adopt
+# a child repo ONLY when there is exactly one candidate — see _DISCOVER_SH.
 _STATUS_SH = (
     'cd {cwd} 2>/dev/null || exit 3; '
     'git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 4; '
@@ -297,24 +309,49 @@ _STATUS_SH = (
     'printf "GIT|%s|%s|%s|%s|%s|%s\\n" "$b" "$n" "$a" "$bd" "$u" "$r"'
 )
 
+# List candidate repos BELOW cwd, one CAND| line each, most recently modified
+# first. Deliberately a listing and not a pick: the choice of "exactly one, or
+# none" is policy and belongs in Python where it can be read and tested.
+#
+# maxdepth 3 is `./<dir>/.git` plus one level of nesting, measured against the
+# real layout above. Dot-directories are pruned because the workspace root is
+# full of them (.claude, .chromium-profile, .playwright-profile) and none is a
+# user project; node_modules is pruned because a vendored package with its own
+# .git is not this session's repo and the tree is enormous.
+#
+# -mindepth 2 keeps cwd itself out: if cwd were a repo the upward walk above
+# would already have returned, so a self-match here could only mislead.
+_DISCOVER_SH = (
+    'cd {cwd} 2>/dev/null || exit 3; '
+    'find . -maxdepth 3 -mindepth 2 '
+    "-path './.*' -prune -o -name node_modules -prune -o "
+    '-name .git -print 2>/dev/null | '
+    # Strip the trailing /.git to get the work tree, then order by mtime so the
+    # repo someone is actually working in wins when a tiebreak is possible.
+    'while IFS= read -r g; do d=${{g%/.git}}; printf "%s\\n" "$d"; done | '
+    'while IFS= read -r d; do printf "CAND|%s\\n" "$d"; done'
+)
 
-def repo_status(hid, cwd):
-    """{"repo": bool, name, branch, dirty, ahead, behind, remote, root} for a
-    working directory on the host. ahead/behind are None with no upstream."""
-    script = _STATUS_SH.format(cwd=_q_path(cwd))
+
+def _run_sh(hid, script, timeout=15):
+    """Run a shell snippet locally or on a remote host. Returns (rc, stdout)."""
     if not hid or hid == "local":
-        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=15)
-        rc, out = p.returncode, p.stdout
-    else:
-        from viewer.remote import remote_run_shell
-        rc, out = remote_run_shell(hid, script, timeout=20)
+        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                           timeout=timeout)
+        return p.returncode, p.stdout
+    from viewer.remote import remote_run_shell
+    return remote_run_shell(hid, script, timeout=timeout + 5)
+
+
+def _parse_status(rc, out):
+    """The GIT| line → a status dict, or None when there isn't a usable one."""
     line = next((ln.strip() for ln in out.replace("\r", "").splitlines()
                  if ln.strip().startswith("GIT|")), "")
     if rc != 0 or not line:
-        return {"repo": False}
+        return None
     parts = line.split("|")
     if len(parts) < 7:
-        return {"repo": False}
+        return None
     _, branch, dirty, ahead, behind, remote, root = parts[:7]
     m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", remote)
     name = m.group(1) if m else (root.rstrip("/").rsplit("/", 1)[-1] if root else "")
@@ -322,3 +359,55 @@ def repo_status(hid, cwd):
             "dirty": int(dirty) if dirty.strip().isdigit() else 0,
             "ahead": int(ahead) if ahead.strip().isdigit() else None,
             "behind": int(behind) if behind.strip().isdigit() else None}
+
+
+def _discover_child_repo(hid, cwd):
+    """The single repo directly below `cwd`, or None.
+
+    EXACTLY ONE, OR NONE — on purpose. With one candidate, "the repo for this
+    session" is unambiguous and showing it is strictly better than the blank bar
+    users get today. With several, any pick is a guess, and a git bar naming the
+    wrong repo is worse than no bar: the Sync button would commit, push and
+    rebase somewhere the user never chose. Ambiguity resolves to silence.
+    """
+    rc, out = _run_sh(hid, _DISCOVER_SH.format(cwd=_q_path(cwd)))
+    if rc != 0:
+        return None
+    cands = [ln.strip()[5:] for ln in out.replace("\r", "").splitlines()
+             if ln.strip().startswith("CAND|") and ln.strip()[5:]]
+    # De-dupe defensively: a symlinked path could surface the same work tree
+    # twice and fake an ambiguity that isn't real.
+    uniq = list(dict.fromkeys(cands))
+    return uniq[0] if len(uniq) == 1 else None
+
+
+def repo_status(hid, cwd):
+    """{"repo": bool, name, branch, dirty, ahead, behind, root, ...} for a
+    working directory on the host. ahead/behind are None with no upstream.
+
+    Looks upward first (cwd is inside a repo), then one level down (the repo is
+    a child of cwd, which is how vcode workspaces are laid out). A result found
+    downward carries "discovered": True and a "cwd" naming the work tree, so
+    callers can tell the two apart — anything that runs git commands must use
+    that path rather than the session cwd.
+    """
+    rc, out = _run_sh(hid, _STATUS_SH.format(cwd=_q_path(cwd)))
+    st = _parse_status(rc, out)
+    if st:
+        return st
+
+    child = _discover_child_repo(hid, cwd)
+    if not child:
+        return {"repo": False}
+
+    # Resolve the child to an absolute path first: the discovery output is
+    # relative to cwd ("./sase-gms"), and every consumer of "root"/"cwd" needs
+    # something that stands on its own.
+    child_abs = child if child.startswith("/") else f"{cwd.rstrip('/')}/{child.lstrip('./')}"
+    rc, out = _run_sh(hid, _STATUS_SH.format(cwd=_q_path(child_abs)))
+    st = _parse_status(rc, out)
+    if not st:
+        return {"repo": False}
+    st["discovered"] = True
+    st["cwd"] = st.get("root") or child_abs
+    return st

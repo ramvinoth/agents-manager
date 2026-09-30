@@ -2,7 +2,7 @@ import { useState } from "react"
 import { ChevronDown, ChevronRight, GitBranch, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useStore } from "@/store"
-import { SYNC_PROMPT } from "@/lib/git"
+import { syncPrompt } from "@/lib/git"
 
 /** Collapsible git bar above the transcript: repo name · branch · dirty/ahead/
  *  behind counters · a Sync button that hands SYNC_PROMPT to the model. Hidden
@@ -45,9 +45,17 @@ export function GitSection() {
         title={collapsed ? "Expand git details" : "Collapse git details"}
       >
         {collapsed ? <ChevronRight className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
-        <span className="max-w-40 truncate font-medium text-foreground sm:max-w-56" title={git.name}>
+        <span className="max-w-40 truncate font-medium text-foreground sm:max-w-56" title={git.discovered ? `${git.name} — found in ${git.cwd}, below this session's directory` : git.name}>
           {git.name || "repo"}
         </span>
+        {/* The repo is a subdirectory, not the session cwd. Say so: otherwise
+            the bar reads as though the session itself is on that branch, and a
+            `git` command typed in the terminal would fail confusingly. */}
+        {git.discovered && (
+          <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground" title={`This session's directory isn't a repo. Showing the one repository inside it: ${git.cwd}`}>
+            subdir
+          </span>
+        )}
       </button>
       <span
         className="flex min-w-0 items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-primary"
@@ -86,7 +94,7 @@ export function GitSection() {
         size="sm"
         className={"shrink-0 " + (collapsed ? "size-6 p-0" : "h-6 gap-1.5 px-2 text-xs")}
         disabled={chatRunning}
-        onClick={() => sendChat(SYNC_PROMPT)}
+        onClick={() => sendChat(syncPrompt(git.discovered ? git.cwd : undefined))}
         aria-label="Sync branch"
         title="Ask the model to commit, push, and safely rebase this branch onto the default branch"
       >

@@ -117,7 +117,9 @@ export function createRuntime(set: SetState, get: GetState) {
       }
       // ~30s cadence on the 2s poll: refresh the git bar so branch switches
       // made outside the viewer (terminal, agent) show up without a reload.
-      if (++gitTick % 15 === 0 && get().git?.repo) get().loadGitStatus()
+      // With no repo yet, re-check four times slower, so a repo cloned into the
+      // workspace during the session shows up without a reload.
+      if (++gitTick % (get().git?.repo ? 15 : 60) === 0) get().loadGitStatus()
     } catch {
       /* transient; retry next tick */
     } finally {

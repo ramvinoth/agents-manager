@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { SYNC_PROMPT } from "@/lib/git"
+import { syncPrompt } from "@/lib/git"
 import { useStore } from "@/store"
 
 /**
@@ -41,6 +41,11 @@ export function GitDialog({ onClose }: { onClose: () => void }) {
             <div className="flex items-center gap-1.5">
               <span className="font-medium text-foreground">{git.name || "repo"}</span>
               <Badge variant="outline" className="px-1.5 text-[10px] font-normal">{git.branch || "—"}</Badge>
+              {git.discovered && (
+                <Badge variant="outline" className="px-1.5 text-[10px] font-normal text-muted-foreground" title={git.cwd}>
+                  subdir
+                </Badge>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -77,7 +82,7 @@ export function GitDialog({ onClose }: { onClose: () => void }) {
               variant="outline"
               className="mt-1 w-full gap-1.5"
               disabled={chatRunning}
-              onClick={() => { sendChat(SYNC_PROMPT); onClose() }}
+              onClick={() => { sendChat(syncPrompt(git.discovered ? git.cwd : undefined)); onClose() }}
             >
               <RefreshCw className="size-3.5" /> Sync branch
             </Button>
@@ -86,7 +91,10 @@ export function GitDialog({ onClose }: { onClose: () => void }) {
             </p>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">This session's directory isn't a git repository.</p>
+          <p className="text-sm text-muted-foreground">
+            No git repository found in this session's directory, or in any single
+            repository directly inside it.
+          </p>
         )}
 
         <DialogFooter>
