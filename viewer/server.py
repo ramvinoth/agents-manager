@@ -470,6 +470,7 @@ class SessionViewerHandler(
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
         "/api/mcp/delete": "_p_mcp_delete",
+        "/api/mcp/probe": "_p_mcp_probe",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",
         "/api/session/backup-restore": "_p_session_backup_restore",

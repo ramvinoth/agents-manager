@@ -5,6 +5,8 @@ import { SessionParser } from "./lib/parser"
 import { isQueued } from "./lib/types"
 import type { AIConfig } from "./lib/aiSelection"
 import { writeThemeChoice, applyTheme } from "./lib/theme"
+import { isRunning } from "./lib/mcp"
+import type { ProbeEntry, ProbeResult } from "./lib/mcp"
 import type {
   AgentInfo,
   Capabilities,
@@ -117,6 +119,9 @@ interface AppState {
   floatRect: { x: number; y: number; w: number; h: number }
   caps: Capabilities
   capsLoading: boolean
+  /** Per-server MCP probe state, keyed by server name. Absent = never tested.
+   *  Cleared with the capability list it describes (see loadCapabilities). */
+  mcpProbes: Record<string, ProbeEntry>
   projects: ProjectDir[]
   slashCommands: SlashCommand[]
   fullSummary: SessionSummary | null
@@ -178,6 +183,9 @@ interface AppState {
   cancelAgentLogin: () => void
   loadOlder: () => Promise<void>
   loadCapabilities: () => Promise<void>
+  /** Handshake with one MCP server and record the result. Manual only. */
+  probeMcp: (name: string) => Promise<void>
+  probeAllMcp: () => Promise<void>
   loadCommands: () => Promise<void>
   loadSummary: () => Promise<void>
   analyzeSession: (refresh?: boolean) => Promise<void>
@@ -564,6 +572,7 @@ export const useStore = create<AppState>((set, get) => {
     })(),
     caps: { skills: [], mcp: [] },
     capsLoading: false,
+    mcpProbes: {},
     projects: [],
     slashCommands: [],
     fullSummary: null,
@@ -642,7 +651,7 @@ export const useStore = create<AppState>((set, get) => {
       set({
         needsAuth: true, authUser: null, error: null,
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
-        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
+        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] }, mcpProbes: {},
         meta: null, sessionAI: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
         harman: null, loopControl: null, automationOn: false, systemPreamble: null,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,
@@ -763,6 +772,7 @@ export const useStore = create<AppState>((set, get) => {
       set({
         currentAgent: id, currentSessionPath: "", turns: [], loading: true, error: null,
         chatRunning: false, chatStatus: null, queue: [], analysis: null, analysisError: null,
+        mcpProbes: {},
       })
       try {
         const sessions = (await api.sessions()) as SessionListItem[]
@@ -788,7 +798,7 @@ export const useStore = create<AppState>((set, get) => {
       stopTimers()
       api.setHost(hid)
       localStorage.setItem("currentHost", hid)
-      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null })
+      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null, mcpProbes: {} })
       get().loadAgents() // install state is per-host
       try {
         const { hosts, sessions } = await reloadForHost()
@@ -894,12 +904,57 @@ export const useStore = create<AppState>((set, get) => {
       try {
         const caps = (await api.capabilities(params.toString())) as Capabilities
         if (get().currentSessionPath !== currentSessionPath) return
-        if (caps && Array.isArray(caps.skills)) set({ caps })
+        // Probe results are dropped with the list they describe. A result is a
+        // statement about one server on one host at one moment; carrying it
+        // across a reload could show "Connected" next to a server that is no
+        // longer even the same server.
+        if (caps && Array.isArray(caps.skills)) set({ caps, mcpProbes: {} })
       } catch {
         /* leave placeholders */
       } finally {
         if (get().currentSessionPath === currentSessionPath) set({ capsLoading: false })
       }
+    },
+
+    probeMcp: async (name) => {
+      const server = get().caps.mcp.find((m) => m.name === name)
+      if (!server || isRunning(get().mcpProbes[name])) return
+      const { currentSessionPath, currentHost } = get()
+      set((s) => ({ mcpProbes: { ...s.mcpProbes, [name]: { running: true } } }))
+      let result: ProbeResult
+      try {
+        result = (await api.mcpProbe({
+          name, config: server.config, session: currentSessionPath,
+        })) as ProbeResult
+        if (!result || typeof result.state !== "string") throw new Error("Malformed probe response")
+      } catch (e: any) {
+        // The probe itself never fails a request — this is the transport dying
+        // (server restarted, network gone). Say that, rather than blaming the
+        // MCP server for something it was never asked.
+        result = {
+          name, transport: server.transport || "", state: "failed",
+          error: "Could not reach Agents Manager: " + (e?.message || String(e)),
+          detail: "", tools: [], server: {}, elapsed_ms: 0,
+        }
+      }
+      // Host/session may have changed during the probe — a late answer must not
+      // land against a different list.
+      const now = get()
+      if (now.currentHost !== currentHost || now.currentSessionPath !== currentSessionPath) return
+      set((s) => ({ mcpProbes: { ...s.mcpProbes, [name]: result } }))
+    },
+
+    probeAllMcp: async () => {
+      const names = get().caps.mcp.map((m) => m.name)
+      // Bounded fan-out: each row settles on its own instead of blocking on the
+      // slowest server, but a 20-server config doesn't open 20 sockets at once.
+      const queue = [...names]
+      const worker = async () => {
+        for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
+          await get().probeMcp(n)
+        }
+      }
+      await Promise.all([worker(), worker(), worker()])
     },
 
     refreshAuth: async () => {

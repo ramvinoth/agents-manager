@@ -25,7 +25,7 @@ from viewer.login import (
     auth_status, codex_bin,
 )
 from viewer.remote import (
-    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
+    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_probe, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
 )
 
 
@@ -2420,6 +2420,7 @@ class Host:
 
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
+    def mcp_probe(self, name, cfg, cwd): raise NotImplementedError
 
 
 class LocalHost(Host):
@@ -2666,6 +2667,10 @@ class LocalHost(Host):
             return {"error": str(e), "status": 500}
         return {"saved": True, "file": str(path)}
 
+    def mcp_probe(self, name, cfg, cwd):
+        from viewer.mcp_probe import probe
+        return probe(name, cfg, cwd)
+
 
 class RemoteHost(Host):
     def __init__(self, hid):
@@ -2680,6 +2685,9 @@ class RemoteHost(Host):
     def list_sessions(self):               return remote_list_sessions(self.hid)
     def mcp_save(self, name, scope, cfg, cwd, delete):
         return remote_mcp_save(self.hid, name, scope, cfg, cwd, delete)
+
+    def mcp_probe(self, name, cfg, cwd):
+        return remote_mcp_probe(self.hid, name, cfg, cwd)
 
     def resolve(self, sid):
         return remote_resolve(self.hid, sid)

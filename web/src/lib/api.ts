@@ -491,6 +491,13 @@ class ApiClient {
   mcpDelete(body: Body) {
     return this.postRes("/api/mcp/delete", this.wha(body))
   }
+  /** Live handshake with ONE configured MCP server (initialize + tools/list).
+   *  Manual only — a stdio probe executes the server's command, so this is
+   *  never called on panel load. Up to ~15s; resolves even on failure, with the
+   *  reason in the result. */
+  mcpProbe(body: Body) {
+    return this.postJSON("/api/mcp/probe", this.wha(body))
+  }
 
   // Resolve the shell command to resume a Copilot session interactively (host-aware).
   copilotInteractive(session: string) {
