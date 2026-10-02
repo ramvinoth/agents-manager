@@ -24,7 +24,7 @@ from viewer.login import (
     auth_status, codex_bin,
 )
 from viewer.remote import (
-    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
+    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_probe, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
 )
 
 
@@ -858,14 +858,73 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     return {"behavior": "deny", "message": answer}
 
 
+def _plan_text(session_id, tinput, live_text="", started=0):
+    """The plan to show in the approval card.
+
+    Older CLIs put the markdown straight in ExitPlanMode's `plan` argument. Newer
+    ones build the plan in a *plan file* and call ExitPlanMode with `{}` (measured
+    against claude-opus-5.5: input keys == []), which would leave the card blank.
+
+    Order matters. `live_text` is the assistant text captured from the run's own
+    stream and is the only ordering-safe source: the transcript file is written
+    asynchronously, so reading it back here can return the PREVIOUS turn's text
+    (measured). The file scan stays as the fallback for a plan that arrives
+    without live text. Best-effort throughout; "" is still a valid answer."""
+    if isinstance(tinput, dict):
+        for key in ("plan", "plan_md", "content"):
+            v = tinput.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+    if isinstance(live_text, str) and live_text.strip():
+        return live_text.strip()
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        plan_file, last_text = "", ""
+        with open(matches[0], errors="replace") as f:
+            for line in f:
+                if '"plan' not in line and '"text"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pf = (obj.get("attachment") or {}).get("planFilePath")
+                if pf:
+                    plan_file = pf
+                content = (obj.get("message") or {}).get("content")
+                if obj.get("type") == "assistant" and isinstance(content, list):
+                    txt = "\n".join(b.get("text", "") for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text").strip()
+                    if txt:
+                        last_text = txt
+        if plan_file:
+            # Only if it belongs to THIS call — a plan file left over from an
+            # earlier run would be exactly the staleness live_text exists to avoid.
+            try:
+                p = Path(plan_file)
+                if p.stat().st_mtime >= started:
+                    body = p.read_text(errors="replace").strip()
+                    if body:
+                        return body
+            except OSError:
+                pass
+        return last_text
+    except Exception:
+        return ""
+
+
 def _await_plan_decision(session_id, tinput, tool_use_id):
     """Block a driven claude's ExitPlanMode until the user approves or denies with
     feedback. Persists a durable pending_plans row so the app renders the plan card
     and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
     from viewer import questions
-    plan_md = ""
-    if isinstance(tinput, dict):
-        plan_md = tinput.get("plan") or ""
+    with CHAT_LOCK:
+        _j = CHAT_JOBS.get(session_id) or {}
+        live = _j.get("last_assistant_text", "")
+        started = _j.get("started", 0)
+    plan_md = _plan_text(session_id, tinput, live, started)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
@@ -1210,6 +1269,19 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Remember the newest assistant text as it streams. The plan card
+                # needs the text that immediately precedes ExitPlanMode, and the
+                # transcript file is written asynchronously — reading it back at
+                # approval time can still show the PREVIOUS turn's text (measured:
+                # a stale "ACKNOWLEDGED" from the prior run). The stream is the
+                # only ordering-safe source.
+                if ev.get("type") == "assistant":
+                    blocks = ((ev.get("message") or {}).get("content")) or []
+                    if isinstance(blocks, list):
+                        txt = "\n".join(b.get("text", "") for b in blocks
+                                        if isinstance(b, dict) and b.get("type") == "text").strip()
+                        if txt:
+                            job["last_assistant_text"] = txt
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
@@ -1681,8 +1753,65 @@ class Host:
     def session_summary(self, rel): raise NotImplementedError
     def analysis(self, rel, refresh=False): return session_analysis(self.hid, rel, refresh)
     def resolve(self, sid): raise NotImplementedError
+    @staticmethod
+    def _decode_pdir(pdir):
+        """Claude's project-dir name back to a path — LOSSY, use only as a fallback.
+
+        The encoding maps every "/" to "-", but "." and "-" in the real path
+        become "-" too, so the mapping is not reversible: a directory named
+        "vcode.work" and one named "vcode/work" encode identically. Decoding
+        "-Users-me-Documents-vcode-work" therefore yields ".../vcode/work" and
+        the UI shows the last segment as "work". Prefer the cwd recorded inside
+        the session file (_project_for); this is only for files that have none.
+        """
+        if pdir.startswith(_HOME_ENC + "-"):
+            pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
+        return pdir.replace("--", "/").replace("-", "/")
+
+    @staticmethod
+    def _project_for(jsonl_file, cache):
+        """The session's real working directory, read from the file itself.
+
+        Every Claude session record carries "cwd". Reading it is what the Codex/
+        Pi/Copilot listers already do (viewer.adapters._peek), and it is the only
+        way to get a project name that matches the directory on disk. Cached per
+        parent dir so this costs one short read per PROJECT, not per session.
+        """
+        pdir = str(jsonl_file.parent.name)
+        if pdir in cache:
+            return cache[pdir]
+        cwd = ""
+        try:
+            with open(jsonl_file, errors="replace") as fh:
+                for i, line in enumerate(fh):
+                    if i > 40:
+                        break
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("cwd"):
+                        cwd = obj["cwd"]
+                        break
+        except OSError:
+            pass
+        # Shorten the home prefix for display, matching the fallback's "~/…".
+        if cwd:
+            home = str(Path.home())
+            if cwd == home:
+                cwd = "~"
+            elif cwd.startswith(home + "/"):
+                cwd = "~/" + cwd[len(home) + 1:]
+        else:
+            cwd = LocalHost._decode_pdir(pdir)
+        # Only cache a real answer: a file with no cwd must not pin the whole
+        # directory to the lossy fallback when a later session records one.
+        cache[pdir] = cwd
+        return cwd
+
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
+    def mcp_probe(self, name, cfg, cwd): raise NotImplementedError
 
 
 class LocalHost(Host):
@@ -1844,6 +1973,10 @@ class LocalHost(Host):
 
     def list_sessions(self):
         sessions = []
+        # cwd per project DIRECTORY, not per session: every session inside one of
+        # Claude's project dirs shares the same working directory, so the first
+        # file that records one answers for all of them.
+        cwd_by_pdir = {}
         for jsonl_file in CLAUDE_DIR.rglob("*.jsonl"):
             if "subagents" in str(jsonl_file):
                 continue
@@ -1885,10 +2018,7 @@ class LocalHost(Host):
                                 preview = p
             except Exception:
                 pass
-            pdir = str(jsonl_file.parent.name)
-            if pdir.startswith(_HOME_ENC + "-"):
-                pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
-            project = pdir.replace("--", "/").replace("-", "/")
+            project = self._project_for(jsonl_file, cwd_by_pdir)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,
@@ -1928,6 +2058,10 @@ class LocalHost(Host):
             return {"error": str(e), "status": 500}
         return {"saved": True, "file": str(path)}
 
+    def mcp_probe(self, name, cfg, cwd):
+        from viewer.mcp_probe import probe
+        return probe(name, cfg, cwd)
+
 
 class RemoteHost(Host):
     def __init__(self, hid):
@@ -1942,6 +2076,9 @@ class RemoteHost(Host):
     def list_sessions(self):               return remote_list_sessions(self.hid)
     def mcp_save(self, name, scope, cfg, cwd, delete):
         return remote_mcp_save(self.hid, name, scope, cfg, cwd, delete)
+
+    def mcp_probe(self, name, cfg, cwd):
+        return remote_mcp_probe(self.hid, name, cfg, cwd)
 
     def resolve(self, sid):
         return remote_resolve(self.hid, sid)

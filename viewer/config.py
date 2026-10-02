@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -118,6 +119,31 @@ def load_system_commands():
 
 
 def claude_bin():
+    """The claude binary the viewer spawns: CLAUDE_BIN, else PATH, else the two
+    known local install spots.
+
+    PATH DECIDES, DELIBERATELY — this function does not rank installs. An earlier
+    revision probed every candidate's `claude --version` and spawned the newest,
+    to fix a real complaint: a 15-month-old Homebrew claude kept winning on PATH
+    while a current nvm install sat unused. That rule was wrong three ways, and
+    each one is the kind that costs more later than the bug it fixed:
+
+      * It makes resolution a policy decision taken in code. "Which build is
+        better" belongs to whoever administers the machine, not to us — the same
+        reason the model list is declared rather than ranked.
+      * It gives "where is claude" side effects: N subprocesses with timeouts,
+        which then need a cache, which then needs invalidation. Three mechanisms
+        to answer a question PATH answers for free.
+      * It is non-deterministic from the caller's side. Installing an unrelated
+        nvm version silently changes which binary a session runs, and someone who
+        deliberately pinned an older claude is overridden by the tool.
+
+    The real defect in that complaint was INVISIBILITY, not precedence — nothing
+    told the user which claude was about to run. That is fixed by reporting the
+    resolution (see claude_bin_info, surfaced on /api/capabilities), which costs
+    nothing and leaves the choice where it belongs. PATH-first also means a CLI
+    that self-updates is picked up next session rather than pinned by us.
+    """
     override = os.environ.get("CLAUDE_BIN")
     if override:
         return override
@@ -128,6 +154,58 @@ def claude_bin():
         if cand.exists():
             return str(cand)
     return "claude"
+
+
+def claude_bin_info():
+    """Which claude will be spawned, where it came from, and what version it is.
+
+    The observability half of claude_bin's contract: resolution stays dumb and
+    predictable, and this reports the outcome so a stale install is VISIBLE
+    rather than silently out-voted. `other` lists the installs that exist but
+    lost, which is what turns "why is it running an old claude" from a support
+    thread into something the user can see for themselves.
+
+    Never raises and never blocks resolution — a probe that cannot run reports an
+    empty version rather than failing. Called from the capabilities route only,
+    so the subprocess cost is paid when a human is looking, not on every spawn.
+    """
+    path = claude_bin()
+    if os.environ.get("CLAUDE_BIN"):
+        source = "CLAUDE_BIN"
+    elif shutil.which("claude"):
+        source = "PATH"
+    elif path == "claude":
+        source = "unresolved"
+    else:
+        source = "local install"
+
+    seen, other = {str(Path(path).resolve()) if os.path.exists(path) else path}, []
+    candidates = [shutil.which("claude"), str(Path.home() / ".local/bin/claude"),
+                  str(Path.home() / ".claude/local/claude")]
+    candidates += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin/claude"))
+    for cand in candidates:
+        if not cand or not os.path.exists(cand):
+            continue
+        real = str(Path(cand).resolve())
+        if real in seen:
+            continue
+        seen.add(real)
+        other.append({"path": cand, "version": _claude_version(cand)})
+
+    return {"path": path, "source": source, "version": _claude_version(path),
+            "other": other}
+
+
+def _claude_version(path):
+    """`claude --version`, or "" if it cannot be run or parsed. A probe failure is
+    never an error — this is reporting, not resolution."""
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True, text=True,
+                             timeout=10).stdout
+        m = re.search(r"\d+\.\d+\.\d+", out)
+        return m.group(0) if m else ""
+    except Exception:
+        return ""
 
 
 def read_back_f(f, end_off, n_lines):

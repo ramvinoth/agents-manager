@@ -342,6 +342,7 @@ class SessionViewerHandler(
         "/api/session-meta": "_p_session_meta",
         "/api/providers": "_p_providers",
         "/api/providers/delete": "_p_providers_delete",
+        "/api/mcp/probe": "_p_mcp_probe",
         "/api/org/employees": "_p_org_employees",
         "/api/org/employees/update": "_p_org_employees_update",
         "/api/org/projects": "_p_org_projects",
@@ -373,6 +374,20 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
+    # DERIVED from the route table, never hand-listed. Defining this at all is not
+    # cosmetic: _is_ws() reads self.WS_PATHS on EVERY request, so while it was
+    # missing every request raised AttributeError inside the pool worker and the
+    # connection was reset before a response was written — the server accepted
+    # sockets and then dropped them.
+    #
+    # Deriving it is what stops that from being a recurring bug rather than a
+    # one-off fix: a second copy of the list would silently fall out of step the
+    # next time a /ws route is added or renamed, and the symptom (a WebSocket
+    # holding a bounded pool worker for its whole lifetime) looks nothing like
+    # its cause. Asking GET_ROUTES makes the two agree by construction.
+    WS_PATHS = frozenset(
+        path.encode() for path in SessionViewerHandler.GET_ROUTES if path.endswith("/ws")
+    )
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
