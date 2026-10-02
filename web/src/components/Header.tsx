@@ -8,6 +8,7 @@ import {
   ShieldAlert,
   Terminal as TerminalIcon,
   Globe,
+  Monitor,
   FolderOpen,
   User,
   LogOut,
@@ -65,6 +66,7 @@ export function Header() {
   const auth = useStore((s) => s.auth)
   const openPanel = useStore((s) => s.openPanel)
   const panel = useStore((s) => s.panel)
+  const desktopUrl = useStore((s) => s.desktopUrl)
   const openFs = useStore((s) => s.openFs)
   const droppedFile = useStore((s) => s.droppedFile)
   const authUser = useStore((s) => s.authUser)
@@ -160,6 +162,13 @@ export function Header() {
             <Globe className="size-3.5" /> Browser panel
             {panel === "browser" && <Check className="ml-auto size-3.5" />}
           </DropdownMenuItem>
+          {/* Only when the deployment has one — an empty frame is worse than no item. */}
+          {desktopUrl && (
+            <DropdownMenuItem onClick={() => openPanel("desktop")}>
+              <Monitor className="size-3.5" /> Desktop panel
+              {panel === "desktop" && <Check className="ml-auto size-3.5" />}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onClick={() => openPanel("terminal")}>
             <TerminalIcon className="size-3.5" /> Terminal panel
             {panel === "terminal" && <Check className="ml-auto size-3.5" />}

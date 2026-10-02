@@ -35,6 +35,7 @@ export function createRuntime(set: SetState, get: GetState) {
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
     api.health().then((h) => set({ serverVersion: h.version })).catch(() => {})
     get().loadAgents()
+    get().loadDesktop()
     get().loadProviders() // global provider library — session-independent
     get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
     api.getPrefs().then((p: any) => {

@@ -158,6 +158,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
       localStorage.setItem("currentHost", hid)
       set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null, mcpProbes: {} })
       get().loadAgents() // install state is per-host
+      get().loadDesktop() // only the local deployment has an embeddable desktop
       try {
         const { hosts, sessions } = await reloadForHost()
         set({ hosts, sessions, loading: false })

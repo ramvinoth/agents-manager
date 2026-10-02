@@ -16,6 +16,7 @@ import type { AppState } from "./store/types"
 
 export { sessionIdOf } from "./store/helpers"
 export type { RestoreMode } from "./store/types"
+export type { PanelKind } from "./store/layout"
 
 export const useStore = create<AppState>((set, get) => {
   const rt = createRuntime(set, get)

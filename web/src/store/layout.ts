@@ -1,5 +1,19 @@
 /** Panels, tabs and docking — pure UI state persisted to localStorage. */
+import { api } from "../lib/api"
 import type { Slice } from "./types"
+
+/** The panels the dock can show. One name for the union so adding a panel is a
+ *  single edit rather than a hunt through every place the literals were spelled out. */
+export type PanelKind = "terminal" | "browser" | "desktop"
+
+const PANEL_KINDS: readonly PanelKind[] = ["terminal", "browser", "desktop"]
+
+/** localStorage is user-writable and outlives any rename of these values, so a
+ *  stored panel is validated rather than cast — an unknown one opens nothing. */
+function hydratePanel(): PanelKind | null {
+  const v = localStorage.getItem("panel")
+  return PANEL_KINDS.includes(v as PanelKind) ? (v as PanelKind) : null
+}
 
 export interface LayoutSlice {
   lhsTab: string
@@ -10,7 +24,11 @@ export interface LayoutSlice {
   lhsOpen: boolean
   /** The wide-screen Skills/MCP/Plugins panel; closed until the user opens it. */
   rhsOpen: boolean
-  panel: "terminal" | "browser" | null
+  panel: PanelKind | null
+  /** Resolved embed URL for the desktop panel; null until probed, and the
+   *  desktop button stays hidden while it is null or unavailable. */
+  desktopUrl: string | null
+  loadDesktop: () => Promise<void>
   // When set, the terminal panel launches this command in a dedicated persistent
   // session (key) instead of the general host shell — used by "Continue interactively".
   termInit: { key: string; cmd: string } | null
@@ -25,7 +43,7 @@ export interface LayoutSlice {
   setRhsTab: (t: string) => void
   toggleRhs: () => void
   toggleLhs: () => void
-  openPanel: (k: "terminal" | "browser") => void
+  openPanel: (k: PanelKind) => void
   closePanel: () => void
   continueInteractively: (cmd: string, key: string) => void
   openFs: () => void
@@ -55,7 +73,24 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
     rhsTab: localStorage.getItem("rhsTab") || "skills",
     rhsOpen: localStorage.getItem("rhsOpen") === "1",
     lhsOpen: localStorage.getItem("lhsOpen") !== "0",
-    panel: (localStorage.getItem("panel") as "terminal" | "browser" | null) || null,
+    panel: hydratePanel(),
+    desktopUrl: null,
+    // Ask the server whether this deployment has a desktop to embed. Deliberately
+    // not persisted: the URL carries a credential and the answer is cheap, so it
+    // is re-fetched per load rather than cached where it could go stale or leak.
+    loadDesktop: async () => {
+      try {
+        const d: any = await api.desktop()
+        const url = d?.available && d.url ? String(d.url) : null
+        set({ desktopUrl: url })
+        // A panel restored from localStorage can outlive the config that made it
+        // valid (the env var dropped, or the host switched to one with no
+        // desktop). Fall back rather than render an empty frame.
+        if (!url && get().panel === "desktop") get().closePanel()
+      } catch {
+        set({ desktopUrl: null })
+      }
+    },
     termInit: JSON.parse(localStorage.getItem("termInit") || "null"),
     fsOpen: false,
     fsPick: null,
