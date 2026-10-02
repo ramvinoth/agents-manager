@@ -30,7 +30,7 @@ lint:  ## Ruff (real defects only) + Python & JS syntax
 unit:  ## Fast hermetic unit tests (pure functions; no server/DB/SSH)
 	python3 -m pytest tests/unit -q
 
-bootstrap:  ## Idempotent fresh-install: DB tables + seed CEO/Harman + skills dir + config
+bootstrap:  ## Idempotent fresh-install/upgrade: DB tables + seed owner + install bundled skills
 	python3 -m viewer.bootstrap
 
 web:  ## Type-check + build the React app (web/ → web/dist)
@@ -49,7 +49,12 @@ test: smoke e2e  ## smoke + React e2e
 check: lint unit web test  ## Full gate: lint + unit + React build + smoke + e2e
 
 serve:  ## (Re)start the production server on $(PORT) [React UI]
-	-fuser -k $(PORT)/tcp 2>/dev/null; sleep 1
+	@# macOS ships fuser but without -k, so the kill must go through lsof there.
+	-@if [ "$$(uname)" = "Darwin" ]; then \
+	   lsof -ti tcp:$(PORT) | xargs -r kill 2>/dev/null; \
+	 else \
+	   fuser -k $(PORT)/tcp 2>/dev/null; \
+	 fi; sleep 1
 	env -u ANTHROPIC_MODEL nohup python3 server.py $(PORT) > /tmp/agents.log 2>&1 & sleep 2
 	@curl -sf -o /dev/null $(BASE)/ \
 	  && echo "serve: up on $(PORT)" || (echo "serve: FAILED — see /tmp/agents.log"; exit 1)
