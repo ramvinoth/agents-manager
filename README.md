@@ -1,11 +1,11 @@
-# Harman
+# Agents Manager
 
-Harman (**Harness Manager**) is a self-hosted web app for **viewing and driving coding-agent sessions** — Claude, Codex,
+Agents Manager is a self-hosted web app for **viewing and driving coding-agent sessions** — Claude, Codex,
 Copilot, and Pi — on your own machine and across your SSH hosts. Point it at your agent
 transcripts and it renders them as readable conversations; connect a host and you can start
 and steer runs right from the browser.
 
-> **Agents Manager** — the app is branded **Agents** in the UI.
+The mobile app is branded **Agents**, which is the same product under a name that fits a home screen.
 
 ## What it does
 

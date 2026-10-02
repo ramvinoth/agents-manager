@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.suhai.agents",
       "buildNumber": "1",
       "infoPlist": {
-        "CFBundleDisplayName": "Harman"
+        "CFBundleDisplayName": "Agents"
       },
       "config": {
         "usesNonExemptEncryption": false
