@@ -136,8 +136,6 @@ class TestBootstrapWiring:
 
         calls = []
         monkeypatch.setattr(bootstrap.db, "init_db", lambda: None)
-        monkeypatch.setattr(bootstrap.db, "board_columns_list", lambda: [])
-        monkeypatch.setattr(bootstrap.db, "employee_list", lambda: [{"name": "Ram"}])
         monkeypatch.setattr(bootstrap.skills, "install_bundled",
                             lambda *a, **k: calls.append(1) or [("x", "installed")])
         report = bootstrap.bootstrap()
