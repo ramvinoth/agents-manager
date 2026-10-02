@@ -15,11 +15,9 @@ import {
   Pencil,
   User,
   LogOut,
-  Sparkles,
   KeyRound,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
-import { HarmanDialog } from "./HarmanDialog"
 import { HostDialog } from "./HostDialog"
 import { EnvDialog } from "./EnvDialog"
 import { SessionActions } from "./SessionActions"
@@ -36,28 +34,39 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
 import { describeHost } from "@/lib/host"
+import { prefersDark, applyTheme, writeThemeChoice } from "@/lib/theme"
 import type { HostInfo } from "@/lib/types"
 
 function useTheme() {
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark")
+  // Dark is the default; only an explicit "light" moves it. See lib/theme.ts for
+  // why that lives behind a helper and a versioned key.
+  const [dark, setDark] = useState(prefersDark)
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark)
-    localStorage.setItem("theme", dark ? "dark" : "light")
+    // Apply only. Persisting from here is what broke the dark default before:
+    // this effect also runs on mount, so it stamped the *default* into storage
+    // as though the user had chosen it. Writes now happen in toggle(), which
+    // only a click reaches.
+    applyTheme(dark)
   }, [dark])
-  return { dark, toggle: () => setDark((d) => !d) }
+  return {
+    dark,
+    toggle: () =>
+      setDark((d) => {
+        writeThemeChoice(!d ? "dark" : "light")
+        return !d
+      }),
+  }
 }
 
 export function Header() {
   const { dark, toggle } = useTheme()
   const [nsOpen, setNsOpen] = useState(false)
-  const [harmanOpen, setHarmanOpen] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
   const currentHost = useStore((s) => s.currentHost)
   const setHost = useStore((s) => s.setHost)
   const sessions = useStore((s) => s.sessions)
-  const loadSession = useStore((s) => s.loadSession)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const auth = useStore((s) => s.auth)
   const openPanel = useStore((s) => s.openPanel)
@@ -70,7 +79,7 @@ export function Header() {
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
-  // so showing New/Harman/host/panels here would only open dialogs that then 401.
+  // so showing New/host/panels here would only open dialogs that then 401.
   if (needsAuth) {
     return (
       <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3">
@@ -97,13 +106,6 @@ export function Header() {
 
   const current = sessions.find((x) => x.path === currentSessionPath)
   const hostLabel = describeHost(currentHost, hosts)
-
-  // Harman: open the existing orchestrator session if one exists, else set one up.
-  const openHarman = () => {
-    const existing = sessions.find((s) => s.title === "Harman")
-    if (existing) loadSession(existing.path)
-    else setHarmanOpen(true)
-  }
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
@@ -186,16 +188,6 @@ export function Header() {
         <Plus className="size-3.5" /> New
       </Button>
 
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 gap-1 px-2 text-xs"
-        onClick={openHarman}
-        title="Harman — Harness Manager orchestrator"
-      >
-        <Sparkles className="size-3.5" /> <span className="hidden sm:inline">Harman</span>
-      </Button>
-
       <div className="flex min-w-0 flex-1 items-center gap-1">
         {droppedFile && (
           <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
@@ -264,7 +256,6 @@ export function Header() {
       </Button>
 
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
-      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>

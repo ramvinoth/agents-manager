@@ -114,7 +114,12 @@ export interface McpServer {
 export interface Capabilities {
   skills: Skill[]
   mcp: McpServer[]
-  models?: { v: string; label: string }[] // Copilot: dynamic per-plan model picker list
+  /** Models the host actually serves, in the order it listed them — Copilot's
+   *  per-plan list, or a Claude gateway's /v1/models catalogue. Never ranked or
+   *  filtered here. Absent/empty means "no catalogue to read", which is the
+   *  normal answer on a plain Anthropic login, and the picker falls back to its
+   *  built-in aliases. */
+  models?: { v: string; label: string }[]
 }
 
 export interface AgentInfo {
@@ -201,6 +206,13 @@ export interface GitStatus {
   dirty?: number
   ahead?: number | null
   behind?: number | null
+  /** True when the repo was found BELOW the session cwd rather than at/above
+   *  it — the workspace-root layout. The UI flags this so "master" isn't read
+   *  as the branch of the directory the session is actually sitting in. */
+  discovered?: boolean
+  /** Absolute path of the discovered work tree. Anything that runs git must use
+   *  this, not the session cwd, which is the parent directory. */
+  cwd?: string
 }
 export interface Loop {
   id: string

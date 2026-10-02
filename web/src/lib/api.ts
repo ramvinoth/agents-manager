@@ -168,7 +168,7 @@ class ApiClient {
   /** List an endpoint's models — from a saved preset (id) or by probing a
    *  baseUrl+key before saving. The key never leaves the server. */
   providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
-    const params =
+    const params: Record<string, string> =
       "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
     return this.getJSON<{ models: string[]; error?: string }>(
       "/api/providers/models?" + new URLSearchParams(params).toString()
@@ -231,6 +231,11 @@ class ApiClient {
   chatQuestionAnswer(body: Body) {
     return this.postRes("/api/chat/question/answer", this.wh(body))
   }
+  // Approve / request-changes on a blocked ExitPlanMode. Same-turn: the run is
+  // parked inside the permission tool waiting on this, so it is NOT a chat message.
+  chatPlanDecide(body: Body) {
+    return this.postRes("/api/chat/plan/decide", this.wh(body))
+  }
   chatQueueRemove(body: Body) {
     return this.postRes("/api/chat/queue/remove", body)
   }
@@ -273,6 +278,13 @@ class ApiClient {
   }
   mcpDelete(body: Body) {
     return this.postRes("/api/mcp/delete", this.wha(body))
+  }
+  /** Live handshake with ONE configured MCP server (initialize + tools/list).
+   *  Manual only — a stdio probe executes the server's command, so this is
+   *  never called on panel load. Up to ~15s; resolves even on failure, with the
+   *  reason in the result. */
+  mcpProbe(body: Body) {
+    return this.postJSON("/api/mcp/probe", this.wha(body))
   }
 
   // Resolve the shell command to resume a Copilot session interactively (host-aware).

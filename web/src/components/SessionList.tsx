@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ArrowLeft } from "lucide-react"
+import { Folder, ChevronRight, ArrowLeft, GitBranch } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { cn } from "@/lib/utils"
@@ -33,6 +33,7 @@ export function SessionList() {
   const sessions = useStore((s) => s.sessions)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const loadSession = useStore((s) => s.loadSession)
+  const git = useStore((s) => s.git)
   const [dir, setDir] = useState<string | null>(null)
   const [q, setQ] = useState("")
 
@@ -78,10 +79,31 @@ export function SessionList() {
                 <button
                   key="back"
                   onClick={() => setDir(null)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
                 >
                   <ArrowLeft className="size-4" /> All projects
                 </button>,
+                // Which project am I in? The back link alone doesn't say. Branch
+                // comes from the store's existing git state (the same state
+                // GitSection renders) — a second read, not a second fetch, so it
+                // is simply absent when the cwd isn't a repo.
+                <div
+                  key="header"
+                  className="mb-1 flex items-center gap-1.5 border-b border-border px-2 pb-1.5"
+                  title={active.project}
+                >
+                  <Folder className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium">{projectName(active.project)}</span>
+                  {git?.branch && (
+                    <span
+                      className="flex min-w-0 items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                      title={git.branch}
+                    >
+                      <GitBranch className="size-3 shrink-0" />
+                      <span className="truncate">{git.branch}</span>
+                    </span>
+                  )}
+                </div>,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
