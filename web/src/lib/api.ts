@@ -612,6 +612,9 @@ class ApiClient {
   browserTabs() {
     return this.getJSON("/api/browser/tabs" + this.qs("?"))
   }
+  desktop() {
+    return this.getJSON("/api/desktop" + this.qs("?"))
+  }
 
   // ---- user accounts (viewer app login) ----
   authState() {

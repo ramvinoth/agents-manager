@@ -72,6 +72,24 @@ UI_DIR = REACT_DIR
 # relative path to pin a specific session.
 DEFAULT_SESSION = os.environ.get("VIEWER_DEFAULT_SESSION", "")
 
+# ===== Embedded desktop (optional) =====
+# A URL for a remote desktop stream to show in a panel beside the terminal and
+# browser. Empty by default: a plain checkout has no desktop, and the panel is
+# hidden rather than offering a button that opens a blank frame.
+#
+# It MUST be injected rather than derived. The intended deployment is a vcode
+# sandbox container, where the desktop (Neko, WebRTC) runs beside this app on
+# container port 8080 — but what a browser needs is the *published* address on
+# the host, and a container cannot see its own port publication. Only whoever
+# created the container knows it, so only they can set this.
+#
+# VIEWER_DESKTOP_PASSWORD is separate because it is a credential: it is sent to
+# the client only for a logged-in user (see routes/panels.py), and the desktop
+# is the same trust boundary as the terminal this app already exposes.
+DESKTOP_URL = os.environ.get("VIEWER_DESKTOP_URL", "").strip()
+DESKTOP_PASSWORD = os.environ.get("VIEWER_DESKTOP_PASSWORD", "")
+DESKTOP_USER = os.environ.get("VIEWER_DESKTOP_USER", "").strip()
+
 MAX_POLL_BYTES = 8 * 1024 * 1024  # cap a single ?from= read
 CHAT_TIMEOUT = 3600               # seconds for one claude -p run (one-shot paths:
                                   # a hard wall-clock cap on communicate())

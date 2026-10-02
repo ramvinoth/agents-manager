@@ -82,6 +82,20 @@ export interface NewSessionOpts {
   goal?: string
 }
 
+/** The panels the dock can show. One name for the union so adding a panel is a
+ *  single edit rather than a hunt through every place the literals were spelled
+ *  out — which is how the dock stayed a two-way conditional for so long. */
+export type PanelKind = "terminal" | "browser" | "desktop"
+
+const PANEL_KINDS: readonly PanelKind[] = ["terminal", "browser", "desktop"]
+
+/** localStorage is user-writable and outlives any rename of these values, so a
+ *  stored panel is validated rather than cast — an unknown one opens nothing. */
+function hydratePanel(): PanelKind | null {
+  const v = localStorage.getItem("panel")
+  return PANEL_KINDS.includes(v as PanelKind) ? (v as PanelKind) : null
+}
+
 interface AppState {
   agents: AgentInfo[]
   currentAgent: string
@@ -108,7 +122,10 @@ interface AppState {
   stash: string[]
   permMode: string
   model: string
-  panel: "terminal" | "browser" | null
+  panel: PanelKind | null
+  /** Resolved embed URL for the desktop panel; null until probed, and the
+   *  desktop button stays hidden while it is null or unavailable. */
+  desktopUrl: string | null
   // When set, the terminal panel launches this command in a dedicated persistent
   // session (key) instead of the general host shell — used by "Continue interactively".
   termInit: { key: string; cmd: string } | null
@@ -174,6 +191,7 @@ interface AppState {
 
   init: () => Promise<void>
   loadAgents: () => Promise<void>
+  loadDesktop: () => Promise<void>
   setAgent: (id: string) => Promise<void>
   installing: string | null
   installAgent: (id: string) => Promise<void>
@@ -244,7 +262,7 @@ interface AppState {
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
-  openPanel: (k: "terminal" | "browser") => void
+  openPanel: (k: PanelKind) => void
   closePanel: () => void
   continueInteractively: (cmd: string, key: string) => void
   openFs: () => void
@@ -295,6 +313,7 @@ export const useStore = create<AppState>((set, get) => {
     api.setAgent(get().currentAgent)
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
     get().loadAgents()
+    get().loadDesktop()
     get().loadProviders() // global provider library — session-independent
     get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
     api.getPrefs().then((p: any) => {
@@ -555,7 +574,8 @@ export const useStore = create<AppState>((set, get) => {
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
     permMode: localStorage.getItem("permMode") || "acceptEdits",
     model: localStorage.getItem("model") || "",
-    panel: (localStorage.getItem("panel") as "terminal" | "browser" | null) || null,
+    panel: hydratePanel(),
+    desktopUrl: null,
     termInit: JSON.parse(localStorage.getItem("termInit") || "null"),
     fsOpen: false,
     fsPick: null,
@@ -674,6 +694,22 @@ export const useStore = create<AppState>((set, get) => {
         }
       } catch {
         /* leave empty; picker falls back to Claude */
+      }
+    },
+    // Ask the server whether this deployment has a desktop to embed. Deliberately
+    // not persisted: the URL carries a credential and the answer is cheap, so it
+    // is re-fetched per load rather than cached where it could go stale or leak.
+    loadDesktop: async () => {
+      try {
+        const d: any = await api.desktop()
+        const url = d?.available && d.url ? String(d.url) : null
+        set({ desktopUrl: url })
+        // A panel restored from localStorage can outlive the config that made it
+        // valid (the env var dropped, or the host switched to one with no
+        // desktop). Fall back rather than render an empty frame.
+        if (!url && get().panel === "desktop") get().closePanel()
+      } catch {
+        set({ desktopUrl: null })
       }
     },
     // Install an agent CLI into $HOME/.local (no sudo) on the current host, then
@@ -800,6 +836,7 @@ export const useStore = create<AppState>((set, get) => {
       localStorage.setItem("currentHost", hid)
       set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null, mcpProbes: {} })
       get().loadAgents() // install state is per-host
+      get().loadDesktop() // only the local deployment has an embeddable desktop
       try {
         const { hosts, sessions } = await reloadForHost()
         set({ hosts, sessions, loading: false })
