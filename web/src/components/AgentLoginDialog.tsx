@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ExternalLink, Loader2, Copy, Check, LogIn } from "lucide-react"
+import { ExternalLink, Loader2, Copy, Check, LogIn, RefreshCw } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -15,6 +15,7 @@ export function AgentLoginDialog() {
   const agentLogin = useStore((s) => s.agentLogin)
   const submit = useStore((s) => s.submitAgentLogin)
   const cancel = useStore((s) => s.cancelAgentLogin)
+  const restart = useStore((s) => s.startAgentLogin)
   const agents = useStore((s) => s.agents)
   const [callback, setCallback] = useState("")
   const [copied, setCopied] = useState(false)
@@ -75,11 +76,19 @@ export function AgentLoginDialog() {
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" /> Waiting for you to approve… this closes automatically.
             </div>
+            <div className="text-xs text-muted-foreground">
+              Codes expire after about 15 minutes. If GitHub says the code has expired, get a new
+              one below.
+            </div>
             {error && <div className="text-xs text-destructive">{error}</div>}
           </div>
         ) : !ready ? (
-          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Preparing sign-in…
+          <div className="space-y-2 py-6">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {stage !== "error" && <Loader2 className="size-4 animate-spin" />}
+              {stage === "error" ? "Sign-in couldn't start." : "Preparing sign-in…"}
+            </div>
+            {error && <div className="text-xs text-destructive">{error}</div>}
           </div>
         ) : (
           <div className="space-y-4">
@@ -140,6 +149,19 @@ export function AgentLoginDialog() {
           <Button variant="outline" onClick={cancel}>
             Cancel
           </Button>
+          {/* A device code expires (GitHub's own ~15min, mirrored by the server's
+              900s poll timeout), and the dialog otherwise has no way forward once
+              it does. Restarting is safe to repeat: the manager cancels and resets
+              the previous attempt before spawning a new `copilot login`. */}
+          {(isDevice || stage === "error") && (
+            <Button
+              variant="outline"
+              onClick={() => restart(agentLogin.agent)}
+              disabled={stage === "starting"}
+            >
+              <RefreshCw className="size-3.5" /> Get a new code
+            </Button>
+          )}
           {ready && !isDevice && (
             <Button
               onClick={() => submit(callback.trim())}
