@@ -2,9 +2,11 @@
 import sys
 import threading
 import traceback
+from urllib.parse import urlencode
 from viewer.browser import (
     browser_frame, browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws, serve_terminal_ws,
 )
+from viewer.config import DESKTOP_PASSWORD, DESKTOP_URL, DESKTOP_USER
 
 
 class PanelsMixin:
@@ -39,6 +41,31 @@ class PanelsMixin:
 
     def _g_browser_ws(self, req):
         serve_browser_ws(self, req.host)
+
+    def _g_desktop(self, req):
+        """Where to point the desktop panel's iframe, or that there isn't one.
+
+        The embed URL is assembled HERE rather than in the client because the
+        password is part of it. The client gets a ready-to-use src and never
+        has to hold the credential as a separate value it might log, persist or
+        put in a link. This route is gated like every other /api route, so the
+        password reaches a logged-in user only — the same user who already has
+        a shell through /api/terminal/ws.
+
+        Only "local" has a desktop: the URL is configuration of THIS deployment
+        (the container this app runs in), and nothing tells us the published
+        desktop address of some other host we merely have SSH to.
+        """
+        if not DESKTOP_URL or req.host != "local":
+            self.send_json({"available": False})
+            return
+        params = {"embed": "1"}
+        if DESKTOP_PASSWORD:
+            params["pwd"] = DESKTOP_PASSWORD
+        if DESKTOP_USER:
+            params["usr"] = DESKTOP_USER
+        sep = "&" if "?" in DESKTOP_URL else "?"
+        self.send_json({"available": True, "url": DESKTOP_URL + sep + urlencode(params)})
 
     def _g_debug_stacks(self, req):
         # All thread stacks — for diagnosing wedged SSH ops without ptrace.

@@ -1,11 +1,21 @@
 import { useState } from "react"
-import { Terminal as TerminalIcon, Globe, X, PictureInPicture2, PanelBottom } from "lucide-react"
+import { Terminal as TerminalIcon, Globe, Monitor, X, PictureInPicture2, PanelBottom } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { describeHost } from "@/lib/host"
-import { useStore } from "@/store"
+import { useStore, type PanelKind } from "@/store"
 import { TerminalPanel } from "./TerminalPanel"
 import { BrowserPanel } from "./BrowserPanel"
+import { DesktopPanel } from "./DesktopPanel"
+
+/** Icon and title per panel. A registry rather than a chain of ternaries: this
+ *  was a two-way conditional repeated in three places, and every new panel had
+ *  to find all three. Adding one is now a single entry. */
+export const PANELS: Record<PanelKind, { icon: typeof Globe; label: string }> = {
+  terminal: { icon: TerminalIcon, label: "Terminal" },
+  browser: { icon: Globe, label: "Browser" },
+  desktop: { icon: Monitor, label: "Desktop" },
+}
 
 export function PanelDock({
   floating,
@@ -24,7 +34,7 @@ export function PanelDock({
 
   if (!panel) return null
   const hostLabel = describeHost(currentHost, hosts)
-  const Icon = panel === "terminal" ? TerminalIcon : Globe
+  const { icon: Icon, label } = PANELS[panel]
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -43,7 +53,7 @@ export function PanelDock({
       >
         <Icon className="size-3.5" />
         <span className="font-medium">
-          {panel === "terminal" ? "Terminal" : "Browser"} on {hostLabel}
+          {label} on {hostLabel}
         </span>
         {state && <span className="text-muted-foreground">· {state}</span>}
         <div className="flex-1" />
@@ -66,6 +76,8 @@ export function PanelDock({
             reconnects to the NEW host instead of silently driving the old one. */}
         {panel === "terminal" ? (
           <TerminalPanel key={`term-${currentHost}-${termInit?.key || "shell"}`} onState={setState} />
+        ) : panel === "desktop" ? (
+          <DesktopPanel key={`desktop-${currentHost}`} onState={setState} />
         ) : (
           <BrowserPanel key={`browser-${currentHost}`} onState={setState} />
         )}

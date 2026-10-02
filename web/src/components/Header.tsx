@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   Terminal as TerminalIcon,
   Globe,
+  Monitor,
   Plus,
   FolderOpen,
   Pencil,
@@ -71,6 +72,7 @@ export function Header() {
   const auth = useStore((s) => s.auth)
   const openPanel = useStore((s) => s.openPanel)
   const panel = useStore((s) => s.panel)
+  const desktopUrl = useStore((s) => s.desktopUrl)
   const openFs = useStore((s) => s.openFs)
   const droppedFile = useStore((s) => s.droppedFile)
   const authUser = useStore((s) => s.authUser)
@@ -209,6 +211,19 @@ export function Header() {
       >
         <Globe className="size-4" />
       </Button>
+      {/* Only when the deployment actually has one — a button that opens an
+          empty frame is worse than no button. */}
+      {desktopUrl && (
+        <Button
+          variant={panel === "desktop" ? "secondary" : "ghost"}
+          size="icon"
+          className="size-7"
+          onClick={() => openPanel("desktop")}
+          title="Desktop panel"
+        >
+          <Monitor className="size-4" />
+        </Button>
+      )}
       <Button
         variant={panel === "terminal" ? "secondary" : "ghost"}
         size="icon"

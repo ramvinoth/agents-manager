@@ -264,6 +264,7 @@ class SessionViewerHandler(
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/browser/frame": "_g_browser_frame",
+        "/api/desktop": "_g_desktop",
         "/api/capabilities": "_g_capabilities",
         "/api/session-summary": "_g_session_summary",
         "/api/session-analysis": "_g_session_analysis",
