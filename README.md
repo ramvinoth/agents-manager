@@ -34,7 +34,8 @@ createdb viewer
 # 2. Build the web UI
 cd web && npm install && npm run build && cd ..
 
-# 3. Bootstrap the empire (idempotent: tables + seed CEO/Harman + skills dir)
+# 3. Bootstrap (idempotent: tables + bundled skills). Safe to re-run on upgrade —
+#    that is how an improved bundled skill reaches an existing install.
 make bootstrap
 
 # 4. Run the server (defaults to :8091)

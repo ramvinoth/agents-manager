@@ -21,8 +21,10 @@ common providers ship as *seed presets*, not as code branches.
 
 - `viewer/providers.py` — LLM-only presets, Anthropic-compatible endpoints, stored
   in `.viewer-providers.json`. Chat picks one via `SESSION_META.provider`.
-- Voice STT/TTS is **hardcoded** to `SPEECH_SERVICE_URL` (:8095 sherpa) /
-  `ASSISTANT_SERVICE_URL` (:8099, now dead) in `config.py`, chosen by `?assistant=1`.
+- Voice has no code on this branch at all — no `viewer/voice.py`, no `/api/voice/*`.
+  The hardcoded `SPEECH_SERVICE_URL` / `ASSISTANT_SERVICE_URL` constants that §5
+  below proposes replacing were removed from `config.py` once nothing read them,
+  so the STT/TTS half of this design is greenfield rather than a replacement.
 - We just consolidated the box: **sherpa STT (:8095) + Pocket TTS (:8097)** are the
   live built-ins; Kokoro TTS (part of speech_service), Qwen-TTS, Step-Audio are gone.
 
