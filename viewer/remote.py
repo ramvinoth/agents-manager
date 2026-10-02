@@ -759,6 +759,38 @@ def remote_mcp_save(hid, name, scope, cfg, cwd, delete=False):
         return {"error": "remote MCP op failed: " + txt.strip()[-300:]}
 
 
+def remote_mcp_probe(hid, name, cfg, cwd):
+    """Handshake with an MCP server ON the remote host; returns the same dict
+    viewer.mcp_probe.probe() does.
+
+    Unlike its neighbours, this does NOT hand-copy the logic into a script
+    string. viewer/mcp_probe.py imports stdlib only, so the module's own source
+    is shipped and exec'd — the probe cannot drift from the local one, which is
+    exactly the failure mode the duplicated REMOTE_*_SCRIPTs above are prone to.
+
+    The probe runs on the host, so a server's command, url and any credentials
+    in its config are exercised where they belong; only the result travels back.
+    """
+    try:
+        src = (Path(__file__).parent / "mcp_probe.py").read_text()
+    except Exception as e:
+        return {"name": name, "transport": "", "state": "failed", "detail": "",
+                "error": f"Cannot read probe module: {e}",
+                "tools": [], "server": {}, "elapsed_ms": 0}
+    # Same json.loads-of-a-repr trick as remote_mcp_save: JSON false/true/null
+    # are not Python literals, so an embedded json.dumps would NameError.
+    params = {"name": name, "config": cfg, "cwd": cwd or ""}
+    hdr = "import json\nP = json.loads(%r)\n" % json.dumps(params)
+    tail = "\nprint(json.dumps(probe(P['name'], P['config'], P['cwd'])))\n"
+    txt = remote_run_python(hid, hdr + src + tail)
+    try:
+        return json.loads(txt.strip().splitlines()[-1])
+    except Exception:
+        return {"name": name, "transport": "", "state": "failed", "detail": "",
+                "error": "remote probe failed: " + txt.strip()[-300:],
+                "tools": [], "server": {}, "elapsed_ms": 0}
+
+
 def remote_full_path(hid, rel):
     """Map a 'projects/...' rel path to an absolute remote path; guard traversal."""
     c = SSH.get(hid)
@@ -1304,7 +1336,6 @@ def remote_setup_perm_mcp(hid, port):
     if not viewer_tailnet_base(port):
         raise RuntimeError("no tailnet address for the viewer (remote AUQ needs it)")
     helper_src = (Path(__file__).parent / "permission_mcp.py").read_text()
-    kanban_src = (Path(__file__).parent / "kanban_mcp.py").read_text()
     with SSH.sftp(hid) as sftp:
         home = SSH.get(hid)["home"].rstrip("/")
         d = f"{home}/{_REMOTE_PERM_DIR}"
@@ -1317,15 +1348,11 @@ def remote_setup_perm_mcp(hid, port):
             except IOError:
                 pass
         helper_path = f"{d}/permission_mcp.py"
-        kanban_path = f"{d}/kanban_mcp.py"
         cfg_path = f"{d}/mcp.json"
         with sftp.open(helper_path, "w") as f:
             f.write(helper_src)
-        with sftp.open(kanban_path, "w") as f:
-            f.write(kanban_src)
         cfg = {"mcpServers": {
             "viewerperm": {"command": "python3", "args": [helper_path]},
-            "viewerkanban": {"command": "python3", "args": [kanban_path]},
         }}
         with sftp.open(cfg_path, "w") as f:
             f.write(json.dumps(cfg))

@@ -2,6 +2,9 @@ import { create } from "zustand"
 import { api } from "./lib/api"
 import { describeHost } from "./lib/host"
 import { SessionParser } from "./lib/parser"
+import { writeThemeChoice, applyTheme } from "./lib/theme"
+import { isRunning } from "./lib/mcp"
+import type { ProbeEntry, ProbeResult } from "./lib/mcp"
 import type {
   AgentInfo,
   Capabilities,
@@ -38,6 +41,12 @@ export interface PermApproval {
   id: string
   tool_name: string
   input: unknown
+}
+/** A blocked ExitPlanMode awaiting the user's approval (see PlanPrompt). */
+export interface PendingPlan {
+  tool_use_id: string
+  plan: string
+  host?: string
 }
 
 // Non-reactive timers (module-level so they never trigger re-renders).
@@ -88,6 +97,7 @@ interface AppState {
   chatStatus: ChatStatus | null
   queue: string[]
   pendingApprovals: PermApproval[]
+  pendingPlan: PendingPlan | null
   stash: string[]
   permMode: string
   model: string
@@ -102,6 +112,9 @@ interface AppState {
   floatRect: { x: number; y: number; w: number; h: number }
   caps: Capabilities
   capsLoading: boolean
+  /** Per-server MCP probe state, keyed by server name. Absent = never tested.
+   *  Cleared with the capability list it describes (see loadCapabilities). */
+  mcpProbes: Record<string, ProbeEntry>
   projects: ProjectDir[]
   slashCommands: SlashCommand[]
   fullSummary: SessionSummary | null
@@ -148,6 +161,9 @@ interface AppState {
   cancelAgentLogin: () => void
   loadOlder: () => Promise<void>
   loadCapabilities: () => Promise<void>
+  /** Handshake with one MCP server and record the result. Manual only. */
+  probeMcp: (name: string) => Promise<void>
+  probeAllMcp: () => Promise<void>
   loadCommands: () => Promise<void>
   loadSummary: () => Promise<void>
   analyzeSession: (refresh?: boolean) => Promise<void>
@@ -183,6 +199,7 @@ interface AppState {
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
   answerQuestion: (picks: string[]) => Promise<void>
+  decidePlan: (decision: "approve" | "deny", feedback?: string) => Promise<void>
   removeQueued: (i: number) => Promise<void>
   addStash: (text: string) => void
   removeStash: (i: number) => void
@@ -239,9 +256,15 @@ export const useStore = create<AppState>((set, get) => {
     get().loadAgents()
     get().loadProviders() // global provider library — session-independent
     api.getPrefs().then((p: any) => {
-      if (p && p.theme) {
-        localStorage.setItem("theme", p.theme)
-        document.documentElement.classList.toggle("dark", p.theme === "dark")
+      // A server-side theme is a real cross-device preference, so it still wins
+      // — but only when it says something. `p.theme` absent leaves the local
+      // choice (or the dark default) exactly as the pre-paint script set it.
+      // Nothing in this app writes prefs.theme today; this path exists for a
+      // preference set elsewhere, and treating a missing value as "light" is
+      // what a naive read here would do.
+      if (p && (p.theme === "dark" || p.theme === "light")) {
+        writeThemeChoice(p.theme)
+        applyTheme(p.theme === "dark")
       }
     }).catch(() => {})
     set({ loading: true })
@@ -315,7 +338,14 @@ export const useStore = create<AppState>((set, get) => {
       }
       // ~30s cadence on the 2s poll: refresh the git bar so branch switches
       // made outside the viewer (terminal, agent) show up without a reload.
-      if (++gitTick % 15 === 0 && get().git?.repo) get().loadGitStatus()
+      //
+      // When there is NO repo yet, re-check too, just four times slower. The
+      // old guard skipped that case entirely, so a repo cloned during the
+      // session stayed invisible until a reload — and with the workspace-root
+      // layout (repo discovered one level down) cloning into the workspace is
+      // exactly how a session acquires its repo. The slower cadence keeps the
+      // discovery `find` off the hot path on remote hosts.
+      if (++gitTick % (get().git?.repo ? 15 : 60) === 0) get().loadGitStatus()
     } catch {
       /* transient; retry next tick */
     } finally {
@@ -334,11 +364,15 @@ export const useStore = create<AppState>((set, get) => {
       try {
         const d: any = await api.chatStatus(sessionId)
         if (d.running) {
-          set({ queue: d.queue || [], pendingApprovals: d.pending_approvals || [] })
+          set({
+            queue: d.queue || [],
+            pendingApprovals: d.pending_approvals || [],
+            pendingPlan: d.pending_plan || null,
+          })
           return
         }
         if (chatTimer) { clearInterval(chatTimer); chatTimer = null }
-        set({ chatRunning: false, queue: [], pendingApprovals: [] })
+        set({ chatRunning: false, queue: [], pendingApprovals: [], pendingPlan: null })
         await pollTick()
         get().loadGitStatus() // the run may have committed / switched branches
         // Refresh the full-session summary (fresh user-message count) without a
@@ -475,6 +509,7 @@ export const useStore = create<AppState>((set, get) => {
     chatStatus: null,
     queue: [],
     pendingApprovals: [],
+    pendingPlan: null,
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
     permMode: localStorage.getItem("permMode") || "acceptEdits",
     model: localStorage.getItem("model") || "",
@@ -495,6 +530,7 @@ export const useStore = create<AppState>((set, get) => {
     })(),
     caps: { skills: [], mcp: [] },
     capsLoading: false,
+    mcpProbes: {},
     projects: [],
     slashCommands: [],
     fullSummary: null,
@@ -568,7 +604,7 @@ export const useStore = create<AppState>((set, get) => {
       set({
         needsAuth: true, authUser: null, error: null,
         currentSessionPath: "", turns: [], droppedFile: null, parser: new SessionParser(),
-        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] },
+        sessions: [], hosts: [], agents: [], caps: { skills: [], mcp: [] }, mcpProbes: {},
         meta: null, git: null, loops: [], fullSummary: null, analysis: null, analysisError: null,
         slashCommands: [], queue: [], chatRunning: false, chatStatus: null,
         panel: null, fsOpen: false, searchOpen: false,
@@ -688,6 +724,7 @@ export const useStore = create<AppState>((set, get) => {
       set({
         currentAgent: id, currentSessionPath: "", turns: [], loading: true, error: null,
         chatRunning: false, chatStatus: null, queue: [], analysis: null, analysisError: null,
+        mcpProbes: {},
       })
       try {
         const sessions = (await api.sessions()) as SessionListItem[]
@@ -713,7 +750,7 @@ export const useStore = create<AppState>((set, get) => {
       stopTimers()
       api.setHost(hid)
       localStorage.setItem("currentHost", hid)
-      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null })
+      set({ currentHost: hid, currentSessionPath: "", turns: [], loading: true, error: null, chatRunning: false, chatStatus: null, mcpProbes: {} })
       get().loadAgents() // install state is per-host
       try {
         const { hosts, sessions } = await reloadForHost()
@@ -812,12 +849,57 @@ export const useStore = create<AppState>((set, get) => {
       try {
         const caps = (await api.capabilities(params.toString())) as Capabilities
         if (get().currentSessionPath !== currentSessionPath) return
-        if (caps && Array.isArray(caps.skills)) set({ caps })
+        // Probe results are dropped with the list they describe. A result is a
+        // statement about one server on one host at one moment; carrying it
+        // across a reload could show "Connected" next to a server that is no
+        // longer even the same server.
+        if (caps && Array.isArray(caps.skills)) set({ caps, mcpProbes: {} })
       } catch {
         /* leave placeholders */
       } finally {
         if (get().currentSessionPath === currentSessionPath) set({ capsLoading: false })
       }
+    },
+
+    probeMcp: async (name) => {
+      const server = get().caps.mcp.find((m) => m.name === name)
+      if (!server || isRunning(get().mcpProbes[name])) return
+      const { currentSessionPath, currentHost } = get()
+      set((s) => ({ mcpProbes: { ...s.mcpProbes, [name]: { running: true } } }))
+      let result: ProbeResult
+      try {
+        result = (await api.mcpProbe({
+          name, config: server.config, session: currentSessionPath,
+        })) as ProbeResult
+        if (!result || typeof result.state !== "string") throw new Error("Malformed probe response")
+      } catch (e: any) {
+        // The probe itself never fails a request — this is the transport dying
+        // (server restarted, network gone). Say that, rather than blaming the
+        // MCP server for something it was never asked.
+        result = {
+          name, transport: server.transport || "", state: "failed",
+          error: "Could not reach Agents Manager: " + (e?.message || String(e)),
+          detail: "", tools: [], server: {}, elapsed_ms: 0,
+        }
+      }
+      // Host/session may have changed during the probe — a late answer must not
+      // land against a different list.
+      const now = get()
+      if (now.currentHost !== currentHost || now.currentSessionPath !== currentSessionPath) return
+      set((s) => ({ mcpProbes: { ...s.mcpProbes, [name]: result } }))
+    },
+
+    probeAllMcp: async () => {
+      const names = get().caps.mcp.map((m) => m.name)
+      // Bounded fan-out: each row settles on its own instead of blocking on the
+      // slowest server, but a 20-server config doesn't open 20 sockets at once.
+      const queue = [...names]
+      const worker = async () => {
+        for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
+          await get().probeMcp(n)
+        }
+      }
+      await Promise.all([worker(), worker(), worker()])
     },
 
     refreshAuth: async () => {
@@ -1152,6 +1234,24 @@ export const useStore = create<AppState>((set, get) => {
         watchChat(sid)
       } catch (e: any) {
         set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to answer: " + (e?.message || e) } })
+      }
+    },
+
+    // Decide a blocked ExitPlanMode. approve -> the agent executes; deny ->
+    // it revises using `feedback`. Both resume the SAME turn, so the chat goes
+    // back to running rather than needing a new message.
+    decidePlan: async (decision, feedback = "") => {
+      const { currentSessionPath } = get()
+      if (!currentSessionPath) return
+      set({ pendingPlan: null })
+      try {
+        const res = await api.chatPlanDecide({ session: currentSessionPath, decision, feedback })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
+        set({ chatRunning: true })
+        watchChat(d.session || sessionIdOf(currentSessionPath))
+      } catch (e: any) {
+        set({ chatStatus: { kind: "error", text: "Failed to decide plan: " + (e?.message || e) } })
       }
     },
 

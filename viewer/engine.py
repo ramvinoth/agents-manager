@@ -24,7 +24,7 @@ from viewer.login import (
     auth_status, codex_bin,
 )
 from viewer.remote import (
-    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
+    SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_probe, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
 )
 
 
@@ -176,13 +176,6 @@ def loop_scheduler(launch):
                 launch(lp["session"], lp["path"], lp["prompt"], lp.get("model", ""))
             except Exception:
                 pass
-        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
-        # thread). Self-throttles to its own interval; exception-safe internally.
-        try:
-            from viewer.orchestrator import harman_tick
-            harman_tick()
-        except Exception:
-            pass
 
 
 def frontmatter_description(path):
@@ -741,61 +734,19 @@ def start_copilot_new(message, cwd, host="local"):
 
 
 def _write_perm_mcp_config():
-    """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
-    'viewerperm' (permission_mcp.py) and 'viewerkanban' (kanban_mcp.py). Additive —
-    the driven claude still loads the user's ambient MCP servers (Playwright etc.)
-    since we omit --strict-mcp-config. The kanban tool is only *usable* when the run
-    also sets VIEWER_KANBAN_* env (employee sessions); without it the tool's calls
-    fail auth server-side, which is harmless."""
+    """Write (idempotently) the --mcp-config that registers the viewer's permission
+    MCP server ('viewerperm', permission_mcp.py). Additive — the driven claude still
+    loads the user's ambient MCP servers (Playwright etc.) since we omit
+    --strict-mcp-config."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
     perm = str(Path(__file__).parent / "permission_mcp.py")
-    kanban = str(Path(__file__).parent / "kanban_mcp.py")
     py = sys.executable or "python3"
     cfg = {"mcpServers": {
         "viewerperm": {"command": py, "args": [perm]},
-        "viewerkanban": {"command": py, "args": [kanban]},
     }}
     with open(path, "w") as f:
         json.dump(cfg, f)
     return path
-
-
-def _resolve_employee(session_id):
-    """Map a session to its (employee_row_or_None, responsibility_level). A session
-    is linked to an employee via its session-meta provider preset id (the employee's
-    provider). No link → (None, 'ic') — least authority, the safe default."""
-    try:
-        meta = SESSION_META.get(session_id) or {}
-        provider_id = meta.get("provider")
-        if not provider_id:
-            return None, "ic"
-        from viewer import db
-        for emp in db.employee_list():
-            if emp.get("provider") == provider_id:
-                return emp, emp.get("level") or _emp_level(emp)
-    except Exception:
-        pass
-    return None, "ic"
-
-
-def _emp_level(emp):
-    """Derive a responsibility level from an employee's role when no explicit level
-    column is set. Conservative: only obvious lead/manager role names elevate."""
-    role = (emp.get("role") or "").lower()
-    if any(w in role for w in ("manager", "head", "director", "lead")):
-        return "manager" if ("manager" in role or "head" in role or "director" in role) else "lead"
-    return "ic"
-
-
-def validate_kanban_token(session_id, token):
-    """Called by the org routes for an MCP caller: confirm the per-run kanban token
-    matches this session's job, and return {'employee', 'level'} for scoping. None
-    if unknown/unauthorized — the handler then 401s."""
-    with CHAT_LOCK:
-        job = CHAT_JOBS.get(session_id)
-        if not job or not job.get("kanban_token") or job.get("kanban_token") != token:
-            return None
-        return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
 
 
 def _perm_mcp_config_path(host):
@@ -858,14 +809,73 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     return {"behavior": "deny", "message": answer}
 
 
+def _plan_text(session_id, tinput, live_text="", started=0):
+    """The plan to show in the approval card.
+
+    Older CLIs put the markdown straight in ExitPlanMode's `plan` argument. Newer
+    ones build the plan in a *plan file* and call ExitPlanMode with `{}` (measured
+    against claude-opus-5.5: input keys == []), which would leave the card blank.
+
+    Order matters. `live_text` is the assistant text captured from the run's own
+    stream and is the only ordering-safe source: the transcript file is written
+    asynchronously, so reading it back here can return the PREVIOUS turn's text
+    (measured). The file scan stays as the fallback for a plan that arrives
+    without live text. Best-effort throughout; "" is still a valid answer."""
+    if isinstance(tinput, dict):
+        for key in ("plan", "plan_md", "content"):
+            v = tinput.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+    if isinstance(live_text, str) and live_text.strip():
+        return live_text.strip()
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        plan_file, last_text = "", ""
+        with open(matches[0], errors="replace") as f:
+            for line in f:
+                if '"plan' not in line and '"text"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pf = (obj.get("attachment") or {}).get("planFilePath")
+                if pf:
+                    plan_file = pf
+                content = (obj.get("message") or {}).get("content")
+                if obj.get("type") == "assistant" and isinstance(content, list):
+                    txt = "\n".join(b.get("text", "") for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text").strip()
+                    if txt:
+                        last_text = txt
+        if plan_file:
+            # Only if it belongs to THIS call — a plan file left over from an
+            # earlier run would be exactly the staleness live_text exists to avoid.
+            try:
+                p = Path(plan_file)
+                if p.stat().st_mtime >= started:
+                    body = p.read_text(errors="replace").strip()
+                    if body:
+                        return body
+            except OSError:
+                pass
+        return last_text
+    except Exception:
+        return ""
+
+
 def _await_plan_decision(session_id, tinput, tool_use_id):
     """Block a driven claude's ExitPlanMode until the user approves or denies with
     feedback. Persists a durable pending_plans row so the app renders the plan card
     and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
     from viewer import questions
-    plan_md = ""
-    if isinstance(tinput, dict):
-        plan_md = tinput.get("plan") or ""
+    with CHAT_LOCK:
+        _j = CHAT_JOBS.get(session_id) or {}
+        live = _j.get("last_assistant_text", "")
+        started = _j.get("started", 0)
+    plan_md = _plan_text(session_id, tinput, live, started)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
@@ -1067,14 +1077,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
-    # Kanban (org board) tool token: an employee's agent session can create/move
-    # cards from inside a turn. Minted per run; the route handler validates it and
-    # scopes writes by the employee's responsibility level (see routes/orchestrator).
-    kanban_token = secrets.token_hex(16)
-    job["kanban_token"] = kanban_token
-    # Resolve which employee (and authority level) this session runs as, from its
-    # session-meta provider link. No employee → default 'ic' scope.
-    job["employee"], job["employee_level"] = _resolve_employee(session_id)
     cmd += ["--mcp-config", _perm_mcp_config_path(host),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
@@ -1140,10 +1142,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
                 env["VIEWER_PERM_TOKEN"] = perm_token
-            if kanban_token:  # let kanban_mcp.py reach the org board for this session
-                env["VIEWER_KANBAN_SESSION"] = session_id
-                env["VIEWER_KANBAN_PORT"] = str(PORT)
-                env["VIEWER_KANBAN_TOKEN"] = kanban_token
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -1181,12 +1179,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  "VIEWER_PERM_TOKEN": perm_token}
                     if base:
                         rperm_env["VIEWER_PERM_BASE"] = base
-                    # Same reach-back for the kanban tool on the remote host.
-                    if kanban_token:
-                        rperm_env["VIEWER_KANBAN_SESSION"] = session_id
-                        rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
-                        if base:
-                            rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
@@ -1210,6 +1202,19 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Remember the newest assistant text as it streams. The plan card
+                # needs the text that immediately precedes ExitPlanMode, and the
+                # transcript file is written asynchronously — reading it back at
+                # approval time can still show the PREVIOUS turn's text (measured:
+                # a stale "ACKNOWLEDGED" from the prior run). The stream is the
+                # only ordering-safe source.
+                if ev.get("type") == "assistant":
+                    blocks = ((ev.get("message") or {}).get("content")) or []
+                    if isinstance(blocks, list):
+                        txt = "\n".join(b.get("text", "") for b in blocks
+                                        if isinstance(b, dict) and b.get("type") == "text").strip()
+                        if txt:
+                            job["last_assistant_text"] = txt
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
@@ -1681,8 +1686,65 @@ class Host:
     def session_summary(self, rel): raise NotImplementedError
     def analysis(self, rel, refresh=False): return session_analysis(self.hid, rel, refresh)
     def resolve(self, sid): raise NotImplementedError
+    @staticmethod
+    def _decode_pdir(pdir):
+        """Claude's project-dir name back to a path — LOSSY, use only as a fallback.
+
+        The encoding maps every "/" to "-", but "." and "-" in the real path
+        become "-" too, so the mapping is not reversible: a directory named
+        "vcode.work" and one named "vcode/work" encode identically. Decoding
+        "-Users-me-Documents-vcode-work" therefore yields ".../vcode/work" and
+        the UI shows the last segment as "work". Prefer the cwd recorded inside
+        the session file (_project_for); this is only for files that have none.
+        """
+        if pdir.startswith(_HOME_ENC + "-"):
+            pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
+        return pdir.replace("--", "/").replace("-", "/")
+
+    @staticmethod
+    def _project_for(jsonl_file, cache):
+        """The session's real working directory, read from the file itself.
+
+        Every Claude session record carries "cwd". Reading it is what the Codex/
+        Pi/Copilot listers already do (viewer.adapters._peek), and it is the only
+        way to get a project name that matches the directory on disk. Cached per
+        parent dir so this costs one short read per PROJECT, not per session.
+        """
+        pdir = str(jsonl_file.parent.name)
+        if pdir in cache:
+            return cache[pdir]
+        cwd = ""
+        try:
+            with open(jsonl_file, errors="replace") as fh:
+                for i, line in enumerate(fh):
+                    if i > 40:
+                        break
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("cwd"):
+                        cwd = obj["cwd"]
+                        break
+        except OSError:
+            pass
+        # Shorten the home prefix for display, matching the fallback's "~/…".
+        if cwd:
+            home = str(Path.home())
+            if cwd == home:
+                cwd = "~"
+            elif cwd.startswith(home + "/"):
+                cwd = "~/" + cwd[len(home) + 1:]
+        else:
+            cwd = LocalHost._decode_pdir(pdir)
+        # Only cache a real answer: a file with no cwd must not pin the whole
+        # directory to the lossy fallback when a later session records one.
+        cache[pdir] = cwd
+        return cwd
+
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
+    def mcp_probe(self, name, cfg, cwd): raise NotImplementedError
 
 
 class LocalHost(Host):
@@ -1844,6 +1906,10 @@ class LocalHost(Host):
 
     def list_sessions(self):
         sessions = []
+        # cwd per project DIRECTORY, not per session: every session inside one of
+        # Claude's project dirs shares the same working directory, so the first
+        # file that records one answers for all of them.
+        cwd_by_pdir = {}
         for jsonl_file in CLAUDE_DIR.rglob("*.jsonl"):
             if "subagents" in str(jsonl_file):
                 continue
@@ -1885,10 +1951,7 @@ class LocalHost(Host):
                                 preview = p
             except Exception:
                 pass
-            pdir = str(jsonl_file.parent.name)
-            if pdir.startswith(_HOME_ENC + "-"):
-                pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
-            project = pdir.replace("--", "/").replace("-", "/")
+            project = self._project_for(jsonl_file, cwd_by_pdir)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,
@@ -1928,6 +1991,10 @@ class LocalHost(Host):
             return {"error": str(e), "status": 500}
         return {"saved": True, "file": str(path)}
 
+    def mcp_probe(self, name, cfg, cwd):
+        from viewer.mcp_probe import probe
+        return probe(name, cfg, cwd)
+
 
 class RemoteHost(Host):
     def __init__(self, hid):
@@ -1942,6 +2009,9 @@ class RemoteHost(Host):
     def list_sessions(self):               return remote_list_sessions(self.hid)
     def mcp_save(self, name, scope, cfg, cwd, delete):
         return remote_mcp_save(self.hid, name, scope, cfg, cwd, delete)
+
+    def mcp_probe(self, name, cfg, cwd):
+        return remote_mcp_probe(self.hid, name, cfg, cwd)
 
     def resolve(self, sid):
         return remote_resolve(self.hid, sid)

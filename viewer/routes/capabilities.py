@@ -167,6 +167,46 @@ class CapabilitiesMixin:
     def _p_mcp_save(self, req):
         self.handle_mcp_save(delete=False)
 
+    def _p_mcp_probe(self, req):
+        """Handshake with ONE configured MCP server and report what came back.
+
+        Manual only, by design: probing a stdio server executes its configured
+        command, so this must never be reachable as a side effect of loading the
+        panel. /api/capabilities stays a pure config read.
+
+        Synchronous rather than a background job (cf. gitops.start_clone):
+        measured, a probe is sub-second and hard-capped at 15s, well inside the
+        server's 30s REQUEST_TIMEOUT, and PooledHTTPServer bounds workers with
+        fast-503 backpressure. "Test all" is the client fanning out, so each row
+        settles on its own instead of blocking on the slowest server.
+        """
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        cfg = body.get("config")
+        if not name:
+            self.send_json({"error": "Empty server name"}, status=400)
+            return
+        if not isinstance(cfg, dict):
+            self.send_json({"error": "config must be a JSON object"}, status=400)
+            return
+        host = body.get("host", "local")
+        cwd = (body.get("cwd") or "").strip()
+        if not cwd:
+            # Project-scoped servers resolve relative paths against the session's
+            # own cwd, on whichever host it lives on.
+            rel = body.get("session") or ""
+            try:
+                cwd = str(get_host(host).extract_cwd(rel)) if rel else ""
+            except Exception:
+                cwd = ""
+        try:
+            self.send_host_result(get_host(host).mcp_probe(name, cfg, cwd))
+        except Exception as e:
+            self.send_json({"error": f"Probe failed: {e}"}, status=502)
+
     def serve_capabilities(self, query):
         q = parse_qs(query)
         rel = (q.get("session") or [""])[0]
@@ -200,9 +240,25 @@ class CapabilitiesMixin:
             except Exception:
                 cwd = ""
         try:
-            self.send_json(h.capabilities(cwd))
+            caps = h.capabilities(cwd)
         except Exception as e:
             self.send_json({"error": f"SSH: {e}", "skills": [], "mcp": []}, status=502)
+            return
+        # Models the host's Claude gateway serves, so the picker tracks the
+        # gateway instead of a hardcoded alias list. Injected here rather than in
+        # LocalHost.capabilities/remote_capabilities so local and remote hosts get
+        # it from one place. [] (no gateway) leaves the UI on its built-in aliases.
+        from viewer.claude_models import claude_models
+        caps["models"] = claude_models(host)
+        # Which claude is about to be spawned, and which installs lost. Local
+        # only: a remote host resolves its own binary over SSH, and reporting
+        # this machine's answer for it would be worse than reporting nothing.
+        # See config.claude_bin — resolution stays PATH-first and dumb, and this
+        # is how a stale install becomes visible instead of silently overridden.
+        if host == "local":
+            from viewer.config import claude_bin_info
+            caps["claude_bin"] = claude_bin_info()
+        self.send_json(caps)
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""

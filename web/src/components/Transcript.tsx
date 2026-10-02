@@ -24,7 +24,12 @@ function Markdown({ text }: { text: string }) {
         seg.type === "mermaid" ? (
           <MermaidDiagram key={i} source={seg.source} dark={dark} />
         ) : (
-          <div key={i} dangerouslySetInnerHTML={{ __html: seg.html }} />
+          // .md-segment is `display: contents` — the wrapper exists only because
+          // dangerouslySetInnerHTML needs an element, and it must not become a
+          // layout box, or the spacing rules would apply to IT rather than to
+          // the paragraphs and headings inside it. That was why a message split
+          // across segments spaced differently from one that was not.
+          <div key={i} className="md-segment" dangerouslySetInnerHTML={{ __html: seg.html }} />
         )
       )}
     </div>

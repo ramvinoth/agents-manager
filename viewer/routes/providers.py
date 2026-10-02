@@ -16,6 +16,7 @@ import json
 import urllib.request
 
 from viewer import providers
+from viewer.config import USER_AGENT
 
 
 class ProvidersMixin:
@@ -63,7 +64,7 @@ class ProvidersMixin:
             self.send_json({"error": "baseUrl required"}, status=400)
             return
         url = base_url + "/v1/models"
-        headers = {"User-Agent": "harman-viewer/1.0"}
+        headers = {"User-Agent": USER_AGENT}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
