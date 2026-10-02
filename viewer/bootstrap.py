@@ -1,16 +1,13 @@
 """viewer.bootstrap — idempotent fresh-install.
 
 `make bootstrap` (or `python3 -m viewer.bootstrap`) makes a clean checkout work:
-creates the DB tables, seeds the owner as an employee and ensures the shared
-skills dir exists. Every step is a no-op if already done — safe to re-run.
+creates the DB tables, seeds the owner as an employee and installs the skills
+that ship with the product. Every step is a no-op if already done — safe to
+re-run.
 
 Runs BEFORE the server is up (it is setup), so it imports db directly.
 """
-from pathlib import Path
-
-from viewer import db
-
-SKILLS_DIR = Path.home() / ".claude" / "skills"
+from viewer import db, skills
 
 _SEED_EMPLOYEES = [
     {"name": "Ram", "role": "Founder/CEO"},
@@ -42,9 +39,18 @@ def bootstrap():
         report.append(f"created employees: {', '.join(created)}")
     if present:
         report.append(f"employees present: {', '.join(present)}")
-    # 3. Shared skills dir.
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    report.append(f"skills dir: {SKILLS_DIR}")
+    # 3. Shared skills dir + the skills that ship with the product.
+    #
+    # This runs on upgrade as well as on install, which is the point: the
+    # container converge script calls `python3 -m viewer.bootstrap` for every
+    # bundle it installs, so a new or improved bundled skill reaches existing
+    # environments without anyone copying a file by hand. install_bundled()
+    # decides per skill whether writing is safe — see its docstring.
+    base = skills.skills_base()
+    base.mkdir(parents=True, exist_ok=True)
+    report.append(f"skills dir: {base}")
+    for name, action in skills.install_bundled():
+        report.append(f"skill {name}: {action}")
     return report
 
 

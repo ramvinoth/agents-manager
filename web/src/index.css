@@ -141,24 +141,238 @@
     @apply font-sans;
     }
 }
-/* ---- Transcript markdown ---- */
+/* ---- Transcript markdown ----------------------------------------------------
+
+   READABILITY IS THE FEATURE HERE, not decoration. These messages are read for
+   minutes at a time, often dense and technical, and the reader is usually
+   scanning for one thing. Four properties do almost all the work and each is
+   set deliberately below:
+
+     1. MEASURE   — a line longer than ~75 characters makes the eye lose its
+                    place on the return sweep. Capped with a ch-based max-width.
+     2. SPACING   — vertical rhythm is what tells the eye "this is a new idea"
+                    before a single word is read. Space BETWEEN blocks is larger
+                    than space between lines WITHIN a block, so grouping is
+                    pre-attentive. Headings get more space above than below, so
+                    a heading binds to the text it introduces, not the text it
+                    follows.
+     3. HIERARCHY — heading sizes step by a consistent ratio so level is legible
+                    at a glance, without reading the words.
+     4. ANCHORS   — lists, tables, quotes and code each get a visible left edge
+                    or boundary, giving the eye a fixed rail to return to.
+
+   WHY THE SELECTORS ARE DESCENDANT (`.markdown-content :is(p, h1, …)`) AND NOT
+   CHILD (`> * + *`): Transcript.tsx renders each markdown SEGMENT into its own
+   <div>, so the paragraphs and headings are GRANDchildren. The previous
+   `> * + *` rule therefore applied to the segment wrappers and never to a
+   single paragraph — which is why, even once the parser emitted correct
+   paragraphs, nothing moved apart on screen. The wrapper is collapsed with
+   `display: contents` as well, so a message split across segments spaces
+   identically to one that is not.                                            */
+
 :root { --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
-.markdown-content { font-size: 0.875rem; line-height: 1.6; word-break: break-word; }
-.markdown-content > * + * { margin-top: 0.4rem; }
-.markdown-content h1, .markdown-content h2, .markdown-content h3, .markdown-content h4 { font-weight: 600; line-height: 1.3; margin-top: 0.6rem; }
-.markdown-content h1 { font-size: 1.15rem; }
-.markdown-content h2 { font-size: 1.05rem; }
-.markdown-content h3 { font-size: 0.98rem; }
-.markdown-content ul { padding-left: 1.25rem; list-style: disc; }
-.markdown-content li { margin: 0.1rem 0; }
-.markdown-content a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
-.markdown-content code { background: var(--muted); padding: 0.1em 0.35em; border-radius: 0.25rem; font-family: var(--font-mono); font-size: 0.85em; }
-.markdown-content pre { background: var(--muted); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.65rem 0.8rem; overflow-x: auto; }
-.markdown-content pre code { background: none; padding: 0; font-size: 0.8rem; line-height: 1.5; }
-.markdown-content blockquote { border-left: 2px solid var(--border); padding-left: 0.6rem; color: var(--muted-foreground); }
-.markdown-content table { border-collapse: collapse; font-size: 0.82rem; display: block; overflow-x: auto; }
-.markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 0.3rem 0.5rem; text-align: left; }
-.markdown-content hr { border: none; border-top: 1px solid var(--border); }
+
+.markdown-content {
+  font-size: 0.9rem;
+  /* 1.65 rather than a tighter value: generous leading is the single most
+     effective typographic aid for tracking across a line, and it costs only
+     vertical space, which a scrolling transcript has. */
+  line-height: 1.65;
+  /* break-word, not break-all: never split an ordinary word, but do break a
+     URL or a long identifier rather than forcing a horizontal scrollbar. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* The per-segment wrapper disappears from layout so spacing between blocks is
+   uniform whether or not a mermaid diagram splits the message in two. Scoped to
+   the html wrapper by class: .mermaid-diagram is a sibling div and must KEEP
+   its box, since its toolbar is positioned against it. */
+.markdown-content > .md-segment { display: contents; }
+
+/* ---- Vertical rhythm ---- */
+.markdown-content :is(p, ul, ol, pre, blockquote, table, hr, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+}
+/* The one rule that creates paragraph separation. 0.85em between blocks against
+   1.65 line-height within them is a clear ratio — the gap between two ideas is
+   visibly larger than the gap between two lines of the same idea. */
+.markdown-content :is(p, ul, ol, pre, blockquote, table, .mermaid-diagram) + :is(p, ul, ol, pre, blockquote, table, .mermaid-diagram, h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.85em;
+}
+/* Measure. Applied to prose only: a table or a code block legitimately needs
+   the full width, and constraining those would force scrolling instead. */
+.markdown-content :is(p, ul, ol, blockquote) { max-width: 72ch; }
+
+/* ---- Headings ---- */
+.markdown-content :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 650;
+  line-height: 1.25;
+  /* Tighter letter-spacing at larger sizes: headings set at body tracking look
+     loose, and the slight negative value is what makes them read as a unit. */
+  letter-spacing: -0.011em;
+  text-wrap: balance;
+}
+/* Space ABOVE a heading is roughly double the space below it, so the heading
+   groups with the content it introduces. This is the main cue that turns a long
+   answer into scannable sections. */
+.markdown-content :is(p, ul, ol, pre, blockquote, table, .mermaid-diagram) + :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.6em;
+}
+.markdown-content :is(h1, h2, h3, h4, h5, h6) + * { margin-top: 0.45em; }
+.markdown-content h1 { font-size: 1.32rem; }
+.markdown-content h2 { font-size: 1.16rem; }
+.markdown-content h3 { font-size: 1.04rem; }
+.markdown-content h4 { font-size: 0.95rem; }
+.markdown-content :is(h5, h6) {
+  font-size: 0.88rem;
+  /* Below h4 there is no size budget left, so the distinction is carried by
+     colour and letterform instead — still legible as "deeper than h4". */
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+/* A rule under the top two levels makes section boundaries visible in a long
+   answer without the reader having to compare font sizes. */
+.markdown-content :is(h1, h2) {
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+/* ---- Lists ---- */
+.markdown-content ul { padding-left: 1.35em; list-style: disc; }
+.markdown-content ol { padding-left: 1.6em; list-style: decimal; }
+.markdown-content ul ul { list-style: circle; }
+.markdown-content ul ul ul { list-style: square; }
+.markdown-content li { margin: 0; }
+/* Items get real separation from each other — a list whose items touch reads as
+   a paragraph with bullets stuck on, which defeats the point of a list. */
+.markdown-content li + li { margin-top: 0.3em; }
+/* A nested list sits closer to its parent item than sibling items do to each
+   other, so the hierarchy is visible without counting indents. */
+.markdown-content li > :is(ul, ol) { margin-top: 0.3em; }
+.markdown-content li > p + p { margin-top: 0.6em; }
+/* The marker is dimmed so the eye lands on the TEXT, while the markers still
+   form the vertical rail that makes a list scannable. */
+.markdown-content li::marker { color: var(--muted-foreground); }
+.markdown-content ol > li::marker { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.markdown-content ul.task-list { list-style: none; padding-left: 0.2em; }
+.markdown-content li.task { display: flex; align-items: baseline; gap: 0.5em; }
+.markdown-content li.task input { accent-color: var(--primary); translate: 0 1px; }
+
+/* ---- Links ---- */
+.markdown-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  /* An underline that clears descenders is legible rather than a strike through
+     the g/y/p of the link text. */
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-skip-ink: auto;
+}
+.markdown-content a:hover { text-decoration-thickness: 2px; }
+
+/* ---- Code ---- */
+.markdown-content code {
+  background: color-mix(in oklch, var(--muted) 75%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+  font-family: var(--font-mono);
+  /* 0.875em, not a fixed rem: monospace faces run optically larger than the
+     body face at the same size, so matching them numerically makes code look
+     bigger than the prose around it. */
+  font-size: 0.875em;
+  white-space: break-spaces;
+}
+.markdown-content pre {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  overflow-x: auto;
+  position: relative;
+}
+.markdown-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre;
+}
+/* The language label. Named by the parser as data-lang so the block says what
+   it is without the reader inferring it from syntax. */
+.markdown-content pre[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0.4rem;
+  right: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+/* ---- Quotes ---- */
+.markdown-content blockquote {
+  border-left: 3px solid color-mix(in oklch, var(--primary) 45%, transparent);
+  padding: 0.1em 0 0.1em 0.9em;
+  color: var(--muted-foreground);
+  font-style: normal; /* italic over several lines is measurably slower to read */
+}
+
+/* ---- Tables ---- */
+/* display:block makes a wide table scroll instead of overflowing the message,
+   at the cost of the table no longer filling its container when narrow. */
+.markdown-content table {
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.markdown-content :is(th, td) {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-content th {
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  font-weight: 650;
+  white-space: nowrap;
+}
+/* Zebra striping: the single most effective aid for tracking across a wide row
+   without losing which row you are on. */
+.markdown-content tbody tr:nth-child(even) {
+  background: color-mix(in oklch, var(--muted) 35%, transparent);
+}
+/* Numbers line up digit-over-digit so a column can be compared by shape. */
+.markdown-content td { font-variant-numeric: tabular-nums; }
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin-block: 1.4em;
+}
+
+.markdown-content :is(strong, b) { font-weight: 650; }
+.markdown-content del { color: var(--muted-foreground); }
+.markdown-content img { max-width: 100%; height: auto; border-radius: 0.4rem; }
+/* KaTeX display math is centred on its own line and may be wider than the
+   measure, so it scrolls rather than overflowing. */
+.markdown-content .katex-display { margin: 0; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
+
+/* Respect a reader who has asked for less motion: the only transitions in the
+   transcript are hover affordances, and none of them carry meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .markdown-content * { transition: none !important; animation: none !important; }
+}
+
 .sh-keyword { color: #8b5cf6; } .dark .sh-keyword { color: #c4b5fd; }
 .sh-string { color: #16a34a; } .dark .sh-string { color: #86efac; }
 .sh-number { color: #ea580c; } .dark .sh-number { color: #fdba74; }

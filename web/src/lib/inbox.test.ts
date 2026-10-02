@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, inboxScopeFilter, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, rowActor, searchInbox, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, inboxScopeFilter, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, searchInbox, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {

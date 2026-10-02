@@ -27,5 +27,5 @@
   // *.test.ts run under `node --experimental-strip-types` (see package.json
   // "test"), not in the browser — they use `process` and are never bundled.
   // Typechecking them against vite/client libs only produces false errors.
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

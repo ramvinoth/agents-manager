@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test \"src/**/*.test.ts\"",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "for f in src/lib/*.test.ts; do node --experimental-strip-types \"$f\" || exit 1; done",
