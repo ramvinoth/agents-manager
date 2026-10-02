@@ -1,17 +1,13 @@
 """viewer.bootstrap — idempotent fresh-install for the empire.
 
 `make bootstrap` (or `python3 -m viewer.bootstrap`) makes a clean checkout work:
-creates the DB tables (+ Harman's default config and the agent role templates,
-seeded in init_db) and ensures the shared skills dir exists. Every step is a
-no-op if already done — safe to re-run.
+creates the DB tables (+ the default config and the agent role templates,
+seeded in init_db) and installs the skills that ship with the product. Every
+step is a no-op if already done — safe to re-run.
 
 Runs BEFORE the server is up (it is setup), so it imports db directly.
 """
-from pathlib import Path
-
-from viewer import db
-
-SKILLS_DIR = Path.home() / ".claude" / "skills"
+from viewer import db, skills
 
 
 def bootstrap():
@@ -20,9 +16,18 @@ def bootstrap():
     #    created per-project on demand (no global board).
     db.init_db()
     report.append("DB ready")
-    # 2. Shared skills dir.
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    report.append(f"skills dir: {SKILLS_DIR}")
+    # 2. Shared skills dir + the skills that ship with the product.
+    #
+    # This runs on upgrade as well as on install, which is the point: the
+    # container converge script calls `python3 -m viewer.bootstrap` for every
+    # bundle it installs, so a new or improved bundled skill reaches existing
+    # environments without anyone copying a file by hand. install_bundled()
+    # decides per skill whether writing is safe — see its docstring.
+    base = skills.skills_base()
+    base.mkdir(parents=True, exist_ok=True)
+    report.append(f"skills dir: {base}")
+    for name, action in skills.install_bundled():
+        report.append(f"skill {name}: {action}")
     return report
 
 
