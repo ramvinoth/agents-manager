@@ -474,6 +474,20 @@ class ApiClient {
   capabilities(qs: string) {
     return this.getJSON("/api/capabilities" + (qs ? "?" + qs : ""))
   }
+  /** Public liveness + version probe. Not under /api/ (needs no auth), takes no
+   *  host/agent — it reports THIS server's own release. `version` is the code on
+   *  disk; `db_version` is what the DB was last stamped with (they differ only
+   *  during a half-applied upgrade). Used to show the running version in the UI. */
+  health() {
+    return this.getJSON<{
+      ok: boolean
+      version: string
+      schema_version: number
+      db_ok: boolean
+      db_version: string | null
+      db_schema: number | null
+    }>("/healthz")
+  }
   skill(path: string) {
     return this.getJSON(`/api/skill?path=${encodeURIComponent(path)}`)
   }

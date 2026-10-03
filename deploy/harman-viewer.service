@@ -6,8 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tim
-WorkingDirectory=/home/tim/Documents/projects/agents
+User=harman
+# The release-symlink layout: `current` points at the active release, so a
+# deploy is an atomic symlink swap + restart (see deploy/lib.sh hm_activate).
+# install.sh / the `harman` CLI rewrite User= and WorkingDirectory= for the
+# actual host; these are the production defaults.
+WorkingDirectory=/opt/harman/current
 # Bind on all interfaces so both the tunnel and localhost (MCP subprocesses)
 # reach it. DATABASE_URL defaults to the local `dbname=viewer`.
 Environment=VIEWER_HOST=0.0.0.0

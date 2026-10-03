@@ -348,6 +348,7 @@ class SessionViewerHandler(
 
 
     GET_ROUTES = {
+        "/healthz": "_g_healthz",
         "/api/hosts": "_g_hosts",
         "/api/env": "_g_env",
         "/api/env/value": "_g_env_value",

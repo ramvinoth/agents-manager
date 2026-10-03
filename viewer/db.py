@@ -26,6 +26,9 @@ from psycopg2.extras import Json, RealDictCursor
 # orglogic is pure (no viewer imports) — importing it here cannot cycle, and the
 # default pipeline shape lives ONCE there (orglogic.PIPELINE_COLUMNS).
 from viewer import orglogic
+# config is the package's bottom layer (imports nothing from viewer), so importing
+# it here is cycle-free. init_db() stamps config.VERSION into app_meta on every boot.
+from viewer import config
 
 DATABASE_URL = os.environ.get("DATABASE_URL") or "dbname=viewer"
 SESSION_COOKIE = "viewer_session"
@@ -59,6 +62,23 @@ def _db():
                 yield cur
     finally:
         pool.putconn(conn)
+
+
+# Harman's DB schema generation. The big CREATE/ALTER block in init_db() is
+# additive-idempotent, so additive changes (new table, new nullable column) need
+# NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
+# destructive step is added to _run_migrations() below. The stamp lives in the
+# settings table (app_meta), so there is no separate schema_version table.
+SCHEMA_VERSION = 1
+
+
+def _run_migrations(prev):
+    """Ordered / non-additive schema steps, run after the additive DDL in
+    init_db(). `prev` is the schema_version the DB was last stamped with (0 on a
+    fresh install). Today there are none — additive changes are handled by the
+    idempotent DDL above — so this is the intentionally-empty seam where future
+    destructive steps go, each guarded `if prev < N:` and applied in order."""
+    return
 
 
 def init_db():
@@ -527,6 +547,27 @@ In-conversation todos are scratch for the current task only. Work that outlives 
             board_columns_ensure(proj["id"])
         except Exception:
             pass
+    # Version + schema stamp. The additive DDL above already ran idempotently;
+    # now apply any ordered steps and record what this boot converged to. The
+    # stamp is an upsert (NOT seed-once) so app_meta always reflects the running
+    # release — which is how /healthz can report the live version and detect a
+    # half-applied upgrade (code on disk vs what the DB was last stamped with).
+    #
+    # Skipped under PREFLIGHT: a spare-port preflight shares the live server's
+    # Postgres, and both of these MUTATE it — the stamp rewrites app_meta (it
+    # would mislabel the shared DB as the preflight code's version), and
+    # _run_migrations is the seam for ordered/destructive steps that must never
+    # run against a live DB from a validation boot. The additive IF-NOT-EXISTS
+    # DDL above is idempotent and stays unguarded; only the forward-moving
+    # convergence is gated. The real restart does the stamp.
+    if not config.VIEWER_PREFLIGHT:
+        meta = setting_get("app_meta", {}) or {}
+        _run_migrations(int(meta.get("schema_version", 0)))
+        setting_set("app_meta", {
+            "version": config.VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "stamped_at": time.time(),
+        })
 
 
 def close_pool():

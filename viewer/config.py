@@ -62,6 +62,16 @@ def transcript_path(session_id):
     return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
 
+# Harman's own release version. Read from the top-level VERSION file relative to
+# STATIC_DIR (NOT an absolute path) so that when the server is launched from a
+# release symlink (e.g. /opt/harman/current -> releases/v1.2.0), this reports the
+# active release with no release-awareness in the code. Bare dev checkouts without
+# a VERSION file fall back to a sentinel.
+try:
+    VERSION = (STATIC_DIR / "VERSION").read_text().strip() or "0.0.0-dev"
+except OSError:
+    VERSION = "0.0.0-dev"
+
 # The UI is the built React app in web/dist — run `cd web && npm run build` first
 # (server startup warns if it's missing).
 REACT_DIR = STATIC_DIR / "web" / "dist"

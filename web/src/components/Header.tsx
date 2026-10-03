@@ -61,6 +61,7 @@ export function Header() {
   const openFs = useStore((s) => s.openFs)
   const droppedFile = useStore((s) => s.droppedFile)
   const authUser = useStore((s) => s.authUser)
+  const serverVersion = useStore((s) => s.serverVersion)
   const signout = useStore((s) => s.signout)
   const needsAuth = useStore((s) => s.needsAuth)
 
@@ -232,6 +233,14 @@ export function Header() {
             <DropdownMenuItem onClick={() => signout()}>
               <LogOut className="size-3.5" /> Log out
             </DropdownMenuItem>
+            {serverVersion && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  Harman v{serverVersion}
+                </DropdownMenuLabel>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

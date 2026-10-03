@@ -86,6 +86,7 @@ interface AppState {
   headOffset: number
   tailOffset: number
   auth: AuthStatus | null
+  serverVersion: string | null
   loading: boolean
   loadingOlder: boolean
   error: string | null
@@ -278,6 +279,7 @@ export const useStore = create<AppState>((set, get) => {
     api.setHost(host)
     api.setAgent(get().currentAgent)
     api.authStatus().then((a) => set({ auth: a })).catch(() => {})
+    api.health().then((h) => set({ serverVersion: h.version })).catch(() => {})
     get().loadAgents()
     get().loadProviders() // global provider library — session-independent
     get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
@@ -509,6 +511,7 @@ export const useStore = create<AppState>((set, get) => {
     headOffset: 0,
     tailOffset: 0,
     auth: null,
+    serverVersion: null,
     loading: false,
     loadingOlder: false,
     error: null,
