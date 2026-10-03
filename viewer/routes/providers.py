@@ -5,6 +5,7 @@ import urllib.parse
 import urllib.request
 
 from viewer import ai, db, providers
+from viewer.config import USER_AGENT
 from viewer.routes import require_human
 
 
@@ -68,7 +69,7 @@ class ProvidersMixin:
 
     def _discover_models(self, base, key):
         result = {"models": [], "choices": [], "source": "endpoint", "manualModelId": True}
-        headers = {"User-Agent": "harman-viewer/1.0"}
+        headers = {"User-Agent": USER_AGENT}
         if key:
             headers["Authorization"] = "Bearer " + key
         try:

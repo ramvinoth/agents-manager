@@ -20,7 +20,7 @@ import urllib.request
 import uuid as _uuid
 from datetime import datetime, timezone
 
-from viewer.config import CLAUDE_DIR, CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, transcript_path
+from viewer.config import CLAUDE_DIR, CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, USER_AGENT, transcript_path
 from viewer import providers
 
 # How many prior transcript records to feed back as context. A small local model
@@ -166,7 +166,7 @@ def chat_completion_message(base_url, api_key, payload, timeout=None):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     # A non-default User-Agent: some CDNs (Cloudflare) 403 the urllib default.
-    req.add_header("User-Agent", "harman-viewer/1.0")
+    req.add_header("User-Agent", USER_AGENT)
     if api_key:
         req.add_header("Authorization", f"Bearer {api_key}")
     with urllib.request.urlopen(req, timeout=timeout or CHAT_TIMEOUT) as resp:

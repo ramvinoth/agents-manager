@@ -112,7 +112,7 @@ export function LocationPicker({
   }
 
   async function remove(drive: Drive) {
-    if (!window.confirm(`Remove “${drive.label}”? Harman forgets its access token; nothing in the drive itself is touched.`)) return
+    if (!window.confirm(`Remove “${drive.label}”? Agents Manager forgets its access token; nothing in the drive itself is touched.`)) return
     setError(null)
     try {
       const r = await api.driveDelete(drive.id)

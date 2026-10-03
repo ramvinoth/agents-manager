@@ -92,7 +92,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
         <DialogHeader>
           <DialogTitle>Integrations</DialogTitle>
           <DialogDescription>
-            Each cloud-drive vendor needs one OAuth client that identifies this Harman to it. Create
+            Each cloud-drive vendor needs one OAuth client that identifies this Agents Manager to it. Create
             the client in the vendor's developer console with the redirect URI below, then paste its
             id (and secret, where the vendor issues one) here. Every drive of that kind shares it.
           </DialogDescription>

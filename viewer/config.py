@@ -35,6 +35,12 @@ _load_env_file()
 # package stays importable under pytest/other tools (whose argv[1] isn't a port).
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(os.environ.get("PORT", "8091"))
 
+# How this app identifies itself on outbound HTTP. Sent on every request we make
+# to a user-configured provider endpoint, because some CDNs (Cloudflare among
+# them) 403 urllib's default UA outright. One constant rather than a literal per
+# call site: a UA that varies by code path is a UA nobody can filter a log on.
+USER_AGENT = "agents-manager/1.0"
+
 
 # ===== Access control =====
 # The API exposes a shell, a permission-skipping agent runner, and full FS
