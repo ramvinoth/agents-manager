@@ -85,7 +85,8 @@ class SessionViewerHandler(
     # Authority is min(human ceiling, session level) — orglogic.effective_level.
     #
     # PUBLIC_API is ONLY for endpoints that must work with no credential at all:
-    # signing up/in, a device dropping its own push token on logout (which
+    # signing up/in, a phone redeeming a QR pairing code (the code is the
+    # credential), a device dropping its own push token on logout (which
     # must succeed even though the session is already gone), and the OAuth
     # callback a cloud-drive vendor redirects the browser to (a cross-site
     # top-level redirect carries no SameSite=Strict cookie; that route is bound
@@ -93,6 +94,7 @@ class SessionViewerHandler(
     # authenticates. A handler must never re-derive the caller — read
     # req.principal.
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
+                  "/api/auth/pair/redeem",
                   "/api/push/unregister", "/api/drive/oauth/callback"}
 
     def _cookie(self, name):
@@ -455,6 +457,8 @@ class SessionViewerHandler(
         "/api/auth/signup": "_p_auth_signup",
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",
+        "/api/auth/pair/start": "_p_auth_pair_start",
+        "/api/auth/pair/redeem": "_p_auth_pair_redeem",
         "/api/prefs": "_p_prefs",
         "/api/auth/login/start": "_p_auth_login_start",
         "/api/auth/login/code": "_p_auth_login_code",

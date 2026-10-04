@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react"
-import Constants from "expo-constants"
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
-import { serverUrl, setToken } from "../state/config"
-import { registerForPush } from "../lib/notify"
+import { serverUrl } from "../state/config"
+import { completeSignIn } from "../state/signin"
 import ServerPicker from "../components/ServerPicker"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "./styles"
@@ -46,19 +45,7 @@ export default function LoginScreen({ navigation }: Props) {
     try {
       const res = signupOpen ? await api.signup(username, password, setupCode.trim()) : await api.signin(username, password)
       if (!res.token) throw new Error("Server did not return a token")
-      // Record the username with the token so actor labels ("you") render
-      // client-side on cards and threads without a round trip.
-      await setToken(res.token, res.user?.username)
-      // Register this device for background push now that we're authenticated,
-      // declaring which build it runs (version + native build number from the
-      // embedded Info.plist) so the server can see what is on the device.
-      registerForPush((tok) =>
-        api.pushRegister(
-          tok,
-          "ios",
-          { version: Constants.expoConfig?.version ?? null, build: Constants.ios?.buildNumber ?? null },
-        ),
-      ).catch(() => {})
+      await completeSignIn(res.token, res.user?.username)
       navigation.replace("Home")
     } catch (e) {
       setError((e as Error).message)

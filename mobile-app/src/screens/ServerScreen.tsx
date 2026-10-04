@@ -4,6 +4,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { addServer, switchServer, token } from "../state/config"
 import { api } from "../api/client"
+import { parsePairLink } from "../lib/pairLink"
+import { pairFromLink } from "../state/signin"
 import { useStyles } from "./styles"
 import { useTheme } from "../lib/useTheme"
 
@@ -29,6 +31,12 @@ export default function ServerScreen({ route, navigation }: Props) {
     setError("")
     setBusy(true)
     try {
+      // A pasted pairing link (web Profile → Pair a phone → copy) signs in
+      // directly, the same as scanning its QR.
+      if (parsePairLink(url)) {
+        if (await pairFromLink(url)) navigation.reset({ index: 0, routes: [{ name: "Home" }] })
+        return
+      }
       const entry = await addServer(url, name)
       await switchServer(entry.id)
       // Reachability probe against a public endpoint (uses the now-active server).
@@ -75,7 +83,8 @@ export default function ServerScreen({ route, navigation }: Props) {
         onChangeText={setUrl}
       />
       <Text style={styles.hint}>
-        Reach your self-hosted server over Tailscale — its tailnet IP or MagicDNS name, port 8091.
+        Reach your self-hosted server over Tailscale — its tailnet IP or MagicDNS name, port 8091. Or scan the
+        QR from Profile → Pair a phone on your computer with the iPhone Camera.
       </Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <TouchableOpacity testID="server-connect" accessibilityLabel="server-connect" style={styles.button} onPress={connect} disabled={busy || !url}>

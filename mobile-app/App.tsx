@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react"
-import { ActivityIndicator, useColorScheme, View } from "react-native"
+import { ActivityIndicator, Linking, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
@@ -13,6 +13,7 @@ import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { loadConfig, serverUrl, token } from "./src/state/config"
 import { registerForPush, onNotificationTap } from "./src/lib/notify"
+import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
 import HomeTabs from "./src/screens/HomeTabs"
@@ -111,6 +112,23 @@ function flushPendingNav(): void {
   if (data && navigationRef.isReady()) void navToTarget(data)
 }
 
+// A scanned pairing QR (`agents://pair?...`, see lib/pairLink) arrives as a URL
+// open — on a cold start via getInitialURL, warm via the 'url' event. Handled
+// only after loadConfig (pairing adds a server, which a later hydrate would
+// overwrite), and one at a time so a double-delivered URL can't race itself.
+let pairing = false
+async function openPairLink(url: string | null): Promise<void> {
+  if (!url || pairing) return
+  pairing = true
+  try {
+    if (await pairFromLink(url)) {
+      if (navigationRef.isReady()) navigationRef.reset({ index: 0, routes: [{ name: "Home" }] })
+    }
+  } finally {
+    pairing = false
+  }
+}
+
 export default function App() {
   const [ready, setReady] = useState(false)
   const [initial, setInitial] = useState<keyof RootStackParamList>("Server")
@@ -163,6 +181,13 @@ export default function App() {
   // Route notification taps to the chat they belong to (foreground/background AND
   // cold start). Set up once; teardown on unmount.
   useEffect(() => onNotificationTap((data) => openFromNotification(data)), [])
+
+  useEffect(() => {
+    if (!ready) return
+    Linking.getInitialURL().then(openPairLink).catch(() => {})
+    const sub = Linking.addEventListener("url", (e) => void openPairLink(e.url))
+    return () => sub.remove()
+  }, [ready])
 
   if (!ready) {
     return (

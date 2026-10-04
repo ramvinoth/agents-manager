@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
-from viewer import db, hostenv, setupcode
+from viewer import db, hostenv, pairing, setupcode
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
@@ -170,6 +170,41 @@ class AuthMixin:
         token = db.create_session(user["id"])
         self.set_session_cookie(token)
         self.send_json({"user": user, **({"token": token} if body.get("wantToken") else {})})
+
+    def _p_auth_pair_start(self, req):
+        """Mint a one-time pairing code for the signed-in human (web shows it as a
+        QR). Agents can't: a code is a login, and only a person hands one out."""
+        p = req.principal or {}
+        if p.get("kind") != "app" or not p.get("user"):
+            self.send_json({"error": "Only a signed-in person can pair a device"}, status=403)
+            return
+        if not p["user"].get("id"):   # VIEWER_NO_AUTH's synthetic user has no account
+            self.send_json({"error": "This server runs without accounts, so there is nothing to pair"},
+                           status=400)
+            return
+        code, expires = pairing.create(p["user"]["id"])
+        self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL})
+
+    def _p_auth_pair_redeem(self, req):
+        """Swap a pairing code for a session token (the scanning phone). Public:
+        the code IS the credential. Throttled like sign-in."""
+        ip = _client_ip(self.client_address[0] if self.client_address else "?", self.headers)
+        if _login_over_limit(ip):
+            self.send_json({"error": "Too many attempts — wait a minute and try again."}, status=429)
+            return
+        body = self.read_body() or {}
+        uid = pairing.redeem(body.get("code"))
+        if uid is None:
+            self.send_json({"error": "This pairing code is used or expired. Make a new one on the computer."},
+                           status=401)
+            return
+        token = db.create_session(uid)
+        user = db.user_for_session(token)
+        if not user:   # account deleted between minting and scanning
+            db.delete_session(token)
+            self.send_json({"error": "That account no longer exists"}, status=401)
+            return
+        self.send_json({"user": user, "token": token})
 
     def _p_auth_signout(self, req):
         # Revoke via cookie (web) or Bearer header (mobile), whichever carried it.

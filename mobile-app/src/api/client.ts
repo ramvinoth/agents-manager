@@ -281,6 +281,8 @@ export const api = {
     req<{ user: User; token?: string }>("POST", "/api/auth/signin", { username, password, wantToken: true }),
   signup: (username: string, password: string, setupCode: string) =>
     req<{ user: User; token?: string }>("POST", "/api/auth/signup", { username, password, setupCode, wantToken: true }),
+  // Redeem a one-time code from the web's "Pair a phone" QR for a session token.
+  pairRedeem: (code: string) => req<{ user: User; token: string }>("POST", "/api/auth/pair/redeem", { code }),
   signout: () => req("POST", "/api/auth/signout", {}),
 
   // ---- push notifications ----
