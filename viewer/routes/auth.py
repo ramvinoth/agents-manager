@@ -20,11 +20,30 @@ from viewer.remote import (
 # --- Per-IP sign-in throttle -------------------------------------------------
 # Lenient by design: a real user logs in once; only a hammering script trips it.
 # Keyed on the raw socket peer IP, NOT X-Forwarded-For (a client can spoof that
-# to mint unlimited buckets and dodge the limit). Sliding 60s window.
+# to mint unlimited buckets and dodge the limit) — except behind the local
+# Cloudflare tunnel, see _client_ip. Sliding 60s window.
 _LOGIN_WINDOW = 60   # seconds
 _LOGIN_MAX = 20      # attempts per window per IP
 _login_hits = {}     # ip -> deque[timestamps]
 _login_lock = threading.Lock()
+
+
+_LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+def _client_ip(peer_ip, headers):
+    """The sign-in throttle key for a request. Normally the raw socket peer.
+    Behind a Cloudflare Tunnel, though, the peer is the local cloudflared
+    process, so every internet client would share ONE bucket — 20 bad tries
+    from anyone would lock the owner out too. Cloudflare sets CF-Connecting-IP
+    to the real client (and overwrites any client-sent value), so it is trusted
+    ONLY when the peer is loopback: a LAN/tailnet client connects from its own
+    address and its headers are ignored, as before."""
+    if peer_ip in _LOOPBACK:
+        cf = (headers.get("CF-Connecting-IP") or "").strip()
+        if cf:
+            return cf
+    return peer_ip
 
 
 def _login_over_limit(ip):
@@ -127,7 +146,7 @@ class AuthMixin:
         self.send_json({"user": user, **({"token": token} if body.get("wantToken") else {})})
 
     def _p_auth_signin(self, req):
-        ip = self.client_address[0] if self.client_address else "?"
+        ip = _client_ip(self.client_address[0] if self.client_address else "?", self.headers)
         if _login_over_limit(ip):
             self.send_json({"error": "Too many sign-in attempts — wait a minute and try again."},
                            status=429)
