@@ -148,7 +148,7 @@ interface AppState {
   authUser: { id: number; username: string } | null
   signupOpen: boolean
   signin: (username: string, password: string) => Promise<string | undefined>
-  signup: (username: string, password: string) => Promise<string | undefined>
+  signup: (username: string, password: string, setupCode: string) => Promise<string | undefined>
   signout: () => Promise<void>
 
   refreshAuth: () => Promise<void>
@@ -600,9 +600,9 @@ export const useStore = create<AppState>((set, get) => {
       }
     },
 
-    signup: async (username, password) => {
+    signup: async (username, password, setupCode) => {
       try {
-        const d: any = await api.signup({ username, password })
+        const d: any = await api.signup({ username, password, setupCode })
         if (d.error || !d.user) return d.error || "Sign-up failed"
         set({ needsAuth: false, authUser: d.user, signupOpen: false, error: null })
         await bootApp()

@@ -39,3 +39,4 @@ if [[ -n "${NO_SERVICE:-}" ]]; then
   exit 0
 fi
 hm_service_install
+hm_setup_code || true   # 6. print the one-time owner-signup code

@@ -17,6 +17,7 @@ export default function LoginScreen({ navigation }: Props) {
   const t = useTheme()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [setupCode, setSetupCode] = useState("")
   const [signupOpen, setSignupOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -43,7 +44,7 @@ export default function LoginScreen({ navigation }: Props) {
     setError("")
     setBusy(true)
     try {
-      const res = signupOpen ? await api.signup(username, password) : await api.signin(username, password)
+      const res = signupOpen ? await api.signup(username, password, setupCode.trim()) : await api.signin(username, password)
       if (!res.token) throw new Error("Server did not return a token")
       // Record the username with the token so actor labels ("you") render
       // client-side on cards and threads without a round trip.
@@ -93,7 +94,23 @@ export default function LoginScreen({ navigation }: Props) {
         value={password}
         onChangeText={setPassword}
       />
-      {signupOpen ? <Text style={styles.hint}>First run on this instance — this creates the owner account.</Text> : null}
+      {signupOpen ? (
+        <>
+          <Text style={styles.label}>Setup code</Text>
+          <TextInput
+            testID="login-setup-code"
+            accessibilityLabel="login-setup-code"
+            style={styles.input}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            value={setupCode}
+            onChangeText={setSetupCode}
+          />
+          <Text style={styles.hint}>
+            First run on this instance — this creates the owner account. The setup code is shown when Harman is installed.
+          </Text>
+        </>
+      ) : null}
       {!reachable ? (
         <Text testID="login-unreachable" style={[styles.error]}>
           Can't reach this server. It may be down — use “Change server” below to switch or edit it.
@@ -105,7 +122,7 @@ export default function LoginScreen({ navigation }: Props) {
         accessibilityLabel="login-submit"
         style={styles.button}
         onPress={submit}
-        disabled={busy || !username || !password}
+        disabled={busy || !username || !password || (signupOpen && !setupCode.trim())}
       >
         {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>{signupOpen ? "Create account" : "Sign in"}</Text>}
       </TouchableOpacity>

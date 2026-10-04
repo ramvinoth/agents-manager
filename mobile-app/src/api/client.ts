@@ -279,8 +279,8 @@ export const api = {
   me: () => req<{ user: User | null }>("GET", "/api/auth/me"),
   signin: (username: string, password: string) =>
     req<{ user: User; token?: string }>("POST", "/api/auth/signin", { username, password, wantToken: true }),
-  signup: (username: string, password: string) =>
-    req<{ user: User; token?: string }>("POST", "/api/auth/signup", { username, password, wantToken: true }),
+  signup: (username: string, password: string, setupCode: string) =>
+    req<{ user: User; token?: string }>("POST", "/api/auth/signup", { username, password, setupCode, wantToken: true }),
   signout: () => req("POST", "/api/auth/signout", {}),
 
   // ---- push notifications ----

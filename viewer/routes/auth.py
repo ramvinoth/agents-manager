@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
-from viewer import db, hostenv
+from viewer import db, hostenv, setupcode
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
@@ -133,12 +133,23 @@ class AuthMixin:
         if db.user_count() > 0:
             self.send_json({"error": "Signup is closed on this instance"}, status=403)
             return
+        # Same throttle as sign-in: the setup code must not be brute-forceable.
+        ip = _client_ip(self.client_address[0] if self.client_address else "?", self.headers)
+        if _login_over_limit(ip):
+            self.send_json({"error": "Too many attempts — wait a minute and try again."}, status=429)
+            return
         body = self.read_body() or {}
+        setupcode.ensure()   # a missing file (deleted by hand) must not wedge first-run
+        if not setupcode.matches(body.get("setupCode")):
+            self.send_json({"error": "Wrong setup code. Find it in the install output, the server log, "
+                                     "or run `harman setup-code` on the server."}, status=403)
+            return
         try:
             user = db.create_user(body.get("username", ""), body.get("password", ""))
         except ValueError as e:
             self.send_json({"error": str(e)}, status=400)
             return
+        setupcode.clear()
         token = db.create_session(user["id"])
         self.set_session_cookie(token)
         # `wantToken` lets non-browser clients (mobile) receive the token in the

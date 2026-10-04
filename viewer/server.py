@@ -28,7 +28,7 @@ import sys
 import threading
 from urllib.parse import urlparse, parse_qs
 
-from viewer import db, orglogic
+from viewer import db, orglogic, setupcode
 from viewer.remote import tailnet_ipv4
 from viewer.config import (
     CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, VIEWER_PREFLIGHT, claude_bin,
@@ -685,7 +685,15 @@ def main():
     if VIEWER_NO_AUTH:
         print("  ⚠ AUTH DISABLED (VIEWER_NO_AUTH) — the API exposes a shell + FS; front it with your own auth")
     else:
-        print("  Sign in at the URL above (first visit creates your account).")
+        try:
+            if db.user_count() == 0:
+                print(f"  First run: create the owner account with setup code {setupcode.ensure()}")
+                print(f"  (also in {setupcode.path()}; `harman setup-code` prints it)")
+            else:
+                setupcode.clear()   # an owner exists: a stale code must not linger
+                print("  Sign in at the URL above.")
+        except Exception as e:
+            print(f"  ⚠ could not check first-run state: {e}")
     print("")
     print(f"  Default session: {DEFAULT_SESSION}")
     print(f"  Sessions dir:    {CLAUDE_DIR}")

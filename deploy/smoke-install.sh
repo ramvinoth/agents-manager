@@ -38,4 +38,13 @@ echo "healthz: $health"
   || { echo "FAIL: /healthz not healthy"; tail -20 /tmp/server.log; exit 1; }
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/sessions")"
 [[ "$code" == 401 ]] || { echo "FAIL: anonymous /api/sessions returned $code, want 401"; exit 1; }
-echo "PASS: fresh install boots, healthy, API gated"
+# First-run claim guard: the owner account needs the one-time setup code.
+signup() { curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+             -d "$1" "http://127.0.0.1:$PORT/api/auth/signup"; }
+code="$(signup '{"username":"eve","password":"pw-123456"}')"
+[[ "$code" == 403 ]] || { echo "FAIL: signup without setup code returned $code, want 403"; exit 1; }
+setup="$(cat "$HOME/.harman/setup-code")"
+code="$(signup "{\"username\":\"owner\",\"password\":\"pw-123456\",\"setupCode\":\"$setup\"}")"
+[[ "$code" == 200 ]] || { echo "FAIL: signup with setup code returned $code, want 200"; exit 1; }
+[[ ! -e "$HOME/.harman/setup-code" ]] || { echo "FAIL: setup code not burned after use"; exit 1; }
+echo "PASS: fresh install boots, healthy, API gated, owner claim needs setup code"

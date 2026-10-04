@@ -12,6 +12,7 @@
 #   harman status
 #   harman rollback [<ver>]
 #   harman restart
+#   harman setup-code    # one-time code for creating the owner account
 #
 # The update is crash-safe: it stages + builds the new release FULLY before the
 # atomic symlink swap, and auto-rolls-back if the restarted service doesn't
@@ -109,6 +110,7 @@ cmd_install() {
   hm_service_restart
   hm_health_probe "$ver" && hm_log "Install of $ver live and healthy." \
     || die "install of $ver failed health probe (service may still be starting)"
+  hm_setup_code || true
 }
 
 cmd_status() {
@@ -141,7 +143,8 @@ main() {
     status)   cmd_status   "$@" ;;
     rollback) hm_rollback  "${1:-}" ;;
     restart)  hm_service_restart ;;
-    *)        die "unknown command '$sub' (try: install update status rollback restart)" ;;
+    setup-code) hm_setup_code ;;
+    *)        die "unknown command '$sub' (try: install update status rollback restart setup-code)" ;;
   esac
 }
 

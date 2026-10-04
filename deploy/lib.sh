@@ -180,6 +180,26 @@ hm_service_install() {
   fi
 }
 
+# First-run setup code (viewer/setupcode.py): while the instance has no owner
+# account, the server writes it at boot and signup requires it, so whoever
+# reaches a fresh install over the network first cannot claim it. Prints it for
+# the person running the install; silent once the owner exists (file deleted).
+# Waits up to 30s because the service writes it on startup.
+hm_setup_code() {
+  local f i; f="$(eval echo "~$SERVICE_USER")/.harman/setup-code"
+  for (( i=0; i<30; i++ )); do
+    if [[ -s "$f" ]]; then
+      hm_log "Setup code (enter it when creating the owner account): $(sudo -u "$SERVICE_USER" cat "$f" 2>/dev/null || cat "$f")"
+      return 0
+    fi
+    curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/auth/state" 2>/dev/null \
+      | grep -q '"signupOpen": false' && { hm_log "Owner account exists — no setup code needed."; return 0; }
+    sleep 1
+  done
+  echo "setup code not found at $f — check the server log" >&2
+  return 1
+}
+
 # ─── Release-symlink helpers (used by the `harman` CLI / update.sh) ────────────
 #
 # Layout:
