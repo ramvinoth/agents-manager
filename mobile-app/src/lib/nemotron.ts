@@ -47,8 +47,8 @@ export interface NemotronSocket {
   send(data: ArrayBuffer): void
   close(): void
   onmessage: ((ev: { data: unknown }) => void) | null
-  onerror: ((ev: unknown) => void) | null
-  onclose: ((ev: unknown) => void) | null
+  onerror: ((ev: { message?: string }) => void) | null
+  onclose: ((ev: { code?: number; reason?: string }) => void) | null
 }
 
 /** Mirrors WebSocket.OPEN (1) without requiring the global to exist here. */
@@ -70,8 +70,9 @@ export interface NemotronTurnResult {
 }
 
 export interface NemotronBindings {
-  /** Open the connection; return a socket-like object this class drives. */
-  openSocket(url: string, headers: Record<string, string>): NemotronSocket
+  /** Open the call socket for session `path`; return a socket-like object
+   *  this class drives. */
+  openSocket(path: string): NemotronSocket
   /** Persist one reply WAV; return where it landed, or null on failure. Must
    *  never throw — a failed save rejects the turn (see module doc), it never
    *  crashes the call. */
@@ -126,9 +127,9 @@ export class NemotronCall {
    *  model finished loading for this call). Rejects on error/close/timeout
    *  before that. Startup is bounded to 90s server-side; the default timeout
    *  here leaves headroom above that. */
-  connect(url: string, headers: Record<string, string>, timeoutMs = 100000): Promise<void> {
+  connect(path: string, timeoutMs = 100000): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = this.bindings.openSocket(url, headers)
+      const socket = this.bindings.openSocket(path)
       this.socket = socket
       const timer = setTimeout(() => {
         // Let teardown -> handleDown find and reject this.pendingReady itself

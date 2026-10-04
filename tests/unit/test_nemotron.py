@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from viewer import nemotron
+from viewer import nemotron, wsclient
 from viewer.routes.voice import VoiceMixin
 
 
@@ -148,7 +148,7 @@ class _FakeWS:
 
 
 class _FakeUpstream:
-    """A scripted _UpstreamWS stand-in for the GPU service side."""
+    """A scripted wsclient.WSClient stand-in for the GPU service side."""
     def __init__(self, events):
         self._events = list(events)
         self.sent = []
@@ -159,7 +159,7 @@ class _FakeUpstream:
 
     def recv(self):
         if not self._events:
-            raise nemotron.NemotronError("no more events")
+            raise wsclient.WSError("no more events")
         return self._events.pop(0)
 
     def close(self):

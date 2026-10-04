@@ -23,7 +23,7 @@ import { api, type PendingPlan, type PendingQuestion, type PermApproval, type Sl
 import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { ensurePermission } from "../lib/notify"
-import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
+import { composerPrefs, draftFor, setDraft } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
 import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/boardSwipe"
@@ -741,7 +741,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       const picked = await pickImage()
       if (!picked) return
       setAttaching(true)
-      const remote = await uploadImage({ base: serverUrl(), token: token(), host }, picked)
+      const remote = await uploadImage(api, host, picked)
       setInput((cur) => attachMessage(remote, cur))
     } catch (e) {
       setError((e as Error).message)

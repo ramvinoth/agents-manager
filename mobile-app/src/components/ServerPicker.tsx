@@ -11,6 +11,7 @@ import {
   token,
   type ServerEntry,
 } from "../state/config"
+import { displayAddress } from "../lib/servers"
 import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
 import SheetModal from "./SheetModal"
@@ -89,11 +90,11 @@ export default function ServerPicker({
               <Icon name={on ? "serverFilled" : "server"} size={18} color={on ? t.accent : t.textMuted} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.actionText, { color: on ? t.accent : t.text }]} numberOfLines={1}>
-                  {s.name || s.url}
+                  {s.name || displayAddress(s)}
                 </Text>
                 {s.name ? (
                   <Text style={styles.rowSub} numberOfLines={1}>
-                    {s.url}
+                    {displayAddress(s)}
                   </Text>
                 ) : null}
               </View>

@@ -6,8 +6,9 @@
  * (`wantToken: true`), stored in the OS keystore (Keychain / Android Keystore)
  * via expo-secure-store. It is server-specific — issued by and valid for only
  * one backend — so it travels with that server's entry in the list rather than
- * as a single global value. The ACTIVE server's url + token are what the API
- * client reads via serverUrl()/token(); switching servers just re-points those.
+ * as a single global value. The ACTIVE server's routes + token are what
+ * src/api/transport.ts reads via activeServer()/token(); switching servers just
+ * re-points those.
  */
 import * as SecureStore from "expo-secure-store"
 import {
@@ -22,6 +23,7 @@ import {
   type ServerEntry,
   type ServerState,
 } from "../lib/servers"
+import type { RelayRoute } from "../lib/pairLink"
 
 export type { ServerEntry } from "../lib/servers"
 
@@ -94,7 +96,7 @@ async function persistServers() {
 // Shared chat-filter state (active host). The Hosts tab sets this and the
 // Chats tab reads it. Host persists via HOST_KEY below.
 
-export async function loadConfig(): Promise<{ serverUrl: string; token: string }> {
+export async function loadConfig(): Promise<void> {
   // Best-effort: if the secure store is unavailable, fall back to empty
   // in-memory state rather than throwing (which would brick app startup).
   try {
@@ -122,7 +124,6 @@ export async function loadConfig(): Promise<{ serverUrl: string; token: string }
     _servers = EMPTY_STATE
     _host = "local"
   }
-  return { serverUrl: serverUrl(), token: token() }
 }
 
 /**
@@ -162,10 +163,14 @@ export async function setCurrentHost(h: string): Promise<void> {
   }
 }
 
-/** The active server's base URL (empty when no server is configured). This is
- *  what src/api/client.ts prefixes onto every request. */
-export function serverUrl(): string {
-  return activeEntry(_servers)?.url || ""
+/** The active saved server (routes + token), or undefined when none. */
+export function activeServer(): ServerEntry | undefined {
+  return activeEntry(_servers)
+}
+
+/** Whether a server is configured at all (direct, relay, or both). */
+export function hasServer(): boolean {
+  return !!activeEntry(_servers)
 }
 
 /** The active server's auth token (empty when signed out / no server). Sent as
@@ -185,12 +190,13 @@ export function activeServerId(): string {
 }
 
 /**
- * Add a server to the list (or return the existing entry with the same URL,
- * updating its nickname). Does NOT switch to it — call switchServer next. New
+ * Add a server to the list (or return the existing entry — same relay
+ * serverId or same URL — refreshing its routes and nickname). Pass url "" with
+ * a relay route for a server reachable only through the relay. Does NOT switch to it — call switchServer next. New
  * entries start tokenless, so the caller routes to Login. Returns the entry.
  */
-export async function addServer(url: string, name?: string): Promise<ServerEntry> {
-  const { state, entry } = addToList(_servers, url, name)
+export async function addServer(url: string, name?: string, relay?: RelayRoute): Promise<ServerEntry> {
+  const { state, entry } = addToList(_servers, url, name, relay)
   _servers = state
   await persistServers()
   notifyServer()

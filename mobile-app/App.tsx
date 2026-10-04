@@ -11,7 +11,7 @@ import { useThemePref } from "./src/lib/useTheme"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
-import { loadConfig, serverUrl, token } from "./src/state/config"
+import { hasServer, loadConfig, token } from "./src/state/config"
 import { registerForPush, onNotificationTap } from "./src/lib/notify"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
@@ -159,7 +159,7 @@ export default function App() {
     ;(async () => {
       try {
         await loadConfig()
-        if (!serverUrl()) setInitial("Server")
+        if (!hasServer()) setInitial("Server")
         else if (!token()) setInitial("Login")
         else {
           setInitial("Home")

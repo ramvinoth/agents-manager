@@ -1,34 +1,15 @@
 /**
  * nemotronNative — real RN wiring for the pure NemotronCall state machine
- * (see ./nemotron.ts): opens the authenticated WebSocket the same way
- * voice.ts/duplexMic.ts/terminalSession.ts do (RN's WebSocket 3rd-arg headers,
- * carrying the Bearer token on the handshake — never a query param), and
- * persists a reply WAV to a private cache file for audioSession to play.
+ * (see ./nemotron.ts): opens the call socket through the app's server
+ * transport (direct or relayed, like every other socket), and persists a reply
+ * WAV to a private cache file for audioSession to play.
  */
 import * as FileSystem from "expo-file-system"
-import type { NemotronBindings, NemotronSocket } from "./nemotron"
+import { api } from "../api/client"
+import type { NemotronBindings } from "./nemotron"
+import { toBase64 } from "./bytes"
 
 const REPLY_DIR = FileSystem.cacheDirectory + "nemotron/"
-
-// Base64 encode without String.fromCharCode.apply(null, hugeArray) — that blows
-// the call stack on the multi-MB replies this can carry (up to ~180s of 22.05kHz
-// PCM16, see deploy/voicechat_service.py MAX_OUTPUT). Table-based, 3 bytes -> 4
-// chars at a time, like every other from-scratch base64 encoder.
-const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-function encodeBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let out = ""
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i]
-    const b1 = i + 1 < bytes.length ? bytes[i + 1] : undefined
-    const b2 = i + 2 < bytes.length ? bytes[i + 2] : undefined
-    out += B64_CHARS[b0 >> 2]
-    out += B64_CHARS[((b0 & 0x03) << 4) | (b1 === undefined ? 0 : b1 >> 4)]
-    out += b1 === undefined ? "=" : B64_CHARS[((b1 & 0x0f) << 2) | (b2 === undefined ? 0 : b2 >> 6)]
-    out += b2 === undefined ? "=" : B64_CHARS[b2 & 0x3f]
-  }
-  return out
-}
 
 let dirReady: Promise<void> | null = null
 function ensureReplyDir(): Promise<void> {
@@ -40,26 +21,19 @@ function ensureReplyDir(): Promise<void> {
   return dirReady
 }
 
-/** Real bindings for NemotronCall: an authenticated RN WebSocket + a private
+/** Real bindings for NemotronCall: the authenticated call socket + a private
  *  cache-dir WAV file per reply. `saveAudio` never throws (see NemotronBindings) —
  *  a failed write rejects the TURN (see nemotron.ts), never crashes the call.
  *  `deleteAudio` is best-effort/idempotent: used both for normal post-playback
  *  cleanup and for a save that lands after its turn was already invalidated. */
 export function nemotronNativeBindings(): NemotronBindings {
   return {
-    openSocket(url, headers) {
-      const WS = WebSocket as unknown as {
-        new (url: string, protocols: undefined, options: { headers: Record<string, string> }): WebSocket
-      }
-      const ws = new WS(url, undefined, { headers })
-      ws.binaryType = "arraybuffer" // otherwise RN may hand back a blob-like object
-      return ws as unknown as NemotronSocket
-    },
+    openSocket: (path) => api.nemotronSocket(path),
     async saveAudio(data: ArrayBuffer): Promise<string | null> {
       try {
         await ensureReplyDir()
         const uri = `${REPLY_DIR}reply-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
-        await FileSystem.writeAsStringAsync(uri, encodeBase64(data), {
+        await FileSystem.writeAsStringAsync(uri, toBase64(data), {
           encoding: FileSystem.EncodingType.Base64,
         })
         return uri

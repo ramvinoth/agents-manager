@@ -1,12 +1,27 @@
 /**
  * The QR pairing link shown by Profile → "Pair a phone":
- * `agents://pair?url=<server>&code=<one-time code>`. The iPhone Camera opens it
- * in the app, which redeems the code (POST /api/auth/pair/redeem) for a token.
+ *
+ *   agents://pair?code=<one-time code>[&url=<server>][&relay=<wss url>&sid=<serverId>&pk=<key>]
+ *
+ * The iPhone Camera opens it in the app, which redeems the code
+ * (POST /api/auth/pair/redeem) for a token. `url` is a direct address the
+ * phone can reach; `relay`/`sid`/`pk` come from the server's relay offer
+ * (viewer/relay.py offer()) and let the phone reach a server that has no
+ * public address at all, end-to-end encrypted to `pk`. At least one of the
+ * two routes is present; when both are, the phone keeps both.
  *
  * DUPLICATED (parser side) in mobile-app/src/lib/pairLink.ts; the two apps share no build.
  */
-export function buildPairLink(serverUrl: string, code: string): string {
-  return `agents://pair?url=${encodeURIComponent(serverUrl.trim().replace(/\/+$/, ""))}&code=${encodeURIComponent(code)}`
+export type RelayOffer = { url: string; serverId: string; publicKey: string }
+
+export function buildPairLink(serverUrl: string, code: string, relay?: RelayOffer | null): string {
+  const q = [`code=${encodeURIComponent(code)}`]
+  const url = serverUrl.trim().replace(/\/+$/, "")
+  if (url) q.push(`url=${encodeURIComponent(url)}`)
+  if (relay)
+    q.push(`relay=${encodeURIComponent(relay.url)}`, `sid=${encodeURIComponent(relay.serverId)}`,
+      `pk=${encodeURIComponent(relay.publicKey)}`)
+  return `agents://pair?${q.join("&")}`
 }
 
 /** Why a phone could NOT reach `serverUrl`, or "" when it looks reachable.

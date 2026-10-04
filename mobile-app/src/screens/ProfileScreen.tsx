@@ -4,9 +4,10 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
+import { displayAddress } from "../lib/servers"
 import {
+  activeServer,
   notifyEveryReply,
-  serverUrl,
   setNotifyEveryReply,
   setThemePref,
   setToken,
@@ -75,11 +76,12 @@ export default function ProfileScreen({ navigation }: Props) {
   const [draft, setDraft] = useState("")
   const [preBusy, setPreBusy] = useState(false)
   const [preMsg, setPreMsg] = useState("")
-  // Server picker sheet + a reactive mirror of the active server URL so the row
-  // repaints the moment the selection changes (subscribeServer pub-sub).
+  // Server picker sheet + a reactive mirror of the active server so the row
+  // repaints (and AI settings refetch) the moment the selection changes. Keyed by
+  // entry, not URL: a relay-only server has no URL, and two of them must differ.
   const [serverOpen, setServerOpen] = useState(false)
-  const [activeUrl, setActiveUrl] = useState(serverUrl())
-  useEffect(() => subscribeServer(() => setActiveUrl(serverUrl())), [])
+  const [active, setActive] = useState(activeServer())
+  useEffect(() => subscribeServer(() => setActive(activeServer())), [])
 
   const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
   const [aiErr, setAIErr] = useState("")
@@ -95,7 +97,7 @@ export default function ProfileScreen({ navigation }: Props) {
       if (alive) { setAIConfig(config); setProviders(result.providers || []) }
     }).catch(e => { if (alive) setAIErr(aiError(e)) })
     return () => { alive = false }
-  }, [activeUrl, host]))
+  }, [active?.id, host]))
 
   // Header theme toggle: cycles the preference light → dark → system → light,
   // mirroring the segmented control below. The glyph shows the CURRENT effective
@@ -428,7 +430,7 @@ export default function ProfileScreen({ navigation }: Props) {
       >
         <Text style={styles.profileInfoLabel}>Server</Text>
         <Text style={[styles.profileInfoValue, { color: t.text, flex: 1 }]} numberOfLines={1}>
-          {activeUrl || "—"}
+          {active ? displayAddress(active) : "—"}
         </Text>
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>

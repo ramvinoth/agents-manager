@@ -17,8 +17,8 @@ class FakeSocket implements NemotronSocket {
   sent: ArrayBuffer[] = []
   closed = 0
   onmessage: ((ev: { data: unknown }) => void) | null = null
-  onerror: ((ev: unknown) => void) | null = null
-  onclose: ((ev: unknown) => void) | null = null
+  onerror: ((ev: { message?: string }) => void) | null = null
+  onclose: ((ev: { code?: number; reason?: string }) => void) | null = null
   send(data: ArrayBuffer) { this.sent.push(data) }
   close() { this.closed++; this.readyState = 3 }
   text(obj: unknown) { this.onmessage?.({ data: JSON.stringify(obj) }) }
@@ -53,7 +53,7 @@ function test(name: string, fn: () => Promise<void> | void) {
 
 test("connect resolves on ready; audio before turn_end resolves a turn", async () => {
   const h = harness()
-  const connected = h.call.connect("ws://x", {})
+  const connected = h.call.connect("p/session.jsonl")
   assert.equal(h.call.isReady, false)
   h.sock.text({ kind: "ready" })
   await connected
@@ -69,7 +69,7 @@ test("connect resolves on ready; audio before turn_end resolves a turn", async (
 
 test("a turn_end with no audio rejects — never a text-only success", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const turn = h.call.sendTurn(new ArrayBuffer(4))
   h.sock.text({ kind: "turn_end", text: "hello" })
   await assert.rejects(turn, /without reply audio/)
@@ -78,7 +78,7 @@ test("a turn_end with no audio rejects — never a text-only success", async () 
 
 test("a failed save rejects the turn", async () => {
   const h = harness(null)
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const turn = h.call.sendTurn(new ArrayBuffer(4))
   h.sock.binary(new ArrayBuffer(8))
   h.sock.text({ kind: "turn_end", text: "hi" })
@@ -87,7 +87,7 @@ test("a failed save rejects the turn", async () => {
 
 test("only one turn in flight; second sendTurn rejects without sending", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const first = h.call.sendTurn(new ArrayBuffer(1))
   await assert.rejects(h.call.sendTurn(new ArrayBuffer(1)), /already in flight/)
   assert.equal(h.sock.sent.length, 1)
@@ -97,7 +97,7 @@ test("only one turn in flight; second sendTurn rejects without sending", async (
 
 test("service error mid-turn rejects that turn only", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const turn = h.call.sendTurn(new ArrayBuffer(1))
   h.sock.text({ kind: "error", message: "GPU call slot is occupied" })
   await assert.rejects(turn, /slot is occupied/)
@@ -106,7 +106,7 @@ test("service error mid-turn rejects that turn only", async () => {
 
 test("idle disconnect fires onDown exactly once and leaves the call not ready", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   h.sock.onclose?.({})
   h.sock.onerror?.({})
   assert.deepEqual(h.downs, ["Nemotron connection closed"])
@@ -116,7 +116,7 @@ test("idle disconnect fires onDown exactly once and leaves the call not ready", 
 
 test("error before ready rejects connect and fires onDown once", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {})
+  const c = h.call.connect("p/session.jsonl")
   h.sock.text({ kind: "error", message: "busy" })
   await assert.rejects(c, /busy/)
   h.sock.onclose?.({})
@@ -125,7 +125,7 @@ test("error before ready rejects connect and fires onDown once", async () => {
 
 test("turn timeout closes the socket; a late reply is dropped and its file deleted", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const turn = h.call.sendTurn(new ArrayBuffer(1), 5)
   await assert.rejects(turn, /timed out/)
   assert.equal(h.sock.closed, 1)
@@ -138,7 +138,7 @@ test("turn timeout closes the socket; a late reply is dropped and its file delet
 
 test("close() during an in-flight save deletes the file instead of leaking it", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   const turn = h.call.sendTurn(new ArrayBuffer(1))
   h.sock.binary(new ArrayBuffer(1)); h.sock.text({ kind: "turn_end", text: "x" })
   h.call.close() // save is still pending (microtask)
@@ -150,14 +150,14 @@ test("close() during an in-flight save deletes the file instead of leaking it", 
 
 test("close() is idempotent and onDown fires once", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {}); h.sock.text({ kind: "ready" }); await c
+  const c = h.call.connect("p/session.jsonl"); h.sock.text({ kind: "ready" }); await c
   h.call.close(); h.call.close()
   assert.equal(h.downs.length, 1)
 })
 
 test("malformed and unknown frames are ignored", async () => {
   const h = harness()
-  const c = h.call.connect("ws://x", {})
+  const c = h.call.connect("p/session.jsonl")
   h.sock.onmessage?.({ data: "{not json" })
   h.sock.text({ kind: "transcript_delta", text: "…" })
   h.sock.text(null)

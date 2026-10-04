@@ -1,0 +1,15 @@
+name = "harman-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayDurableObject"
+
+# SQLite-backed: the only Durable Object backend on the Workers Free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayDurableObject"]

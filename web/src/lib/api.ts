@@ -5,6 +5,7 @@
 import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, DriveClient, InboxFilter, InboxMessage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
+import type { RelayOffer } from "./pairLink"
 
 type Body = Record<string, unknown>
 
@@ -636,7 +637,9 @@ class ApiClient {
   }
   /** One-time code a phone redeems by scanning the Pair-a-phone QR. */
   pairStart() {
-    return this.postStrict<{ code: string; expiresAt: number; ttl: number; publicUrl?: string }>("/api/auth/pair/start")
+    return this.postStrict<{ code: string; expiresAt: number; ttl: number; publicUrl?: string; relay?: RelayOffer | null }>(
+      "/api/auth/pair/start"
+    )
   }
   getPrefs<T = any>() {
     return this.getJSON<T>("/api/prefs")

@@ -1,5 +1,6 @@
 import { api } from "../api/client"
-import { token } from "../state/config"
+import { toBase64 } from "./bytes"
+import type { AppSocket } from "./deferredSocket"
 
 /**
  * A process-wide terminal session that outlives the TerminalScreen.
@@ -22,18 +23,11 @@ type Listener = (b64: string) => void
 // of base64 is plenty of scrollback; older chunks fall off the front.
 const BUFFER_CAP = 512 * 1024
 
-let ws: WebSocket | null = null
+let ws: AppSocket | null = null
 let sessionHost: string | null = null
 let buffer: string[] = []
 let bufferLen = 0
 let listener: Listener | null = null
-
-function b64FromArrayBuffer(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let bin = ""
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-  return typeof btoa === "function" ? btoa(bin) : Buffer.from(bytes).toString("base64")
-}
 
 function pushBuffer(b64: string) {
   buffer.push(b64)
@@ -44,15 +38,10 @@ function pushBuffer(b64: string) {
 }
 
 function openSocket(host: string, cols: number, rows: number) {
-  const url = api.terminalWsUrl({ cols, rows, host })
-  // RN WebSocket: 3rd arg carries headers (a browser WS can't) — this is what lets
-  // the terminal authenticate with a Bearer token on the handshake.
-  const WS = WebSocket as unknown as new (url: string, protocols?: string | string[], options?: unknown) => WebSocket
-  const sock = new WS(url, undefined, { headers: { Authorization: `Bearer ${token()}` } })
-  sock.binaryType = "arraybuffer"
+  const sock = api.terminalSocket({ cols, rows, host })
   sock.onmessage = (e) => {
     if (!(e.data instanceof ArrayBuffer)) return
-    const b64 = b64FromArrayBuffer(e.data)
+    const b64 = toBase64(e.data)
     pushBuffer(b64) // keep for replay even while detached (no WebView attached)
     listener?.(b64)
   }

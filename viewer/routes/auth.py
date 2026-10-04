@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
-from viewer import db, hostenv, pairing, setupcode
+from viewer import db, hostenv, pairing, relay, setupcode
 from viewer.config import PUBLIC_URL
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
 from viewer.login import (
@@ -184,8 +184,10 @@ class AuthMixin:
                            status=400)
             return
         code, expires = pairing.create(p["user"]["id"])
+        # `relay` (or null): how a phone reaches this server through the Harman
+        # relay when it has no direct route — see viewer.relay.offer.
         self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
-                        "publicUrl": PUBLIC_URL})
+                        "publicUrl": PUBLIC_URL, "relay": relay.offer()})
 
     def _p_auth_pair_redeem(self, req):
         """Swap a pairing code for a session token (the scanning phone). Public:

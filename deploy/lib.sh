@@ -51,7 +51,7 @@ HM_CURRENT="$HM_PREFIX/current"
 # hosts (terminal / files / sessions over SSH); PyJWT signs the APNs token;
 # tomli/tomli-w read and write Codex's config.toml (tomllib is stdlib only from
 # 3.11, and the system python on macOS is 3.9).
-HM_PY_DEPS="psycopg2-binary paramiko PyJWT tomli tomli-w"
+HM_PY_DEPS="psycopg2-binary paramiko PyJWT tomli tomli-w pynacl"
 
 # Python deps live in a venv INSIDE each app dir (releases/vX/.venv), never in
 # the system/user site: PEP 668 distros (Ubuntu 24.04+, Homebrew Python) refuse

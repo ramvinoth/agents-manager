@@ -14,12 +14,8 @@ read fresh from a private 0600 file (the same convention as
 VIEWER_TOKEN_FILE/viewer/login.py) on each request and only ever placed in an
 outbound Authorization header, never a URL, a log line, or a response body.
 """
-import base64
 import json
 import os
-import socket
-import ssl
-import struct
 import subprocess
 import tempfile
 import threading
@@ -28,6 +24,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from viewer import wsclient
 from viewer.config import NEMOTRON_TIMEOUT, NEMOTRON_TOKEN_FILE, NEMOTRON_URL
 
 # Mirror the service's own input bound (deploy/voicechat_service.py MAX_INPUT)
@@ -61,8 +58,6 @@ TURN_WAIT_TIMEOUT = 130   # > the service's own 120s per-turn deadline, so ITS
                          # {"kind":"error"} reaches the client before a generic
                          # proxy timeout would
 CALL_LIFETIME = 900       # matches the service's own socket lifetime cap
-
-WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
 class NemotronError(Exception):
@@ -267,129 +262,20 @@ def sanitize_event(event):
     return clean
 
 
-class _UpstreamWS:
-    """Client-role WebSocket framing over a raw connected socket: masks
-    outgoing frames (RFC 6455 requires it from a client), decodes incoming
-    ones (the service does not mask). Deliberately self-contained rather than
-    shared with viewer.browser.WSServer/WSConn — both of those are sized for
-    their own call sites (server-role framing, and CDP's text-only client),
-    and duplicating ~30 lines of frame parsing here is simpler than bending
-    either to a third shape."""
-
-    def __init__(self, sock, leftover=b""):
-        self.sock = sock
-        self.buf = leftover
-
-    def _fill(self):
-        chunk = self.sock.recv(65536)
-        if not chunk:
-            raise NemotronError("Nemotron connection closed")
-        self.buf += chunk
-
-    def _take(self, n):
-        while len(self.buf) < n:
-            self._fill()
-        out, self.buf = self.buf[:n], self.buf[n:]
-        return out
-
-    def recv(self):
-        """Return (opcode, payload) for the next data/close frame."""
-        while True:
-            b1, b2 = self._take(2)
-            opcode = b1 & 0x0F
-            masked, ln = b2 & 0x80, b2 & 0x7F
-            if ln == 126:
-                ln = struct.unpack("!H", self._take(2))[0]
-            elif ln == 127:
-                ln = struct.unpack("!Q", self._take(8))[0]
-            mask = self._take(4) if masked else None
-            payload = self._take(ln)
-            if mask:
-                payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
-            if opcode == 0x9:                       # ping -> pong
-                self._send(0xA, payload)
-                continue
-            if opcode == 0x8:
-                return 0x8, payload
-            if opcode in (0x0, 0x1, 0x2):
-                return opcode, payload
-
-    def _send(self, opcode, data):
-        """Mask and write one frame — a client-role socket MUST mask (RFC 6455
-        5.1); the service-side WSServer in viewer/browser.py never does, so
-        this cannot reuse that class's _send."""
-        if isinstance(data, str):
-            data = data.encode()
-        mask = os.urandom(4)
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        ln = len(data)
-        if ln < 126:
-            hdr = struct.pack("!BB", 0x80 | opcode, 0x80 | ln)
-        elif ln < 65536:
-            hdr = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, ln)
-        else:
-            hdr = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, ln)
-        self.sock.sendall(hdr + mask + masked)
-
-    def send_bytes(self, data):
-        self._send(0x2, data)
-
-    def send_text(self, data):
-        self._send(0x1, data)
-
-    def close(self):
-        try:
-            self._send(0x8, b"")
-        except Exception:
-            pass
-        try:
-            self.sock.close()
-        except Exception:
-            pass
-
-
 def open_upstream(timeout=10):
     """Dial the Nemotron service's /call WebSocket with the Bearer token in
     the handshake headers (never a query param — those can end up in logs),
-    and return a connected _UpstreamWS. Raises NemotronError on any failure
-    (bad URL, TCP/TLS failure, non-101 handshake) so the caller can surface a
-    clean 502 instead of a bare socket exception."""
+    and return a connected viewer.wsclient.WSClient. Raises NemotronError on
+    any failure (bad URL, TCP/TLS failure, non-101 handshake) so the caller
+    can surface a clean 502 instead of a bare socket exception."""
     token = _token()
-    host, port, tls = _host_port(NEMOTRON_URL)
-    path = urlsplit(NEMOTRON_URL).path.rstrip("/") + "/call"
-    sock = socket.create_connection((host, port), timeout=timeout)
-    sock.settimeout(timeout)
-    if tls:
-        ctx = ssl.create_default_context()
-        sock = ctx.wrap_socket(sock, server_hostname=host)
-    key = base64.b64encode(os.urandom(16)).decode()
-    request = (
-        f"GET {path} HTTP/1.1\r\n"
-        f"Host: {host}\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        f"Authorization: Bearer {token}\r\n"
-        "\r\n"
-    ).encode()
+    _host_port(NEMOTRON_URL)  # validates scheme + host with Nemotron's own message
+    url = NEMOTRON_URL.rstrip("/") + "/call"
     try:
-        sock.sendall(request)
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = sock.recv(4096)
-            if not chunk:
-                raise NemotronError("Nemotron service closed the connection during handshake")
-            buf += chunk
-    except (OSError, socket.timeout) as e:
-        sock.close()
-        raise NemotronError(f"Nemotron service unreachable: {e}")
-    head, _, rest = buf.partition(b"\r\n\r\n")
-    status_line = head.split(b"\r\n", 1)[0]
-    if b" 101" not in status_line:
-        sock.close()
-        if b" 401" in status_line or b" 403" in status_line:
+        return wsclient.dial(url, {"Authorization": "Bearer " + token}, timeout=timeout)
+    except wsclient.WSHandshakeError as e:
+        if e.status in (401, 403):
             raise NemotronError("Nemotron service rejected the shared token")
-        raise NemotronError("Nemotron handshake failed: " + status_line.decode(errors="replace")[:200])
-    sock.settimeout(None)
-    return _UpstreamWS(sock, leftover=rest)
+        raise NemotronError("Nemotron " + str(e))
+    except wsclient.WSError as e:
+        raise NemotronError(f"Nemotron service unreachable: {e}")

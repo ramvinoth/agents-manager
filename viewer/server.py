@@ -679,6 +679,12 @@ def main():
         except Exception as e:
             print(f"  ⚠ run settings sweep failed: {e}")
         threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
+        # Outbound to the Harman relay (off unless HARMAN_RELAY_URL is set). Never
+        # from a preflight spare: the relay keeps ONE control socket per server,
+        # so a spare would steal the live server's phones.
+        from viewer import relay
+        if relay.start():
+            print(f"  Relay:     {relay.RELAY_URL} (server {relay.identity()['serverId']})")
     server = PooledHTTPServer((os.environ.get("VIEWER_HOST","0.0.0.0"), PORT), SessionViewerHandler)
 
     print("Agents")

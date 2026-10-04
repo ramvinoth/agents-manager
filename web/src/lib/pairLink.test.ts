@@ -7,7 +7,12 @@ function eq(label: string, got: unknown, want: unknown) {
 }
 
 eq("link encodes url, drops trailing slash", buildPairLink(" https://agents.suhai.ai/ ", "abc_-1"),
-  "agents://pair?url=https%3A%2F%2Fagents.suhai.ai&code=abc_-1")
+  "agents://pair?code=abc_-1&url=https%3A%2F%2Fagents.suhai.ai")
+const RELAY = { url: "wss://relay.harman.ai", serverId: "AbCdEfGhIjKlMnOpQr12", publicKey: "a+b/c=" }
+eq("relay offer rides along with a direct url", buildPairLink("https://x.io", "c1", RELAY),
+  "agents://pair?code=c1&url=https%3A%2F%2Fx.io&relay=wss%3A%2F%2Frelay.harman.ai&sid=AbCdEfGhIjKlMnOpQr12&pk=a%2Bb%2Fc%3D")
+eq("relay-only link has no url", buildPairLink("", "c1", RELAY),
+  "agents://pair?code=c1&relay=wss%3A%2F%2Frelay.harman.ai&sid=AbCdEfGhIjKlMnOpQr12&pk=a%2Bb%2Fc%3D")
 eq("tailnet ip is fine", unreachableReason("http://100.64.0.2:8091"), "")
 eq("domain is fine", unreachableReason("https://agents.suhai.ai"), "")
 eq("localhost flagged", unreachableReason("http://localhost:8091") !== "", true)

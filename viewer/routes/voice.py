@@ -28,7 +28,7 @@ import threading
 import time
 import urllib.request
 
-from viewer import nemotron, voice
+from viewer import nemotron, voice, wsclient
 from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
 from viewer.speakable import speakable
 
@@ -263,7 +263,7 @@ class VoiceMixin:
                 while True:
                     try:
                         up_op, up_payload = upstream.recv()
-                    except nemotron.NemotronError:
+                    except (wsclient.WSError, OSError):
                         return None
                     if up_op == 0x2:               # binary reply audio first,
                         ws.send_bytes(up_payload)   # exactly as the service sent it

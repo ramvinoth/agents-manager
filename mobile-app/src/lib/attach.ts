@@ -9,8 +9,8 @@
  * Both native modules are loaded defensively; on a build without them the
  * attach button simply reports that it needs a newer build rather than crashing.
  *
- * NOTE: this module deliberately imports NOTHING from app state — the server URL
- * and token are passed in. Importing state/config pulled in expo-secure-store,
+ * NOTE: this module deliberately imports NOTHING from app state — the file
+ * calls are passed in. Importing state/config pulled in expo-secure-store,
  * which made the whole module impossible to unit-test in Node.
  */
 
@@ -56,39 +56,24 @@ export function pathFromUploadResponse(res: unknown, fallbackName: string): stri
   return first?.path || uploadedPath(fallbackName)
 }
 
+/** The two file calls an upload needs — `api` satisfies it. Injected so this
+ *  module stays free of app state (see the header). */
+export type HostFiles = {
+  fsMkdir(scope: { host?: string }, body: { path: string; name: string }): Promise<unknown>
+  fsUpload(scope: { host?: string }, dir: string, uri: string, name: string, mime?: string): Promise<unknown>
+}
+
 /**
- * Upload to the host via multipart. Returns the remote path to mention in chat.
- * Uses fetch + FormData: React Native turns {uri,name,type} into a file part.
+ * Upload to the host. Returns the remote path to mention in chat.
  */
-export async function uploadImage(
-  opts: { base: string; token: string; host: string },
-  file: Picked,
-  dir = UPLOAD_DIR
-): Promise<string> {
-  const { base, token, host } = opts
-  if (!base) throw new Error("No server configured")
-  const form = new FormData()
-  // RN's FormData accepts this shape for a local file URI.
-  form.append("files", { uri: file.uri, name: file.name, type: guessMime(file.name) } as any)
-
+export async function uploadImage(files: HostFiles, host: string, file: Picked, dir = UPLOAD_DIR): Promise<string> {
+  const scope = host && host !== "local" ? { host } : {}
   // Ensure the target exists — the server 400s on a missing directory. Creating
-  // an existing folder is harmless, so the result is ignored.
-  await fetch(`${base}/api/fs/mkdir`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ path: UPLOAD_PARENT, name: UPLOAD_NAME, host }),
-  }).catch(() => {})
-
-  const q = new URLSearchParams({ path: dir })
-  if (host && host !== "local") q.set("host", host)
-  const res = await fetch(`${base}/api/fs/upload?${q.toString()}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` }, // no Content-Type: fetch sets the boundary
-    body: form,
-  })
-  if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status})`)
+  // an existing folder is refused harmlessly, so the result is ignored.
+  await files.fsMkdir(scope, { path: UPLOAD_PARENT, name: UPLOAD_NAME }).catch(() => {})
+  const res = await files.fsUpload(scope, dir, file.uri, file.name, guessMime(file.name))
   // Use the server's absolute path — a "~" prefix may not expand for the agent.
-  return pathFromUploadResponse(await res.json().catch(() => null), file.name)
+  return pathFromUploadResponse(res, file.name)
 }
 
 export function guessMime(name: string): string {

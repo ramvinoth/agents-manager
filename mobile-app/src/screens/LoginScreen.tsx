@@ -3,7 +3,8 @@ import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View 
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
-import { serverUrl } from "../state/config"
+import { activeServer } from "../state/config"
+import { displayAddress } from "../lib/servers"
 import { completeSignIn } from "../state/signin"
 import ServerPicker from "../components/ServerPicker"
 import { useTheme } from "../lib/useTheme"
@@ -125,7 +126,7 @@ export default function LoginScreen({ navigation }: Props) {
       >
         <Text style={{ color: t.accent, fontWeight: "600" }}>Change server</Text>
         <Text style={[styles.hint, { textAlign: "center", marginTop: 2 }]} numberOfLines={1}>
-          {serverUrl() || "—"}
+          {(() => { const s = activeServer(); return s ? displayAddress(s) : "—" })()}
         </Text>
       </TouchableOpacity>
       <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />

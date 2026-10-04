@@ -53,6 +53,10 @@ VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
 # Tunnel hostname). The Pair-a-phone QR defaults to it, so a customer never has
 # to know or type it. Empty = the QR falls back to the browser's own address.
 PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
+# Harman relay (relay/ — Cloudflare Worker): wss:// URL this server dials out
+# to so phones can reach it from anywhere with no tunnel or open port. Empty =
+# off. See viewer/relay.py.
+RELAY_URL = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 
 

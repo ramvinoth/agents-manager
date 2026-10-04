@@ -200,19 +200,18 @@ export default function FilesTab({ navigation }: Props) {
     setError("")
     try {
       const full = joinPath(path, item.name)
-      const { url, headers } = api.fsDownloadUrl(scope, full)
       const dest = FileSystem.cacheDirectory + encodeURIComponent(item.name)
-      const r = await FileSystem.downloadAsync(url, dest, { headers })
-      if (r.status >= 400) {
+      const status = await api.fsDownload(scope, full, dest)
+      if (status >= 400) {
         // The body on disk is the server's JSON error, not the file: surface
         // its message and don't leave it in the cache under the file's name.
-        const body = await FileSystem.readAsStringAsync(r.uri).catch(() => "")
-        await FileSystem.deleteAsync(r.uri, { idempotent: true }).catch(() => {})
-        let msg = `Download failed (HTTP ${r.status})`
+        const body = await FileSystem.readAsStringAsync(dest).catch(() => "")
+        await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {})
+        let msg = `Download failed (HTTP ${status})`
         try { msg = JSON.parse(body).error || msg } catch {}
         throw new Error(msg)
       }
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(r.uri)
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest)
     } catch (e) {
       setError((e as Error).message)
     } finally {

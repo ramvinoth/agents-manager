@@ -5,7 +5,7 @@
  * no cookie jar) instead of the HttpOnly `viewer_session` cookie. The backend
  * accepts either — see viewer/server.py `_auth_token`.
  */
-import { serverUrl, token } from "../state/config"
+import { serverFetch, serverMedia, serverSocket, serverUpload, serverDownload } from "./transport"
 import { normModel } from "../lib/model"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
@@ -241,18 +241,13 @@ export type Session = {
  *  DUPLICATED in web/src/lib/types.ts; the two apps share no build. */
 export type SessionPersona = { id: number; name: string; role: string; avatar: string }
 
-function authHeaders(): Record<string, string> {
-  const t = token()
-  return t ? { Authorization: `Bearer ${t}` } : {}
-}
-
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
-  if (!serverUrl()) throw new Error("No server configured")
-  const res = await fetch(serverUrl() + path, {
+  const res = await serverFetch(
     method,
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+    path,
+    { "Content-Type": "application/json" },
+    body === undefined ? undefined : JSON.stringify(body)
+  )
   const text = await res.text()
   let data: unknown = null
   try {
@@ -319,19 +314,8 @@ export const api = {
   // route matches, exactly as the web client does. The server responds with a
   // JSON envelope {start,end,size,lines:[...]}; we return the `lines` array
   // (each entry is one JSONL transcript record).
-  sessionRead: async (host: string, path: string, tail = 400): Promise<string[]> => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const q = new URLSearchParams({ tail: String(tail) })
-    if (host && host !== "local") q.set("host", host)
-    const res = await fetch(`${serverUrl()}/api/session/${path}?${q.toString()}`, { headers: authHeaders() })
-    if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}`) as Error & { status?: number }
-      err.status = res.status
-      throw err
-    }
-    const env = (await res.json()) as { lines?: string[] }
-    return Array.isArray(env.lines) ? env.lines : []
-  },
+  sessionRead: async (host: string, path: string, tail = 400): Promise<string[]> =>
+    (await api.sessionReadPage(host, path, tail)).lines,
   // Like sessionRead but returns the paging envelope too: `start` is the byte
   // offset of the first returned line (0 ⇒ we've reached the top of the file, so
   // there's no older history to load). Used by the thread to grow its window when
@@ -341,17 +325,13 @@ export const api = {
     path: string,
     tail = 400
   ): Promise<{ lines: string[]; start: number; size: number }> => {
-    if (!serverUrl()) throw new Error("No server configured")
     const q = new URLSearchParams({ tail: String(tail) })
     if (host && host !== "local") q.set("host", host)
-    const res = await fetch(`${serverUrl()}/api/session/${path}?${q.toString()}`, { headers: authHeaders() })
-    if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}`) as Error & { status?: number }
-      err.status = res.status
-      throw err
-    }
-    const env = (await res.json()) as { lines?: string[]; start?: number; size?: number }
-    return { lines: Array.isArray(env.lines) ? env.lines : [], start: env.start ?? 0, size: env.size ?? 0 }
+    const env = await req<{ lines?: string[]; start?: number; size?: number } | null>(
+      "GET",
+      `/api/session/${path}?${q.toString()}`
+    )
+    return { lines: Array.isArray(env?.lines) ? env.lines : [], start: env?.start ?? 0, size: env?.size ?? 0 }
   },
   // Start a brand-new agent session in `cwd`. Returns the new session id plus the
   // transcript path, which the thread screen opens directly.
@@ -558,33 +538,31 @@ export const api = {
   fsDelete: (scope: FsScope, body: { path: string }) =>
     req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", { ...body, ...scope }),
 
-  // Upload a file to `dir` via multipart/form-data. RN's FormData takes a
-  // { uri, name, type } object for a file part; the server parses the
-  // multipart body into (filename, bytes) — see _p_fs_upload.
+  // Upload a local file into `dir` as one multipart part; the server parses
+  // the body into (filename, bytes) — see _p_fs_upload. Returns the server's
+  // reply (`uploaded` holds the absolute paths written).
   fsUpload: async (scope: FsScope, dir: string, uri: string, name: string, mime?: string) => {
-    if (!serverUrl()) throw new Error("No server configured")
-    const form = new FormData()
-    // @ts-expect-error RN FormData accepts the {uri,name,type} file shape.
-    form.append("file", { uri, name, type: mime || "application/octet-stream" })
     const q = new URLSearchParams({ path: dir, ...scope })
-    const res = await fetch(`${serverUrl()}/api/fs/upload?${q.toString()}`, {
-      method: "POST",
-      // NOTE: do NOT set Content-Type — fetch adds the multipart boundary itself.
-      headers: authHeaders(),
-      body: form,
+    const res = await serverUpload(`/api/fs/upload?${q.toString()}`, {
+      uri,
+      name,
+      type: mime || "application/octet-stream",
+      field: "file",
     })
-    const data = (await res.json().catch(() => null)) as { uploaded?: unknown[]; error?: string } | null
+    let data: { uploaded?: unknown[]; error?: string } | null = null
+    try {
+      data = JSON.parse(await res.text())
+    } catch {
+      /* not JSON */
+    }
     if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`)
     return data
   },
 
-  // The authed URL for downloading a file. RN's fetch/FileSystem can pass the
-  // Bearer header (a browser <a> can't), so we return the URL + headers for
-  // FileSystem.downloadAsync to save it to disk, then share it.
-  fsDownloadUrl: (scope: FsScope, path: string): { url: string; headers: Record<string, string> } => {
-    const q = new URLSearchParams({ path, ...scope })
-    return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
-  },
+  // Save a file to `dest` on this phone (to share it onward). Resolves the HTTP
+  // status; on an error status `dest` holds the server's JSON error body.
+  fsDownload: (scope: FsScope, path: string, dest: string): Promise<number> =>
+    serverDownload(`/api/fs/download?${new URLSearchParams({ path, ...scope }).toString()}`, dest),
 
   // ---- cloud drives (the Files tab's third location) ----
   // Every drive the location picker can offer (sanitized — no tokens) plus the
@@ -615,22 +593,16 @@ export const api = {
     req<DriveClientList & { error?: string }>("POST", "/api/drive/clients/delete", { kind }),
 
   // ---- voice (call listening + text-to-speech) ----
-  // Streaming TTS URL for react-native-track-player: a GET that returns a live
-  // AAC stream (Pocket generate_audio_stream -> ffmpeg). track-player plays the
-  // URL and can send the Authorization header, so first audio arrives in ~0.5s
-  // even for a long reply. Returns { url, headers } for TrackPlayer.add().
-  voiceTtsStreamUrl: (text: string): { url: string; headers: Record<string, string> } => ({
-    url: `${serverUrl()}/api/voice/tts/stream?text=${encodeURIComponent(text)}`,
-    headers: authHeaders(),
-  }),
-  // Call listening WebSocket. The app streams endpointed utterances (binary
+  // Spoken text as an AAC stream (Pocket generate_audio_stream -> ffmpeg).
+  // Direct, track-player streams the URL (first audio in ~0.5s even for a
+  // long reply); through the relay it is fetched into `dest` first.
+  voiceTts: (text: string, dest: string) =>
+    serverMedia(`/api/voice/tts/stream?text=${encodeURIComponent(text)}`, dest),
+  // Call listening socket. The app streams endpointed utterances (binary
   // frames); the server transcribes each on the GPU box and pushes back
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
-  // signal, so there is no per-turn wake word. Auth rides the handshake header.
-  voiceWsUrl: (): { url: string; headers: Record<string, string> } => ({
-    url: `${serverUrl().replace(/^http/, "ws")}/api/voice/ws?mode=call`,
-    headers: authHeaders(),
-  }),
+  // signal, so there is no per-turn wake word.
+  voiceSocket: () => serverSocket("/api/voice/ws?mode=call"),
 
   // ---- Nemotron voicechat (call audio, turn-based) ----
   // GET /api/voice/nemotron/status -> the GPU service's /health passed through
@@ -639,26 +611,18 @@ export const api = {
   // while idle is EXPECTED (the model loads per call). Consulted only AFTER
   // callEngine chose "nemotron" — it never decides the engine.
   nemotronStatus: () => req<NemotronStatus>("GET", "/api/voice/nemotron/status"),
-  // The one Nemotron call WS for a session. Same auth pattern as voiceWsUrl:
-  // Bearer token on the handshake header (RN's WebSocket 3rd-arg), never a
-  // query param. `kind:"ready"` arrives once the model loaded for this call —
-  // never send audio before it. Binary replies precede their turn_end frame.
-  nemotronWsUrl: (path: string): { url: string; headers: Record<string, string> } => ({
-    url: `${serverUrl().replace(/^http/, "ws")}/api/voice/nemotron/ws?path=${encodeURIComponent(path)}`,
-    headers: authHeaders(),
-  }),
+  // The one Nemotron call socket for a session. `kind:"ready"` arrives once
+  // the model loaded for this call — never send audio before it. Binary
+  // replies precede their turn_end frame.
+  nemotronSocket: (path: string) => serverSocket(`/api/voice/nemotron/ws?path=${encodeURIComponent(path)}`),
 
-  // Barge-in wake-guard WS: a lightweight keyword-spotting stream that runs WHILE
-  // the assistant is speaking. The server uses a cheap KWS pass (not full STT) so
-  // it can loop continuously; it fires only when the wake word "Harman" is heard,
-  // returning the transcript tail for command parsing (stop / end / new question).
-  voiceWakeguardWsUrl: (speakerId = "default"): { url: string; headers: Record<string, string> } => {
-    const base = serverUrl().replace(/^http/, "ws")
-    return {
-      url: `${base}/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}&mode=wakeguard`,
-      headers: authHeaders(),
-    }
-  },
+  // Barge-in wake-guard socket: a lightweight keyword-spotting stream that runs
+  // WHILE the assistant is speaking. The server uses a cheap KWS pass (not full
+  // STT) so it can loop continuously; it fires only when the wake word "Harman"
+  // is heard, returning the transcript tail for command parsing (stop / end /
+  // new question).
+  voiceWakeguardSocket: (speakerId = "default") =>
+    serverSocket(`/api/voice/ws?speaker_id=${encodeURIComponent(speakerId)}&mode=wakeguard`),
 
   // ---- host management ----
   hostsSave: (cfg: {
@@ -681,18 +645,13 @@ export const api = {
       `/api/commands${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
     ),
 
-  // ---- terminal WS ----
+  // ---- terminal socket ----
   // Mirrors web/ TerminalPanel: binary output, JSON `{t:"i",d}` input,
-  // `{t:"r",cols,rows}` resize. Auth: RN's WebSocket can send an Authorization
-  // header (unlike a browser), so the token rides the handshake — see
-  // TerminalScreen. `local` host is implied by omitting the param.
-  terminalWsUrl: (opts: { cols: number; rows: number; host?: string; key?: string; init?: string }) => {
-    const base = serverUrl().replace(/^http/, "ws")
+  // `{t:"r",cols,rows}` resize. `local` host is implied by omitting the param.
+  terminalSocket: (opts: { cols: number; rows: number; host?: string }) => {
     const p = new URLSearchParams({ cols: String(opts.cols), rows: String(opts.rows) })
     if (opts.host && opts.host !== "local") p.set("host", opts.host)
-    if (opts.key) p.set("key", opts.key)
-    if (opts.init) p.set("init", opts.init)
-    return `${base}/api/terminal/ws?${p.toString()}`
+    return serverSocket(`/api/terminal/ws?${p.toString()}`)
   },
 
   // ---- org / Kanban (the "empire") ----

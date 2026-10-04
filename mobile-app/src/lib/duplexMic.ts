@@ -15,6 +15,7 @@
  */
 import { HarmanAudio, type HarmanAudioFrame } from "../../modules/harman-audio/src"
 import { api } from "../api/client"
+import { fromBase64 } from "./bytes"
 
 export interface WakeguardEvent {
   /** true when the wake word "Harman" was detected in this window. */
@@ -69,12 +70,7 @@ export async function startWakeguard(
   opts: { speakerId?: string; onSpeechChange?: (speaking: boolean) => void } = {}
 ): Promise<DuplexMic> {
   const speakerId = opts.speakerId ?? "default"
-  const { url, headers } = api.voiceWakeguardWsUrl(speakerId)
-
-  const WS = WebSocket as unknown as {
-    new (url: string, protocols: undefined, options: { headers: Record<string, string> }): WebSocket
-  }
-  const ws = new WS(url, undefined, { headers })
+  const ws = api.voiceWakeguardSocket(speakerId)
 
   let stopped = false
   let pcmChunks: Uint8Array[] = []
@@ -83,7 +79,7 @@ export async function startWakeguard(
   const windowBytes = Math.floor((SAMPLE_RATE * 2 * WINDOW_MS) / 1000) // 16-bit mono
 
   const flush = () => {
-    if (stopped || ws.readyState !== WebSocket.OPEN || pcmBytes === 0) return
+    if (stopped || ws.readyState !== 1 /* OPEN */ || pcmBytes === 0) return
     const pcm = concat(pcmChunks, pcmBytes)
     pcmChunks = []
     pcmBytes = 0
@@ -96,7 +92,7 @@ export async function startWakeguard(
 
   const frameSub = HarmanAudio.addFrameListener((f: HarmanAudioFrame) => {
     if (stopped) return
-    const bytes = base64ToBytes(f.pcm)
+    const bytes = fromBase64(f.pcm)
     // Per-frame energy → duck the moment the user starts talking (well before the
     // 900ms window ships and the server recognizes the wake word). Hysteresis
     // avoids flicker at the threshold.
@@ -115,7 +111,7 @@ export async function startWakeguard(
     if (pcmBytes >= windowBytes) flush()
   })
 
-  ws.onmessage = (ev: WebSocketMessageEvent) => {
+  ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(String(ev.data)) as { type?: string; text?: string }
       // Server sends {type:"wake", text:tail} on a hit, {type:"idle"} otherwise.
@@ -186,10 +182,3 @@ function wavFromPcm16(pcm: Uint8Array, sampleRate: number): ArrayBuffer {
   return buf
 }
 
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = typeof atob === "function" ? atob(b64) : ""
-  const len = bin.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes
-}

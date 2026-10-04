@@ -19,6 +19,7 @@ import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"
 import { api } from "../api/client"
 import { audioSession } from "./audioSessionNative"
+import { fromBase64, toArrayBuffer } from "./bytes"
 import {
   endpointVerdict,
   observeFrame,
@@ -42,6 +43,9 @@ async function resetRecorder(): Promise<void> {
 // stays below this never contained speech, so it is dropped without an upload —
 // that's what cuts the battery cost of always-listening at rest. -45 is
 // conservative but still catches room-level speech.
+/** WebSocket.OPEN, for the app socket (which carries no static constants). */
+const OPEN = 1
+
 const VAD_FLOOR_DB = -45
 
 /** Recording options with metering enabled so each frame reports a dB level for
@@ -120,7 +124,7 @@ export async function recordUtterance(): Promise<Utterance> {
     const b64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     })
-    return { buf: _base64ToArrayBuffer(b64), silent: false }
+    return { buf: toArrayBuffer(fromBase64(b64)), silent: false }
   } catch {
     return { buf: null, silent: false }
   } finally {
@@ -128,29 +132,6 @@ export async function recordUtterance(): Promise<Utterance> {
   }
 }
 
-
-/** Decode a base64 string to an ArrayBuffer (atob is available in the RN/Hermes
- *  runtime; falls back to a manual decode if not). */
-function _base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = typeof atob === "function" ? atob(b64) : _atobPolyfill(b64)
-  const len = bin.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes.buffer
-}
-
-const _B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-function _atobPolyfill(input: string): string {
-  const str = input.replace(/=+$/, "")
-  let out = ""
-  for (let bc = 0, bs = 0, buffer, i = 0; (buffer = str.charAt(i++)); ) {
-    const idx = _B64.indexOf(buffer)
-    if (idx === -1) continue
-    bs = bc % 4 ? bs * 64 + idx : idx
-    if (bc++ % 4) out += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)))
-  }
-  return out
-}
 
 /** A parsed message from the hands-free WS. */
 export type ListenEvent =
@@ -173,16 +154,9 @@ let _listenStop: (() => void) | null = null
  */
 export async function startListening(onEvent: (e: ListenEvent) => void): Promise<() => void> {
   await stopListening() // never run two loops at once
-  const { url, headers } = api.voiceWsUrl()
+  const ws = api.voiceSocket()
 
   let stopped = false
-  // RN's WebSocket runtime accepts a 3rd `options` arg carrying request headers
-  // (so the Bearer token rides the handshake, like the terminal WS) — but the TS
-  // lib types only declare (url, protocols). Cast the constructor to add it.
-  const WS = WebSocket as unknown as {
-    new (url: string, protocols: undefined, options: { headers: Record<string, string> }): WebSocket
-  }
-  const ws = new WS(url, undefined, { headers })
 
   const stop = () => {
     if (stopped) return
@@ -197,7 +171,7 @@ export async function startListening(onEvent: (e: ListenEvent) => void): Promise
   }
   _listenStop = stop
 
-  ws.onmessage = (ev: WebSocketMessageEvent) => {
+  ws.onmessage = (ev) => {
     try {
       onEvent(JSON.parse(String(ev.data)) as ListenEvent)
     } catch {
@@ -214,14 +188,14 @@ export async function startListening(onEvent: (e: ListenEvent) => void): Promise
   // ends on a natural pause), send it, repeat. audioSession serializes each record,
   // which naturally paces the stream.
   ws.onopen = async () => {
-    while (!stopped && ws.readyState === WebSocket.OPEN) {
+    while (!stopped && ws.readyState === OPEN) {
       let res: Utterance = { buf: null, silent: false }
       try {
         res = await recordUtterance()
       } catch {
         res = { buf: null, silent: false }
       }
-      if (stopped || ws.readyState !== WebSocket.OPEN) break
+      if (stopped || ws.readyState !== OPEN) break
       // On-device endpointer: a silent window is dropped here — no upload, no server STT.
       if (res.silent) continue
       if (res.buf && res.buf.byteLength > 0) {
@@ -244,15 +218,21 @@ export async function stopListening(): Promise<void> {
 }
 
 /**
- * Speak `text` by STREAMING it through the session owner: track-player plays the
- * viewer's live AAC stream (Pocket generate_audio_stream -> ffmpeg), so the first
- * audio arrives in ~0.5s. Resolves when playback finishes AND the session has been
- * released — so a following recording sees a free session.
+ * Speak `text` through the session owner. Direct, track-player STREAMS the
+ * viewer's live AAC (Pocket generate_audio_stream -> ffmpeg), so the first audio
+ * arrives in ~0.5s; through the relay the whole clip is fetched first. Resolves
+ * when playback finishes AND the session has been released — so a following
+ * recording sees a free session.
  */
 export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
-  const { url, headers } = api.voiceTtsStreamUrl(text)
-  await audioSession.play(url, headers)
+  const dest = `${FileSystem.cacheDirectory}tts-${Date.now()}-${Math.random().toString(36).slice(2)}.aac`
+  const src = await api.voiceTts(text, dest)
+  try {
+    await audioSession.play(src.url, src.headers)
+  } finally {
+    if (src.file) FileSystem.deleteAsync(src.url, { idempotent: true }).catch(() => {})
+  }
 }
 
 /** Play an already-persisted reply file (a Nemotron turn's WAV) to completion

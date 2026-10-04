@@ -296,9 +296,8 @@ export function useAssistantTurn(
       setPhase("idle")
     }
     setPhase("connecting")
-    const { url, headers } = api.nemotronWsUrl(path!)
     try {
-      await call.connect(url, headers)
+      await call.connect(path!)
     } catch {
       return // onDown already reported the reason
     }

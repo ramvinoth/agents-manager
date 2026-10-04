@@ -41,10 +41,11 @@ test("permission client uses existing authority endpoints and canonical target",
   const source=readFileSync(resolve(dirname(process.argv[1]),"../api/client.ts"),"utf8")
   const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
   const exports:any={}
-  const modules:Record<string,any>={"../state/config":{serverUrl:()=>"https://fixture.invalid",token:()=>"test"},"../lib/model":{},"../lib/audit":{}}
-  new Function("require","exports","fetch",js)((name:string)=>modules[name],exports,async(url:string,options:any)=>{
-    calls.push({url,...options});return {ok:true,text:async()=>"{}"}
-  })
+  const serverFetch=async(method:string,path:string,_headers:any,body?:string)=>{
+    calls.push({url:"https://fixture.invalid"+path,method,body});return {ok:true,status:200,text:async()=>"{}"}
+  }
+  const modules:Record<string,any>={"./transport":{serverFetch},"../lib/model":{},"../lib/audit":{}}
+  new Function("require","exports",js)((name:string)=>modules[name],exports)
   await exports.api.sessionDetail("remote", "p/session-1.jsonl")
   await exports.api.sessionModeSet("session-1","bypass")
   const url=new URL(calls[0].url)
