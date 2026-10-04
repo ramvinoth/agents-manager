@@ -4,7 +4,6 @@ import * as DocumentPicker from "expo-document-picker"
 import * as ImagePicker from "expo-image-picker"
 import * as FileSystem from "expo-file-system"
 import * as Sharing from "expo-sharing"
-import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Drive, type FileEntry } from "../api/client"
@@ -14,8 +13,8 @@ import {
   type NavHistory,
 } from "../lib/files"
 import { HOST_LOCATION, START_PATH, describeLocation, fsScope, isLiveLocation, type Location } from "../lib/location"
-import { currentHost } from "../state/config"
-import { HostHeaderButton } from "../components/HostPicker"
+import { useHost } from "../lib/useHost"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
@@ -26,7 +25,7 @@ type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof R
 /**
  * Files tab: a location-aware file browser with upload / download / delete.
  * The files come from one of two places: the *current* host (shared state,
- * driven by the top-left HostPicker) or a cloud drive chosen here via the
+ * picked under Profile → Machine) or a cloud drive chosen here via the
  * top-right LocationPicker. Either change re-roots to the start folder. Tap a
  * folder to descend; tap a file to download+share; long-press any row for
  * delete. Back/forward history + on-screen nav buttons + edge-swipe navigation
@@ -35,8 +34,7 @@ type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof R
 export default function FilesTab({ navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
-  const [host, setHost] = useState(currentHost())
-  const [hostLabel, setHostLabel] = useState("This machine")
+  const { host, label: hostLabel } = useHost()
   const [location, setLocation] = useState<Location>(HOST_LOCATION)
   const [drives, setDrives] = useState<Drive[]>([])
   const [locOpen, setLocOpen] = useState(false)
@@ -137,31 +135,6 @@ export default function FilesTab({ navigation }: Props) {
       },
     })
   ).current
-
-  // Resolve the current host's friendly label (for the Terminal header title),
-  // mirroring HostHeaderButton. Local is a fixed name; SSH hosts come from the list.
-  useEffect(() => {
-    let cancelled = false
-    if (host === "local") {
-      setHostLabel("This machine")
-      return
-    }
-    api
-      .hosts()
-      .then((r) => !cancelled && setHostLabel(r.find((h) => h.id === host)?.label || host))
-      .catch(() => !cancelled && setHostLabel(host))
-    return () => {
-      cancelled = true
-    }
-  }, [host])
-
-  // Sync host when this tab gains focus (host may have changed on another tab).
-  useFocusEffect(
-    useCallback(() => {
-      const h = currentHost()
-      setHost((prev) => (prev === h ? prev : h))
-    }, [])
-  )
 
   async function doUploadPhoto() {
     const res = await ImagePicker.launchImageLibraryAsync({ quality: 1 })
@@ -269,50 +242,31 @@ export default function FilesTab({ navigation }: Props) {
     ])
   }
 
-  // Re-assert this tab's header on FOCUS: swipeable tabs share one parent-stack
-  // header and stay mounted, so setting it only on mount lets a sibling tab's
-  // header linger. Files owns the location chip + new-folder + upload actions;
-  // the terminal is a host thing, so it hides while a drive is selected.
+  // The header carries only the location chip + terminal (the terminal is a host
+  // thing, so it hides on a drive). New-folder/upload act on the current folder,
+  // so they sit in the folder toolbar below — four header icons overflowed the
+  // iOS header pill and clipped upload off-screen.
   const onDrive = location !== HOST_LOCATION
-  useFocusEffect(
-    useCallback(() => {
-      navigation.setOptions({
-        headerLeft: () => <HostHeaderButton navigation={navigation} />,
-        headerRight: () => (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 4 }}>
-            <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
-            {onDrive ? null : (
-              <TouchableOpacity
-                testID="files-terminal"
-                accessibilityLabel="open-terminal"
-                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
-                hitSlop={8}
-                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-              >
-                <Icon name="terminal" size={21} color={t.accent} />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              testID="files-newfolder"
-              onPress={promptNewFolder}
-              hitSlop={8}
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-            >
-              <Icon name="folderPlus" size={22} color={t.accent} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="files-upload"
-              onPress={promptUpload}
-              hitSlop={8}
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-            >
-              <Icon name="upload" size={22} color={t.accent} />
-            </TouchableOpacity>
-          </View>
-        ),
-      })
-    }, [navigation, t, path, host, hostLabel, location, drives]) // eslint-disable-line react-hooks/exhaustive-deps
-  )
+  useScreenHeader(navigation, () => ({
+    title: "Files",
+    headerLeft: () => null,
+    headerRight: () => (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 4 }}>
+        <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
+        {onDrive ? null : (
+          <TouchableOpacity
+            testID="files-terminal"
+            accessibilityLabel="open-terminal"
+            onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
+            hitSlop={8}
+            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
+          >
+            <Icon name="terminal" size={21} color={t.accent} />
+          </TouchableOpacity>
+        )}
+      </View>
+    ),
+  }), [t, host, hostLabel, location, drives])
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }} {...pan.panHandlers}>
@@ -331,6 +285,22 @@ export default function FilesTab({ navigation }: Props) {
         <Text style={[styles.fsPath, { flex: 1, marginLeft: 4 }]} numberOfLines={1}>
           {onDrive ? `${describeLocation(location, drives, hostLabel)}: ${path}` : path}
         </Text>
+        <TouchableOpacity
+          testID="files-newfolder"
+          onPress={promptNewFolder}
+          hitSlop={8}
+          style={{ padding: 6 }}
+        >
+          <Icon name="folderPlus" size={22} color={t.accent} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="files-upload"
+          onPress={promptUpload}
+          hitSlop={8}
+          style={{ padding: 6 }}
+        >
+          <Icon name="upload" size={22} color={t.accent} />
+        </TouchableOpacity>
       </View>
       <LocationPicker
         visible={locOpen}

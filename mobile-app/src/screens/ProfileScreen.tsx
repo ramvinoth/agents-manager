@@ -5,7 +5,6 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
 import {
-  currentHost,
   notifyEveryReply,
   serverUrl,
   setNotifyEveryReply,
@@ -22,6 +21,9 @@ import Icon from "../components/Icon"
 import ProviderPicker from "../components/ProviderPicker"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import ServerPicker from "../components/ServerPicker"
+import HostPicker from "../components/HostPicker"
+import { useHost } from "../lib/useHost"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
@@ -83,7 +85,8 @@ export default function ProfileScreen({ navigation }: Props) {
   const [aiErr, setAIErr] = useState("")
   const [aiOpen, setAIOpen] = useState(false)
   const [providers, setProviders] = useState<Provider[]>([])
-  const host = currentHost()
+  const { host, label: hostLabel } = useHost()
+  const [hostOpen, setHostOpen] = useState(false)
   useFocusEffect(useCallback(() => {
     let alive = true
     setAIConfig(null); setAIErr(""); setAIOpen(false)
@@ -104,28 +107,22 @@ export default function ProfileScreen({ navigation }: Props) {
     setThemePref(next)
   }, [])
 
-  // Own the shared parent-stack header on focus: Profile has no host picker on
-  // the left, and a theme toggle on the right. Explicitly clearing headerLeft
-  // stops the host button from a sibling tab lingering here.
-  useFocusEffect(
-    useCallback(() => {
-      navigation.setOptions({
-        title: "Profile",
-        headerLeft: () => null,
-        headerRight: () => (
-          <TouchableOpacity
-            testID="theme-toggle"
-            accessibilityLabel="toggle-theme"
-            onPress={cycleTheme}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4 }}
-          >
-            <Icon name={dark ? "moon" : "sun"} size={22} color={t.accent} />
-          </TouchableOpacity>
-        ),
-      })
-    }, [navigation, cycleTheme, dark, t])
-  )
+  // Profile's header: a theme toggle on the right.
+  useScreenHeader(navigation, () => ({
+    title: "Profile",
+    headerLeft: () => null,
+    headerRight: () => (
+      <TouchableOpacity
+        testID="theme-toggle"
+        accessibilityLabel="toggle-theme"
+        onPress={cycleTheme}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4 }}
+      >
+        <Icon name={dark ? "moon" : "sun"} size={22} color={t.accent} />
+      </TouchableOpacity>
+    ),
+  }), [cycleTheme, dark, t])
 
   async function signOut() {
     // Stop background pushes to this device before dropping the token.
@@ -436,6 +433,20 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
       <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />
+      {/* The machine chats/files/terminal work on. A setting you rarely change,
+          so it lives here — not as a permanent label eating every tab header. */}
+      <TouchableOpacity
+        testID="open-host-picker"
+        style={styles.profileInfoRow}
+        onPress={() => setHostOpen(true)}
+      >
+        <Text style={styles.profileInfoLabel}>Machine</Text>
+        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1 }]} numberOfLines={1}>
+          {hostLabel}
+        </Text>
+        <Icon name="chevronRight" size={18} color={t.textMuted} />
+      </TouchableOpacity>
+      <HostPicker visible={hostOpen} onClose={() => setHostOpen(false)} navigation={navigation} />
 
       <TouchableOpacity
         testID="sign-out"

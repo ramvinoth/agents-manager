@@ -24,7 +24,7 @@ import type { RootStackParamList } from "../../App"
 import { api, type AgentTemplate } from "../api/client"
 import BUILTIN_TEMPLATES, { TEMPLATE_CATEGORIES } from "../lib/builtinTemplates"
 import { useTheme } from "../lib/useTheme"
-import { HostHeaderButton } from "../components/HostPicker"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import Icon, { type IconName } from "../components/Icon"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
@@ -52,16 +52,8 @@ export default function AgentsScreen({ navigation }: Props) {
       .finally(() => setRefreshing(false))
   }, [])
 
-  useFocusEffect(
-    useCallback(() => {
-      navigation.setOptions({
-        title: "Agents",
-        headerLeft: () => <HostHeaderButton navigation={navigation} />,
-        headerRight: () => null,
-      })
-      load()
-    }, [navigation, load])
-  )
+  useScreenHeader(navigation, () => ({ title: "Agents", headerLeft: () => null, headerRight: () => null }), [])
+  useFocusEffect(useCallback(() => { load() }, [load]))
 
   const filtered = category === "all" ? templates : templates.filter((t) => t.category === category)
 

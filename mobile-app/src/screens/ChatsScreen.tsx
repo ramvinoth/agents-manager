@@ -4,16 +4,14 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
-import {
-  currentHost,
-  setToken,
-} from "../state/config"
+import { setToken } from "../state/config"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
-import { HostHeaderButton } from "../components/HostPicker"
+import { useHost } from "../lib/useHost"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
 
 // Chats lives inside the bottom-tab navigator, which itself is nested in the
@@ -42,7 +40,7 @@ export default function ChatsScreen({ navigation }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-  const [host, setHostState] = useState(currentHost())
+  const { host, label: hostLabel } = useHost()
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<"all" | "unread" | "favorites" | "projects">("all")
   const [showArchived, setShowArchived] = useState(false)
@@ -56,7 +54,6 @@ export default function ChatsScreen({ navigation }: Props) {
   const [harmanBusy, setHarmanBusy] = useState(false)
   const t = useTheme()
   const styles = useStyles()
-  const hostLabel = host === "local" ? "This machine" : host
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
@@ -204,14 +201,11 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
-  // These are swipeable tabs that all share ONE parent-stack header and stay
-  // mounted together, so the header must be re-asserted on FOCUS (not just on
-  // mount) — otherwise it keeps whatever the previously-focused tab last set.
-  // Chats shows a "+" that starts a new session.
-  useFocusEffect(
-    useCallback(() => {
-      if (selecting) {
-        navigation.setOptions({
+  // Chats shows a "+" that starts a new session; selection mode swaps in
+  // close + bulk delete.
+  useScreenHeader(navigation, () =>
+    selecting
+      ? {
           title: `${selected.size} selected`,
           headerLeft: () => (
             <TouchableOpacity
@@ -233,42 +227,37 @@ export default function ChatsScreen({ navigation }: Props) {
               <Icon name="trash" size={21} color={t.danger} />
             </TouchableOpacity>
           ),
-        })
-        return
-      }
-      navigation.setOptions({
-        title: "Chats",
-        headerLeft: () => <HostHeaderButton navigation={navigation} />,
-        headerRight: () => (
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <TouchableOpacity
-              testID="chats-terminal"
-              onPress={() =>
-                navigation.navigate("Terminal", { host, label: host === "local" ? "This machine" : host })
-              }
-              accessibilityLabel="open-terminal"
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-            >
-              <Icon name="terminal" size={21} color={t.accent} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="new-chat-button"
-              onPress={() => navigation.navigate("NewChat")}
-              accessibilityLabel="new-chat"
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              // Fixed, centered 32pt box so the glyph sits dead-center inside iOS's
-              // header (and the iOS-26 "glass" tap enclosure) instead of being
-              // baseline-aligned hard against the trailing edge.
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4 }}
-            >
-              <Icon name="add" size={24} color={t.accent} />
-            </TouchableOpacity>
-          </View>
-        ),
-      })
-    }, [navigation, t, selecting, selected])
-  )
+        }
+      : {
+          title: "Chats",
+          headerLeft: () => null,
+          headerRight: () => (
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <TouchableOpacity
+                testID="chats-terminal"
+                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
+                accessibilityLabel="open-terminal"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
+              >
+                <Icon name="terminal" size={21} color={t.accent} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="new-chat-button"
+                onPress={() => navigation.navigate("NewChat")}
+                accessibilityLabel="new-chat"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                // Fixed, centered 32pt box so the glyph sits dead-center inside iOS's
+                // header (and the iOS-26 "glass" tap enclosure) instead of being
+                // baseline-aligned hard against the trailing edge.
+                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4 }}
+              >
+                <Icon name="add" size={24} color={t.accent} />
+              </TouchableOpacity>
+            </View>
+          ),
+        },
+    [t, selecting, selected, host, hostLabel])
 
   const load = useCallback(
     async (silent = false) => {

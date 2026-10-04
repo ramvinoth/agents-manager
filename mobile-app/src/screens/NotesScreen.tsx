@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Note, type NoteFilter } from "../api/client"
@@ -76,18 +77,16 @@ export default function NotesScreen({ navigation, filter, title, isTab }: Props)
 
   // The shared stack header: a pushed (scoped) view gets its title; the tab
   // re-asserts its own header on focus (sibling tabs share the header).
-  useFocusEffect(useCallback(() => {
-    navigation.setOptions({
-      title: title || "Notes",
-      headerLeft: isTab ? () => null : undefined,
-      headerRight: () => (
-        <TouchableOpacity testID="notes-add" accessibilityLabel="new-note" onPress={() => setPicking(true)} hitSlop={8}
-          style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
-          <Icon name="add" size={22} color={t.accent} />
-        </TouchableOpacity>
-      ),
-    })
-  }, [navigation, title, isTab, t.accent]))
+  useScreenHeader(navigation, () => ({
+    title: title || "Notes",
+    headerLeft: isTab ? () => null : undefined,
+    headerRight: () => (
+      <TouchableOpacity testID="notes-add" accessibilityLabel="new-note" onPress={() => setPicking(true)} hitSlop={8}
+        style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+        <Icon name="add" size={22} color={t.accent} />
+      </TouchableOpacity>
+    ),
+  }), [title, isTab, t.accent])
 
   const shown = useMemo(() => orderNotes(searchNotes(notes, query)), [notes, query])
 

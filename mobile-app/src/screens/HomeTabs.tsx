@@ -74,6 +74,10 @@ export default function HomeTabs({ navigation }: Props) {
       tabBarPosition="bottom"
       screenOptions={({ route }) => ({
         swipeEnabled: true,
+        // A stable handle for tests and a clean VoiceOver name: the icon+label
+        // column otherwise reads as " Inbox  Inbox".
+        tabBarTestID: `tab-${route.name}`,
+        tabBarAccessibilityLabel: route.name,
         tabBarActiveTintColor: t.accent,
         tabBarInactiveTintColor: t.textMuted,
         tabBarShowIcon: true,

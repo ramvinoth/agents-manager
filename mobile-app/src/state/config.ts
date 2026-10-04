@@ -70,6 +70,17 @@ function notifyServer() {
   _serverListeners.forEach((fn) => fn())
 }
 
+// Pub-sub for the active machine (host), so every host-scoped screen — Chats,
+// Files, the Profile row — re-roots the moment it changes, wherever it changed.
+const _hostListeners = new Set<() => void>()
+export function subscribeHost(fn: () => void): () => void {
+  _hostListeners.add(fn)
+  return () => _hostListeners.delete(fn)
+}
+function notifyHost() {
+  _hostListeners.forEach((fn) => fn())
+}
+
 // Persist the whole server list (best-effort). In-memory state is the source of
 // truth for the session, so a keychain failure never breaks the running app.
 async function persistServers() {
@@ -143,6 +154,7 @@ export function currentHost(): string {
 
 export async function setCurrentHost(h: string): Promise<void> {
   _host = h || "local"
+  notifyHost()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)
   } catch {
@@ -193,6 +205,7 @@ export async function addServer(url: string, name?: string): Promise<ServerEntry
 export async function switchServer(id: string): Promise<void> {
   _servers = switchInList(_servers, id)
   _host = "local"
+  notifyHost()
   await persistServers()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)

@@ -11,6 +11,7 @@ import {
   orderInbox, replyTo, rowActor, searchInbox,
 } from "../lib/inbox"
 import { fmtWaiting } from "../lib/decisions"
+import { useScreenHeader } from "../lib/useScreenHeader"
 import { currentHost, setToken } from "../state/config"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
@@ -99,13 +100,14 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
   // re-asserts its own on focus (sibling tabs share the header). The unread
   // count rides in the title so Ram sees "how many wait on me" at a glance —
   // the same number the tab badge shows.
-  useFocusEffect(useCallback(() => {
+  useScreenHeader(navigation, () => {
     const base = title || (filter?.session ? "Chat inbox" : "Inbox")
-    navigation.setOptions({
+    return {
       title: unread > 0 ? `${base} (${unread})` : base,
       headerLeft: isTab ? () => null : undefined,
-    })
-  }, [navigation, title, filter?.session, isTab, unread]))
+      headerRight: () => null,
+    }
+  }, [title, filter?.session, isTab, unread])
 
   // The tab's composer needs a target to message: this host's chats, chips.
   useEffect(() => {
