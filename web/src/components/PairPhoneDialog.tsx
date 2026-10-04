@@ -8,7 +8,8 @@ import { api } from "@/lib/api"
 import { buildPairLink, unreachableReason } from "@/lib/pairLink"
 
 // The address a phone uses can differ from the one this tab is on (localhost on
-// the box itself), so it is editable and remembered per browser.
+// the box itself). Precedence: what the user typed here (remembered per browser)
+// > the server's configured public address (HARMAN_PUBLIC_URL) > this tab's origin.
 const URL_KEY = "pairServerUrl"
 
 /**
@@ -18,7 +19,9 @@ const URL_KEY = "pairServerUrl"
  * five minutes; the dialog counts down and offers a fresh one.
  */
 export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
-  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem(URL_KEY) || window.location.origin)
+  const [typedUrl, setTypedUrl] = useState(() => localStorage.getItem(URL_KEY) || "")
+  const [publicUrl, setPublicUrl] = useState("")
+  const serverUrl = typedUrl || publicUrl || window.location.origin
   const [code, setCode] = useState<{ code: string; expiresAt: number } | null>(null)
   const [error, setError] = useState("")
   const [now, setNow] = useState(() => Date.now() / 1000)
@@ -27,7 +30,13 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
   const mint = useCallback(() => {
     setError("")
     setCode(null)
-    api.pairStart().then(setCode, (e: Error) => setError(e.message))
+    api.pairStart().then(
+      (r) => {
+        setCode(r)
+        setPublicUrl(r.publicUrl || "")
+      },
+      (e: Error) => setError(e.message)
+    )
   }, [])
   useEffect(mint, [mint])
   useEffect(() => {
@@ -43,9 +52,11 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
     [link]
   )
 
+  // Clearing the field drops the override, so the server's address applies again.
   function saveUrl(v: string) {
-    setServerUrl(v)
-    localStorage.setItem(URL_KEY, v.trim())
+    setTypedUrl(v)
+    if (v.trim()) localStorage.setItem(URL_KEY, v.trim())
+    else localStorage.removeItem(URL_KEY)
   }
 
   return (

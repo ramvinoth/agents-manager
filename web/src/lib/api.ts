@@ -636,7 +636,7 @@ class ApiClient {
   }
   /** One-time code a phone redeems by scanning the Pair-a-phone QR. */
   pairStart() {
-    return this.postStrict<{ code: string; expiresAt: number; ttl: number }>("/api/auth/pair/start")
+    return this.postStrict<{ code: string; expiresAt: number; ttl: number; publicUrl?: string }>("/api/auth/pair/start")
   }
   getPrefs<T = any>() {
     return this.getJSON<T>("/api/prefs")

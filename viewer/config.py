@@ -49,6 +49,10 @@ VIEWER_NO_AUTH = os.environ.get("VIEWER_NO_AUTH") == "1"
 # mid-run" and sweep the settings files its runs are using, and a second
 # scheduler would fire due loops twice.
 VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
+# The address phones use to reach this server from anywhere (e.g. its Cloudflare
+# Tunnel hostname). The Pair-a-phone QR defaults to it, so a customer never has
+# to know or type it. Empty = the QR falls back to the browser's own address.
+PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 
 

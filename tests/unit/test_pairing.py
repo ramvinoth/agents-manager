@@ -71,6 +71,16 @@ def test_start_requires_a_person():
     assert status == 200 and data["ttl"] == pairing.TTL and len(data["code"]) >= 20
 
 
+def test_start_tells_the_qr_the_public_address(monkeypatch):
+    """The QR must carry the address a phone can reach (the tunnel), not the
+    localhost the customer's browser happens to be on."""
+    from viewer.routes import auth
+    monkeypatch.setattr(auth, "PUBLIC_URL", "https://law.suhai.ai")
+    h = _Handler()
+    h._p_auth_pair_start(_Req(APP))
+    assert h.sent[0]["publicUrl"] == "https://law.suhai.ai"
+
+
 def test_redeem_issues_token_for_the_minting_user(monkeypatch):
     monkeypatch.setattr(db, "create_session", lambda uid: f"tok{uid}")
     monkeypatch.setattr(db, "user_for_session", lambda t: {"id": 7, "username": "ram", "role": "owner"})

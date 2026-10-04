@@ -8,6 +8,7 @@ import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
 from viewer import db, hostenv, pairing, setupcode
+from viewer.config import PUBLIC_URL
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
@@ -183,7 +184,8 @@ class AuthMixin:
                            status=400)
             return
         code, expires = pairing.create(p["user"]["id"])
-        self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL})
+        self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
+                        "publicUrl": PUBLIC_URL})
 
     def _p_auth_pair_redeem(self, req):
         """Swap a pairing code for a session token (the scanning phone). Public:
