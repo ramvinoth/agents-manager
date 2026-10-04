@@ -53,6 +53,16 @@ HM_CURRENT="$HM_PREFIX/current"
 # 3.11, and the system python on macOS is 3.9).
 HM_PY_DEPS="psycopg2-binary paramiko PyJWT tomli tomli-w"
 
+# Python deps live in a venv INSIDE each app dir (releases/vX/.venv), never in
+# the system/user site: PEP 668 distros (Ubuntu 24.04+, Homebrew Python) refuse
+# `pip install --user`, and a per-release venv means a rollback also rolls back
+# the deps. The service runs this interpreter through the `current` symlink.
+hm_py() { echo "${1:-$HM_APP_DIR}/.venv/bin/python"; }
+
+# Vite 8 (web build) needs node >= 20.19; distro nodejs is often older
+# (Ubuntu 24.04 ships 18.19). Below this major we install NodeSource's 22.x.
+HM_NODE_MIN_MAJOR=20
+
 hm_log() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 
 # 1. System prerequisites ──────────────────────────────────────────────────────
@@ -62,8 +72,16 @@ hm_deps() {
   elif [[ "$OS" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
     hm_log "Installing system packages via apt (python3, node, postgresql)…"
     sudo apt-get update -qq
-    sudo apt-get install -y python3 python3-pip nodejs npm postgresql
-    pip3 install --user --quiet $HM_PY_DEPS
+    sudo apt-get install -y python3 python3-venv postgresql curl ca-certificates
+    local node_major
+    # `|| true`: callers run under `set -euo pipefail`, and a missing node
+    # (exit 127) must mean "install it", not abort the installer.
+    node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\).*/\1/p' || true)"
+    if [[ -z "$node_major" || "$node_major" -lt "$HM_NODE_MIN_MAJOR" ]]; then
+      hm_log "node ${node_major:-missing} < $HM_NODE_MIN_MAJOR — installing Node.js 22 from NodeSource…"
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+      sudo apt-get install -y nodejs   # NodeSource's nodejs bundles npm
+    fi
   elif [[ "$OS" == "Darwin" ]]; then
     if ! command -v brew >/dev/null 2>&1; then
       echo "Homebrew not found. Install it first: https://brew.sh" >&2; return 1
@@ -71,7 +89,6 @@ hm_deps() {
     hm_log "Installing system packages via Homebrew (python, node, postgresql@16)…"
     brew install python node postgresql@16
     brew services start postgresql@16
-    pip3 install --user --quiet $HM_PY_DEPS
   else
     hm_log "Unknown package manager on $OS — ensure python3/node/psql are present, or use SKIP_DEPS=1."
   fi
@@ -102,10 +119,21 @@ hm_db() {
   fi
 }
 
+# 2b. Python venv for this app dir (idempotent: reuses an existing venv) ──────
+hm_pyenv() {
+  local py; py="$(hm_py)"
+  if [[ ! -x "$py" ]]; then
+    hm_log "Creating Python venv at $HM_APP_DIR/.venv…"
+    python3 -m venv "$HM_APP_DIR/.venv"
+  fi
+  hm_log "Installing Python deps into the venv…"
+  "$py" -m pip install --quiet --disable-pip-version-check $HM_PY_DEPS
+}
+
 # 3. Bootstrap schema + seed data (idempotent) ─────────────────────────────────
 hm_bootstrap() {
   hm_log "Bootstrapping DB tables + seed data…"
-  ( cd "$HM_APP_DIR" && python3 -m viewer.bootstrap )
+  ( cd "$HM_APP_DIR" && "$(hm_py)" -m viewer.bootstrap )
 }
 
 # 4. Build the web UI ──────────────────────────────────────────────────────────
@@ -121,7 +149,7 @@ hm_web_build() {
 hm_service_install() {
   if [[ "$OS" == "Darwin" ]]; then
     local plist="$HOME/Library/LaunchAgents/com.harman.viewer.plist"
-    local python_bin; python_bin="$(command -v python3)"
+    local python_bin; python_bin="$(hm_py "$HM_WORKDIR")"
     hm_log "Installing launchd agent 'com.harman.viewer' (port=$PORT)…"
     mkdir -p "$HOME/Library/LaunchAgents"
     sed \
@@ -141,6 +169,7 @@ hm_service_install() {
     sed \
       -e "s|^User=.*|User=$SERVICE_USER|" \
       -e "s|^WorkingDirectory=.*|WorkingDirectory=$HM_WORKDIR|" \
+      -e "s|^ExecStart=[^ ]*|ExecStart=$(hm_py "$HM_WORKDIR")|" \
       -e "s|server.py 8091|server.py $PORT|" \
       "$HM_REPO_DIR/deploy/$unit_name" | sudo tee "/etc/systemd/system/$unit_name" >/dev/null
     sudo systemctl daemon-reload
@@ -245,8 +274,12 @@ hm_rollback() {
     target="$(ls -1 "$HM_RELEASES" 2>/dev/null | grep -vx "$cur" | sort -V | tail -1)"
   fi
   [[ -n "$target" && -d "$HM_RELEASES/$target" ]] || { echo "no rollback target available" >&2; return 1; }
+  # The service unit runs current/.venv/bin/python, so a release without a venv
+  # (staged before venvs, or a half-provisioned one) would never start.
+  [[ -x "$(hm_py "$HM_RELEASES/$target")" ]] || {
+    echo "refusing rollback: $target has no .venv (never fully provisioned)" >&2; return 1; }
   local tgt_schema db_schema
-  tgt_schema="$(cd "$HM_RELEASES/$target" && python3 -c 'from viewer import db; print(db.SCHEMA_VERSION)' 2>/dev/null || echo 0)"
+  tgt_schema="$(cd "$HM_RELEASES/$target" && "$(hm_py "$HM_RELEASES/$target")" -c 'from viewer import db; print(db.SCHEMA_VERSION)' 2>/dev/null || echo 0)"
   db_schema="$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" 2>/dev/null \
                 | sed -n 's/.*"db_schema"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
   if [[ -n "$db_schema" && "$tgt_schema" -lt "$db_schema" && -z "${HM_FORCE:-}" ]]; then

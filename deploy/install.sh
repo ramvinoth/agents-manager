@@ -29,12 +29,13 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 hm_deps          # 1. system prerequisites
 hm_db            # 2. Postgres `viewer` database
+hm_pyenv         # 2b. Python venv + deps
 hm_bootstrap     # 3. schema + seed data
 hm_web_build     # 4. web UI → web/dist
 
 # 5. Service (survives reboot)
 if [[ -n "${NO_SERVICE:-}" ]]; then
-  hm_log "NO_SERVICE set — skipping service install. Run manually with: python3 server.py $PORT"
+  hm_log "NO_SERVICE set — skipping service install. Run manually with: $(hm_py) server.py $PORT"
   exit 0
 fi
 hm_service_install
