@@ -2,9 +2,14 @@
 #
 # harman — install / update / operate the Harman viewer like a package manager.
 #
-# Installed to /usr/local/bin/harman (OUTSIDE /opt/harman/releases so it survives
-# every release swap). All the actual steps live in deploy/lib.sh, which this
-# sources from the active release — so `harman` and install.sh never drift.
+# /usr/local/bin/harman is a symlink to $HM_PREFIX/current/deploy/harman, made by
+# `install`, so the CLI always matches the release it manages and survives every
+# swap. All the actual steps live in deploy/lib.sh, sourced from beside this
+# script — so `harman` and install.sh never drift.
+#
+# First install on a fresh box (no CLI yet) — run it from the bundle itself:
+#   git clone -q harman-X.Y.Z.bundle /tmp/h && /tmp/h/deploy/harman install \
+#     --from harman-X.Y.Z.bundle --expect-sha <sha>
 #
 # Commands:
 #   harman install --from <bundle> --expect-sha <sha> [<ver>]
@@ -23,7 +28,7 @@ HM_PREFIX="${HM_PREFIX:-/opt/harman}"
 HM_LOCK="$HM_PREFIX/.harman.lock"
 
 die() { echo "harman: $*" >&2; exit 1; }
-usage() { sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 # Resolve lib.sh. Prefer the active release (so the CLI runs the release's own
 # step definitions); fall back to a sibling of this script for first install.
@@ -93,7 +98,6 @@ cmd_install() {
   local ver="${REST[0]:-}"
   [[ -n "$BUNDLE" ]]     || die "install needs --from <bundle>"
   [[ -n "$EXPECT_SHA" ]] || die "install needs --expect-sha <sha>"
-  mkdir -p "$HM_PREFIX"
   # Derive the version from the bundle's VERSION if not given, by staging first.
   if [[ -z "$ver" ]]; then
     # Peek: clone to a temp, read VERSION, discard — stage_release will redo it
@@ -107,6 +111,7 @@ cmd_install() {
   hm_log "Staged $ver at $rel"
   _provision_release "$rel"
   hm_activate "$ver"
+  sudo ln -sfn "$HM_CURRENT/deploy/harman" /usr/local/bin/harman
   hm_service_restart
   hm_health_probe "$ver" && hm_log "Install of $ver live and healthy." \
     || die "install of $ver failed health probe (service may still be starting)"
@@ -130,9 +135,14 @@ main() {
   [[ -z "$sub" || "$sub" == "-h" || "$sub" == "--help" ]] && usage 0
 
   # Serialize everything that could mutate releases/current behind one lock.
-  mkdir -p "$HM_PREFIX" 2>/dev/null || true
-  exec 9>"$HM_LOCK" 2>/dev/null || true
-  flock -w 300 9 2>/dev/null || die "another harman run holds the lock"
+  # /opt is root-owned on a fresh box: create the prefix once, owned by the
+  # invoking (service) user, so the lock and every release write work unprivileged.
+  [[ -w "$HM_PREFIX" ]] || sudo install -d -o "$(id -un)" "$HM_PREFIX" \
+    || die "cannot create $HM_PREFIX"
+  # Braces scope the 2>/dev/null to this exec; a bare `exec 9>f 2>/dev/null`
+  # would redirect the WHOLE script's stderr and silence every later failure.
+  { exec 9>"$HM_LOCK"; } 2>/dev/null || true
+  flock -w 300 9 || die "another harman run holds the lock"
 
   # shellcheck source=deploy/lib.sh
   source "$(_lib)"
