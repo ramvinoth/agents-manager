@@ -82,4 +82,10 @@ describe("Tab header ownership — every transition", function () {
     for (let i = 1; i < TABS.length; i++) { await swipe(-1); await assertHeader(TABS[i], "swipe left") }
     for (let i = TABS.length - 2; i >= 0; i--) { await swipe(1); await assertHeader(TABS[i], "swipe right") }
   })
+
+  it("Files renders its real state, never a raw server error", async () => {
+    await $("~tab-Files").click()
+    await $("~filestab-list").waitForDisplayed()
+    assert.equal(await $("~filestab-error").isExisting(), false, "Files showed an error banner on a healthy server")
+  })
 })

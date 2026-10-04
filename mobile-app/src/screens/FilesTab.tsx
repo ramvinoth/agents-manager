@@ -14,6 +14,7 @@ import {
 } from "../lib/files"
 import { HOST_LOCATION, START_PATH, describeLocation, fsScope, isLiveLocation, type Location } from "../lib/location"
 import { useHost } from "../lib/useHost"
+import { userError } from "../lib/errors"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
 import Icon from "../components/Icon"
@@ -62,7 +63,7 @@ export default function FilesTab({ navigation }: Props) {
         // screen under the error — they'd read as this location's contents.
         setEntries([])
         setParent(undefined)
-        setError((e as Error).message)
+        setError(userError(e, "this folder"))
       } finally {
         setLoading(false)
       }
@@ -327,7 +328,14 @@ export default function FilesTab({ navigation }: Props) {
           refreshControl={<RefreshControl refreshing={false} onRefresh={() => fetchDir(path, host, location)} />}
           ListHeaderComponent={
             <>
-              {error ? <Text style={[styles.error, { paddingHorizontal: 16 }]}>{error}</Text> : null}
+              {error ? (
+                <View style={{ paddingHorizontal: 16 }}>
+                  <Text testID="filestab-error" style={styles.error}>{error}</Text>
+                  <TouchableOpacity testID="filestab-retry" accessibilityRole="button" onPress={() => fetchDir(path, host, location)} style={{ minHeight: 44, justifyContent: "center" }}>
+                    <Text style={{ color: t.accent, fontSize: 16 }}>Try again</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
               {parent ? (
                 <TouchableOpacity testID="filestab-up" style={styles.fsRow} onPress={() => parent && go(parent)}>
                   <Icon name="up" size={18} color={t.textMuted} />

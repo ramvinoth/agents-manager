@@ -208,6 +208,10 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
     if (url.pathname === "/api/capabilities") return send({ skills: [], mcp: [] })
     if (url.pathname === "/api/projects" && ai) return send([{ name: "Fixture project", cwd: "/fixture" }])
     if (["/api/hosts", "/api/commands", "/api/projects", "/api/loops"].includes(url.pathname)) return send([])
+    // Files tab: an empty home folder and no cloud drives, so the tab renders its
+    // real empty state instead of the fixture's catch-all 404.
+    if (route === "GET /api/fs") return send({ path: url.searchParams.get("path") || "~", entries: [] })
+    if (route === "GET /api/drives") return send({ drives: [], vendors: [] })
     return send({ error: `Unhandled fixture route: ${route}` }, 404)
   })
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve) })

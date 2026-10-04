@@ -11,6 +11,7 @@ import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useHost } from "../lib/useHost"
+import { userError } from "../lib/errors"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
 
@@ -275,7 +276,7 @@ export default function ChatsScreen({ navigation }: Props) {
         }
         // Silent background polls must never surface a transient error banner or
         // wipe the list — only a user-initiated load reports failures.
-        if (!silent) setError(err.message)
+        if (!silent) setError(userError(err, "your chats"))
       } finally {
         if (!silent) setLoading(false)
       }
