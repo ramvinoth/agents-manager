@@ -32,6 +32,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   const [note, setNote] = useState<Note | null>(null)
   const [title, setTitle] = useState("")
   const [body, setBody] = useState("")
+  // A note with content opens for reading; an empty one opens ready to type.
   const [preview, setPreview] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -68,7 +69,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     let alive = true
     api.orgNote(id).then((r) => {
       if (!alive) return
-      setNote(r.note); setTitle(r.note.title); setBody(r.note.body); setLoading(false)
+      setNote(r.note); setTitle(r.note.title); setBody(r.note.body); setPreview(!!r.note.body.trim()); setLoading(false)
     }).catch((err) => {
       if (!alive) return
       const e = err as Error & { status?: number }
@@ -110,9 +111,11 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       title: KIND_LABEL[note?.kind || "note"],
       headerRight: () => (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-          <TouchableOpacity testID="note-preview" onPress={() => setPreview((v) => !v)} hitSlop={8}
+          {/* Shows the mode you'd switch TO: a pencil while reading, an eye while editing. */}
+          <TouchableOpacity testID="note-preview" accessibilityLabel={preview ? "edit-note" : "view-note"}
+            onPress={() => setPreview((v) => !v)} hitSlop={8}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
-            <Icon name="eye" size={20} color={preview ? t.accent : t.textMuted} />
+            <Icon name={preview ? "edit" : "eye"} size={20} color={t.accent} />
           </TouchableOpacity>
           <TouchableOpacity testID="note-pin" onPress={() => patchNote({ pinned: !note?.pinned })} hitSlop={8}
             style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>

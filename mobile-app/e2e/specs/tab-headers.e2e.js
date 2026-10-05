@@ -8,7 +8,7 @@ const TABS = ["Chats", "Inbox", "Files", "Notes", "Agents", "Profile"]
 const OWN = {
   Chats: ["new-chat-button", "chats-terminal"],
   Inbox: [],
-  Files: ["location-header-button", "files-terminal"],
+  Files: ["location-header-button"],
   Notes: ["notes-add"],
   Agents: [],
   Profile: ["theme-toggle"],
@@ -19,15 +19,21 @@ const ALL = [...new Set(Object.values(OWN).flat())]
 // query per control, or a full page-source read (the pager renders all six
 // tabs, ~35s each), blew the timeout.
 const QUERY = `-ios predicate string:name IN {${ALL.map((id) => `"${id}"`).join(", ")}}`
-async function onScreen() { return $$(QUERY).map((el) => el.getAttribute("name")) } // wdio v9: ElementArray.map is already async
+// Name + frame per control: presence alone passed while Chats' "+" sat past the
+// screen edge (a header subview kept the previous tab's narrower width).
+async function onScreen() {
+  return $$(QUERY).map(async (el) => ({ name: await el.getAttribute("name"), ...(await el.getLocation()), ...(await el.getSize()) }))
+}
 async function tab(name) { await $(`~tab-${name}`).click() }
 async function assertHeader(name, how) {
   await browser.pause(400) // let the focus effect commit the header
   const seen = await onScreen()
+  const { width } = await browser.getWindowSize()
   for (const id of ALL) {
     const want = OWN[name].includes(id) ? 1 : 0
-    const got = seen.filter((n) => n === id).length
-    assert.equal(got, want, `${how} → ${name}: header control ${id} expected ${want}, found ${got}`)
+    const got = seen.filter((c) => c.name === id)
+    assert.equal(got.length, want, `${how} → ${name}: header control ${id} expected ${want}, found ${got.length}`)
+    for (const c of got) assert.ok(c.x >= 0 && c.x + c.width <= width, `${how} → ${name}: ${id} off-screen at x=${c.x}..${c.x + c.width} (screen ${width})`)
   }
 }
 

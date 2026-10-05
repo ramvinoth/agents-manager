@@ -73,7 +73,7 @@ export default function MathView({ tex, dark, textColor }: { tex: string; dark: 
     )
   }
   return (
-    <View style={{ height, marginVertical: 2 }}>
+    <View style={{ height }}>
       <WebView
         originWhitelist={["*"]}
         source={{ html }}

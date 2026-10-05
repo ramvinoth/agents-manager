@@ -10,6 +10,9 @@ const caps = {
   "appium:autoAcceptAlerts": true,
   "appium:app": process.env.APP_PATH,
   "appium:newCommandTimeout": 240,
+  // WebDriverAgent defaults to :8100, which another local service may own —
+  // then every WDA probe hits that service and the session never starts.
+  "appium:wdaLocalPort": Number(process.env.E2E_WDA_PORT || 8100),
 }
 // Pin the exact booted simulator when the runner provides its UDID.
 if (process.env.E2E_UDID) caps["appium:udid"] = process.env.E2E_UDID

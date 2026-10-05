@@ -211,7 +211,7 @@ export function LocationHeaderButton({
       accessibilityLabel="switch-location"
       onPress={onPress}
       hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-      style={{ flexDirection: "row", alignItems: "center", maxWidth: 120, height: 32 }}
+      style={{ flexDirection: "row", alignItems: "center", maxWidth: 72, height: 32 }}
     >
       <Icon name="cloud" size={19} color={onDrive ? t.accent : t.textMuted} />
       {onDrive ? (

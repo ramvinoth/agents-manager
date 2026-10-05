@@ -242,31 +242,18 @@ export default function FilesTab({ navigation }: Props) {
     ])
   }
 
-  // The header carries only the location chip + terminal (the terminal is a host
-  // thing, so it hides on a drive). New-folder/upload act on the current folder,
-  // so they sit in the folder toolbar below — four header icons overflowed the
-  // iOS header pill and clipped upload off-screen.
+  // The header carries only the location chip. The terminal lives on Chats:
+  // it opens a home-directory shell, not this folder, so a second entry point
+  // here only duplicated it. New-folder/upload act on the current folder, so
+  // they sit in the folder toolbar below.
   const onDrive = location !== HOST_LOCATION
   useScreenHeader(navigation, () => ({
     title: "Files",
     headerLeft: () => null,
     headerRight: () => (
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 4 }}>
-        <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
-        {onDrive ? null : (
-          <TouchableOpacity
-            testID="files-terminal"
-            accessibilityLabel="open-terminal"
-            onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
-            hitSlop={8}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-          >
-            <Icon name="terminal" size={21} color={t.accent} />
-          </TouchableOpacity>
-        )}
-      </View>
+      <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
     ),
-  }), [t, host, hostLabel, location, drives])
+  }), [location, drives, hostLabel])
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }} {...pan.panHandlers}>

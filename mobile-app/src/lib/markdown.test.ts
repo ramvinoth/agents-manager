@@ -4,7 +4,7 @@
  * where this content rendered as raw markdown — the bug this module fixes.
  */
 import assert from "node:assert"
-import { parseInline, parseMarkdown } from "./markdown.ts"
+import { blockGap, parseInline, parseMarkdown } from "./markdown.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -121,6 +121,13 @@ test("real agent reply from the thread screenshot", () => {
 test("plain text passes through unchanged", () => {
   const b = parseMarkdown("just a sentence")
   assert.deepEqual(b, [{ t: "p", spans: [{ t: "text", s: "just a sentence" }] }])
+})
+
+test("block gaps: sections open wide, lists stay tight, paragraphs separate", () => {
+  const b = parseMarkdown("intro\n\n## Plan\nfirst para\n\nsecond para\n\n- a\n- b\n\nafter")
+  assert.deepEqual(b.map((x, i) => [x.t, blockGap(b[i - 1], x)]), [
+    ["p", 0], ["h", 18], ["p", 6], ["p", 12], ["li", 12], ["li", 4], ["p", 12],
+  ])
 })
 
 console.log(`${passed} passing`)

@@ -231,7 +231,7 @@ export default function MermaidView({
   const btnLabel = { fontSize: 12, color: t.textMuted } as const
 
   return (
-    <View style={{ marginVertical: 4 }}>
+    <View>
       {/* Toolbar: Diagram/Code toggle + Copy + Download. */}
       <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 6, marginBottom: 4 }}>
         <Pressable testID="mermaid-toggle" onPress={() => setShowCode((v) => !v)} style={btn}>

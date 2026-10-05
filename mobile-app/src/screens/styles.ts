@@ -621,12 +621,11 @@ function buildStyles(t: Theme) {
       justifyContent: "center",
     },
     // Markdown rendering (Markdown.tsx also themes code/tables inline off useTheme)
-    mdText: { fontSize: 15, lineHeight: 21, color: t.text },
-    mdPara: { marginBottom: 2 },
+    mdText: { fontSize: 15, lineHeight: 22, color: t.text },
     mdBold: { fontWeight: "700" },
     mdItalic: { fontStyle: "italic" },
-    mdH1: { fontSize: 18, fontWeight: "700", marginTop: 8, marginBottom: 2 },
-    mdH3: { fontSize: 16, fontWeight: "700", marginTop: 6, marginBottom: 2 },
+    mdH1: { fontSize: 18, fontWeight: "700" },
+    mdH3: { fontSize: 16, fontWeight: "700" },
     mdLink: { color: t.accent, textDecorationLine: "underline" },
     mdCodeInline: {
       fontFamily: mono,
@@ -639,7 +638,6 @@ function buildStyles(t: Theme) {
       borderRadius: 8,
       paddingHorizontal: 10,
       paddingVertical: 8,
-      marginVertical: 6,
     },
     mdCodeText: {
       fontFamily: mono,
@@ -647,9 +645,8 @@ function buildStyles(t: Theme) {
       lineHeight: 18,
       color: t.codeText,
     },
-    mdLi: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginVertical: 1 },
+    mdLi: { flexDirection: "row", alignItems: "flex-start", gap: 6 },
     mdBullet: { width: 18 },
-    mdTableWrap: { marginVertical: 6 },
     mdScroll: { flexGrow: 0 },
     // Reply bar (what you're replying to) + swipe affordance
     replyBar: {
@@ -690,10 +687,9 @@ function buildStyles(t: Theme) {
       borderLeftWidth: 3,
       borderLeftColor: t.border,
       paddingLeft: 10,
-      marginVertical: 4,
     },
     mdQuoteText: { color: t.textMuted, fontStyle: "italic" },
-    mdHr: { height: StyleSheet.hairlineWidth, backgroundColor: t.border, marginVertical: 10 },
+    mdHr: { height: StyleSheet.hairlineWidth, backgroundColor: t.border, marginVertical: 4 },
     // Slash-command autocomplete
     slashList: {
       marginHorizontal: 8,

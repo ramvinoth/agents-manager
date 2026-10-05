@@ -66,6 +66,21 @@ const splitRow = (line: string): string[] =>
 
 const isDivider = (line: string) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line) && line.includes("-")
 
+/**
+ * Vertical space (pt) above block `next` when it follows `prev`. One rule for
+ * every place markdown renders, so sections and paragraphs breathe evenly:
+ * consecutive list items stay tight, a heading opens a new section with room
+ * above and hugs its own content, everything else is separated like
+ * paragraphs. The first block gets nothing — the container owns its padding.
+ */
+export function blockGap(prev: MdBlock | undefined, next: MdBlock): number {
+  if (!prev) return 0
+  if (next.t === "h") return 18
+  if (prev.t === "h") return 6
+  if (prev.t === "li" && next.t === "li") return 4
+  return 12
+}
+
 export function parseMarkdown(src: string): MdBlock[] {
   const lines = (src || "").replace(/\r\n?/g, "\n").split("\n")
   const blocks: MdBlock[] = []

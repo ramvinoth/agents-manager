@@ -1,6 +1,6 @@
 import React, { useMemo } from "react"
 import { Linking, ScrollView, Text, View } from "react-native"
-import { parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
+import { blockGap, parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
 import { texToUnicode } from "../lib/texUnicode"
 import { useTheme, type Theme } from "../lib/useTheme"
 import { useStyles } from "../screens/styles"
@@ -41,7 +41,9 @@ export default function Markdown({
   return (
     <View>
       {blocks.map((b, i) => (
-        <Block key={i} b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+        <View key={i} style={{ marginTop: blockGap(blocks[i - 1], b) }}>
+          <Block b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+        </View>
       ))}
     </View>
   )
@@ -126,7 +128,7 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
     case "table":
       // Scrolls sideways so wide tables stay aligned instead of collapsing.
       return (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.mdTableWrap, styles.mdScroll]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mdScroll}>
           <View>
             <View style={[styles.mdRow, styles.mdHeadRow, { borderBottomColor: t.border }]}>
               {b.header.map((h, i) => (
@@ -159,6 +161,6 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
       // Display equation → full-fidelity KaTeX in a WebView (bundled offline).
       return <MathView tex={b.text} dark={isDarkBg(t.bg)} textColor={color || t.text} />
     default:
-      return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[base, styles.mdPara]} />
+      return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={base} />
   }
 }
