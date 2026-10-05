@@ -119,15 +119,18 @@ def load_system_commands():
         return {}
 
 
-_CLAUDE_BIN_CACHE = {"at": 0.0, "bin": ""}  # resolved binary + when (hourly re-resolve)
+_CLAUDE_BIN_CACHE = {"at": 0.0, "bin": "", "ttl": 3600}  # resolved binary, when, how long
 
 
 def _claude_version(path):
     """(major, minor, patch) parsed from `claude --version`, or () if it cannot
     be run/parsed — a probe failure must never fail the resolution."""
     try:
+        # 30s, not 10: macOS scans a freshly (auto-)updated binary on first
+        # exec — measured 8.5s for 2.1.289 — and a timed-out probe must not be
+        # what decides which claude runs.
         out = subprocess.run([path, "--version"], capture_output=True, text=True,
-                             timeout=10).stdout
+                             timeout=30).stdout
         m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
         return tuple(int(g) for g in m.groups()) if m else ()
     except Exception:
@@ -170,16 +173,23 @@ def claude_bin():
     if override:
         return override
     now = time.time()
-    if _CLAUDE_BIN_CACHE["bin"] and now - _CLAUDE_BIN_CACHE["at"] < 3600:
+    if _CLAUDE_BIN_CACHE["bin"] and now - _CLAUDE_BIN_CACHE["at"] < _CLAUDE_BIN_CACHE.get("ttl", 3600):
         return _CLAUDE_BIN_CACHE["bin"]
-    best, best_ver = "", ()
+    best, best_ver, degraded = "", (), False
     for cand in _claude_candidates():
         ver = _claude_version(cand)
-        if ver and ver > best_ver:
+        if not ver:
+            degraded = True
+        elif ver > best_ver:
             best, best_ver = cand, ver
     if not best:
         best = shutil.which("claude") or "claude"
-    _CLAUDE_BIN_CACHE.update({"at": now, "bin": best})
+    # A probe that failed (binary mid-auto-update, first-exec scan) means this
+    # pick may be the stale fallback, not the newest — the 2026-10-05 RSI
+    # incident cached 2.1.84 for an hour exactly this way. Hold a degraded
+    # answer for one minute only (not zero: a candidate that always hangs would
+    # otherwise cost every run a 30s probe).
+    _CLAUDE_BIN_CACHE.update({"at": now, "bin": best, "ttl": 60 if degraded else 3600})
     return best
 
 
@@ -189,7 +199,7 @@ def invalidate_claude_bin_cache():
     user has since installed/updated a newer claude (`claude update`), the very
     next run must pick it up — waiting up to an hour, or for a server restart,
     is the stale-cache half of the 2.1.84 incident (card 18)."""
-    _CLAUDE_BIN_CACHE.update({"at": 0.0, "bin": ""})
+    _CLAUDE_BIN_CACHE.update({"at": 0.0, "bin": "", "ttl": 3600})
 
 
 # The provider (not the viewer) owns the model->minimum-CLI-version mapping and
