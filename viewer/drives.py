@@ -292,6 +292,18 @@ class _OAuthDrive(OAuthAccount, BaseDrive):
             p = "/" + p
         return "/" + "/".join(s for s in p.split("/") if s)
 
+    def _abs(self, path):
+        """A route path → the account path it addresses. When the owner
+        narrowed this connection to one folder (config.root), that folder is
+        "/" — the app and agents alike see nothing above it."""
+        p = self._norm(path)
+        if ".." in p.split("/"):
+            # Some vendors resolve ".." server-side; a folder-scoped connection
+            # must never be walked out of, so it is refused rather than trusted.
+            raise DriveError("Paths may not contain ..", 400)
+        root = self._norm(self.config.get("root") or "/")
+        return p if root == "/" else self._norm(root + p)
+
     @staticmethod
     def _parent_path(path):
         p = path if path.startswith("/") else "/" + path
@@ -491,7 +503,7 @@ class GoogleDrive(_OAuthDrive):
         """(id, is_dir, name) for a path. `~`/`/`/empty → the root folder;
         otherwise walk from root, requiring each non-final segment to be a
         folder (a path to a file whose prefix names a file is a 404)."""
-        p = self._norm(path)
+        p = self._abs(path)
         if p == "/":
             return self._root(), True, "/"
         segs = [s for s in p.split("/") if s]
@@ -641,10 +653,9 @@ class DropboxDrive(_OAuthDrive):
 
     # ---- transport --------------------------------------------------------
 
-    @staticmethod
-    def _dbx(path):
-        """Our normalized path in Dropbox's spelling (root = "")."""
-        p = _OAuthDrive._norm(path)
+    def _dbx(self, path):
+        """A route path in Dropbox's spelling (account root = "")."""
+        p = self._abs(path)
         return "" if p == "/" else p
 
     def _rpc(self, endpoint, arg):
@@ -731,7 +742,7 @@ class DropboxDrive(_OAuthDrive):
         if len(data) > self._UPLOAD_CAP:
             raise DriveError("File is over 150 MB — Dropbox's single-call upload cap", 400)
         self._content("files/upload",
-                      {"path": self._join(self._norm(folder), name), "mode": "add", "autorename": False},
+                      {"path": self._dbx(self._join(self._norm(folder), name)), "mode": "add", "autorename": False},
                       data=data)
 
     # ---- the operations ---------------------------------------------------
@@ -758,7 +769,7 @@ class DropboxDrive(_OAuthDrive):
         p = self._norm(path)
         if p == "/":
             raise DriveError("Path is a folder — download it as a zip instead", 400)
-        return self._content("files/download", {"path": p}), p.rsplit("/", 1)[-1]
+        return self._content("files/download", {"path": self._dbx(p)}), p.rsplit("/", 1)[-1]
 
     def upload(self, path, files):
         uploaded = []
@@ -772,7 +783,7 @@ class DropboxDrive(_OAuthDrive):
 
     def mkdir(self, path, name):
         target = self._join(self._norm(path), name)
-        self._rpc("files/create_folder_v2", {"path": target, "autorename": False})
+        self._rpc("files/create_folder_v2", {"path": self._dbx(target), "autorename": False})
         return {"created": target}
 
     def rename(self, path, name):
@@ -780,14 +791,14 @@ class DropboxDrive(_OAuthDrive):
         if p == "/":
             raise DriveError("The root folder cannot be renamed", 400)
         target = self._join(self._parent_path(p) or "/", name)
-        self._rpc("files/move_v2", {"from_path": p, "to_path": target, "autorename": False})
+        self._rpc("files/move_v2", {"from_path": self._dbx(p), "to_path": self._dbx(target), "autorename": False})
         return {"renamed": target}
 
     def delete(self, path):
         p = self._norm(path)
         if p == "/":
             raise DriveError("The root folder cannot be deleted", 400)
-        self._rpc("files/delete_v2", {"path": p})
+        self._rpc("files/delete_v2", {"path": self._dbx(p)})
         return {"deleted": p, "trash": "dropbox"}
 
     def build_zip(self, path, names):
@@ -796,7 +807,7 @@ class DropboxDrive(_OAuthDrive):
         if len(names) == 1:
             target = self._join(self._norm(path), names[0])
             if self._metadata(target).get(".tag") == "folder":
-                return self._content("files/download_zip", {"path": target}), names[0] + ".zip"
+                return self._content("files/download_zip", {"path": self._dbx(target)}), names[0] + ".zip"
         return self._zip(path, names, None)
 
     def whoami(self):
@@ -818,12 +829,11 @@ class OneDriveDrive(_OAuthDrive):
 
     # ---- transport --------------------------------------------------------
 
-    @staticmethod
-    def _item(path):
-        """The Graph address of a path: /root for the root, else
+    def _item(self, path):
+        """The Graph address of a route path: /root for the account root, else
         /root:/{url-encoded path}: — both accept a /children or /content
         suffix by plain concatenation."""
-        p = _OAuthDrive._norm(path)
+        p = self._abs(path)
         return "/root" if p == "/" else "/root:" + urllib.parse.quote(p, safe="/") + ":"
 
     def _call(self, method, url, body=None, headers=None):

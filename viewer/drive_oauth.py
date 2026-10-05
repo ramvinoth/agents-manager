@@ -103,10 +103,11 @@ def _expire_stale(now):
             del _PENDING[pid]
 
 
-def start(drive_id, origin, service=None):
+def start(drive_id, origin, service=None, op=None):
     """Begin a consent flow on connection `drive_id` from a browser that
     reached us at `origin`, asking for `service` (default: the provider's files
-    service) on top of everything the connection already holds. Returns
+    service — and `op`'s extra scopes when the owner grants one operation, e.g.
+    editing calendar events) on top of everything the connection already holds. Returns
     {url, pending, redirect_uri}: the caller opens `url` in a browser and polls
     status() with `pending`; the vendor lands the user on `redirect_uri` (this
     server's callback), which completes the exchange."""
@@ -120,7 +121,7 @@ def start(drive_id, origin, service=None):
     try:
         if integrations.service(service)["provider"] != kind:
             raise integrations.IntegrationError("%s is not a %s service" % (service, kind), 400)
-        scope = integrations.consent_scopes(drive, service)
+        scope = integrations.consent_scopes(drive, service, op)
     except integrations.IntegrationError as e:
         raise DriveError(str(e), e.status)
     client = _vendor_client(kind, public=integrations.PROVIDERS[kind]["public"])  # 403 with guidance if unset
@@ -130,7 +131,7 @@ def start(drive_id, origin, service=None):
     redirect_uri = redirect_uri_for(origin)
     url = _build_auth_url(kind, client, redirect_uri, state, challenge, scope)
 
-    p = {"kind": kind, "drive_id": drive_id, "client": client, "service": service,
+    p = {"kind": kind, "drive_id": drive_id, "client": client, "service": service, "op": op,
          "scope": scope, "code_verifier": verifier, "state": state,
          "redirect_uri": redirect_uri, "started": time.time(),
          "status": "waiting", "error": None}
@@ -229,6 +230,8 @@ def _store(p, tokens):
     if drive is None:
         raise DriveError("Connection vanished during OAuth", 404)
     cfg = integrations.with_service(drive.get("config"), p["service"], True)
+    if p.get("op"):
+        cfg = integrations.with_op(cfg, p["service"], p["op"], True)
     cfg.update({
         "access_token": tokens.get("access_token"),
         "refresh_token": tokens.get("refresh_token") or cfg.get("refresh_token"),
@@ -248,7 +251,9 @@ def _store(p, tokens):
     if account:
         cfg["account"] = account
     db.drive_upsert(p["drive_id"], row)
-    missing = set(integrations.service(p["service"])["scopes"]) - set(cfg["scopes"])
+    missing = (set(integrations.service(p["service"])["scopes"])
+               | set(integrations.op_spec(p["service"], p["op"])["scopes"] if p.get("op") else ())
+               ) - set(cfg["scopes"])
     if missing:
         raise DriveError("%s was not granted — tick every permission on the consent screen "
                          "and try again" % integrations.service(p["service"])["label"], 403)

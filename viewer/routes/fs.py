@@ -7,6 +7,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from viewer import db, integrations
 from viewer.drives import DriveError, adapter_for
 from viewer.engine import (
     get_host,
@@ -79,17 +80,50 @@ def _resolve_location(req, body=None):
     return "local", "local"
 
 
+def _local_real(path):
+    return str(Path(os.path.expanduser(path or "~")).resolve())
+
+
+def _agent_refusal(req, kind, ref, path, op):
+    """Why an AGENT may not do `op` at `path`, or None. The owner's rules from
+    Integrations: on this machine's disk, the allowed folders and operations;
+    on a cloud drive, the files service's operations. A human is never
+    refused here, and SSH hosts carry their own access (their credentials)."""
+    if (getattr(req, "principal", None) or {}).get("kind") != "mcp":
+        return None
+    if kind == "local":
+        from viewer.routes.integrations import local_rules
+        if integrations.local_allows(local_rules(), _local_real(path), op, _local_real):
+            return None
+        return ("The owner has not allowed agents to %s %s on this machine — "
+                "ask them to add it under Integrations → Local disk"
+                % (integrations.OP_LABELS[op].lower(), path or "~"))
+    if kind == "drive":
+        drive = db.drive_get(ref)
+        sid = integrations.FILES_SERVICE.get((drive or {}).get("kind"))
+        if drive is None or sid is None or integrations.op_state(drive, sid, op) == "on":
+            return None   # unknown drive: adapter_for answers the 404
+        return ("The owner has not allowed agents to %s on this drive — they allow it in Integrations"
+                % integrations.OP_LABELS[op].lower())
+    return None
+
+
 class FsMixin:
-    def _drive_target(self, req, body=None):
-        """Route a request to a cloud drive. Returns (True, adapter) for a
-        drive request, (False, None) for local/SSH (the original code below
-        the call site runs unchanged), and (None, None) after an error
-        (DriveError) has already been sent: unknown id 404, paused/hidden
-        403, bad params 400."""
+    def _drive_target(self, req, body, path, op):
+        """The one gate every file route passes before touching a disk.
+        Returns (True, adapter) for a cloud drive, (False, None) for local/SSH
+        (the code below the call site runs), and (None, None) after a refusal
+        has been sent: unknown drive 404, paused/hidden 403, bad params 400,
+        or an agent outside what the owner allowed for `op`
+        ("read" | "write" | "delete") at `path` 403."""
         try:
             kind, ref = _resolve_location(req, body)
         except DriveError as e:
             self.send_json({"error": str(e)}, status=e.status)
+            return None, None
+        why = _agent_refusal(req, kind, ref, path, op)
+        if why:
+            self.send_json({"error": why}, status=403)
             return None, None
         if kind != "drive":
             return False, None
@@ -115,7 +149,7 @@ class FsMixin:
         if not fpath:
             self.send_json({"error": "Missing path"}, status=400)
             return
-        ok, adapter = self._drive_target(req)
+        ok, adapter = self._drive_target(req, None, fpath, "read")
         if ok:
             try:
                 data, name = adapter.read_bytes(fpath)
@@ -164,7 +198,7 @@ class FsMixin:
         if not _safe_name(name):
             self.send_json({"error": "Invalid folder name"}, status=400)
             return
-        ok, adapter = self._drive_target(req, body)
+        ok, adapter = self._drive_target(req, body, body.get("path") or "~", "write")
         if ok:
             try:
                 self.send_json(adapter.mkdir(body.get("path") or "~", name))
@@ -218,7 +252,7 @@ class FsMixin:
         if not arcname.endswith(".zip"):
             arcname += ".zip"
 
-        ok, adapter = self._drive_target(req)
+        ok, adapter = self._drive_target(req, None, path, "read")
         if ok:
             try:
                 data, _ = adapter.build_zip(path, names)
@@ -294,7 +328,7 @@ class FsMixin:
         if not fpath or not _safe_name(name):
             self.send_json({"error": "Invalid name"}, status=400)
             return
-        ok, adapter = self._drive_target(req, body)
+        ok, adapter = self._drive_target(req, body, fpath, "write")
         if ok:
             try:
                 self.send_json(adapter.rename(fpath, name))
@@ -334,7 +368,7 @@ class FsMixin:
         if not fpath or fpath in ("/", "~", "."):
             self.send_json({"error": "Cannot delete system paths"}, status=400)
             return
-        ok, adapter = self._drive_target(req, body)
+        ok, adapter = self._drive_target(req, body, fpath, "delete")
         if ok:
             try:
                 self.send_json(adapter.delete(fpath))
@@ -388,7 +422,7 @@ class FsMixin:
         if archive and ("/" in archive or "\0" in archive):
             self.send_json({"error": "Invalid archive name"}, status=400)
             return
-        ok, adapter = self._drive_target(req, body)
+        ok, adapter = self._drive_target(req, body, path, "write")
         if ok:
             try:
                 self.send_json(adapter.compress(path, names, archive))
@@ -495,7 +529,7 @@ class FsMixin:
         """Write (name, bytes) pairs into a directory on whichever disk the
         request targets — the one store behind both the multipart upload and
         the JSON write."""
-        ok, adapter = self._drive_target(req, body)
+        ok, adapter = self._drive_target(req, body, path, "write")
         if ok:
             try:
                 self.send_json(adapter.upload(path, files))
@@ -530,7 +564,7 @@ class FsMixin:
     def _g_fs(self, req):
         raw = (req.query.get("path") or ["~"])[0]
         show_hidden = (req.query.get("hidden") or ["0"])[0] == "1"
-        ok, adapter = self._drive_target(req)
+        ok, adapter = self._drive_target(req, None, raw, "read")
         if ok:
             try:
                 self.send_host_result(adapter.fs_list(raw, show_hidden))

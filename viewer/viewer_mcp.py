@@ -83,11 +83,16 @@ _TOOLS = {
     "fs_mkdir":         ("POST", "/api/fs/mkdir"),
     # ── The owner's connected accounts (Integrations page). Mail is read +
     # draft only: an agent never sends — the owner presses Send in Gmail.
+    # Calendar writes never notify guests (sendUpdates=none). What an agent
+    # may do per account is the owner's switch there; the server enforces it.
     "integrations_list": ("GET", "/api/integrations"),
     "gmail_search":     ("GET", "/api/gmail/search"),
     "gmail_read":       ("GET", "/api/gmail/read"),
     "gmail_draft":      ("POST", "/api/gmail/draft"),
     "calendar_events":  ("GET", "/api/calendar/events"),
+    "calendar_create":  ("POST", "/api/calendar/create"),
+    "calendar_update":  ("POST", "/api/calendar/update"),
+    "calendar_delete":  ("POST", "/api/calendar/delete"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
@@ -132,6 +137,14 @@ _DRIVE_ARG = {"type": "string",
 
 _CONN_ARG = {"type": "string",
              "description": "Account id from integrations_list; only needed when several accounts have the service on."}
+_CAL_ARG = {"type": "string", "description": "Calendar id (default primary)."}
+_EVENT_PROPS = {
+    "title": {"type": "string"},
+    "start": {"type": "string", "description": "ISO datetime with offset (2026-10-06T15:00:00-07:00), or a date (2026-10-06) with all_day."},
+    "end": {"type": "string", "description": "Same form as start; for all_day the day after the last day."},
+    "all_day": {"type": "boolean"},
+    "location": {"type": "string"}, "description": {"type": "string"},
+    "attendees": {"type": "array", "items": {"type": "string"}, "description": "Guest emails (never notified)."}}
 
 _TOOL_LIST = [
     # ── See everything ──────────────────────────────────────────────────────
@@ -256,8 +269,20 @@ _TOOL_LIST = [
      "description": "The owner's Google Calendar events between start and end (ISO dates/datetimes; default now → 7 days), recurring events expanded, in start order: title, start, end, all_day, location, attendees, link.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "start": {"type": "string"}, "end": {"type": "string"}, "q": {"type": "string", "description": "Free-text filter."},
-         "calendar": {"type": "string", "description": "Calendar id (default primary)."},
+         "calendar": _CAL_ARG,
          "limit": {"type": "integer"}, "connection": _CONN_ARG}}},
+    {"name": "calendar_create",
+     "description": "Add an event to the owner's Google Calendar. Guests are never emailed. Only works if the owner allowed 'Add events' for that account in Integrations — if refused, ask them on your card instead of retrying.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title", "start", "end"], "properties": {
+         **_EVENT_PROPS, "calendar": _CAL_ARG, "connection": _CONN_ARG}}},
+    {"name": "calendar_update",
+     "description": "Change an event (id from calendar_events): only the fields you pass change. Guests are never emailed. Needs 'Edit events' allowed in Integrations.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string"}, **_EVENT_PROPS, "calendar": _CAL_ARG, "connection": _CONN_ARG}}},
+    {"name": "calendar_delete",
+     "description": "Delete an event (id from calendar_events). Guests are never emailed. Off unless the owner allowed 'Delete' for calendar in Integrations — confirm with the owner on your card first.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string"}, "calendar": _CAL_ARG, "connection": _CONN_ARG}}},
     {"name": "fs_list",
      "description": "List a directory: entries with name/type/size/modified. Scope with EXACTLY ONE of `drive` (a cloud drive id from drive_list) or `host` (an SSH host from host_list); neither means this machine. Paths on a drive start at '/'; on a machine '~' is home.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {

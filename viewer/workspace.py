@@ -1,5 +1,5 @@
 """viewer.workspace — what agents can do with a connected Google account
-beyond files: search/read mail, write drafts, read calendar events.
+beyond files: search/read mail, write drafts, read and edit calendar events.
 
 Each client is an OAuthAccount (viewer.drives) — the same token lifecycle,
 refresh and 401-retry as the file adapters — speaking one REST dialect and
@@ -8,9 +8,11 @@ bodies are plain text, capped, and headers are the handful a human would look
 at). Which connection to use and whether the owner turned the service on is
 decided by viewer.integrations; this module only talks to the vendor.
 
-Deliberately absent: sending mail and editing events. A draft lands in the
-owner's Gmail Drafts and the owner presses Send — an agent never speaks for
-them to the outside world without a human in the loop.
+Deliberately absent: sending mail, and telling guests about event changes. A
+draft lands in the owner's Gmail Drafts and the owner presses Send; an event
+edit always goes with sendUpdates=none — an agent never speaks for the owner
+to the outside world without a human in the loop. Whether an agent may edit
+events at all is the owner's per-account choice (integrations ops).
 
 API facts (VERIFIED 2026-10-05, developers.google.com/workspace/gmail/api/
 reference/rest/v1/users.messages{,/list,/get}, users.drafts/create,
@@ -23,6 +25,9 @@ reference/rest/v1/users.messages{,/list,/get}, users.drafts/create,
     RFC 2822, "threadId"?}}; gmail.compose suffices.
   - events.list: singleEvents=true expands recurrences; orderBy=startTime
     needs singleEvents; timeMin/timeMax are RFC 3339 with an offset.
+  - events.insert/patch/delete (/calendars/{id}/events[/{eventId}]): patch
+    leaves unspecified fields unchanged and overwrites arrays; delete answers
+    an empty body; all take sendUpdates=all|externalOnly|none.
 """
 import base64
 import datetime
@@ -177,7 +182,74 @@ def _rfc3339(value, default):
     return (d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)).isoformat()
 
 
+def event_time(value, all_day):
+    """A start/end in the Calendar API's shape: {"date"} for an all-day event,
+    else {"dateTime"} with an offset. Pure."""
+    if not value:
+        raise DriveError("start and end are required", 400)
+    if all_day:
+        try:
+            return {"date": datetime.date.fromisoformat(str(value)[:10]).isoformat()}
+        except ValueError:
+            raise DriveError("An all-day date must look like 2026-10-05", 400)
+    return {"dateTime": _rfc3339(value, None)}
+
+
+def event_body(fields):
+    """The Calendar API body for the fields an editor sent — only those it
+    sent, since a patch keeps every field it does not name. Pure."""
+    b = {}
+    if "title" in fields:
+        b["summary"] = fields["title"] or ""
+    for k in ("location", "description"):
+        if k in fields:
+            b[k] = fields[k] or ""
+    all_day = bool(fields.get("all_day"))
+    for k in ("start", "end"):
+        if k in fields:
+            b[k] = event_time(fields[k], all_day)
+    if "attendees" in fields:
+        b["attendees"] = [{"email": a} for a in fields["attendees"] or [] if a]
+    return b
+
+
+def _event(e):
+    s, f = e.get("start") or {}, e.get("end") or {}
+    return {"id": e.get("id", ""), "title": e.get("summary", "(no title)"),
+            "start": s.get("dateTime") or s.get("date", ""),
+            "end": f.get("dateTime") or f.get("date", ""),
+            "all_day": "date" in s, "location": e.get("location", ""),
+            "description": e.get("description", ""),
+            "attendees": [a.get("email", "") for a in e.get("attendees") or []][:20],
+            "link": e.get("htmlLink", ""), "status": e.get("status", "")}
+
+
 class Calendar(_GoogleAPI):
+    def _url(self, calendar, event=""):
+        u = "%s/calendars/%s/events" % (_CAL, urllib.parse.quote(calendar or "primary", safe=""))
+        return u + ("/" + urllib.parse.quote(event, safe="") if event else "")
+
+    def create(self, fields, calendar="primary"):
+        body = event_body(fields)
+        if "start" not in body or "end" not in body:
+            raise DriveError("start and end are required", 400)
+        body.setdefault("summary", "(no title)")
+        return _event(self._json("POST", self._url(calendar) + "?sendUpdates=none", body))
+
+    def update(self, event, fields, calendar="primary"):
+        if not event:
+            raise DriveError("id is required", 400)
+        body = event_body(fields)
+        if not body:
+            raise DriveError("Nothing to change", 400)
+        return _event(self._json("PATCH", self._url(calendar, event) + "?sendUpdates=none", body))
+
+    def delete(self, event, calendar="primary"):
+        if not event:
+            raise DriveError("id is required", 400)
+        self._json("DELETE", self._url(calendar, event) + "?sendUpdates=none")
+        return {"deleted": event}
+
     def events(self, start="", end="", q="", calendar="primary", limit=50):
         now = datetime.datetime.now(datetime.timezone.utc)
         t0 = _rfc3339(start, now)
@@ -186,16 +258,7 @@ class Calendar(_GoogleAPI):
                   "maxResults": max(1, min(int(limit or 50), 250))}
         if q:
             params["q"] = q
-        j = self._json("GET", "%s/calendars/%s/events?%s" % (
-            _CAL, urllib.parse.quote(calendar or "primary"), urllib.parse.urlencode(params)))
-        out = []
-        for e in j.get("items") or []:
-            s, f = e.get("start") or {}, e.get("end") or {}
-            out.append({"id": e.get("id", ""), "title": e.get("summary", "(no title)"),
-                        "start": s.get("dateTime") or s.get("date", ""),
-                        "end": f.get("dateTime") or f.get("date", ""),
-                        "all_day": "date" in s, "location": e.get("location", ""),
-                        "attendees": [a.get("email", "") for a in e.get("attendees") or []][:20],
-                        "link": e.get("htmlLink", ""), "status": e.get("status", "")})
+        j = self._json("GET", self._url(calendar) + "?" + urllib.parse.urlencode(params))
+        out = [_event(e) for e in j.get("items") or []]
         return {"calendar": j.get("summary", calendar), "time_zone": j.get("timeZone", ""),
                 "from": t0, "to": t1, "events": out}

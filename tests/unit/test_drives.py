@@ -375,6 +375,15 @@ def test_google_upload_to_file_is_400(db, monkeypatch):
     assert err.status == 400
 
 
+def test_google_folder_root(db, monkeypatch):
+    a, _ = _gdrive(db, monkeypatch)
+    a.config["root"] = "/Docs"
+    d = a.fs_list("~")
+    assert d["path"] == "/" and sorted(e["name"] for e in d["entries"]) == ["a.txt", "b.md"]
+    assert a.read_bytes("/a.txt") == (b"abc", "a.txt")
+    assert pytest.raises(DriveError, a.fs_list, "/Docs").value.status == 404
+
+
 def test_google_rename(db, monkeypatch):
     a, _ = _gdrive(db, monkeypatch)
     r = a.rename("/Docs/a.txt", "c.txt")
@@ -610,6 +619,23 @@ def test_dropbox_read_upload_mkdir_rename_delete(db, monkeypatch):
     assert pytest.raises(DriveError, a.delete, "/").value.status == 400
 
 
+def test_dropbox_folder_root_is_slash(db, monkeypatch):
+    """A connection narrowed to /docs sees /docs as "/" — and every op,
+    reads and writes alike, stays inside it."""
+    a, fake = _dbx(db, monkeypatch)
+    a.config["root"] = "/docs"
+    root = a.fs_list("/")
+    assert root["path"] == "/" and [e["name"] for e in root["entries"]] == ["sub", "a.txt"]
+    assert a.read_bytes("/sub/b.md") == (b"hi", "b.md")
+    assert a.upload("/", [("n.txt", b"1")])["uploaded"][0]["path"] == "/n.txt"
+    assert "/docs/n.txt" in fake.tree and "/n.txt" not in fake.tree
+    assert a.mkdir("/", "R") == {"created": "/R"} and "/docs/r" in {k.lower() for k in fake.tree}
+    assert a.rename("/n.txt", "m.txt") == {"renamed": "/m.txt"} and "/docs/m.txt" in fake.tree
+    assert a.delete("/m.txt")["deleted"] == "/m.txt" and "/docs/m.txt" not in fake.tree
+    assert pytest.raises(DriveError, a.delete, "/").value.status == 400
+    assert pytest.raises(DriveError, a.read_bytes, "/../docs/a.txt").value.status == 400
+
+
 def test_dropbox_upload_over_cap_is_per_file_error(db, monkeypatch):
     a, _ = _dbx(db, monkeypatch)
     monkeypatch.setattr(DropboxDrive, "_UPLOAD_CAP", 4)
@@ -771,8 +797,21 @@ def _odrive(db, monkeypatch):
 
 
 def test_onedrive_path_addressing():
-    assert OneDriveDrive._item("~") == "/root"
-    assert OneDriveDrive._item("/Docs/My File.txt") == "/root:/Docs/My%20File.txt:"
+    a = OneDriveDrive({"id": "d1", "config": {}})
+    assert a._item("~") == "/root"
+    assert a._item("/Docs/My File.txt") == "/root:/Docs/My%20File.txt:"
+    a.config["root"] = "/Work"
+    assert a._item("~") == "/root:/Work:"
+    assert pytest.raises(DriveError, a._item, "/../x").value.status == 400
+
+
+def test_onedrive_folder_root(db, monkeypatch):
+    a, _ = _odrive(db, monkeypatch)
+    a.config["root"] = "/Docs"
+    d = a.fs_list("/")
+    assert d["path"] == "/" and d["parent"] is None
+    assert [e["name"] for e in d["entries"]] == ["Sub", "a.txt"]
+    assert a.read_bytes("/a.txt") == (b"abc", "a.txt")
 
 
 def test_onedrive_list(db, monkeypatch):
