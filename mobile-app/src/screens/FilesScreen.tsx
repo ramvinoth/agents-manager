@@ -24,7 +24,7 @@ import { useTheme } from "../lib/useTheme"
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
 /**
- * Files tab: a location-aware file browser with upload / download / delete.
+ * Files (opened from the side menu): a location-aware file browser with upload / download / delete.
  * The files come from one of two places: the *current* host (shared state,
  * picked under Profile → Machine) or a cloud drive chosen here via the
  * top-right LocationPicker. Either change re-roots to the start folder. Tap a
@@ -32,7 +32,7 @@ type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof R
  * delete. Back/forward history + on-screen nav buttons + edge-swipe navigation
  * (see navHistory in lib/files.ts).
  */
-export default function FilesTab({ navigation }: Props) {
+export default function FilesScreen({ navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
   const { host, label: hostLabel } = useHost()
@@ -101,12 +101,12 @@ export default function FilesTab({ navigation }: Props) {
   const canBack = navCanBack(hist)
   const canForward = navCanForward(hist)
 
-  // EDGE-swipe history navigation that coexists with the tab pager. The Files tab
-  // lives inside a swipeable material-top-tabs pager that claims horizontal drags,
-  // so a center swipe changes TABS (by design). We only claim a gesture that STARTS
-  // near the screen edge — an edge-drag right = Back, edge-drag left = Forward —
-  // which the pager leaves alone. Center/full swipes fall through to the pager
-  // unchanged. Handlers/history live in refs since the PanResponder is created once.
+  // EDGE-swipe history navigation, like the iOS Files app: inside a folder an
+  // edge-drag right goes up the history (Back), an edge-drag from the right goes
+  // Forward. iOS's own back-swipe would pop this screen instead, so it is off
+  // while there is folder history to walk (see the gestureEnabled effect below)
+  // and on at the start folder, where the same gesture leaves Files.
+  // Handlers/history live in refs since the PanResponder is created once.
   const EDGE = 32 // px from a screen edge where a history-swipe may start
   const TRIGGER = 56 // px of travel before it fires
   const screenW = Dimensions.get("window").width
@@ -247,9 +247,11 @@ export default function FilesTab({ navigation }: Props) {
   // here only duplicated it. New-folder/upload act on the current folder, so
   // they sit in the folder toolbar below.
   const onDrive = location !== HOST_LOCATION
+  useEffect(() => { navigation.setOptions({ gestureEnabled: !canBack }) }, [navigation, canBack])
+
   useScreenHeader(navigation, () => ({
     title: "Files",
-    headerLeft: () => null,
+    headerLeft: undefined,
     headerRight: () => (
       <LocationHeaderButton value={location} drives={drives} hostLabel={hostLabel} onPress={() => setLocOpen(true)} />
     ),
@@ -258,7 +260,7 @@ export default function FilesTab({ navigation }: Props) {
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }} {...pan.panHandlers}>
       {/* Nav toolbar: Back / Forward / Up mirror the edge-swipe gestures so history
-          is reachable without swiping (and regardless of the tab pager). */}
+          is reachable without swiping. */}
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 6, paddingTop: 4, gap: 2 }}>
         <TouchableOpacity testID="filestab-back" disabled={!canBack} onPress={goBack} hitSlop={6} style={{ padding: 6, opacity: canBack ? 1 : 0.3 }}>
           <Icon name="chevronLeft" size={22} color={t.text} />

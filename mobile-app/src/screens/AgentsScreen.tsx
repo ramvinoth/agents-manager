@@ -52,7 +52,7 @@ export default function AgentsScreen({ navigation }: Props) {
       .finally(() => setRefreshing(false))
   }, [])
 
-  useScreenHeader(navigation, () => ({ title: "Agents", headerLeft: () => null, headerRight: () => null }), [])
+  useScreenHeader(navigation, () => ({ title: "Agents", headerLeft: undefined, headerRight: () => null }), [])
   useFocusEffect(useCallback(() => { load() }, [load]))
 
   const filtered = category === "all" ? templates : templates.filter((t) => t.category === category)

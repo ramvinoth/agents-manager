@@ -24,6 +24,7 @@ import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import ServerPicker from "../components/ServerPicker"
 import HostPicker from "../components/HostPicker"
 import { useHost } from "../lib/useHost"
+import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
 
@@ -109,10 +110,11 @@ export default function ProfileScreen({ navigation }: Props) {
     setThemePref(next)
   }, [])
 
+  const menuButton = useMenuButton()
   // Profile's header: a theme toggle on the right.
   useScreenHeader(navigation, () => ({
     title: "Profile",
-    headerLeft: () => null,
+    headerLeft: menuButton,
     headerRight: () => (
       <TouchableOpacity
         testID="theme-toggle"
@@ -323,19 +325,6 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
 
-      <Text style={styles.sheetSection}>INTEGRATIONS</Text>
-      <TouchableOpacity
-        testID="open-integrations"
-        style={styles.profileInfoRow}
-        onPress={() => navigation.navigate("Integrations")}
-      >
-        <Icon name="cloud" size={18} color={t.accent} />
-        <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={[styles.profileInfoValue, { color: t.text, textAlign: "left" }]}>Connected accounts</Text>
-          <Text style={styles.ssRowHint}>Gmail, Calendar, Drive, Dropbox, OneDrive — choose what agents may use.</Text>
-        </View>
-        <Icon name="chevronRight" size={18} color={t.textMuted} />
-      </TouchableOpacity>
       {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="New-chat defaults" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
 
       <Text style={styles.sheetSection}>SYSTEM PREAMBLE</Text>
@@ -405,24 +394,6 @@ export default function ProfileScreen({ navigation }: Props) {
       </View>
 
       <Text style={styles.sheetSection}>ACCOUNT</Text>
-      <TouchableOpacity
-        testID="open-capabilities"
-        style={styles.profileInfoRow}
-        onPress={() => navigation.navigate("Capabilities")}
-      >
-        <Icon name="sparkle" size={18} color={t.accent} />
-        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Skills & MCP tools</Text>
-        <Icon name="chevronRight" size={18} color={t.textMuted} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        testID="open-org"
-        style={styles.profileInfoRow}
-        onPress={() => navigation.navigate("Org")}
-      >
-        <Icon name="folder" size={18} color={t.accent} />
-        <Text style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 10, textAlign: "left" }]}>Company & board</Text>
-        <Icon name="chevronRight" size={18} color={t.textMuted} />
-      </TouchableOpacity>
       <TouchableOpacity
         testID="open-server-picker"
         style={styles.profileInfoRow}

@@ -1,23 +1,21 @@
 const assert = require("node:assert/strict")
 const { startFixture, SESSION } = require("../thread-board-fixture")
 
-// Six swipeable tabs share ONE parent-stack header. Each tab must leave exactly
+// The swipeable home tabs share ONE parent-stack header. Each tab must leave exactly
 // its own header controls after every transition — never a sibling's lingering
 // or appended. Checks every ordered pair of tabs, by tap and by swipe.
-const TABS = ["Chats", "Inbox", "Files", "Notes", "Agents", "Profile"]
+const TABS = ["Chats", "Inbox", "Profile"]
+// Every tab carries the side-menu hamburger on the left.
 const OWN = {
-  Chats: ["new-chat-button", "chats-terminal"],
-  Inbox: [],
-  Files: ["location-header-button"],
-  Notes: ["notes-add"],
-  Agents: [],
-  Profile: ["theme-toggle"],
+  Chats: ["menu-button", "new-chat-button", "chats-terminal"],
+  Inbox: ["menu-button"],
+  Profile: ["menu-button", "theme-toggle"],
 }
 const ALL = [...new Set(Object.values(OWN).flat())]
 
 // One native predicate query per assertion for just the header controls — a
-// query per control, or a full page-source read (the pager renders all six
-// tabs, ~35s each), blew the timeout.
+// query per control, or a full page-source read (the pager renders every
+// tab, ~35s each), blew the timeout.
 const QUERY = `-ios predicate string:name IN {${ALL.map((id) => `"${id}"`).join(", ")}}`
 // Name + frame per control: presence alone passed while Chats' "+" sat past the
 // screen edge (a header subview kept the previous tab's narrower width).
@@ -38,7 +36,7 @@ async function assertHeader(name, how) {
 }
 
 describe("Tab header ownership — every transition", function () {
-  this.timeout(600000) // 31 taps + 10 swipes, each with a native query
+  this.timeout(600000) // the tap walk + swipes, each with a native query
   let fixture
   before(async () => {
     fixture = await startFixture()
@@ -89,9 +87,22 @@ describe("Tab header ownership — every transition", function () {
     for (let i = TABS.length - 2; i >= 0; i--) { await swipe(1); await assertHeader(TABS[i], "swipe right") }
   })
 
-  it("Files renders its real state, never a raw server error", async () => {
-    await $("~tab-Files").click()
-    await $("~filestab-list").waitForDisplayed()
-    assert.equal(await $("~filestab-error").isExisting(), false, "Files showed an error banner on a healthy server")
+  it("the side menu opens from every tab and its pages push with a working Back", async () => {
+    for (const name of TABS) {
+      await tab(name)
+      await $("~menu-button").click()
+      await $("~side-menu").waitForDisplayed()
+      await $("~menu-scrim").click() // tap outside the panel closes it
+      await $("~side-menu").waitForDisplayed({ reverse: true })
+    }
+    await tab("Inbox")
+    for (const [route, ready] of [["Files", "filestab-list"], ["Notes", "notes-add"], ["Agents", "agents-list"]]) {
+      await $("~menu-button").click()
+      await $(`~menu-${route}`).click()
+      await $(`~${ready}`).waitForDisplayed()
+      if (route === "Files") assert.equal(await $("~filestab-error").isExisting(), false, "Files showed an error banner on a healthy server")
+      await browser.back()
+      await assertHeader("Inbox", `back from ${route}`)
+    }
   })
 })

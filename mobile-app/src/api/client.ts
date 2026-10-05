@@ -591,7 +591,7 @@ export const api = {
   fsDownload: (scope: FsScope, path: string, dest: string): Promise<number> =>
     serverDownload(`/api/fs/download?${new URLSearchParams({ path, ...scope }).toString()}`, dest),
 
-  // ---- cloud drives (the Files tab's third location) ----
+  // ---- cloud drives (the Files screen's third location) ----
   // Every drive the location picker can offer (sanitized — no tokens) plus the
   // vendors a NEW drive may be created for.
   drives: () => req<{ drives: Drive[]; vendors: string[] }>("GET", "/api/drives"),

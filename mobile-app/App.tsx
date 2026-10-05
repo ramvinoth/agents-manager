@@ -27,6 +27,8 @@ import IntegrationsScreen from "./src/screens/IntegrationsScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import CardDetailScreen from "./src/screens/CardDetailScreen"
 import NotesScreen from "./src/screens/NotesScreen"
+import FilesScreen from "./src/screens/FilesScreen"
+import AgentsScreen from "./src/screens/AgentsScreen"
 import InboxScreen from "./src/screens/InboxScreen"
 import NoteEditorScreen from "./src/screens/NoteEditorScreen"
 import OrgScreen from "./src/screens/OrgScreen"
@@ -50,6 +52,8 @@ export type RootStackParamList = {
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
   Notes: { session?: string; project?: number; title?: string } | undefined
+  Files: undefined
+  Agents: undefined
   NoteEditor: { id: number }
   Inbox: { session?: string; project?: number; host?: string; path?: string; title?: string } | undefined
   Org: undefined
@@ -237,6 +241,8 @@ export default function App() {
                 />
               )}
             </Stack.Screen>
+            <Stack.Screen name="Files" component={FilesScreen} options={{ title: "Files" }} />
+            <Stack.Screen name="Agents" component={AgentsScreen} options={{ title: "Agents" }} />
             <Stack.Screen name="NoteEditor" component={NoteEditorScreen} options={{ title: "Note" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />

@@ -16,16 +16,14 @@ import { useStyles } from "./styles"
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList>
-  /** Scope of this view: a chat's notes, a project's, or (the Notes tab) everything. */
+  /** Scope of this view: a chat's notes, a project's, or (from the side menu) everything. */
   filter?: NoteFilter
   title?: string
-  /** True when rendered as the Home tab: it owns the shared stack header on focus. */
-  isTab?: boolean
 }
 
 /**
  * NotesScreen — the org's ONE notes ledger rendered as a filtered VIEW, like
- * the board: the Notes tab shows every note, a chat's header menu opens that
+ * the board: the side menu's Notes shows every note, a chat's header menu opens that
  * chat's notes, a project row opens the project's. Agents write into the same
  * table through the note_* MCP tools, so what a session researched or decided
  * shows up here beside what the owner typed.
@@ -36,7 +34,7 @@ type Props = {
  * toggle away, never gone. Polls like the board so agent-written notes appear
  * without a manual refresh.
  */
-export default function NotesScreen({ navigation, filter, title, isTab }: Props) {
+export default function NotesScreen({ navigation, filter, title }: Props) {
   const t = useTheme()
   const styles = useStyles()
   const scope = useMemo(() => notesScopeFilter(filter), [filter])
@@ -75,18 +73,16 @@ export default function NotesScreen({ navigation, filter, title, isTab }: Props)
     return () => clearInterval(id)
   }, [load]))
 
-  // The shared stack header: a pushed (scoped) view gets its title; the tab
-  // re-asserts its own header on focus (sibling tabs share the header).
   useScreenHeader(navigation, () => ({
     title: title || "Notes",
-    headerLeft: isTab ? () => null : undefined,
+    headerLeft: undefined,
     headerRight: () => (
       <TouchableOpacity testID="notes-add" accessibilityLabel="new-note" onPress={() => setPicking(true)} hitSlop={8}
         style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
         <Icon name="add" size={22} color={t.accent} />
       </TouchableOpacity>
     ),
-  }), [title, isTab, t.accent])
+  }), [title, t.accent])
 
   const shown = useMemo(() => orderNotes(searchNotes(notes, query)), [notes, query])
 

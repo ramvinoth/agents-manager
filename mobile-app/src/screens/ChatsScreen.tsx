@@ -12,6 +12,7 @@ import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
+import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
 
@@ -202,6 +203,7 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
+  const menuButton = useMenuButton()
   // Chats shows a "+" that starts a new session; selection mode swaps in
   // close + bulk delete.
   useScreenHeader(navigation, () =>
@@ -231,7 +233,7 @@ export default function ChatsScreen({ navigation }: Props) {
         }
       : {
           title: "Chats",
-          headerLeft: () => null,
+          headerLeft: menuButton,
           headerRight: () => (
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <TouchableOpacity

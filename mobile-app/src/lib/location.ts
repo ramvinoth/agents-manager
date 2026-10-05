@@ -1,6 +1,6 @@
-// The Files tab's location model: what it shows comes from exactly one place —
+// The Files screen's location model: what it shows comes from exactly one place —
 // the current host (this machine or an SSH host, the app-wide choice from the
-// header) or a cloud drive (a choice of the Files tab alone). The server
+// header) or a cloud drive (a choice of the Files screen alone). The server
 // enforces "one of host/drive"; this module is the client's single statement of
 // the same rule so the tab, the picker and the API client never disagree.
 import type { Drive } from "../api/client"

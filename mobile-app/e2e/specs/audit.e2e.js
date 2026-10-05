@@ -58,9 +58,8 @@ describe("Native audit log — isolated display-v1 API", () => {
       await tap("login-submit")
     }
     await $("~chats-list").waitForDisplayed()
-    await $('-ios predicate string:label == "Profile"').click()
-    await reveal("open-org")
-    await tap("open-org")
+    await tap("menu-button")
+    await tap("menu-Org")
     await reveal("org-audit")
     assert.equal(auditRequests().length, 0, "Company must not fetch the removed inline audit dump")
   })
@@ -83,7 +82,7 @@ describe("Native audit log — isolated display-v1 API", () => {
     }
   })
 
-  it("navigates Profile → Company → Audit, handles initial failure and retries safely", async () => {
+  it("navigates menu → Company → Audit, handles initial failure and retries safely", async () => {
     fixture.audit.failNext = 503
     await tap("org-audit")
     await $("~audit-error").waitForDisplayed()

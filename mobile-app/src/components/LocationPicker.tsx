@@ -11,7 +11,7 @@ import SheetModal from "./SheetModal"
 import { useStyles } from "../screens/styles"
 
 /**
- * LocationPicker — the Files tab's "where am I looking" sheet. One list: the
+ * LocationPicker — the Files screen's "where am I looking" sheet. One list: the
  * current host (the app-wide choice from the header, shown by its label),
  * every cloud drive, and one "Add <vendor>" row per vendor the server can
  * connect. Picking an unauthorized drive (never connected, or its token was
@@ -23,7 +23,7 @@ import { useStyles } from "../screens/styles"
  * entered; the same screen is one row away for later edits.
  *
  * Owns only the picker's transient state (the drive list, the in-flight
- * connect). The selected location belongs to the Files tab, which threads it
+ * connect). The selected location belongs to the Files screen, which threads it
  * into every file call.
  */
 export default function LocationPicker({

@@ -4,7 +4,7 @@ import { useFocusEffect } from "@react-navigation/native"
 
 /**
  * The FULL header a screen owns. Every key is required (an `undefined` value
- * still has to be written out) because the six Home tabs share ONE parent-stack
+ * still has to be written out) because the Home tabs share ONE parent-stack
  * header and setOptions MERGES: a key a tab leaves out keeps the previous tab's
  * value — that is how Chats' "+" ended up in Inbox's header. `undefined` means
  * "the navigator default" (the back button on a pushed screen); `() => null`
@@ -27,7 +27,7 @@ type Settable = { setOptions: (options: Partial<ScreenHeader>) => void }
  * to mis-place. Sized to the widest occupant (Chats' two 32pt icons) so a
  * one-icon tab's glass pill stays snug; anything wider must shrink to fit.
  * A tab with NO right content gets no box at all — an empty fixed box would
- * draw an empty pill (Inbox, Agents).
+ * draw an empty pill (Inbox).
  */
 export const HEADER_RIGHT_WIDTH = 72
 

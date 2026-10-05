@@ -37,9 +37,8 @@ describe("Native integrations — one catalog, every service state", () => {
       await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await tap("login-submit")
     }
     await $("~chats-list").waitForDisplayed()
-    await tap("tab-Profile")
-    await reveal("open-integrations")
-    await tap("open-integrations")
+    await tap("menu-button")
+    await tap("menu-Integrations")
     await $("~integrations-screen").waitForDisplayed()
   })
   after(async () => {

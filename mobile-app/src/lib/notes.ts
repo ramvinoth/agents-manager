@@ -33,7 +33,7 @@ export function noteTemplates(now: Date = new Date()): NoteTemplate[] {
 export const KIND_LABEL: Record<NoteKind, string> =
   { note: "Note", journal: "Journal", meeting: "Meeting", idea: "Idea", checklist: "Checklist" }
 
-/** The scope of a notes VIEW: a chat's notes, a project's, or (the Notes tab)
+/** The scope of a notes VIEW: a chat's notes, a project's, or (the side menu's Notes)
  *  every note — unlike the board, notes need no columns, so an unscoped view is
  *  legitimate. A malformed scope is refused, never silently widened. */
 export function notesScopeFilter(input: NoteFilter = {}): NoteFilter | null {

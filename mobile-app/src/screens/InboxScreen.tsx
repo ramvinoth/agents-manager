@@ -11,6 +11,7 @@ import {
   orderInbox, replyTo, rowActor, searchInbox,
 } from "../lib/inbox"
 import { fmtWaiting } from "../lib/decisions"
+import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { currentHost, setToken } from "../state/config"
 import Icon from "../components/Icon"
@@ -96,6 +97,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
     return () => clearInterval(id)
   }, [load]))
 
+  const menuButton = useMenuButton()
   // The shared stack header: a pushed (scoped) view gets its title; the tab
   // re-asserts its own on focus (sibling tabs share the header). The unread
   // count rides in the title so Ram sees "how many wait on me" at a glance —
@@ -104,7 +106,7 @@ export default function InboxScreen({ navigation, filter, title, host, path, isT
     const base = title || (filter?.session ? "Chat inbox" : "Inbox")
     return {
       title: unread > 0 ? `${base} (${unread})` : base,
-      headerLeft: isTab ? () => null : undefined,
+      headerLeft: isTab ? menuButton : undefined,
       headerRight: () => null,
     }
   }, [title, filter?.session, isTab, unread])

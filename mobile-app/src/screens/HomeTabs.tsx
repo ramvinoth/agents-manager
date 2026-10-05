@@ -5,11 +5,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import ChatsScreen from "./ChatsScreen"
-import FilesTab from "./FilesTab"
-import AgentsScreen from "./AgentsScreen"
 import ProfileScreen from "./ProfileScreen"
-import NotesScreen from "./NotesScreen"
 import InboxScreen from "./InboxScreen"
+import SideMenu, { SideMenuProvider } from "../components/SideMenu"
 import Icon, { type IconName } from "../components/Icon"
 import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
@@ -17,9 +15,6 @@ import { useTheme } from "../lib/useTheme"
 export type HomeTabParamList = {
   Chats: undefined
   Inbox: undefined
-  Files: undefined
-  Notes: undefined
-  Agents: undefined
   Profile: undefined
 }
 
@@ -29,9 +24,6 @@ const Tab = createMaterialTopTabNavigator<HomeTabParamList>()
 const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> = {
   Chats: { on: "chatFilled", off: "chat" },
   Inbox: { on: "mailFilled", off: "mail" },
-  Files: { on: "file", off: "file" },
-  Notes: { on: "book", off: "book" },
-  Agents: { on: "sparkle", off: "sparkle" },
   Profile: { on: "userFilled", off: "user" },
 }
 
@@ -43,8 +35,12 @@ type Props = NativeStackScreenProps<RootStackParamList, "Home">
  * that plain bottom-tabs lacks. Nested inside the root stack, so each tab can
  * still push Thread / NewChat / Files / Terminal on the parent stack.
  *
- * The active tab is marked by a filled icon inside a tinted "pill" (like
- * WhatsApp), not a top indicator line — that reads as native, not web tabs.
+ * The active tab is marked by a filled icon, not a top indicator line — that
+ * reads as native, not web tabs.
+ *
+ * Only the daily places are tabs; everything else (Files, Notes, Agents,
+ * boards, Integrations…) lives in the side menu, which every tab opens from
+ * the hamburger in its header (useMenuButton).
  */
 export default function HomeTabs({ navigation }: Props) {
   const t = useTheme()
@@ -56,6 +52,7 @@ export default function HomeTabs({ navigation }: Props) {
   // only mounts/refreshes when the Inbox tab itself is focused. Count-only
   // read; a failure just leaves the last count (no error surface on a badge).
   const [inboxUnread, setInboxUnread] = useState(0)
+  const [menuOpen, setMenuOpen] = useState(false)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -70,6 +67,7 @@ export default function HomeTabs({ navigation }: Props) {
   }, [])
 
   return (
+    <SideMenuProvider value={() => setMenuOpen(true)}>
     <Tab.Navigator
       tabBarPosition="bottom"
       screenOptions={({ route }) => ({
@@ -102,9 +100,7 @@ export default function HomeTabs({ navigation }: Props) {
           const spec = TAB_ICON[route.name]
           const badge = route.name === "Inbox" && inboxUnread > 0 ? inboxUnread : 0
           return (
-            // 58, not 64: six tabs must fit a 375pt screen without the tab bar
-            // scrolling (6×64=384 would).
-            <View style={{ alignItems: "center", justifyContent: "center", width: 58 }}>
+            <View style={{ alignItems: "center", justifyContent: "center", width: 72 }}>
               {/* No pill/enclosure behind the icon: the active tab is already
                   marked by the icon+label recoloring to the accent, so a tinted
                   background would be redundant. */}
@@ -138,10 +134,9 @@ export default function HomeTabs({ navigation }: Props) {
     >
       <Tab.Screen name="Chats">{() => <ChatsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
-      <Tab.Screen name="Files">{() => <FilesTab navigation={navigation} />}</Tab.Screen>
-      <Tab.Screen name="Notes">{() => <NotesScreen navigation={navigation} isTab />}</Tab.Screen>
-      <Tab.Screen name="Agents">{() => <AgentsScreen navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
+    <SideMenu visible={menuOpen} onClose={() => setMenuOpen(false)} navigation={navigation} />
+    </SideMenuProvider>
   )
 }

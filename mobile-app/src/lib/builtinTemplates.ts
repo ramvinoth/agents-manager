@@ -1,5 +1,5 @@
 /**
- * Builtin agent templates — embedded client-side so the Agents tab is never
+ * Builtin agent templates — embedded client-side so the Agents screen is never
  * empty, even before the server has the /api/agent-templates route (requires
  * a viewer restart to pick up new routes). When the API is available, server
  * data replaces these; when it fails or returns empty, these are the fallback.
