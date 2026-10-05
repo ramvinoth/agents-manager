@@ -24,6 +24,8 @@ db.job_runs_abandon_running = lambda: print("RECONCILE job_runs") or 0
 server.run_settings_paths_in_use = lambda: set()
 server.run_settings_sweep_orphans = lambda live: print("RECONCILE settings") or []
 server.loop_scheduler = lambda *a, **k: print("SCHEDULER started")
+from viewer import resume
+resume.resume_inflight = lambda: print("RECONCILE resume") or []
 class _Blocking:
     def __init__(self, *a, **k): pass
     def serve_forever(self): threading.Event().wait()
@@ -53,6 +55,7 @@ def test_real_boot_reconciles_and_starts_scheduler(tmp_path):
     assert "RECONCILE job_runs" in out
     assert "RECONCILE settings" in out
     assert "SCHEDULER started" in out
+    assert "RECONCILE resume" in out
     assert "PREFLIGHT" not in out
 
 

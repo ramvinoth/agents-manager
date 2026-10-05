@@ -679,6 +679,14 @@ def main():
         except Exception as e:
             print(f"  ⚠ run settings sweep failed: {e}")
         threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
+        # Turns the previous process was running when it stopped resume here, so
+        # an update or crash pauses agent work instead of dropping it.
+        from viewer import resume
+        def _resume_cut_turns():
+            ids = resume.resume_inflight()
+            if ids:
+                print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
+        threading.Thread(target=_resume_cut_turns, daemon=True).start()
         # Outbound to the Harman relay (off unless HARMAN_RELAY_URL is set). Never
         # from a preflight spare: the relay keeps ONE control socket per server,
         # so a spare would steal the live server's phones.

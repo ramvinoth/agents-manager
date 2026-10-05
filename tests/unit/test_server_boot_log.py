@@ -27,6 +27,8 @@ class _Blocking:
     def serve_forever(self): threading.Event().wait()
 server.PooledHTTPServer = _Blocking
 server.loop_scheduler = lambda *a, **k: None
+from viewer import resume
+resume.resume_inflight = lambda: []
 server.main()
 """
 

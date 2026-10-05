@@ -1523,6 +1523,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
                "pending_approvals": [], "perm_token": "", "version_gate": ""}
         CHAT_JOBS[session_id] = job
+    # Durable "this turn is in flight" record: a restart that kills the run
+    # leaves the row behind and boot resumes it (viewer/resume.py).
+    try:
+        db.inflight_run_start(session_id, host, cwd, mode, model, job["started"])
+    except Exception:
+        pass
 
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
@@ -1746,7 +1752,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     nxt = job["queue"].pop(0) if job["queue"] else None
                     if nxt is None:
                         job["stdin_open"] = False
+                    backlog = list(job["queue"])
                 if nxt is not None:
+                    _persist_queue(session_id, backlog)
                     stream_user_message(proc, nxt)
                 else:
                     try:
@@ -1790,6 +1798,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 interrupted = job.get("interrupted")
                 last_result = job.get("last_result", "")
                 version_gate = job.get("version_gate", "")
+            # The turn ended on its own (finished, failed or interrupted): not
+            # for boot to resume. Before the leftovers follow-up below records
+            # its own row.
+            try:
+                db.inflight_run_clear(session_id, job["started"])
+            except Exception:
+                pass
             # Self-heal the stale half of the 2.1.84 incident: the provider
             # rejected this run for a too-old CLI, so force the next run to
             # re-resolve the binary from disk — if the user has since run
@@ -1845,6 +1860,15 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     return True
 
 
+def _persist_queue(session_id, backlog):
+    """Mirror a run's message queue into its in-flight row, so messages queued
+    behind a turn survive a restart with it. Best-effort."""
+    try:
+        db.inflight_run_queue(session_id, backlog)
+    except Exception:
+        pass
+
+
 def interrupt_chat(session_id):
     """Abort the running turn (Esc in the TUI): SIGINT, escalating if needed.
     Queued messages are dropped — an interrupt means 'stop what's planned'."""
@@ -1880,7 +1904,9 @@ def enqueue_chat(session_id, text):
         if not job or not job["running"]:
             return None
         job["queue"].append(text)
-        return len(job["queue"])
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
+    return len(backlog)
 
 
 def steer_chat(session_id, text):
@@ -1899,7 +1925,9 @@ def steer_chat(session_id, text):
             except (OSError, ValueError):
                 job["stdin_open"] = False
         job["queue"].append(text)
-        return "queued"
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
+    return "queued"
 
 
 def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_done=None):

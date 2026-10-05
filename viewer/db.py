@@ -121,6 +121,20 @@ def init_db():
               revision    INTEGER NOT NULL DEFAULT 1,
               created_at  DOUBLE PRECISION NOT NULL
             );
+            -- Turns in flight, so a server restart (planned update or crash)
+            -- pauses them instead of killing them: boot resumes every row left
+            -- behind (viewer/resume.py). Written when a run starts, kept in step
+            -- with its message queue, deleted when the run ends.
+            CREATE TABLE IF NOT EXISTS inflight_runs (
+              session_id TEXT PRIMARY KEY,
+              host       TEXT NOT NULL DEFAULT 'local',
+              cwd        TEXT NOT NULL DEFAULT '',
+              mode       TEXT NOT NULL DEFAULT '',
+              model      TEXT NOT NULL DEFAULT '',
+              queue      JSONB NOT NULL DEFAULT '[]',
+              resumes    INTEGER NOT NULL DEFAULT 0,
+              started_at DOUBLE PRECISION NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS session_tokens (
               session_id     TEXT PRIMARY KEY,
               perm_token     TEXT NOT NULL DEFAULT '',
@@ -860,6 +874,48 @@ def pending_question_delete(session_id):
 # is wiped on restart. Persist them here so a session's still-running MCP tools
 # (and the durable pending question/plan that references them) stay authorized
 # across a restart. Cleared when the run's job is reaped.
+
+def inflight_run_start(session_id, host, cwd, mode, model, started):
+    """Record a turn as in flight. `resumes` is kept across upserts: it counts
+    automatic restart-resumes and only resets when a run ends normally (row
+    deleted), so a turn that keeps killing the server cannot resume forever."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at) "
+            "VALUES(%s,%s,%s,%s,%s,'[]',%s) ON CONFLICT (session_id) DO UPDATE SET "
+            "host = EXCLUDED.host, cwd = EXCLUDED.cwd, mode = EXCLUDED.mode, "
+            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at",
+            (session_id, host or "local", cwd or "", mode or "", model or "", started))
+
+
+def inflight_run_queue(session_id, queue):
+    with _db() as cur:
+        cur.execute("UPDATE inflight_runs SET queue = %s WHERE session_id = %s",
+                    (json.dumps(list(queue)), session_id))
+
+
+def inflight_run_clear(session_id, started=None):
+    """Delete the row; with `started`, only if it is still that run's row (a
+    follow-up run of the same session may already have replaced it)."""
+    with _db() as cur:
+        if started is None:
+            cur.execute("DELETE FROM inflight_runs WHERE session_id = %s", (session_id,))
+        else:
+            cur.execute("DELETE FROM inflight_runs WHERE session_id = %s AND started_at = %s",
+                        (session_id, started))
+
+
+def inflight_runs_all():
+    with _db() as cur:
+        cur.execute("SELECT * FROM inflight_runs ORDER BY started_at")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def inflight_run_bump_resumes(session_id):
+    with _db() as cur:
+        cur.execute("UPDATE inflight_runs SET resumes = resumes + 1 WHERE session_id = %s",
+                    (session_id,))
+
 
 def session_token_set(session_id, perm_token, kanban_token, employee_id,
                       employee_level="ic", cwd="", host="local"):
