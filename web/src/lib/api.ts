@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, DriveClient, InboxFilter, InboxMessage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer } from "./pairLink"
@@ -578,23 +578,6 @@ class ApiClient {
   driveDelete(id: string) {
     return this.postJSON<{ ok?: boolean } | { error?: string }>("/api/drives/delete", { drive: id })
   }
-  /** Per-vendor OAuth client status plus the redirect URI this deployment
-   *  needs registered with each vendor (derived from the origin in use). */
-  driveClients() {
-    return this.getJSON<{ clients: DriveClient[]; redirect_uri: string }>("/api/drive/clients")
-  }
-  /** Save a vendor client. Omit client_secret to keep the stored one; send ""
-   *  to clear it. Human-only on the server. */
-  driveClientSave(body: { kind: string; client_id: string; client_secret?: string }) {
-    return this.postJSON<{ clients: DriveClient[]; redirect_uri: string } | { error?: string }>(
-      "/api/drive/clients", body
-    )
-  }
-  driveClientDelete(kind: string) {
-    return this.postJSON<{ clients: DriveClient[]; redirect_uri: string } | { error?: string }>(
-      "/api/drive/clients/delete", { kind }
-    )
-  }
   /** Begin the hosted consent flow for a drive → the vendor URL to open + the
    *  pending handle to poll with driveOAuthStatus(). The vendor redirects the
    *  browser back to this server's /api/drive/oauth/callback, which finishes
@@ -609,6 +592,31 @@ class ApiClient {
     return this.getJSON<{ pending: string; status: "waiting" | "authorized" | "failed" | "expired"; error?: string }>(
       `/api/drive/oauth/status?pending=${encodeURIComponent(pending)}`
     )
+  }
+
+  // ---- integrations (accounts + the services agents may use on them) ----
+  integrations() {
+    return this.getJSON<IntegrationsView>("/api/integrations")
+  }
+  /** Consent for `service` — on `connection` (adds the permission, keeps the
+   *  rest) or, without one, on a new account. Poll the pending handle with
+   *  driveOAuthStatus(). Human-only. */
+  integrationConnect(body: { service: string; connection?: string }) {
+    return this.postJSON<{ url: string; pending: string; connection: string } | { error?: string }>(
+      "/api/integrations/connect", body
+    )
+  }
+  /** Save a provider's OAuth client. Omit client_secret to keep the stored
+   *  one; send "" to clear it. Returns the fresh view. Human-only. */
+  integrationClientSave(body: { provider: string; client_id: string; client_secret?: string }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/client", body)
+  }
+  integrationClientDelete(provider: string) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/client/delete", { provider })
+  }
+  /** The owner's on/off switch for a granted service; returns the fresh view. */
+  integrationService(body: { connection: string; service: string; on: boolean }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/service", body)
   }
 
   // ---- browser panel ----

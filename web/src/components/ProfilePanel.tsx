@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronRight, History, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
+import { ChevronRight, History, Plug, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
@@ -8,6 +8,7 @@ import type { LoopMode } from "@/lib/types"
 import { AISelectionDialog } from "./settings/AISelectionDialog"
 import { AuditDialog } from "./AuditDialog"
 import { PairPhoneDialog } from "./PairPhoneDialog"
+import { IntegrationsDialog } from "./IntegrationsDialog"
 
 // Loop-firing modes, in escalating order of what's licensed to run — the
 // plain-language version of loops.LOOP_MODES. Mirrors the mobile Profile screen.
@@ -82,6 +83,7 @@ export function ProfilePanel() {
   const [aiErr, setAiErr] = useState("")
   const [aiOpen, setAiOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
+  const [integrationsOpen, setIntegrationsOpen] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
   const authUser = useStore((s) => s.authUser)
   useEffect(() => {
@@ -245,6 +247,20 @@ export function ProfilePanel() {
         </section>
 
         <section className="py-4">
+          <SectionHeader icon={Plug} title="Integrations" />
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <Plug className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left" onClick={() => setIntegrationsOpen(true)}>
+              <div className="text-sm font-medium">Connected accounts</div>
+              <div className="truncate text-[11px] text-muted-foreground">Gmail, Calendar, Drive, Dropbox, OneDrive — choose what agents may use.</div>
+            </button>
+            <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setIntegrationsOpen(true)} title="Open integrations">
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        </section>
+
+        <section className="py-4">
           <SectionHeader icon={History} title="Activity" />
           <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
             <History className="size-4 shrink-0 text-muted-foreground" />
@@ -293,6 +309,7 @@ export function ProfilePanel() {
       </div>
 
       {pairOpen && <PairPhoneDialog onClose={() => setPairOpen(false)} />}
+      {integrationsOpen && <IntegrationsDialog onClose={() => setIntegrationsOpen(false)} />}
       {auditOpen && <AuditDialog selfUsername={authUser?.username} onClose={() => setAuditOpen(false)} />}
       {aiOpen && (
         <AISelectionDialog

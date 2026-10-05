@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+import { waitForConsent } from "@/lib/integrations"
 import { IntegrationsDialog } from "@/components/IntegrationsDialog"
 import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "@/lib/location"
 import type { Drive } from "@/lib/types"
@@ -48,9 +49,9 @@ export function LocationPicker({
   const [connecting, setConnecting] = useState<string | null>(null) // drive id mid-consent
   const [error, setError] = useState<string | null>(null)
   const [integrations, setIntegrations] = useState(false)
-  const pollTimer = useRef<number | null>(null)
+  const unmounted = useRef(false)
 
-  useEffect(() => () => { if (pollTimer.current) window.clearTimeout(pollTimer.current) }, [])
+  useEffect(() => () => { unmounted.current = true }, [])
 
   async function refresh(): Promise<Drive[]> {
     const d = await api.drives()
@@ -58,8 +59,8 @@ export function LocationPicker({
     return d.drives || []
   }
 
-  /** Run consent for `drive`, then select it. Polls every 2s until the flow
-   *  ends; a failed/expired flow leaves the drive listed but unselected, with
+  /** Run consent for `drive`, then select it. Waits on the flow (shared
+   *  waitForConsent) until it ends; a failed/expired flow leaves the drive listed but unselected, with
    *  the reason shown — the user can retry from the same menu entry. */
   async function connect(drive: Drive) {
     setError(null)
@@ -74,23 +75,7 @@ export function LocationPicker({
       }
       if (!("url" in r)) throw new Error("No consent URL returned")
       window.open(r.url, "_blank", "noopener")
-      const pending = r.pending
-      await new Promise<void>((resolve, reject) => {
-        const tick = async () => {
-          try {
-            const s = await api.driveOAuthStatus(pending)
-            if (s.status === "authorized") return resolve()
-            if (s.status === "waiting") {
-              pollTimer.current = window.setTimeout(tick, 2000)
-              return
-            }
-            reject(new Error(s.error || `Consent ${s.status}`))
-          } catch (e) {
-            reject(e)
-          }
-        }
-        tick()
-      })
+      await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => unmounted.current)
       await refresh()
       onChange(drive.id)
     } catch (e: any) {
@@ -188,7 +173,7 @@ export function LocationPicker({
         </DropdownMenuContent>
       </DropdownMenu>
       {error && <span className="truncate text-xs text-destructive" title={error}>{error}</span>}
-      {integrations && <IntegrationsDialog onClose={() => setIntegrations(false)} />}
+      {integrations && <IntegrationsDialog onClose={() => setIntegrations(false)} onChanged={() => refresh().catch(() => {})} />}
     </div>
   )
 }

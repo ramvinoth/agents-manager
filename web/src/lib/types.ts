@@ -461,14 +461,39 @@ export interface Drive {
   authorized: boolean
 }
 
-/** One vendor's OAuth client as the Integrations dialog sees it — the secret
- *  itself is never returned; `has_secret` is a presence flag. `public` marks a
- *  PKCE public client (Dropbox, OneDrive) that needs no secret at all. */
-export interface DriveClient {
-  kind: string
+/** GET /api/integrations — the whole Integrations page in one response,
+ *  built server-side from viewer/integrations.py. No secrets or tokens. */
+export type ServiceState = "on" | "off" | "grant" | "unavailable"
+export interface IntegrationService {
+  id: string
   label: string
+  kind: string
+  /** What agents will do with it — read before granting. */
+  agent: string
+  available: boolean
+  /** Why it can't be connected, when !available. */
+  unavailable: string
+}
+export interface IntegrationConnection {
+  id: string
+  /** The signed-in account's address ("" for a connection made before it was recorded). */
+  account: string
+  status: string
+  authorized: boolean
+  services: Record<string, ServiceState>
+}
+export interface IntegrationProvider {
+  id: string
+  label: string
+  /** A PKCE public client — no secret is issued or needed. */
   public: boolean
-  client_id: string
-  has_secret: boolean
-  configured: boolean
+  /** Where the owner creates the OAuth client. */
+  console: string
+  client: { client_id: string; has_secret: boolean; configured: boolean }
+  services: IntegrationService[]
+  connections: IntegrationConnection[]
+}
+export interface IntegrationsView {
+  providers: IntegrationProvider[]
+  redirect_uri: string
 }
