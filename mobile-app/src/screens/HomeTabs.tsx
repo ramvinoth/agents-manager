@@ -53,14 +53,14 @@ export default function HomeTabs({ navigation }: Props) {
   // The Inbox badge: how many messages/decisions wait on this reader. It has to
   // update while ANOTHER tab is showing (that's the point of a badge), so the
   // count is polled here at the navigator level — not inside InboxScreen, which
-  // only mounts/refreshes when the Inbox tab itself is focused. Cheap unscoped
-  // list; a failure just leaves the last count (no error surface on a badge).
+  // only mounts/refreshes when the Inbox tab itself is focused. Count-only
+  // read; a failure just leaves the last count (no error surface on a badge).
   const [inboxUnread, setInboxUnread] = useState(0)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
     const poll = () => {
-      api.inboxList({})
+      api.inboxUnread()
         .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
         .catch(() => {})
     }

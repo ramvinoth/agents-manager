@@ -16,6 +16,7 @@ APIs:
 """
 
 import concurrent.futures
+import gzip
 import logging
 
 import http.cookies
@@ -27,6 +28,9 @@ import socket
 import sys
 import threading
 from urllib.parse import urlparse, parse_qs
+
+# Below this a JSON body isn't worth the compress/decompress round trip.
+GZIP_MIN_BYTES = 1024
 
 from viewer import db, orglogic, setupcode
 from viewer.remote import tailnet_ipv4
@@ -310,8 +314,17 @@ class SessionViewerHandler(
 
     def send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
+        # JSON shrinks ~4x under gzip (measured: a 1.3 MB thread page → 341 KB).
+        # Only when the client asks — browsers and iOS URLSession do, and
+        # decompress transparently; the relay mux doesn't, so it stays plain.
+        gz = len(body) >= GZIP_MIN_BYTES and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:
+            body = gzip.compress(body, compresslevel=5)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()

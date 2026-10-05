@@ -68,6 +68,12 @@ class InboxMixin:
         kind = (q.get("kind") or [None])[0]
         unread_only = (q.get("unread_only") or [None])[0] not in (None, "")
         archived = (q.get("archived") or [None])[0] not in (None, "")
+        if (q.get("count_only") or [None])[0] not in (None, ""):
+            # The tab badge polls this from every screen: the number only,
+            # not the full list it would throw away.
+            self.send_json({"unread": db.inbox_unread_count(
+                session_id=session, project_id=int(project) if project else None, kind=kind)})
+            return
         rows = db.inbox_list(session_id=session,
                              project_id=int(project) if project else None,
                              kind=kind, unread_only=unread_only, archived=archived)

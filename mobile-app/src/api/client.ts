@@ -268,6 +268,16 @@ async function req<T = unknown>(method: string, path: string, body?: unknown): P
   return data as T
 }
 
+
+type RawPage = { lines?: string[]; start?: number; end?: number; size?: number }
+export type SessionPage = { lines: string[]; start: number; end: number; size: number }
+const toPage = (env: RawPage | null): SessionPage => ({
+  lines: Array.isArray(env?.lines) ? env.lines : [],
+  start: env?.start ?? 0,
+  end: env?.end ?? env?.size ?? 0,
+  size: env?.size ?? 0,
+})
+
 export const api = {
   // ---- auth ----
   authState: () => req<{ signupOpen: boolean; user: User | null }>("GET", "/api/auth/state"),
@@ -324,14 +334,18 @@ export const api = {
     host: string,
     path: string,
     tail = 400
-  ): Promise<{ lines: string[]; start: number; size: number }> => {
+  ): Promise<SessionPage> => {
     const q = new URLSearchParams({ tail: String(tail) })
     if (host && host !== "local") q.set("host", host)
-    const env = await req<{ lines?: string[]; start?: number; size?: number } | null>(
-      "GET",
-      `/api/session/${path}?${q.toString()}`
-    )
-    return { lines: Array.isArray(env?.lines) ? env.lines : [], start: env?.start ?? 0, size: env?.size ?? 0 }
+    return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
+  },
+  // Incremental read: only the lines appended after byte offset `from` (the
+  // previous page's `end`). A running thread polls this instead of re-reading
+  // its whole tail window — bytes scale with new output, not transcript size.
+  sessionReadFrom: async (host: string, path: string, from: number): Promise<SessionPage> => {
+    const q = new URLSearchParams({ from: String(from) })
+    if (host && host !== "local") q.set("host", host)
+    return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
   },
   // Start a brand-new agent session in `cwd`. Returns the new session id plus the
   // transcript path, which the thread screen opens directly.
@@ -738,6 +752,8 @@ export const api = {
     return req<{ messages: InboxMessage[]; unread?: number; queue?: { count: number; items: InboxMessage[] } }>(
       "GET", `/api/inbox${q ? "?" + q : ""}`)
   },
+  // Just the badge number — the full list is ~64 KB the badge would discard.
+  inboxUnread: () => req<{ unread?: number }>("GET", "/api/inbox?count_only=1"),
   inboxSend: (body: { to: string; body: string; in_reply_to?: number }) =>
     req<InboxMessage>("POST", "/api/inbox/send", body),
   // Owner surface only: mark read / snooze (a snooze is "later", never delete).

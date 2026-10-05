@@ -231,6 +231,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // visibility, never the auto-scroll.
   const distanceFromBottom = useRef(0)
 
+  // The transcript lines currently rendered and the byte offset they end at. A
+  // full reload() replaces both; poll() appends only what the file gained since
+  // `end`, so a running turn costs bytes proportional to its new output instead
+  // of re-downloading the whole tail window every tick.
+  const loadedRef = useRef<{ path?: string; lines: string[]; end: number }>({ lines: [], end: 0 })
+
   const reload = useCallback(async () => {
     if (!path) {
       setLoading(false)
@@ -241,43 +247,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // start === 0 means the window reaches the top of the file → no older
       // history to lazy-load. Otherwise scrolling up can grow the window.
       hasMoreRef.current = page.start > 0
-      const lines = page.lines
-      const next = groupThread(parseTranscript(lines))
-      // A steered message gets an optimistic bubble immediately, but the server
-      // may not have written it into the transcript yet — so a naive setItems(next)
-      // here would wipe it (it flashes then vanishes). Keep any pending optimistic
-      // bubbles the server hasn't caught up to yet; drop each one once a matching
-      // user turn appears. Match by COUNT, not set-membership: send the same text
-      // twice and each server turn consumes exactly ONE pending bubble (a Set would
-      // drop both on the first match, losing a real duplicate). The transcript user
-      // turns don't echo our client id, so text-with-count is the best identity we
-      // have here.
-      const serverTextCounts = new Map<string, number>()
-      for (const it of next) {
-        if (it.kind === "user") {
-          const txt = (it as { text: string }).text
-          serverTextCounts.set(txt, (serverTextCounts.get(txt) || 0) + 1)
-        }
-      }
-      pendingSteers.current = pendingSteers.current.filter((b) => {
-        const n = serverTextCounts.get(b.text) || 0
-        if (n > 0) {
-          serverTextCounts.set(b.text, n - 1) // this server turn consumes this bubble
-          return false
-        }
-        return true // not caught up yet — keep the optimistic bubble
-      })
-      const merged =
-        pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
-      setItems(merged)
-      // Track the newest tool call so the header/working bubble can name it.
-      const last = next[next.length - 1]
-      if (last && last.kind === "exchange") {
-        const tools = last.steps.filter((b) => b.kind === "tool")
-        const newest = tools[tools.length - 1]
-        if (newest && newest.kind === "tool") setActivity(newest.name)
-      }
-      return next
+      loadedRef.current = { path, lines: page.lines, end: page.end }
+      return render(page.lines)
     } catch (e) {
       setError((e as Error).message)
       return [] as ReturnType<typeof groupThread>
@@ -285,6 +256,63 @@ export default function ThreadScreen({ route, navigation }: Props) {
       setLoading(false)
     }
   }, [host, path, windowLines])
+
+  // Incremental refresh for the live-run poll. Falls back to a full reload when
+  // there's no baseline for this path or the file shrank (rewritten/trimmed).
+  const poll = useCallback(async () => {
+    const loaded = loadedRef.current
+    if (!path || loaded.path !== path) return reload()
+    try {
+      const page = await api.sessionReadFrom(host, path, loaded.end)
+      if (loadedRef.current !== loaded) return // a full reload landed meanwhile
+      if (page.size < loaded.end) return reload()
+      if (!page.lines.length) return // nothing new — skip the re-parse/re-render
+      const lines = [...loaded.lines, ...page.lines]
+      loadedRef.current = { path, lines, end: page.end }
+      return render(lines)
+    } catch {
+      /* transient; the next tick retries */
+    }
+  }, [host, path, reload])
+
+  function render(lines: string[]) {
+    const next = groupThread(parseTranscript(lines))
+    // A steered message gets an optimistic bubble immediately, but the server
+    // may not have written it into the transcript yet — so a naive setItems(next)
+    // here would wipe it (it flashes then vanishes). Keep any pending optimistic
+    // bubbles the server hasn't caught up to yet; drop each one once a matching
+    // user turn appears. Match by COUNT, not set-membership: send the same text
+    // twice and each server turn consumes exactly ONE pending bubble (a Set would
+    // drop both on the first match, losing a real duplicate). The transcript user
+    // turns don't echo our client id, so text-with-count is the best identity we
+    // have here.
+    const serverTextCounts = new Map<string, number>()
+    for (const it of next) {
+      if (it.kind === "user") {
+        const txt = (it as { text: string }).text
+        serverTextCounts.set(txt, (serverTextCounts.get(txt) || 0) + 1)
+      }
+    }
+    pendingSteers.current = pendingSteers.current.filter((b) => {
+      const n = serverTextCounts.get(b.text) || 0
+      if (n > 0) {
+        serverTextCounts.set(b.text, n - 1) // this server turn consumes this bubble
+        return false
+      }
+      return true // not caught up yet — keep the optimistic bubble
+    })
+    const merged =
+      pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
+    setItems(merged)
+    // Track the newest tool call so the header/working bubble can name it.
+    const last = next[next.length - 1]
+    if (last && last.kind === "exchange") {
+      const tools = last.steps.filter((b) => b.kind === "tool")
+      const newest = tools[tools.length - 1]
+      if (newest && newest.kind === "tool") setActivity(newest.name)
+    }
+    return next
+  }
 
   // Lazy-load older history when the user scrolls to the TOP of the (inverted)
   // list. Grow the tail window and re-read; maintainVisibleContentPosition keeps
@@ -529,7 +557,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         if (!s.running || ticks > 400) {
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = null
-          await reload() // final response replaces the "working" bubble
+          await poll() // final response replaces the "working" bubble
           // The run ended. It may have ended WAITING on you — a per-tool approval
           // or a parked AskUserQuestion (pending_question). Either way the server
           // already pushed a notification; we just stop the busy spinner and let
@@ -538,11 +566,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
           setBusy(false)
           return
         }
-        // Still running → stream the steps in as they happen (every other tick,
-        // ~3s, so the transcript fetch doesn't pile up behind the status poll).
-        if (ticks % 2 === 0) {
-          await reload()
-        }
+        // Still running → stream the new steps in. poll() fetches only bytes
+        // appended since the last read, so it's cheap enough to run every tick.
+        await poll()
       } catch {
         /* keep polling through transient errors */
       } finally {
