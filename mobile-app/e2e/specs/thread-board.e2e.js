@@ -235,7 +235,10 @@ describe("Native thread board gesture — isolated API", () => {
     await backToThread()
   })
 
-  it("locates move controls below a newly created long human title and persists its move", async () => {
+  it("locates move controls below a newly created long human title and persists its move", async function () {
+    // WDA types ~1,800 characters at ~20/s (measured 2026-10-05: 86 s), so the
+    // create → move → reopen → reveal flow needs more than the 120 s default.
+    this.timeout(300000)
     await edgeSwipe()
     // Inline creation has ONE single-line title field, not a body editor: a
     // typed newline is the return key and submits the card early. Type one long
