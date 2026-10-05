@@ -1,0 +1,11 @@
+name = "harman-release-feed"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+# releases.suhai.ai — suhai.ai's zone is already on this Cloudflare account.
+routes = [{ pattern = "releases.suhai.ai", custom_domain = true }]
+
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "harman-releases"

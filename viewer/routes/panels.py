@@ -62,7 +62,14 @@ class PanelsMixin:
 
         Never 500s on a DB outage — a health probe must still answer. The disk
         version is always reportable; the DB fields degrade to null and `ok`
-        stays True (the process IS up; `db_ok` tells the prober the DB is not)."""
+        stays True (the process IS up; `db_ok` tells the prober the DB is not).
+
+        `busy` is how many agent turns are running right now: the box's
+        auto-updater (`harman auto-update`) waits for 0 before restarting so it
+        doesn't cut work off. A bare count, so a public probe learns no more
+        than "the agents are working"."""
+        with config.CHAT_LOCK:
+            busy = sum(1 for j in config.CHAT_JOBS.values() if j.get("running"))
         body = {
             "ok": True,
             "version": config.VERSION,
@@ -70,6 +77,7 @@ class PanelsMixin:
             "db_ok": True,
             "db_version": None,
             "db_schema": None,
+            "busy": busy,
         }
         try:
             meta = db.setting_get("app_meta", {}) or {}

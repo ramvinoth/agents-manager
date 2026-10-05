@@ -172,8 +172,16 @@ hm_service_install() {
       -e "s|^ExecStart=[^ ]*|ExecStart=$(hm_py "$HM_WORKDIR")|" \
       -e "s|server.py 8091|server.py $PORT|" \
       "$HM_REPO_DIR/deploy/$unit_name" | sudo tee "/etc/systemd/system/$unit_name" >/dev/null
+    # The auto-updater timer (harman-update.*): runs `harman auto-update` as the
+    # service user; it is a no-op until $HM_PREFIX/update.env holds a feed token.
+    local u
+    for u in harman-update.service harman-update.timer; do
+      sed -e "s|^User=.*|User=$SERVICE_USER|" "$HM_REPO_DIR/deploy/$u" \
+        | sudo tee "/etc/systemd/system/$u" >/dev/null
+    done
     sudo systemctl daemon-reload
     sudo systemctl enable --now "$unit_name"
+    sudo systemctl enable --now harman-update.timer
     hm_log "Done. Instance should be live at http://localhost:$PORT"
     hm_log "  status:  systemctl status $unit_name"
     hm_log "  logs:    journalctl -u $unit_name -f"
@@ -281,6 +289,23 @@ hm_health_probe() {
   done
   echo "health probe timed out: /healthz never reported version $ver" >&2
   return 1
+}
+
+# Hold a restart until no agent turn is running (/healthz `busy` == 0), for at
+# most <cap> seconds. After the cap it proceeds anyway: a restart no longer
+# loses work (interrupted Claude turns resume on boot), so waiting forever for a
+# never-idle box would just mean never updating. Unreadable health → proceed.
+# Args: <cap-secs> (0 = don't wait)
+hm_wait_quiet() {
+  local cap="${1:-0}" waited=0 busy
+  while (( waited < cap )); do
+    busy="$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" 2>/dev/null \
+              | sed -n 's/.*"busy"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
+    [[ -z "$busy" || "$busy" == 0 ]] && return 0
+    (( waited == 0 )) && hm_log "Waiting for $busy running agent turn(s) to finish (up to ${cap}s)…"
+    sleep 15; waited=$(( waited + 15 ))
+  done
+  hm_log "Still busy after ${cap}s — restarting anyway; interrupted turns resume on boot."
 }
 
 # Roll `current` back to <ver> (default: the newest OTHER staged release) and

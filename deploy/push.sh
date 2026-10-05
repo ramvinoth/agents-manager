@@ -32,6 +32,9 @@
 #   deploy/push.sh 1.0.1              # release exactly 1.0.1
 #   deploy/push.sh                    # auto-bump the patch of the current VERSION
 #   deploy/push.sh --dry-run 1.0.1    # print the plan; make NO git changes, touch no box
+#   deploy/push.sh --publish [1.0.1]  # ALSO publish to the private feed (releases.suhai.ai)
+#                                     # so every customer box auto-updates; with no
+#                                     # HARMAN_HOST it ONLY publishes (deploy/release-feed.sh)
 #
 set -euo pipefail
 
@@ -44,7 +47,7 @@ HARMAN_REMOTE_TMP="${HARMAN_REMOTE_TMP:-/tmp}"
 HARMAN_DEPLOY_TIMEOUT="${HARMAN_DEPLOY_TIMEOUT:-600}"
 REMOTE_HARMAN="/usr/local/bin/harman"   # absolute: non-login ssh has a minimal PATH
 
-DRY_RUN=""
+DRY_RUN="" PUBLISH=""
 log()  { printf '\033[1;35m==>\033[0m %s\n' "$*"; }
 die()  { echo "push: $*" >&2; exit 1; }
 
@@ -53,6 +56,7 @@ NEW_VER=""
 while (( $# )); do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --publish) PUBLISH=1; shift ;;
     -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)        die "unknown flag '$1'" ;;
     *)         [[ -z "$NEW_VER" ]] || die "unexpected extra argument '$1'"; NEW_VER="${1#v}"; shift ;;
@@ -76,7 +80,8 @@ TAG="v$NEW_VER"
 # ── 2. safety gates (fail BEFORE mutating anything) ─────────────────────────────
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not a git repo"
 HARMAN_HOST="${HARMAN_HOST:-}"
-[[ -n "$HARMAN_HOST" || -n "$DRY_RUN" ]] || die "set HARMAN_HOST=user@box (ssh target), or use --dry-run"
+[[ -n "$HARMAN_HOST" || -n "$PUBLISH" || -n "$DRY_RUN" ]] \
+  || die "set HARMAN_HOST=user@box (ssh target), pass --publish, or use --dry-run"
 git rev-parse "$TAG" >/dev/null 2>&1 && die "tag $TAG already exists — pick a new version or delete the tag"
 # Clean tree: the release commit must contain exactly what was tested, nothing
 # stray. The ONLY change this script introduces is the VERSION bump itself.
@@ -94,8 +99,9 @@ HEALTH_URL="${HARMAN_HEALTH_URL:-http://${HARMAN_HOST##*@}:$HARMAN_PORT/healthz}
 
 log "Release plan:"
 echo "    version:   $CUR_VER → $NEW_VER   (tag $TAG on branch $BRANCH)"
-echo "    box:       ${HARMAN_HOST:-<dry-run, none>}"
-echo "    health:    $HEALTH_URL"
+echo "    box:       ${HARMAN_HOST:-<none>}"
+echo "    feed:      $([[ -n "$PUBLISH" ]] && echo "publish to the private release feed" || echo no)"
+[[ -n "$HARMAN_HOST" ]] && echo "    health:    $HEALTH_URL"
 
 if [[ -n "$DRY_RUN" ]]; then
   SHA_PREVIEW="$(git rev-parse HEAD)"
@@ -104,9 +110,12 @@ if [[ -n "$DRY_RUN" ]]; then
   echo "    git commit VERSION  (release $TAG)   # new HEAD, then:"
   echo "    git tag $TAG"
   echo "    git bundle create <tmp> $BRANCH $TAG"
-  echo "    scp <tmp> $HARMAN_HOST:$BUNDLE_PREVIEW"
-  echo "    ssh $HARMAN_HOST 'setsid $REMOTE_HARMAN update $NEW_VER --from $BUNDLE_PREVIEW --expect-sha <new-sha> </dev/null >…log 2>&1'"
-  echo "    poll $HEALTH_URL until \"version\":\"$NEW_VER\"  (≤ ${HARMAN_DEPLOY_TIMEOUT}s)"
+  [[ -n "$PUBLISH" ]] && echo "    deploy/release-feed.sh publish $NEW_VER <new-sha> <tmp>"
+  if [[ -n "$HARMAN_HOST" ]]; then
+    echo "    scp <tmp> $HARMAN_HOST:$BUNDLE_PREVIEW"
+    echo "    ssh $HARMAN_HOST 'setsid $REMOTE_HARMAN update $NEW_VER --from $BUNDLE_PREVIEW --expect-sha <new-sha> </dev/null >…log 2>&1'"
+    echo "    poll $HEALTH_URL until \"version\":\"$NEW_VER\"  (≤ ${HARMAN_DEPLOY_TIMEOUT}s)"
+  fi
   echo "    (expect-sha would be the NEW release commit, not current $SHA_PREVIEW)"
   exit 0
 fi
@@ -131,6 +140,12 @@ cleanup() {
 trap cleanup EXIT
 log "Building git bundle…"
 git bundle create "$BUNDLE_LOCAL" "$BRANCH" "$TAG" >/dev/null
+
+if [[ -n "$PUBLISH" ]]; then
+  log "Publishing $TAG to the private release feed…"
+  "$HM_DIR/release-feed.sh" publish "$NEW_VER" "$SHA" "$BUNDLE_LOCAL"
+  [[ -n "$HARMAN_HOST" ]] || { log "✓ Published. Customer boxes pick it up within ~1h."; exit 0; }
+fi
 
 # ── 5. ship it + kick off a detached update on the box ──────────────────────────
 log "Copying bundle to $HARMAN_HOST:$REMOTE_BUNDLE…"
