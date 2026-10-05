@@ -94,6 +94,21 @@ describe("Native thread board gesture — isolated API", () => {
     await backToThread()
   })
 
+  it("finds a card by number: #202 filters the board and Go opens it", async () => {
+    await $("~thread-more").click()
+    await $("~Board").click()
+    await $("~kanban-board").waitForDisplayed()
+    await $("~kanban-find").setValue("#202")
+    await $("~kanban-card-201").waitForExist({ reverse: true })
+    await $("~kanban-card-202").waitForDisplayed()
+    await $("~kanban-find").addValue("\n")
+    await $("~card-detail-col-102").waitForDisplayed()
+    await browser.back()
+    await $("~kanban-find-clear").click()
+    await $("~kanban-card-201").waitForDisplayed()
+    await backToThread()
+  })
+
   it("isolates A → B → A across menu, gesture and chat-list board entry", async () => {
     await browser.back()
     await $("~chats-list").waitForDisplayed()

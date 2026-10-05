@@ -25,6 +25,19 @@ export function filterCards(cards: Card[], f: CardFilter = {}): Card[] {
   })
 }
 
+/**
+ * matchesQuery — the board's find box. "#107" or "107" matches that card number
+ * exactly; anything else is a case-insensitive substring of the title or body.
+ * Empty query matches everything.
+ */
+export function matchesQuery(card: Card, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  const num = /^#?(\d+)$/.exec(q)
+  if (num) return card.id === Number(num[1])
+  return card.title.toLowerCase().includes(q) || (card.body ?? "").toLowerCase().includes(q)
+}
+
 /** Cards sorted by fractional `position` ascending; stable for equal positions. */
 export function orderColumn(cards: Card[]): Card[] {
   return [...cards].sort((a, b) => pos(a) - pos(b))

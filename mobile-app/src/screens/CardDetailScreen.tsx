@@ -321,7 +321,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       >
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
           <Text style={{ color: t.text, fontSize: 18, fontWeight: "700", flex: 1, marginRight: 8 }}>
-            {card.title}
+            <Text style={{ color: t.textMuted, fontWeight: "500" }}>#{card.id} </Text>{card.title}
           </Text>
           <Pressable onPress={deleteCard} hitSlop={8} testID="card-detail-delete">
             <Icon name="trash" size={18} color={t.danger} />

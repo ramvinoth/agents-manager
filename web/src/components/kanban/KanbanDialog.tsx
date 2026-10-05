@@ -11,7 +11,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
-import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare, History } from "lucide-react"
+import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare, History, Search } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
-import { groupByColumn, orderColumn, nextPosition, findCardSession } from "@/lib/board"
+import { groupByColumn, orderColumn, nextPosition, findCardSession, matchesQuery } from "@/lib/board"
 import { useStore } from "@/store"
 import { CardDetail } from "./CardDetail"
 import { DecisionsBand } from "./DecisionsBand"
@@ -63,6 +63,7 @@ export function KanbanDialog({
   const [addingCol, setAddingCol] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
   const [newColName, setNewColName] = useState("")
+  const [query, setQuery] = useState("") // find box: "#107" or words
   // Confirmation gate for the two deletions that touch more than one row:
   // deleting a card removes its comment thread, and deleting a column with
   // cards re-parents them. The dialog holds the target, not a boolean, so the
@@ -107,7 +108,10 @@ export function KanbanDialog({
     }
   }, [host, cwd, name])
 
-  const grouped = useMemo(() => groupByColumn(cards, columns), [cards, columns])
+  // The find box narrows what is SHOWN; moves and positions still use the full
+  // card list, so dropping into a filtered column lands after its hidden cards.
+  const shown = useMemo(() => cards.filter((c) => matchesQuery(c, query)), [cards, query])
+  const grouped = useMemo(() => groupByColumn(shown, columns), [shown, columns])
   const activeCard = activeId != null ? cards.find((c) => c.id === activeId) || null : null
 
   async function reload() {
@@ -218,6 +222,21 @@ export function KanbanDialog({
         <DialogHeader className="pr-10">
           <div className="flex items-center gap-3">
             <DialogTitle className="flex-1">Tasks · {name}</DialogTitle>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter on a single hit opens it — "#107" + Enter jumps straight to the card.
+                  if (e.key === "Enter" && shown.length === 1) setEditing(shown[0])
+                  if (e.key === "Escape" && query) { e.stopPropagation(); setQuery("") }
+                }}
+                placeholder="Find #107 or words"
+                className="h-8 w-52 pl-7 text-sm"
+                aria-label="Find a task"
+              />
+            </div>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAuditOpen(true)} title="Who did what, and when">
               <History className="size-3.5" /> Activity
             </Button>
@@ -475,7 +494,10 @@ function CardFace({
           <GripVertical className="size-3.5" />
         </button>
         <button className="min-w-0 flex-1 text-left" onClick={onEdit}>
-          <div className="font-medium leading-snug">{card.title}</div>
+          <div className="font-medium leading-snug">
+            <span className="mr-1 font-normal tabular-nums text-muted-foreground">#{card.id}</span>
+            {card.title}
+          </div>
           {card.body && <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">{card.body}</div>}
         </button>
         {onDelete && (

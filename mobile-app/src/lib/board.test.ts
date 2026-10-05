@@ -1,4 +1,4 @@
-import { filterCards, orderColumn, groupByColumn, nextPosition, formatActor, type Card, type BoardColumn } from "./board.ts"
+import { filterCards, orderColumn, groupByColumn, nextPosition, formatActor, matchesQuery, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -65,6 +65,16 @@ eq("no colon", formatActor("legacy-label"), { name: "legacy-label", kind: "unkno
 eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })
 eq("null", formatActor(null), { name: "Unknown", kind: "unknown" })
 eq("user with empty name", formatActor("user:", "ram"), { name: "Unknown user", kind: "unknown" })
+
+// matchesQuery — the find box
+const q = C({ id: 107, title: "Server privacy identity", body: "Full Disk Access shim" })
+eq("empty matches", matchesQuery(q, "  "), true)
+eq("#id exact", matchesQuery(q, "#107"), true)
+eq("bare id exact", matchesQuery(q, "107"), true)
+eq("id is not a prefix match", matchesQuery(q, "10"), false)
+eq("title substring, any case", matchesQuery(q, "PRIVACY"), true)
+eq("body substring", matchesQuery(q, "disk access"), true)
+eq("no match", matchesQuery(q, "tunnel"), false)
 
 console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
 if (fail) process.exit(1)

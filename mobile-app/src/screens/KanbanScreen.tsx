@@ -5,7 +5,7 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type BoardColumn, type Card, type CardFilter, type Employee, type OpenDecision } from "../api/client"
-import { boardScopeFilter, groupByColumn, nextPosition } from "../lib/board"
+import { boardScopeFilter, groupByColumn, matchesQuery, nextPosition } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
@@ -68,6 +68,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // the ceiling that makes a tall column scroll vertically instead of
   // overflowing off-screen. Re-measured when the band/error banner toggles.
   const [viewportH, setViewportH] = useState(0)
+  const [query, setQuery] = useState("") // find box: "#107" or words
   // The decision cockpit walks a FROZEN snapshot of the queue (captured at the
   // moment of the tap) so the 4s poll can't reshuffle the item under the
   // reader's thumb. null = closed. New/skipped items reappear on the next open.
@@ -236,7 +237,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
     )
   }
 
-  const grouped = groupByColumn(cards, columns)
+  // The find box narrows what is SHOWN; moves still position against the full
+  // card list, so a move into a filtered column lands after its hidden cards.
+  const shown = cards.filter((c) => matchesQuery(c, query))
+  const grouped = groupByColumn(shown, columns)
   const empName = (id: number | null) => employees.find((e) => e.id === id)?.name
 
   return (
@@ -247,6 +251,27 @@ export default function KanbanScreen({ route, navigation }: Props) {
       {decisions.length ? (
         <DecisionBand decisions={decisions} theme={t} onOpen={openCockpit} />
       ) : null}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginHorizontal: 10, marginTop: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface }}>
+        <Icon name="search" size={14} color={t.textMuted} />
+        <TextInput
+          testID="kanban-find"
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Find #107 or words"
+          placeholderTextColor={t.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="go"
+          // Go on a single hit opens it — "#107" + Go jumps straight to the card.
+          onSubmitEditing={() => { if (shown.length === 1) navigation.navigate("CardDetail", { id: shown[0].id }) }}
+          style={{ flex: 1, color: t.text, fontSize: 14, paddingVertical: 8 }}
+        />
+        {query ? (
+          <Pressable onPress={() => setQuery("")} hitSlop={8} testID="kanban-find-clear">
+            <Icon name="close" size={14} color={t.textMuted} />
+          </Pressable>
+        ) : null}
+      </View>
       <ScrollView
         horizontal
         style={{ flex: 1 }}
@@ -469,7 +494,9 @@ function DraggableCard({
           delayLongPress={300}
           style={{ backgroundColor: t.bubbleAgent, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
         >
-          <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>{card.title}</Text>
+          <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>
+            <Text style={{ color: t.textMuted }}>#{card.id} </Text>{card.title}
+          </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
             {assigneeName ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>

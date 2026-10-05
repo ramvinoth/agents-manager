@@ -1,4 +1,4 @@
-import { filterCards, orderColumn, groupByColumn, nextPosition, decisionActions, formatActor, findCardSession, type Card, type BoardColumn } from "./board.ts"
+import { filterCards, orderColumn, groupByColumn, nextPosition, decisionActions, formatActor, matchesQuery, findCardSession, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -89,6 +89,16 @@ eq("nested path", findCardSession(sessions, "1111-2222")?.title, "A")
 eq("bare path", findCardSession(sessions, "3333")?.title, "B")
 eq("prefix must not match", findCardSession(sessions, "2222"), undefined)
 eq("no session id", findCardSession(sessions, null), undefined)
+
+// matchesQuery — the find box
+const q = C({ id: 107, title: "Server privacy identity", body: "Full Disk Access shim" })
+eq("empty matches", matchesQuery(q, "  "), true)
+eq("#id exact", matchesQuery(q, "#107"), true)
+eq("bare id exact", matchesQuery(q, "107"), true)
+eq("id is not a prefix match", matchesQuery(q, "10"), false)
+eq("title substring, any case", matchesQuery(q, "PRIVACY"), true)
+eq("body substring", matchesQuery(q, "disk access"), true)
+eq("no match", matchesQuery(q, "tunnel"), false)
 
 console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
 if (fail) process.exit(1)
