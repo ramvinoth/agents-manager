@@ -57,14 +57,16 @@ export default function SideMenu({ visible, onClose, navigation }: {
 
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
-      <Pressable testID="menu-scrim" style={{ flex: 1 }} onPress={onClose}>
+      {/* accessible={false}: an accessible Pressable folds its subtree into one
+          element, hiding every menu row from VoiceOver and XCUITest. */}
+      <Pressable testID="menu-scrim" accessible={false} style={{ flex: 1 }} onPress={onClose}>
         <Animated.View pointerEvents="none"
           style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)", opacity: anim }]} />
         <Animated.View style={{
           position: "absolute", top: 0, bottom: 0, left: 0, width: panelW, backgroundColor: t.surface,
           transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [-panelW, 0] }) }],
         }}>
-          <Pressable testID="side-menu" style={{ flex: 1, paddingTop: insets.top + 12, paddingBottom: insets.bottom }}
+          <Pressable testID="side-menu" accessible={false} style={{ flex: 1, paddingTop: insets.top + 12, paddingBottom: insets.bottom }}
             onPress={(e) => e.stopPropagation()}>
             <Text style={{ color: t.text, fontSize: 24, fontWeight: "800", paddingHorizontal: 20, marginBottom: 8 }}>Harman</Text>
             <ScrollView>

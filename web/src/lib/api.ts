@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer } from "./pairLink"
@@ -501,6 +501,20 @@ class ApiClient {
   mcpSave(body: Body) {
     return this.postRes("/api/mcp/save", this.wha(body))
   }
+  // Marketplace: the server rebuilds every install from the source's own record;
+  // the client names an entry id, never a command. Installs land on this machine.
+  marketMcp(q: string, cursor?: string) {
+    return this.getStrict<MarketPage>(`/api/market/mcp?${new URLSearchParams({ q, ...(cursor ? { cursor } : {}) })}`)
+  }
+  marketSkills(q: string) {
+    return this.getStrict<MarketPage>(`/api/market/skills?${new URLSearchParams({ q })}`)
+  }
+  marketMcpInstall(body: { id: string; values: Record<string, string>; scope: "global" | "project"; session?: string }) {
+    return this.postStrict<{ installed: string; scope: string }>("/api/market/mcp/install", body)
+  }
+  marketSkillInstall(body: { id: string; scope: "user" | "project"; session?: string }) {
+    return this.postStrict<{ installed: string; scope: string }>("/api/market/skill/install", body)
+  }
   mcpSaveBrowserAllAgents(body: Body) {
     return this.postRes("/api/agents/mcp/browser", this.wh(body))
   }
@@ -601,7 +615,7 @@ class ApiClient {
   /** Consent for `service` — on `connection` (adds the permission, keeps the
    *  rest) or, without one, on a new account. Poll the pending handle with
    *  driveOAuthStatus(). Human-only. */
-  integrationConnect(body: { service: string; connection?: string }) {
+  integrationConnect(body: { service: string; connection?: string; op?: string }) {
     return this.postJSON<{ url: string; pending: string; connection: string } | { error?: string }>(
       "/api/integrations/connect", body
     )
@@ -617,6 +631,18 @@ class ApiClient {
   /** The owner's on/off switch for a granted service; returns the fresh view. */
   integrationService(body: { connection: string; service: string; on: boolean }) {
     return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/service", body)
+  }
+  /** The owner's switch for one thing agents may do with a service. */
+  integrationOp(body: { connection: string; service: string; op: string; on: boolean }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/op", body)
+  }
+  /** Narrow a files account to one existing folder ("/" = the whole account). */
+  integrationRoot(body: { connection: string; root: string }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/root", body)
+  }
+  /** The folders agents may work in on this machine, and what they may do there. */
+  integrationLocal(body: { roots: string[]; ops: string[] }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/local", body)
   }
 
   // ---- browser panel ----

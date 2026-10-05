@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Check, Copy, ExternalLink, Loader2, Plus, Trash2 } from "lucide-react"
+import { Check, Copy, ExternalLink, Folder, Loader2, Plus, Trash2, X } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { serviceAction, waitForConsent } from "@/lib/integrations"
-import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, ServiceState } from "@/lib/types"
+import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 
@@ -34,7 +34,10 @@ const STATE_TEXT: Record<ServiceState, string> = {
  * redirect URI to register), then each signed-in account with a row per
  * service. A granted service is an on/off switch (the grant is kept); a
  * missing one runs consent that ADDS the permission and keeps the rest; an
- * unavailable one (Google Keep) says why instead of hiding. Opened from
+ * unavailable one (Google Keep) says why instead of hiding. Under a service
+ * that is on, chips say what AGENTS may do with it (read, write, delete…);
+ * a files account can be narrowed to one folder; and "This machine" lists
+ * the folders agents may work in on the server's own disk. Opened from
  * Profile → Integrations and from the file browser's location picker.
  */
 export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
@@ -72,9 +75,9 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
     if ("error" in r && r.error) throw new Error(r.error)
   }
 
-  function connect(service: string, connection?: string) {
-    return run(`${connection || "new"}:${service}`, async () => {
-      const r = await api.integrationConnect({ service, connection })
+  function connect(service: string, connection?: string, op?: string) {
+    return run(`${connection || "new"}:${service}${op ? `:${op}` : ""}`, async () => {
+      const r = await api.integrationConnect({ service, connection, op })
       ok(r)
       if (!("url" in r)) throw new Error("No consent URL returned")
       setConsenting(true)
@@ -89,6 +92,18 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
 
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
     return run(`${conn.id}:${service}`, async () => ok(await api.integrationService({ connection: conn.id, service, on })))
+  }
+
+  function setOp(conn: IntegrationConnection, service: string, op: string, on: boolean) {
+    return run(`${conn.id}:${service}:${op}`, async () => ok(await api.integrationOp({ connection: conn.id, service, op, on })))
+  }
+
+  function setRoot(conn: IntegrationConnection, root: string) {
+    return run(`${conn.id}:root`, async () => ok(await api.integrationRoot({ connection: conn.id, root })))
+  }
+
+  function setLocal(roots: string[], ops: string[]) {
+    return run("local", async () => ok(await api.integrationLocal({ roots, ops })))
   }
 
   function disconnect(p: IntegrationProvider, conn: IntegrationConnection) {
@@ -183,15 +198,31 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                           </button>
                         </div>
                         {p.services.map((s) => (
-                          <ServiceRow
-                            key={s.id}
-                            s={s}
-                            state={c.services[s.id] || "grant"}
-                            busy={busy === `${c.id}:${s.id}`}
-                            disabled={!!busy}
-                            onToggle={(on) => toggle(c, s.id, on)}
-                            onGrant={() => connect(s.id, c.id)}
-                          />
+                          <div key={s.id}>
+                            <ServiceRow
+                              s={s}
+                              state={c.services[s.id] || "grant"}
+                              busy={busy === `${c.id}:${s.id}`}
+                              disabled={!!busy}
+                              onToggle={(on) => toggle(c, s.id, on)}
+                              onGrant={() => connect(s.id, c.id)}
+                            />
+                            {c.services[s.id] === "on" && (
+                              <>
+                                <OpChips
+                                  testPrefix={`op-${c.id}-${s.id}`}
+                                  ops={s.ops.map((o) => ({ ...o, state: c.ops[s.id]?.[o.id] || "grant" }))}
+                                  busy={busy}
+                                  busyPrefix={`${c.id}:${s.id}:`}
+                                  onToggle={(op, on) => setOp(c, s.id, op, on)}
+                                  onGrant={(op) => connect(s.id, c.id, op)}
+                                />
+                                {s.kind === "files" && (
+                                  <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(r) => setRoot(c, r)} />
+                                )}
+                              </>
+                            )}
+                          </div>
                         ))}
                       </div>
                     ))}
@@ -200,6 +231,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                 )}
               </section>
             ))}
+            <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
           </div>
         )}
 
@@ -358,5 +390,132 @@ function NewAccount({ p, busy, onConnect }: { p: IntegrationProvider; busy: stri
         </Button>
       ))}
     </div>
+  )
+}
+
+/** What agents may do with one service, or on this machine. Chips, not
+ *  switches: several small yes/no answers read faster side by side. */
+function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
+  testPrefix: string
+  ops: { id: string; label: string; state: ServiceState }[]
+  busy: string | null
+  busyPrefix: string
+  onToggle: (op: string, on: boolean) => void
+  /** Absent where nothing is ever granted (the local disk). */
+  onGrant?: (op: string) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pb-1.5 pl-3">
+      <span className="text-[11px] text-muted-foreground">Agents may</span>
+      {ops.map((o) => {
+        const action = serviceAction(o.state)
+        if (action === "none") return null
+        const on = o.state === "on"
+        return (
+          <button
+            key={o.id}
+            data-testid={`${testPrefix}-${o.id}`}
+            role="switch"
+            aria-checked={on}
+            aria-label={action === "grant" ? `${o.label}: needs access` : o.label}
+            disabled={!!busy}
+            onClick={() => (action === "grant" ? onGrant?.(o.id) : onToggle(o.id, !on))}
+            className={cn(
+              "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors disabled:opacity-50",
+              on ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            {busy === busyPrefix + o.id ? <Loader2 className="size-3 animate-spin" />
+              : action === "grant" ? <Plus className="size-3" /> : on ? <Check className="size-3" /> : <X className="size-3" />}
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** The folder a files account is narrowed to; agents and Files see nothing above it. */
+function RootRow({ conn, busy, disabled, onSave }: {
+  conn: IntegrationConnection; busy: boolean; disabled: boolean; onSave: (root: string) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  if (draft === null) {
+    return (
+      <div className="flex items-center gap-1.5 pb-1.5 pl-3 text-[11px] text-muted-foreground">
+        <Folder className="size-3" />
+        <span className="min-w-0 flex-1 truncate" data-testid={`root-${conn.id}`}>
+          {conn.root === "/" ? "Whole account" : `Only ${conn.root}`}
+        </span>
+        {busy ? <Loader2 className="size-3 animate-spin" /> : (
+          <button className="text-primary hover:underline disabled:opacity-50" disabled={disabled}
+            onClick={() => setDraft(conn.root === "/" ? "" : conn.root)}>
+            Limit to a folder
+          </button>
+        )}
+      </div>
+    )
+  }
+  const save = () => { onSave(draft.trim() || "/"); setDraft(null) }
+  return (
+    <form className="flex items-center gap-2 pb-1.5 pl-3" onSubmit={(e) => { e.preventDefault(); save() }}>
+      <Input className="h-7 flex-1 font-mono text-xs" value={draft} onChange={(e) => setDraft(e.target.value)}
+        placeholder="/Work/Shared — empty for the whole account" spellCheck={false} autoCapitalize="none" autoFocus />
+      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDraft(null)}>Cancel</Button>
+      <Button type="submit" size="sm" className="h-7 text-xs">Save</Button>
+    </form>
+  )
+}
+
+/** The folders agents may work in on this machine, and what they may do there. */
+function LocalDiskSection({ local, busy, disabled, onSave }: {
+  local: LocalDisk; busy: boolean; disabled: boolean; onSave: (roots: string[], ops: string[]) => void
+}) {
+  const [adding, setAdding] = useState("")
+  const ops = local.ops.filter((o) => o.on).map((o) => o.id)
+  const add = () => {
+    const r = adding.trim()
+    if (!r) return
+    onSave([...local.roots, r], ops)
+    setAdding("")
+  }
+  return (
+    <section className="rounded-md border" data-testid="integration-local">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <span className="font-medium">This machine</span>
+        {busy && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+      </div>
+      <p className="px-3 pb-2 text-xs text-muted-foreground">
+        Folders agents may work in on this computer{local.roots.length ? "" : " — none, so agents cannot touch the disk"}. You are never limited.
+      </p>
+      <div className="flex flex-col divide-y border-t">
+        {local.roots.map((r) => (
+          <div key={r} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+            <Folder className="size-3.5 text-muted-foreground" />
+            <code className="min-w-0 flex-1 truncate font-mono text-xs">{r}</code>
+            <button className="text-muted-foreground hover:text-destructive disabled:opacity-50" disabled={disabled}
+              title="Remove folder" onClick={() => onSave(local.roots.filter((x) => x !== r), ops)}>
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ))}
+        <form className="flex items-center gap-2 px-3 py-2" onSubmit={(e) => { e.preventDefault(); add() }}>
+          <Input className="h-7 flex-1 font-mono text-xs" value={adding} onChange={(e) => setAdding(e.target.value)}
+            placeholder="~/Projects" spellCheck={false} autoCapitalize="none" />
+          <Button type="submit" variant="outline" size="sm" className="h-7 text-xs" disabled={disabled || !adding.trim()}>
+            <Plus className="mr-1 size-3" /> Add
+          </Button>
+        </form>
+        <div className="pt-1.5">
+          <OpChips
+            testPrefix="local-op"
+            ops={local.ops.map((o) => ({ ...o, state: o.on ? "on" : "off" }))}
+            busy={busy ? "local" : null}
+            busyPrefix="local:"
+            onToggle={(op, on) => onSave(local.roots, on ? [...ops, op] : ops.filter((x) => x !== op))}
+          />
+        </div>
+      </div>
+    </section>
   )
 }

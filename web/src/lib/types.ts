@@ -148,6 +148,17 @@ export interface Skill {
   path: string
   editable: boolean
 }
+/** A marketplace entry (GET /api/market/mcp | /api/market/skills). MCP entries
+ *  carry `install` (npm | pypi | remote, or null when only Docker/bundle exists)
+ *  and the `inputs` the owner fills; skills carry `license`. */
+export interface MarketInput { name: string; description: string; secret: boolean; required: boolean; default: string }
+export interface MarketItem {
+  id: string; title: string; description: string; repo: string
+  version?: string; publisher?: string; install?: "npm" | "pypi" | "remote" | null; inputs?: MarketInput[]
+  license?: string; files?: number
+}
+export interface MarketPage { items: MarketItem[]; cursor?: string }
+
 export interface McpServer {
   name: string
   scope: string
@@ -464,6 +475,8 @@ export interface Drive {
 /** GET /api/integrations — the whole Integrations page in one response,
  *  built server-side from viewer/integrations.py. No secrets or tokens. */
 export type ServiceState = "on" | "off" | "grant" | "unavailable"
+/** One thing agents may do with a service (read, write, delete, draft…). */
+export interface IntegrationOp { id: string; label: string }
 export interface IntegrationService {
   id: string
   label: string
@@ -473,6 +486,7 @@ export interface IntegrationService {
   available: boolean
   /** Why it can't be connected, when !available. */
   unavailable: string
+  ops: IntegrationOp[]
 }
 export interface IntegrationConnection {
   id: string
@@ -481,6 +495,10 @@ export interface IntegrationConnection {
   status: string
   authorized: boolean
   services: Record<string, ServiceState>
+  /** Per service, per op: the owner's switch for AGENTS (humans are bounded by the grant only). */
+  ops: Record<string, Record<string, ServiceState>>
+  /** The folder a files account is narrowed to; "/" is the whole account. */
+  root: string
 }
 export interface IntegrationProvider {
   id: string
@@ -493,7 +511,10 @@ export interface IntegrationProvider {
   services: IntegrationService[]
   connections: IntegrationConnection[]
 }
+/** The folders agents may touch on the server's own disk, and what they may do there. */
+export interface LocalDisk { roots: string[]; ops: (IntegrationOp & { on: boolean })[] }
 export interface IntegrationsView {
   providers: IntegrationProvider[]
   redirect_uri: string
+  local: LocalDisk
 }

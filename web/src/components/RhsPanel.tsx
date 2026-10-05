@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Plus, Loader2 } from "lucide-react"
+import { Plus, Loader2, Store } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,8 @@ import {
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { AnalyticsPanel } from "@/components/AnalyticsPanel"
+import { MarketplaceDialog } from "@/components/MarketplaceDialog"
+import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Skill } from "@/lib/types"
 
 const NEW_SKILL =
@@ -232,6 +234,11 @@ export function RhsPanel() {
   const currentAgent = useStore((s) => s.currentAgent)
   const [skillEdit, setSkillEdit] = useState<Skill | null | undefined>(undefined)
   const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
+  const [market, setMarket] = useState<MarketKind | null>(null)
+  const session = useStore((s) => s.currentSessionPath)
+  const loadCapabilities = useStore((s) => s.loadCapabilities)
+  // The marketplace installs onto the viewer's own machine.
+  const local = useStore((s) => s.currentHost) === "local"
 
   return (
     <div className="flex h-full flex-col">
@@ -245,9 +252,16 @@ export function RhsPanel() {
         <TabsContent value="skills" className="min-h-0 flex-1">
           <div className="flex items-center justify-between px-2 pb-1">
             <span className="text-xs text-muted-foreground">{caps.skills.length} skills</span>
-            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setSkillEdit(null)}>
-              <Plus className="size-3.5" /> New
-            </Button>
+            <div className="flex">
+              {local && (
+                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("skills")}>
+                  <Store className="size-3.5" /> Browse
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setSkillEdit(null)}>
+                <Plus className="size-3.5" /> New
+              </Button>
+            </div>
           </div>
           <div className="h-full overflow-y-auto">
             <div className="space-y-1 px-2 pb-4">
@@ -280,9 +294,16 @@ export function RhsPanel() {
         <TabsContent value="mcp" className="min-h-0 flex-1">
           <div className="flex items-center justify-between px-2 pb-1">
             <span className="text-xs text-muted-foreground">{caps.mcp.length} servers</span>
-            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMcpEdit(null)}>
-              <Plus className="size-3.5" /> Add
-            </Button>
+            <div className="flex">
+              {local && (
+                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("mcp")}>
+                  <Store className="size-3.5" /> Browse
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMcpEdit(null)}>
+                <Plus className="size-3.5" /> Add
+              </Button>
+            </div>
           </div>
           <div className="h-full overflow-y-auto">
             <div className="space-y-1 px-2 pb-4">
@@ -315,6 +336,9 @@ export function RhsPanel() {
 
       {skillEdit !== undefined && <SkillEditor skill={skillEdit} onClose={() => setSkillEdit(undefined)} />}
       {mcpEdit !== undefined && <McpEditor server={mcpEdit} onClose={() => setMcpEdit(undefined)} />}
+      {market && (
+        <MarketplaceDialog kind={market} session={session || undefined} onClose={() => setMarket(null)} onInstalled={loadCapabilities} />
+      )}
 
       {capsLoading && rhsTab !== "analysis" && !caps.skills.length && !caps.mcp.length && (
         <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">

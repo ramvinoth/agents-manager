@@ -1,28 +1,15 @@
 /**
  * CapabilitiesDrawer — a right-side slide-in panel showing Skills and MCP tools
- * for the current session. Mirrors the web's RhsPanel / MobileNav Sheet pattern.
+ * for the current session (the list is the shared CapabilitiesPanel).
  *
  * Opens from the tools icon in the ThreadScreen header (rightmost icon).
  * Dismisses on backdrop tap, swipe-right, or toggling the icon again.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react"
-import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native"
+import React, { useEffect, useRef, useState } from "react"
+import { Animated, Dimensions, PanResponder, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
-import { api, type Capabilities, type McpServer, type Skill } from "../api/client"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
-import { SkillEditor, McpEditor } from "./CapabilitiesEditors"
+import CapabilitiesPanel from "./CapabilitiesPanel"
 import Icon from "./Icon"
 
 const SCREEN_W = Dimensions.get("window").width
@@ -37,33 +24,16 @@ interface Props {
 
 export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Props) {
   const t = useTheme()
-  const styles = useStyles()
   const insets = useSafeAreaInsets()
 
   const slideAnim = useRef(new Animated.Value(DRAWER_W)).current
   const backdropAnim = useRef(new Animated.Value(0)).current
   const [rendered, setRendered] = useState(false)
 
-  const [tab, setTab] = useState<"skills" | "mcp">("skills")
-  const [caps, setCaps] = useState<Capabilities | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [skillEdit, setSkillEdit] = useState<Skill | null | undefined>(undefined)
-  const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
-
-  const load = useCallback(() => {
-    setLoading(true)
-    api
-      .capabilities(host, cwd)
-      .then(setCaps)
-      .catch(() => setCaps({ skills: [], mcp: [] }))
-      .finally(() => setLoading(false))
-  }, [host, cwd])
-
   // Animate open/close
   useEffect(() => {
     if (visible) {
       setRendered(true)
-      load()
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
@@ -94,9 +64,6 @@ export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Prop
   ).current
 
   if (!rendered) return null
-
-  const skillCount = caps?.skills.length ?? 0
-  const mcpCount = caps?.mcp.length ?? 0
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -133,105 +100,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Prop
           </TouchableOpacity>
         </View>
 
-        {/* Tab switch with counts */}
-        <View style={styles.segRow}>
-          {([["skills", "Skills", skillCount], ["mcp", "MCP tools", mcpCount]] as const).map(([v, label, count]) => {
-            const active = tab === v
-            return (
-              <TouchableOpacity
-                key={v}
-                testID={`drawer-tab-${v}`}
-                style={[styles.seg, active ? styles.segActive : null]}
-                onPress={() => setTab(v as "skills" | "mcp")}
-              >
-                <Text style={[styles.segText, active ? styles.segTextActive : null]}>
-                  {label}
-                </Text>
-                {!loading && count > 0 ? (
-                  <Text style={[styles.segText, active ? styles.segTextActive : null, styles.capTabCount]}>
-                    {count}
-                  </Text>
-                ) : null}
-              </TouchableOpacity>
-            )
-          })}
-        </View>
-
-        {/* Content */}
-        {loading ? (
-          <ActivityIndicator size="small" color={t.textMuted} style={{ marginTop: 24 }} />
-        ) : (
-          <ScrollView
-            contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            {tab === "skills" ? (
-              <>
-                <TouchableOpacity testID="drawer-add-skill" style={styles.capAddRow} onPress={() => setSkillEdit(null)}>
-                  <Icon name="add" size={16} color={t.accent} />
-                  <Text style={[styles.capAddText, { color: t.accent }]}>New skill</Text>
-                </TouchableOpacity>
-                {skillCount ? (
-                  caps!.skills.map((s) => (
-                    <TouchableOpacity key={s.path} style={styles.capRow} onPress={() => setSkillEdit(s)}>
-                      <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}>
-                        <Icon name="sparkle" size={16} color={t.accent} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>
-                          /{s.name}
-                        </Text>
-                        {s.description ? (
-                          <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>
-                            {s.description}
-                          </Text>
-                        ) : null}
-                      </View>
-                      <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{s.source}</Text>
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  <Text style={styles.capEmpty}>No skills found.</Text>
-                )}
-              </>
-            ) : (
-              <>
-                <TouchableOpacity testID="drawer-add-mcp" style={styles.capAddRow} onPress={() => setMcpEdit(null)}>
-                  <Icon name="add" size={16} color={t.accent} />
-                  <Text style={[styles.capAddText, { color: t.accent }]}>Add MCP server</Text>
-                </TouchableOpacity>
-                {mcpCount ? (
-                  caps!.mcp.map((m) => (
-                    <TouchableOpacity key={`${m.scope}:${m.name}`} style={styles.capRow} onPress={() => setMcpEdit(m)}>
-                      <View style={[styles.capRowIcon, { backgroundColor: t.textMuted + "18" }]}>
-                        <Icon name="tool" size={16} color={t.textMuted} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>
-                          {m.name}
-                        </Text>
-                        <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={1}>
-                          {m.transport}
-                          {m.target ? ` · ${m.target}` : ""}
-                        </Text>
-                      </View>
-                      <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{m.scope}</Text>
-                    </TouchableOpacity>
-                  ))
-                ) : (
-                  <Text style={styles.capEmpty}>No MCP servers configured.</Text>
-                )}
-              </>
-            )}
-          </ScrollView>
-        )}
-
-        {skillEdit !== undefined && (
-          <SkillEditor skill={skillEdit} host={host} cwd={cwd} onClose={() => setSkillEdit(undefined)} onSaved={load} />
-        )}
-        {mcpEdit !== undefined && (
-          <McpEditor server={mcpEdit} host={host} cwd={cwd} onClose={() => setMcpEdit(undefined)} onSaved={load} />
-        )}
+        <CapabilitiesPanel host={host} cwd={cwd} active={visible} testPrefix="drawer" />
       </Animated.View>
     </View>
   )

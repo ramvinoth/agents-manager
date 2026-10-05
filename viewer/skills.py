@@ -7,6 +7,7 @@ skill-learning path (Harman/employee promotion) go through here — one source o
 truth for the layout, no duplicated mkdir+write.
 """
 import re
+import shutil
 from pathlib import Path
 
 SKILL_NAME_RE = re.compile(r"[\w-]+$")
@@ -35,6 +36,29 @@ def write_skill(name, content, scope="user", cwd=None):
     p = d / "SKILL.md"
     p.write_text(content or "")
     return p
+
+
+def write_bundle(name, files, scope="user", cwd=None):
+    """Install a whole skill directory ({relative path: bytes}, SKILL.md among
+    them) — what a marketplace skill ships. Replaces an existing one of that
+    name so a reinstall never leaves stale scripts behind. Returns SKILL.md."""
+    if not valid_name(name):
+        raise ValueError("Skill name must be letters/digits/dashes/underscores")
+    if "SKILL.md" not in files:
+        raise ValueError("A skill needs a SKILL.md")
+    d = (skills_base(scope, cwd) / name).resolve()
+    targets = {}
+    for rel, data in files.items():   # validate everything before touching disk
+        p = (d / rel).resolve()
+        if not str(p).startswith(str(d) + "/"):
+            raise ValueError(f"Unsafe path: {rel}")
+        targets[p] = data
+    if d.exists():
+        shutil.rmtree(d)
+    for p, data in targets.items():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    return d / "SKILL.md"
 
 
 def list_skill_names(scope="user", cwd=None):

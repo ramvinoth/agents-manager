@@ -99,6 +99,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [msgAction, setMsgAction] = useState<MsgTarget | null>(null)
   // Pinned message uuids (persisted in session meta) + which one the banner shows.
   const [pinned, setPinned] = useState<string[]>([])
+  // The session's folder, from the same meta read: scopes the drawer's project skills/tools.
+  const [cwd, setCwd] = useState<string | undefined>()
   const [bannerIdx, setBannerIdx] = useState(0)
   // The message currently being replied to; quoted into the outgoing text.
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -338,7 +340,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (path) {
         api
           .sessionMeta(host, path)
-          .then((m) => setPinned(Array.isArray(m.pinned) ? m.pinned : []))
+          .then((m) => { setPinned(Array.isArray(m.pinned) ? m.pinned : []); setCwd(m.cwd || undefined) })
           .catch(() => {})
       }
       // On focus, fetch status once: reattach the poll if a run is active, and —
@@ -1253,6 +1255,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       <CapabilitiesDrawer
         visible={capDrawerOpen}
         host={host}
+        cwd={cwd}
         onClose={() => setCapDrawerOpen(false)}
       />
     </>

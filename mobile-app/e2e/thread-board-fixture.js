@@ -31,6 +31,13 @@ lines.push(record("assistant", [
   "| " + ["first", "second", "third", "fourth", "last"].map(s => s.repeat(14)).join(" | ") + " |",
 ].join("\n\n"), 19))
 
+const INBOX_ROW = { project_id: null, ref_id: "", in_reply_to: 0, snoozed_until: null, archived: false, updated_at: 0, open: null, snoozed: false }
+const T0 = 1790000000
+const INBOX = [
+  { ...INBOX_ROW, id: 1, session_id: SESSION, sender_type: "session", sender_id: SESSION, recipient_type: "user", recipient_id: "", kind: "message", body: "Fixture build is green.", status: "read", effective_status: "read", created_at: T0 },
+  { ...INBOX_ROW, id: 2, session_id: SESSION, sender_type: "session", sender_id: SESSION, recipient_type: "user", recipient_id: "", kind: "question", ref_id: "toolu_fixture", body: "Question from Native board fixture — ship tonight?\nOptions: yes — ship / no — wait", status: "sent", effective_status: "sent", open: true, created_at: T0 + 60 },
+  { ...INBOX_ROW, id: 3, session_id: BOARD_SESSION_B, sender_type: "session", sender_id: BOARD_SESSION_B, recipient_type: "user", recipient_id: "", kind: "message", body: "Report attached in Files.", status: "sent", effective_status: "sent", created_at: T0 + 120 },
+]
 const clone = value => JSON.parse(JSON.stringify(value))
 const capabilities = { editable: true, customProviders: true, conversationModes: ["agent", "chat"], efforts: ["", "low", "medium", "high", "xhigh", "max"], manualModelId: true }
 const initialSelection = { provider: "", model: null, convMode: "agent", effort: "" }
@@ -50,6 +57,7 @@ function validSelection(s) {
       (s.model.kind === "id" && typeof s.model.id === "string" && s.model.id.trim() && Object.keys(s.model).length === 2))
 }
 
+const FILE_OPS = [{ id: "read", label: "Read" }, { id: "write", label: "Write" }, { id: "delete", label: "Delete" }]
 const INTEGRATIONS = {
   redirect_uri: "http://127.0.0.1/api/drive/oauth/callback",
   providers: [
@@ -57,29 +65,45 @@ const INTEGRATIONS = {
       id: "google", label: "Google", public: false, console: "https://console.cloud.google.com/apis/credentials",
       client: { client_id: "fixture.apps.googleusercontent.com", has_secret: true, configured: true },
       services: [
-        { id: "google.drive", label: "Drive", kind: "files", agent: "Browse and read files", available: true, unavailable: "" },
-        { id: "google.gmail", label: "Gmail", kind: "mail", agent: "Search, read and draft mail", available: true, unavailable: "" },
-        { id: "google.calendar", label: "Calendar", kind: "calendar", agent: "Read events", available: true, unavailable: "" },
-        { id: "google.keep", label: "Keep", kind: "notes", agent: "", available: false, unavailable: "Google offers no Keep API for personal accounts" },
+        { id: "google.drive", label: "Drive", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS },
+        { id: "google.gmail", label: "Gmail", kind: "mail", agent: "Search, read and draft mail", available: true, unavailable: "", ops: [{ id: "read", label: "Read" }, { id: "draft", label: "Draft" }] },
+        { id: "google.calendar", label: "Calendar", kind: "calendar", agent: "Read events", available: true, unavailable: "",
+          ops: [{ id: "read", label: "Read" }, { id: "create", label: "Create" }, { id: "update", label: "Update" }, { id: "delete", label: "Delete" }] },
+        { id: "google.keep", label: "Keep", kind: "notes", agent: "", available: false, unavailable: "Google offers no Keep API for personal accounts", ops: [] },
       ],
       connections: [{ id: "dr-fixture", account: "owner@example.com", status: "ok", authorized: true,
-        services: { "google.drive": "on", "google.gmail": "grant", "google.calendar": "off", "google.keep": "unavailable" } }],
+        services: { "google.drive": "on", "google.gmail": "grant", "google.calendar": "off", "google.keep": "unavailable" },
+        ops: {
+          "google.drive": { read: "on", write: "on", delete: "off" },
+          "google.gmail": { read: "grant", draft: "grant" },
+          "google.calendar": { read: "off", create: "off", update: "off", delete: "off" },
+        },
+        root: "/" }],
     },
     {
       id: "dropbox", label: "Dropbox", public: true, console: "https://www.dropbox.com/developers/apps",
       client: { client_id: "", has_secret: false, configured: false },
-      services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "" }],
+      services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS }],
       connections: [],
     },
   ],
+  local: { roots: ["~"], ops: [{ id: "read", label: "Read", on: true }, { id: "write", label: "Write", on: true }, { id: "delete", label: "Delete", on: false }] },
 }
+const NO_INTEGRATIONS = { providers: [], redirect_uri: "", local: { roots: [], ops: [] } }
 
-async function startFixture({ ai = false, audit = false, integrations = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+// The marketplace browse shape (viewer/marketplace.mcp_entry).
+const MARKET_MCP = [
+  { id: "io.github.acme/notes-mcp", title: "notes-mcp", description: "Search and write your notes", version: "1.2.0", publisher: "io.github.acme",
+    repo: "https://github.com/acme/notes-mcp", install: "npm", inputs: [{ name: "NOTES_KEY", description: "Your notes API key", secret: true, required: true, default: "" }] },
+  { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
+]
+
+async function startFixture({ ai = false, audit = false, integrations = false, inbox = false, market = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   const boardCards = clone(boardIsolation ? [...cards, ...cards.map(c => ({ ...c, id: c.id + 10, title: `B ${c.title}`, session_id: BOARD_SESSION_B }))] : cards)
   let nextCardId = Math.max(...boardCards.map(c => c.id)) + 1
-  const boardSessions = boardIsolation ? [SESSION, BOARD_SESSION_B] : [SESSION]
+  const boardSessions = boardIsolation || inbox ? [SESSION, BOARD_SESSION_B] : [SESSION]
   const holds = []
   const board = boardIsolation ? {
     holdNext(endpoint, session) {
@@ -91,6 +115,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, b
     },
   } : undefined
   const auditScenario = audit ? createAuditScenario() : null
+  const marketCaps = { skills: [], mcp: [] }
   const state = {
     defaults: { revision: 0, configured: false, selection: clone(initialSelection), capabilities },
     sessions: { [SESSION]: { revision: 0, selection: clone(initialSelection), capabilities } },
@@ -100,6 +125,15 @@ async function startFixture({ ai = false, audit = false, integrations = false, b
   // Mirrors viewer/integrations.view(): one Google account with every service
   // state represented, and an unconfigured public-client provider.
   const integrationsState = clone(INTEGRATIONS)
+  // One event today, an hour from now, so the agenda always has a "Today" row.
+  const soon = new Date(Date.now() + 3600_000)
+  const calendarEvents = [{ id: "ev-0", title: "Fixture standup", start: soon.toISOString(), end: new Date(soon.getTime() + 900_000).toISOString(),
+    all_day: false, location: "HQ", description: "", attendees: ["guest@example.com"], link: "", status: "confirmed" }]
+  // Mirrors viewer/inbox: rows carry their mailbox session_id and the derived
+  // open / effective_status. One chat (SESSION) has an open question waiting on
+  // the owner; the other (BOARD_SESSION_B) has an unread free message.
+  const inboxRows = inbox ? clone(INBOX) : []
+  const waiting = m => m.recipient_type === "user" && m.effective_status === "sent" && m.open !== false
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1")
     const route = `${req.method} ${url.pathname}`
@@ -185,13 +219,92 @@ async function startFixture({ ai = false, audit = false, integrations = false, b
       const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
       if (!conn || !["on", "off"].includes(conn.services[body.service])) return send({ error: "Not granted" }, 409)
       conn.services[body.service] = body.on ? "on" : "off"
+      // Like op_state: a switched-off service turns every granted op off; on restores the defaults.
+      for (const op of Object.keys(conn.ops[body.service] || {})) {
+        if (conn.ops[body.service][op] !== "grant") conn.ops[body.service][op] = body.on && op !== "delete" ? "on" : "off"
+      }
       return send(integrationsState)
+    }
+    if (integrations && route === "POST /api/integrations/op") {
+      const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
+      const ops = conn && conn.ops[body.service]
+      if (!ops || !(body.op in ops)) return send({ error: "Unknown op" }, 400)
+      if (ops[body.op] === "grant") return send({ error: "Needs a new grant" }, 409)
+      ops[body.op] = body.on ? "on" : "off"
+      return send(integrationsState)
+    }
+    if (integrations && route === "POST /api/integrations/root") {
+      const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
+      if (!conn) return send({ error: "Unknown files connection" }, 404)
+      if (body.root === "/Missing") return send({ error: "No such folder: /Missing" }, 404)
+      conn.root = body.root || "/"
+      return send(integrationsState)
+    }
+    if (integrations && route === "POST /api/integrations/local") {
+      if (!Array.isArray(body.roots) || !Array.isArray(body.ops)) return send({ error: "Bad rules" }, 400)
+      integrationsState.local = { roots: body.roots, ops: integrationsState.local.ops.map(o => ({ ...o, on: body.ops.includes(o.id) })) }
+      return send(integrationsState)
+    }
+    // Calendar: the owner's events, per viewer/workspace._event. Writes are
+    // refused unless the account was granted editing (the server's rule).
+    if (integrations && route.startsWith("POST /api/calendar/")) {
+      const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
+      const op = route.slice("POST /api/calendar/".length)
+      if (!conn || conn.services["google.calendar"] !== "on") return send({ error: "Calendar is not turned on" }, 403)
+      if (conn.ops["google.calendar"][op] === "grant") return send({ error: "Needs a new grant" }, 403)
+      if (op === "create") {
+        const e = { id: `ev-${calendarEvents.length + 1}`, attendees: [], link: "", status: "confirmed", location: "", description: "", ...body }
+        delete e.connection
+        calendarEvents.push(e)
+        return send(e)
+      }
+      const e = calendarEvents.find(x => x.id === body.id)
+      if (!e) return send({ error: "No such event" }, 404)
+      if (op === "delete") { calendarEvents.splice(calendarEvents.indexOf(e), 1); return send({ deleted: e.id }) }
+      if (op === "update") { const { id, connection, ...f } = body; Object.assign(e, f); return send(e) }
     }
     if (integrations && route === "POST /api/integrations/client") {
       const p = integrationsState.providers.find(x => x.id === body.provider)
       if (!p || !body.client_id) return send({ error: "Bad client" }, 400)
       p.client = { client_id: body.client_id, has_secret: p.client.has_secret, configured: p.public || p.client.has_secret }
       return send(integrationsState)
+    }
+    if (inbox && route === "POST /api/inbox/send") {
+      const sid = String(body.to || "").replace(/^session:/, "")
+      if (!sid || !body.body) return send({ error: "Bad message" }, 400)
+      const row = { ...INBOX_ROW, id: inboxRows.length + 100, session_id: sid, kind: "message", sender_type: "user", sender_id: "", recipient_type: "session", recipient_id: sid, body: body.body, in_reply_to: body.in_reply_to || 0, status: "sent", effective_status: "sent", created_at: Date.now() / 1000 }
+      inboxRows.push(row)
+      return send(row)
+    }
+    if (inbox && route === "POST /api/inbox/read") {
+      const m = inboxRows.find(r => r.id === body.id)
+      if (!m) return send({ error: "not found" }, 404)
+      Object.assign(m, { status: "read", effective_status: "read" })
+      return send({ ok: true })
+    }
+    if (inbox && route === "POST /api/inbox/snooze") {
+      const m = inboxRows.find(r => r.id === body.id)
+      if (!m || m.kind === "message") return send({ error: "only decision items can be snoozed" }, 400)
+      Object.assign(m, { status: "snoozed", effective_status: "snoozed", snoozed: true, snoozed_until: Date.now() / 1000 + body.hours * 3600 })
+      return send({ ok: true, snoozed_until: m.snoozed_until })
+    }
+    // Marketplace: one installable npm entry needing a key, one Docker-only entry,
+    // one skill. Installs are recorded into capabilities so the list shows them,
+    // with the server's own refusals (missing required input, not installable).
+    if (market && route === "POST /api/market/mcp/install") {
+      const item = MARKET_MCP.find(i => i.id === body.id)
+      if (!item) return send({ error: "No such server in the registry." }, 404)
+      if (!item.install) return send({ error: "This server needs Docker or a bundle installer; Harman installs npm, PyPI and hosted servers only." }, 400)
+      const gap = item.inputs.find(i => i.required && !(body.values || {})[i.name])
+      if (gap) return send({ error: `${gap.name} is required.` }, 400)
+      const name = item.id.split("/").pop()
+      marketCaps.mcp.push({ name, scope: body.scope, transport: "stdio", target: "npx", config: {}, editable: true })
+      return send({ installed: name, scope: body.scope })
+    }
+    if (market && route === "POST /api/market/skill/install") {
+      if (body.id !== "pdf") return send({ error: "No such skill" }, 404)
+      marketCaps.skills.push({ name: "pdf", description: "PDF work", source: body.scope, path: "/fixture/skills/pdf/SKILL.md", editable: true })
+      return send({ installed: "pdf", scope: body.scope })
     }
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
@@ -252,10 +365,25 @@ async function startFixture({ ai = false, audit = false, integrations = false, b
       if (!providers.some(p => p.id === id)) return send({ error: "Unknown fixture provider" }, 404)
       return send({ models, choices: models.map(id => ({ id, label: id })), status: "ok", source: "endpoint", manualModelId: true })
     }
-    if (url.pathname === "/api/capabilities") return send({ skills: [], mcp: [] })
+    if (url.pathname === "/api/capabilities") return send(market ? marketCaps : { skills: [], mcp: [] })
+    if (market && url.pathname === "/api/market/mcp") {
+      const q = (url.searchParams.get("q") || "").toLowerCase()
+      return send({ items: MARKET_MCP.filter(i => !q || (i.id + i.description).toLowerCase().includes(q)) })
+    }
+    if (market && url.pathname === "/api/market/skills") return send({ items: [{ id: "pdf", title: "pdf", description: "PDF work", license: "Proprietary", files: 3, repo: "https://github.com/anthropics/skills/tree/main/skills/pdf" }] })
     if (url.pathname === "/api/projects" && ai) return send([{ name: "Fixture project", cwd: "/fixture" }])
     if (["/api/hosts", "/api/commands", "/api/projects", "/api/loops"].includes(url.pathname)) return send([])
-    if (route === "GET /api/integrations") return send(integrations ? integrationsState : { providers: [], redirect_uri: "" })
+    if (route === "GET /api/inbox") {
+      const sid = url.searchParams.get("session")
+      const rows = inboxRows.filter(r => !sid || r.session_id === sid).sort((a, b) => b.created_at - a.created_at)
+      const unread = rows.filter(waiting).length
+      if (url.searchParams.get("count_only")) return send({ unread })
+      return send({ messages: rows, unread, queue: { count: rows.filter(r => r.open && !r.snoozed).length, items: rows.filter(r => r.open && !r.snoozed) } })
+    }
+    if (route === "GET /api/integrations") return send(integrations ? integrationsState : NO_INTEGRATIONS)
+    if (integrations && route === "GET /api/calendar/events") {
+      return send({ calendar: "owner@example.com", time_zone: "UTC", from: url.searchParams.get("start"), to: url.searchParams.get("end"), events: calendarEvents })
+    }
     // Files tab: an empty home folder and no cloud drives, so the tab renders its
     // real empty state instead of the fixture's catch-all 404.
     if (route === "GET /api/fs") return send({ path: url.searchParams.get("path") || "~", entries: [] })

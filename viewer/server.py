@@ -73,12 +73,13 @@ from viewer.routes.orchestrator import OrchestratorMixin
 from viewer.routes.drives import DrivesMixin
 from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.inbox import InboxMixin
+from viewer.routes.marketplace import MarketplaceMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin,
+    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -403,6 +404,8 @@ class SessionViewerHandler(
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/browser/frame": "_g_browser_frame",
         "/api/capabilities": "_g_capabilities",
+        "/api/market/mcp": "_g_market_mcp",
+        "/api/market/skills": "_g_market_skills",
         "/api/session-summary": "_g_session_summary",
         "/api/session-detail": "_g_session_detail",
         "/api/session-analysis": "_g_session_analysis",
@@ -500,6 +503,8 @@ class SessionViewerHandler(
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
+        "/api/market/mcp/install": "_p_market_mcp_install",
+        "/api/market/skill/install": "_p_market_skill_install",
         "/api/mcp/delete": "_p_mcp_delete",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",

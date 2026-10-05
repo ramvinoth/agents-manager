@@ -22,6 +22,16 @@ const QUERY = `-ios predicate string:name IN {${ALL.map((id) => `"${id}"`).join(
 async function onScreen() {
   return $$(QUERY).map(async (el) => ({ name: await el.getAttribute("name"), ...(await el.getLocation()), ...(await el.getSize()) }))
 }
+// The scrim's centre lies INSIDE the panel (≤320pt of a ~400pt screen), so
+// clicking the scrim element taps a menu row. Tap its uncovered right edge.
+async function tapOutsidePanel() {
+  const { width, height } = await browser.getWindowSize()
+  await browser.performActions([{ type: "pointer", id: "scrim-finger", parameters: { pointerType: "touch" }, actions: [
+    { type: "pointerMove", duration: 0, x: width - 24, y: Math.round(height / 2) },
+    { type: "pointerDown", button: 0 }, { type: "pause", duration: 50 }, { type: "pointerUp", button: 0 },
+  ] }])
+  await browser.releaseActions()
+}
 async function tab(name) { await $(`~tab-${name}`).click() }
 async function assertHeader(name, how) {
   await browser.pause(400) // let the focus effect commit the header
@@ -92,7 +102,7 @@ describe("Tab header ownership — every transition", function () {
       await tab(name)
       await $("~menu-button").click()
       await $("~side-menu").waitForDisplayed()
-      await $("~menu-scrim").click() // tap outside the panel closes it
+      await tapOutsidePanel() // tap the scrim beside the panel closes it
       await $("~side-menu").waitForDisplayed({ reverse: true })
     }
     await tab("Inbox")

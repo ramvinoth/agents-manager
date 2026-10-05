@@ -3,19 +3,22 @@ const { startFixture } = require("../thread-board-fixture")
 
 const shown = id => $("~" + id).isDisplayed()
 async function tap(id) { const el = await $("~" + id); await el.waitForDisplayed(); await el.click() }
-async function scroll() {
+async function scroll(up = false) {
   const { width, height } = await browser.getWindowSize()
   const x = Math.round(width * .5)
+  const [from, to] = up ? [.3, .65] : [.55, .2]
   await browser.performActions([{ type: "pointer", id: "int-scroll", parameters: { pointerType: "touch" }, actions: [
-    { type: "pointerMove", duration: 0, x, y: Math.round(height * .55) }, { type: "pointerDown", button: 0 },
-    { type: "pointerMove", duration: 500, x, y: Math.round(height * .2) }, { type: "pointerUp", button: 0 },
+    { type: "pointerMove", duration: 0, x, y: Math.round(height * from) }, { type: "pointerDown", button: 0 },
+    { type: "pointerMove", duration: 500, x, y: Math.round(height * to) }, { type: "pointerUp", button: 0 },
   ] }])
   await browser.releaseActions()
 }
+// Down first, then back up: the screen is longer than two pages and specs move both ways.
 async function reveal(id) {
-  for (let n = 0; n < 10; n++) { if (await shown(id)) return; await scroll() }
-  assert.fail(`Cannot reveal ${id} after 10 bounded native swipes`)
+  for (let n = 0; n < 16; n++) { if (await shown(id)) return; await scroll(n >= 8) }
+  assert.fail(`Cannot reveal ${id} after 16 bounded native swipes`)
 }
+// A native Switch reports value "1"; an op chip (role switch) reports its checked state the same way.
 const switchOn = async id => (await $("~" + id).getAttribute("value")) === "1"
 
 // Integrations against a stateful local fixture: one Google account carrying every
@@ -67,6 +70,45 @@ describe("Native integrations — one catalog, every service state", () => {
     await tap("service-switch-google.calendar")
     await browser.waitUntil(() => switchOn("service-switch-google.calendar"), { timeoutMsg: "Calendar switch must turn on" })
     assert.deepEqual(writes().at(-1).body, { connection: "dr-fixture", service: "google.calendar", on: true })
+  })
+
+  it("ops: a chip per operation once the service is on; a click writes the owner's choice", async () => {
+    // Calendar was switched on above: its op chips appear, defaulting create/update on, delete off.
+    await reveal("op-dr-fixture-google.calendar-delete")
+    assert(!(await switchOn("op-dr-fixture-google.calendar-delete")), "Calendar delete defaults off for agents")
+    await tap("op-dr-fixture-google.calendar-delete")
+    await browser.waitUntil(() => switchOn("op-dr-fixture-google.calendar-delete"), { timeoutMsg: "Delete must turn on" })
+    assert.deepEqual(writes().at(-1).body, { connection: "dr-fixture", service: "google.calendar", op: "delete", on: true })
+    assert(!(await $("~op-dr-fixture-google.gmail-read").isExisting()), "No op chips under a service that is not granted")
+  })
+
+  it("a files account can be narrowed to one folder; a missing folder is refused with the server's words", async () => {
+    await reveal("root-edit-dr-fixture")
+    await tap("root-edit-dr-fixture")
+    await $("~root-input-dr-fixture").setValue("/Missing")
+    await tap("root-save-dr-fixture")
+    await reveal("integrations-error")
+    assert.match(await $("~integrations-error").getText(), /No such folder/)
+    await reveal("root-edit-dr-fixture")
+    await tap("root-edit-dr-fixture")
+    await $("~root-input-dr-fixture").setValue("/Work")
+    await tap("root-save-dr-fixture")
+    await browser.waitUntil(async () => (await $("~root-dr-fixture").getText()) === "Only /Work", { timeoutMsg: "Root must show the folder" })
+    assert.deepEqual(writes().at(-1).body, { connection: "dr-fixture", root: "/Work" })
+    assert(!(await shown("integrations-error")), "A good save clears the error")
+  })
+
+  it("this machine: add a folder and allow deletes", async () => {
+    await reveal("local-add-input")
+    await $("~local-add-input").setValue("~/Projects")
+    await tap("local-add")
+    await reveal("local-root-1")
+    assert.equal(await $("~local-root-1").getText(), "~/Projects")
+    assert.deepEqual(writes().at(-1).body, { roots: ["~", "~/Projects"], ops: ["read", "write"] })
+    await reveal("local-op-delete")
+    await tap("local-op-delete")
+    await browser.waitUntil(() => switchOn("local-op-delete"), { timeoutMsg: "Local delete must turn on" })
+    assert.deepEqual(writes().at(-1).body, { roots: ["~", "~/Projects"], ops: ["read", "write", "delete"] })
   })
 
   it("setting up a public client needs only the id and unlocks connecting", async () => {

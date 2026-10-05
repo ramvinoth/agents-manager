@@ -24,6 +24,7 @@ import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import ProvidersScreen from "./src/screens/ProvidersScreen"
 import IntegrationsScreen from "./src/screens/IntegrationsScreen"
+import CalendarScreen from "./src/screens/CalendarScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
 import CardDetailScreen from "./src/screens/CardDetailScreen"
 import NotesScreen from "./src/screens/NotesScreen"
@@ -49,13 +50,14 @@ export type RootStackParamList = {
   Capabilities: { host?: string; cwd?: string; title?: string } | undefined
   Providers: undefined
   Integrations: undefined
+  Calendar: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
   Notes: { session?: string; project?: number; title?: string } | undefined
   Files: undefined
   Agents: undefined
   NoteEditor: { id: number }
-  Inbox: { session?: string; project?: number; host?: string; path?: string; title?: string } | undefined
+  Inbox: { session?: string; host?: string; path?: string; title?: string } | undefined
   Org: undefined
   Audit: undefined
   AuditEntry: { entry: AuditEntry }
@@ -225,6 +227,7 @@ export default function App() {
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
             <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
             <Stack.Screen name="Integrations" component={IntegrationsScreen} options={{ title: "Integrations" }} />
+            <Stack.Screen name="Calendar" component={CalendarScreen} options={{ title: "Calendar" }} />
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Notes" options={{ title: "Notes" }}>
@@ -234,7 +237,7 @@ export default function App() {
               {({ navigation, route }) => (
                 <InboxScreen
                   navigation={navigation}
-                  filter={route.params ? { session: route.params.session, project: route.params.project } : undefined}
+                  session={route.params?.session}
                   title={route.params?.title}
                   host={route.params?.host}
                   path={route.params?.path}

@@ -1,8 +1,6 @@
 /**
  * Shared editor components for Skills and MCP tools — used by both
- * CapabilitiesScreen (full-screen) and CapabilitiesDrawer (slide-in).
- *
- * Extracted to avoid duplicating editor logic in two places.
+ * CapabilitiesPanel (rendered by both CapabilitiesScreen and CapabilitiesDrawer).
  */
 import React, { useEffect, useState } from "react"
 import {

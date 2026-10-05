@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react"
-import { Animated, Modal, Pressable, StyleSheet } from "react-native"
+import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from "react-native"
 import { useStyles } from "../screens/styles"
 
 /**
@@ -11,7 +11,9 @@ import { useStyles } from "../screens/styles"
  * the standard iOS action-sheet feel.
  *
  * Children are the sheet body; this component supplies the scrim + slide + the
- * tap-outside-to-close behaviour, so callers just render their rows.
+ * tap-outside-to-close behaviour, so callers just render their rows. The
+ * sheet rides up above the keyboard, so a sheet with a text field never hides
+ * its own Save button.
  */
 export default function SheetModal({
   visible,
@@ -37,19 +39,24 @@ export default function SheetModal({
 
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, justifyContent: "flex-end" }} onPress={onClose}>
-        {/* Scrim: fades in place (opacity only), never slides. */}
-        <Animated.View
-          style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)", opacity: anim }]}
-          pointerEvents="none"
-        />
-        {/* Sheet: slides up; stop propagation so taps inside don't close. */}
-        <Animated.View style={{ transform: [{ translateY }] }}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-            {children}
-          </Pressable>
-        </Animated.View>
-      </Pressable>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        {/* accessible={false} on both Pressables: an accessible Pressable folds its
+            subtree into one element, hiding every row of the sheet from
+            VoiceOver and XCUITest. */}
+        <Pressable accessible={false} style={{ flex: 1, justifyContent: "flex-end" }} onPress={onClose}>
+          {/* Scrim: fades in place (opacity only), never slides. */}
+          <Animated.View
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)", opacity: anim }]}
+            pointerEvents="none"
+          />
+          {/* Sheet: slides up; stop propagation so taps inside don't close. */}
+          <Animated.View style={{ transform: [{ translateY }] }}>
+            <Pressable accessible={false} style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+              {children}
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   )
 }

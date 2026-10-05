@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
-import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type ServiceState } from "../api/client"
+import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
 import { serviceAction, waitForConsent } from "../lib/integrations"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -23,7 +23,12 @@ type Draft = { provider: string; client_id: string; client_secret: string }
  * redirect URI), then each signed-in account with a row per service. A granted
  * service is a switch (the grant is kept); a missing one runs consent in the
  * system browser that ADDS the permission and keeps the rest; an unavailable
- * one (Google Keep) says why. Reached from Profile and the Files location picker.
+ * one (Google Keep) says why. Under a switched-on service, one chip per
+ * operation (read, write, delete, create…) says what AGENTS may do there; a
+ * chip that needs a wider grant runs consent for just that op. A files account
+ * can be narrowed to one folder. Last, "This machine": the folders agents may
+ * touch on the local disk and what they may do in them. Reached from the side
+ * menu and the Files location picker.
  */
 export default function IntegrationsScreen() {
   const styles = useStyles()
@@ -53,9 +58,9 @@ export default function IntegrationsScreen() {
     }
   }
 
-  function connect(service: string, connection?: string) {
-    return run(`${connection || "new"}:${service}`, async () => {
-      const r = await api.integrationConnect({ service, connection })
+  function connect(service: string, connection?: string, op?: string) {
+    return run(`${connection || "new"}:${service}${op ? `:${op}` : ""}`, async () => {
+      const r = await api.integrationConnect({ service, connection, op })
       setConsenting(true)
       try {
         await Linking.openURL(r.url)
@@ -64,6 +69,18 @@ export default function IntegrationsScreen() {
         if (!left.current) setConsenting(false)
       }
     })
+  }
+
+  function setOp(conn: IntegrationConnection, service: string, op: string, on: boolean) {
+    return run(`${conn.id}:${service}:${op}`, async () => { await api.integrationOp({ connection: conn.id, service, op, on }) })
+  }
+
+  function setRoot(conn: IntegrationConnection, root: string) {
+    return run(`${conn.id}:root`, async () => { await api.integrationRoot({ connection: conn.id, root }) })
+  }
+
+  function setLocal(roots: string[], ops: string[]) {
+    return run("local", async () => { await api.integrationLocal({ roots, ops }) })
   }
 
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
@@ -176,15 +193,29 @@ export default function IntegrationsScreen() {
                     </TouchableOpacity>
                   </View>
                   {p.services.map((s) => (
-                    <ServiceRow
-                      key={s.id}
-                      s={s}
-                      state={c.services[s.id] || "grant"}
-                      busy={busy === `${c.id}:${s.id}`}
-                      disabled={!!busy}
-                      onToggle={(on) => toggle(c, s.id, on)}
-                      onGrant={() => connect(s.id, c.id)}
-                    />
+                    <React.Fragment key={s.id}>
+                      <ServiceRow
+                        s={s}
+                        state={c.services[s.id] || "grant"}
+                        busy={busy === `${c.id}:${s.id}`}
+                        disabled={!!busy}
+                        onToggle={(on) => toggle(c, s.id, on)}
+                        onGrant={() => connect(s.id, c.id)}
+                      />
+                      {c.services[s.id] === "on" && s.ops.length ? (
+                        <OpChips
+                          testPrefix={`op-${c.id}-${s.id}`}
+                          ops={s.ops.map((o) => ({ ...o, state: c.ops[s.id]?.[o.id] || "grant" }))}
+                          busy={busy}
+                          busyPrefix={`${c.id}:${s.id}:`}
+                          onToggle={(op, on) => setOp(c, s.id, op, on)}
+                          onGrant={(op) => connect(s.id, c.id, op)}
+                        />
+                      ) : null}
+                      {c.services[s.id] === "on" && s.kind === "files" ? (
+                        <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(root) => setRoot(c, root)} />
+                      ) : null}
+                    </React.Fragment>
                   ))}
                 </View>
               ))}
@@ -207,6 +238,8 @@ export default function IntegrationsScreen() {
           )}
         </View>
       ))}
+
+      <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
 
       {consenting ? (
         <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 10, maxWidth: undefined }]}>
@@ -246,6 +279,161 @@ function ServiceRow({ s, state, busy, disabled, onToggle, onGrant }: {
       ) : (
         <Text style={styles.ssRowHint}>Not available</Text>
       )}
+    </View>
+  )
+}
+
+/** What agents may do with one switched-on service on one account: a chip per
+ *  operation. Filled = allowed, outlined = not, "+" = needs a wider grant. */
+function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
+  testPrefix: string
+  ops: { id: string; label: string; state: ServiceState }[]
+  busy: string | null
+  busyPrefix: string
+  onToggle: (op: string, on: boolean) => void
+  /** Absent where nothing is ever granted (the local disk). */
+  onGrant?: (op: string) => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingLeft: 42, paddingRight: 18, paddingBottom: 8 }}>
+      <Text style={[styles.ssRowHint, { width: "100%", maxWidth: undefined }]}>Agents may</Text>
+      {ops.map((o) => {
+        const action = serviceAction(o.state)
+        if (action === "none") return null
+        const on = o.state === "on"
+        return (
+          <TouchableOpacity
+            key={o.id}
+            testID={`${testPrefix}-${o.id}`}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: on }}
+            accessibilityLabel={action === "grant" ? `${o.label}: needs access` : o.label}
+            disabled={!!busy}
+            onPress={() => (action === "grant" ? onGrant?.(o.id) : onToggle(o.id, !on))}
+            style={[styles.filterChip, on && styles.filterChipActive, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy && busy !== busyPrefix + o.id ? 0.5 : 1 }]}
+          >
+            {busy === busyPrefix + o.id ? <ActivityIndicator size="small" />
+              : <Icon name={action === "grant" ? "plus" : on ? "check" : "close"} size={12} color={on ? t.onAccent : t.textMuted} />}
+            <Text style={[styles.filterChipText, on && styles.filterChipTextActive]}>{o.label}</Text>
+          </TouchableOpacity>
+        )
+      })}
+    </View>
+  )
+}
+
+/** The folder a files account is narrowed to; agents and the Files tab see nothing above it. */
+function RootRow({ conn, busy, disabled, onSave }: {
+  conn: IntegrationConnection
+  busy: boolean
+  disabled: boolean
+  onSave: (root: string) => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const [draft, setDraft] = useState<string | null>(null)
+  if (draft === null) {
+    return (
+      <View style={[styles.profileInfoRow, { alignItems: "center", paddingLeft: 42 }]}>
+        <Icon name="folder" size={14} color={t.textMuted} />
+        <Text testID={`root-${conn.id}`} numberOfLines={1} style={[styles.ssRowHint, { flex: 1, marginLeft: 6, maxWidth: undefined }]}>
+          {conn.root === "/" ? "Whole account" : `Only ${conn.root}`}
+        </Text>
+        {busy ? <ActivityIndicator /> : (
+          <TouchableOpacity testID={`root-edit-${conn.id}`} disabled={disabled} hitSlop={8} onPress={() => setDraft(conn.root === "/" ? "" : conn.root)}>
+            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Limit to a folder</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    )
+  }
+  const save = () => { onSave(draft.trim() || "/"); setDraft(null) }
+  return (
+    <View style={{ paddingLeft: 42, paddingRight: 18, paddingBottom: 8, gap: 6 }}>
+      <TextInput
+        testID={`root-input-${conn.id}`}
+        style={styles.ssInput}
+        value={draft}
+        onChangeText={setDraft}
+        placeholder="/Work/Shared — empty for the whole account"
+        placeholderTextColor={t.textMuted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoFocus
+        returnKeyType="done"
+        onSubmitEditing={save}
+      />
+      <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
+        <TouchableOpacity testID={`root-save-${conn.id}`} style={styles.ssAddBtn} onPress={save}>
+          <Text style={styles.ssAddBtnText}>Save</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setDraft(null)}>
+          <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+}
+
+/** This machine's disk: the folders agents may work in and what they may do there. */
+function LocalDiskSection({ local, busy, disabled, onSave }: {
+  local: LocalDisk
+  busy: boolean
+  disabled: boolean
+  onSave: (roots: string[], ops: string[]) => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const [adding, setAdding] = useState("")
+  const ops = local.ops.filter((o) => o.on).map((o) => o.id)
+  const add = () => {
+    const r = adding.trim()
+    if (!r) return
+    onSave([...local.roots, r], ops)
+    setAdding("")
+  }
+  return (
+    <View testID="integration-local">
+      <Text style={[styles.sheetSection, { marginTop: 16, marginBottom: 6 }]}>THIS MACHINE</Text>
+      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
+        Folders agents may work in on this computer{local.roots.length ? "" : " — none, so agents cannot touch the disk"}. You are never limited.
+      </Text>
+      {local.roots.map((r, i) => (
+        <View key={r} style={[styles.profileInfoRow, { alignItems: "center" }]}>
+          <Icon name="folder" size={16} color={t.textMuted} />
+          <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{r}</Text>
+          <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
+            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)}>
+            <Icon name="trash" size={16} color={t.danger} />
+          </TouchableOpacity>
+        </View>
+      ))}
+      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 18, paddingVertical: 6, alignItems: "center" }}>
+        <TextInput
+          testID="local-add-input"
+          style={[styles.ssInput, { flex: 1 }]}
+          value={adding}
+          onChangeText={setAdding}
+          placeholder="~/Projects"
+          placeholderTextColor={t.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+          onSubmitEditing={add}
+        />
+        <TouchableOpacity testID="local-add" style={[styles.ssAddBtn, { opacity: adding.trim() && !disabled ? 1 : 0.5 }]} disabled={!adding.trim() || disabled} onPress={add}>
+          {busy ? <ActivityIndicator size="small" /> : <Text style={styles.ssAddBtnText}>Add</Text>}
+        </TouchableOpacity>
+      </View>
+      <OpChips
+        testPrefix="local-op"
+        ops={local.ops.map((o) => ({ id: o.id, label: o.label, state: o.on ? "on" : "off" }))}
+        busy={busy ? "local" : null}
+        busyPrefix="local:"
+        onToggle={(op, on) => onSave(local.roots, on ? [...ops, op] : ops.filter((x) => x !== op))}
+      />
     </View>
   )
 }

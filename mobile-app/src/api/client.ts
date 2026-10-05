@@ -59,8 +59,20 @@ export type Drive = { id: string; label: string; kind: string; status: string; h
 /** GET /api/integrations — the Integrations screen in one response, built
  *  server-side from viewer/integrations.py. No secrets or tokens. */
 export type ServiceState = "on" | "off" | "grant" | "unavailable"
-export type IntegrationService = { id: string; label: string; kind: string; agent: string; available: boolean; unavailable: string }
-export type IntegrationConnection = { id: string; account: string; status: string; authorized: boolean; services: Record<string, ServiceState> }
+/** One thing an agent may do with a service (read, draft, create, delete…). */
+export type IntegrationOp = { id: string; label: string }
+export type IntegrationService = { id: string; label: string; kind: string; agent: string; available: boolean; unavailable: string; ops: IntegrationOp[] }
+export type IntegrationConnection = {
+  id: string
+  account: string
+  status: string
+  authorized: boolean
+  services: Record<string, ServiceState>
+  /** Per service, per op: may AGENTS do it here ("grant" = needs extra consent). */
+  ops: Record<string, Record<string, ServiceState>>
+  /** The folder a files connection is narrowed to ("/" = the whole account). */
+  root: string
+}
 export type IntegrationProvider = {
   id: string
   label: string
@@ -72,7 +84,18 @@ export type IntegrationProvider = {
   services: IntegrationService[]
   connections: IntegrationConnection[]
 }
-export type IntegrationsView = { providers: IntegrationProvider[]; redirect_uri: string }
+/** What agents may do on this machine's disk (viewer/integrations.local_view). */
+export type LocalDisk = { roots: string[]; ops: (IntegrationOp & { on: boolean })[] }
+export type IntegrationsView = { providers: IntegrationProvider[]; redirect_uri: string; local: LocalDisk }
+/** One Google Calendar event as viewer/workspace._event returns it. `start`/`end`
+ *  are RFC 3339 datetimes, or YYYY-MM-DD dates when `all_day`. */
+export type CalendarEvent = {
+  id: string; title: string; start: string; end: string; all_day: boolean
+  location: string; description: string; attendees: string[]; link: string; status: string
+}
+export type CalendarWindow = { calendar: string; time_zone: string; from: string; to: string; events: CalendarEvent[] }
+/** The fields an editor may send; omitted fields stay as they are on update. */
+export type EventFields = Partial<Pick<CalendarEvent, "title" | "start" | "end" | "all_day" | "location" | "description" | "attendees">>
 export type SessionSummary = {
   lines: number
   userMessages: number
@@ -106,6 +129,16 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
 export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
+/** A marketplace entry (GET /api/market/mcp | /api/market/skills). MCP entries
+ *  carry `install` (npm | pypi | remote, or null when only Docker/bundle exists)
+ *  and the `inputs` the owner fills; skills carry `license` and a file count. */
+export type MarketInput = { name: string; description: string; secret: boolean; required: boolean; default: string }
+export type MarketItem = {
+  id: string; title: string; description: string; repo: string
+  version?: string; publisher?: string; install?: "npm" | "pypi" | "remote" | null; inputs?: MarketInput[]
+  license?: string; files?: number
+}
+export type MarketPage = { items: MarketItem[]; cursor?: string }
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
@@ -523,6 +556,15 @@ export const api = {
     req<{ saved?: boolean; error?: string }>("POST", "/api/mcp/save", body),
   mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string }) =>
     req<{ deleted?: boolean; error?: string }>("POST", "/api/mcp/delete", body),
+  // Marketplace: the server rebuilds every install from the source's own record;
+  // the app names an entry id, never a command. Installs land on this machine.
+  marketMcp: (q: string, cursor?: string) =>
+    req<MarketPage>("GET", `/api/market/mcp?${new URLSearchParams({ q, ...(cursor ? { cursor } : {}) })}`),
+  marketSkills: (q: string) => req<MarketPage>("GET", `/api/market/skills?${new URLSearchParams({ q })}`),
+  marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project"; cwd?: string }) =>
+    req<{ installed: string; scope: string }>("POST", "/api/market/mcp/install", body),
+  marketSkillInstall: (body: { id: string; scope: "user" | "project"; cwd?: string }) =>
+    req<{ installed: string; scope: string }>("POST", "/api/market/skill/install", body),
 
   // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
   loops: (sessionId: string) => req<Job[]>("GET", `/api/loops?session=${encodeURIComponent(sessionId)}`),
@@ -614,17 +656,38 @@ export const api = {
   integrations: () => req<IntegrationsView>("GET", "/api/integrations"),
   // Consent for `service` on `connection` (adds the permission, keeps the
   // rest) or, without one, on a new account. Poll with driveOAuthStatus.
-  integrationConnect: (body: { service: string; connection?: string }) =>
+  // `op` asks for that operation's extra scopes too (e.g. calendar editing).
+  integrationConnect: (body: { service: string; connection?: string; op?: string }) =>
     req<{ url: string; pending: string; connection: string }>("POST", "/api/integrations/connect", body),
   // The owner's on/off switch for a granted service; returns the fresh view.
   integrationService: (body: { connection: string; service: string; on: boolean }) =>
     req<IntegrationsView>("POST", "/api/integrations/service", body),
   // Harman's own OAuth client per provider. The secret is write-only: a save
   // without client_secret keeps the stored one; "" clears it.
+  // Allow/disallow one operation for agents on one account (409 if never granted).
+  integrationOp: (body: { connection: string; service: string; op: string; on: boolean }) =>
+    req<IntegrationsView>("POST", "/api/integrations/op", body),
+  // Narrow a files account to one existing folder ("/" = the whole account).
+  integrationRoot: (body: { connection: string; root: string }) =>
+    req<IntegrationsView>("POST", "/api/integrations/root", body),
+  // The folders agents may touch on this machine, and what they may do there.
+  integrationLocal: (body: { roots: string[]; ops: string[] }) =>
+    req<IntegrationsView>("POST", "/api/integrations/local", body),
   integrationClientSave: (body: { provider: string; client_id: string; client_secret?: string }) =>
     req<IntegrationsView>("POST", "/api/integrations/client", body),
   integrationClientDelete: (provider: string) =>
     req<IntegrationsView>("POST", "/api/integrations/client/delete", { provider }),
+  // ---- calendar (the owner's own Google Calendar; the server answers 403 with
+  // a "connect it in Integrations" message when a grant is missing) ----
+  calendarEvents: (q: { start?: string; end?: string; q?: string; connection?: string } = {}) =>
+    req<CalendarWindow>("GET", "/api/calendar/events?" + new URLSearchParams(
+      Object.entries(q).filter(([, v]) => v) as [string, string][]).toString()),
+  calendarCreate: (fields: EventFields, connection?: string) =>
+    req<CalendarEvent>("POST", "/api/calendar/create", { ...fields, connection }),
+  calendarUpdate: (id: string, fields: EventFields, connection?: string) =>
+    req<CalendarEvent>("POST", "/api/calendar/update", { ...fields, id, connection }),
+  calendarDelete: (id: string, connection?: string) =>
+    req<{ deleted: string }>("POST", "/api/calendar/delete", { id, connection }),
 
   // ---- voice (call listening + text-to-speech) ----
   // Spoken text as an AAC stream (Pocket generate_audio_stream -> ffmpeg).

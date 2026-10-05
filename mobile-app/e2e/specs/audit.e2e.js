@@ -38,9 +38,7 @@ describe("Native audit log — isolated display-v1 API", () => {
   const auditRequests = () => fixture.requests.filter(r => r.route === "GET /api/org/audit")
   async function openAudit() { await tap("org-audit"); await $("~audit-list").waitForDisplayed() }
   async function filter(value) {
-    await reveal("audit-result-filter", "down", "audit-list")
-    await tap("audit-result-filter")
-    await tap(`audit-filter-${value}`)
+    await tap(`audit-filter-${value}`) // a fixed chip row above the list
     await browser.waitUntil(() => auditRequests().some(r => new URLSearchParams(r.search).get("result") === value))
   }
   before(async () => {
@@ -117,8 +115,7 @@ describe("Native audit log — isolated display-v1 API", () => {
     await $("~audit-entry").waitForDisplayed()
     assert((await browser.getPageSource()).includes("does not mean it is still pending"))
     await browser.back()
-    await $("~audit-filter-reset").waitForDisplayed()
-    await tap("audit-filter-reset")
+    await tap("audit-filter-all")
     await $("~audit-row-309").waitForDisplayed()
     assert.equal(new URLSearchParams(auditRequests().at(-1).search).get("result"), "all")
   })
@@ -126,7 +123,9 @@ describe("Native audit log — isolated display-v1 API", () => {
   it("retains rows on older-page failure, retries the cursor, and reaches exact end", async () => {
     await openAudit()
     await reveal("audit-load-older", "up", "audit-list")
-    fixture.audit.failNext = "network"
+    // Not "network": iOS NSURLSession transparently retries an idempotent GET whose
+    // reused keep-alive socket drops before any response byte, so the app never sees it.
+    fixture.audit.failNext = 503
     await tap("audit-load-older")
     await $("~audit-older-error").waitForDisplayed()
     await reveal("audit-row-309", "down", "audit-list")
@@ -194,7 +193,7 @@ describe("Native audit log — isolated display-v1 API", () => {
       await openAudit()
       await filter("denied")
       await $("~audit-empty").waitForDisplayed()
-      await tap("audit-filter-reset")
+      await tap("audit-filter-all")
       await $("~audit-row-309").waitForDisplayed()
     } finally { fixture.audit.rows = rows }
   })
