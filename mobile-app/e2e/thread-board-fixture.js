@@ -160,7 +160,15 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
     if (url.pathname === "/api/org/skills") return send({ skills: [] })
     if (url.pathname === "/api/sessions") return send(boardSessions.map(id => ({ id, title: id === SESSION ? "Native board fixture" : "Native board fixture B", path: `/fixture/${id}.jsonl`, project: "/fixture", modified: Date.now() / 1000 })))
     if (url.pathname === "/api/session/ai") return send({ error: "AI fixture not enabled" }, 404)
-    if (url.pathname.startsWith("/api/session/")) return send({ lines, start: 0, size: lines.length })
+    if (url.pathname.startsWith("/api/session/")) {
+      // Offsets are line counts here (the real server uses bytes); ?from= is the
+      // live-run incremental poll and, like the server, returns only newer lines.
+      if (url.searchParams.has("from")) {
+        const from = Math.min(Number(url.searchParams.get("from")) || 0, lines.length)
+        return send({ lines: lines.slice(from), start: from, end: lines.length, size: lines.length })
+      }
+      return send({ lines, start: 0, end: lines.length, size: lines.length })
+    }
     if (url.pathname === "/api/session-meta") return send({ pinned: [], cwd: "/fixture" })
     if (url.pathname === "/api/session-summary") return send({ models: [], messages: 20, toolCalls: 0 })
     if (url.pathname === "/api/git/status") return send({ repo: false })

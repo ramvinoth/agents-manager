@@ -203,3 +203,16 @@ def test_visible_queue_hides_live_snoozes_but_attach_state_keeps_them_open():
     # The snoozed question is deferred, not decided: its inbox row still reads open.
     (row,) = inbox.attach_state([_row("question", "tq", "snoozed", NOW + 60)], items, NOW)
     assert row["open"] is True and row["snoozed"] is True
+
+
+def test_unread_count_skips_closed_decisions_and_read_rows():
+    rows = [
+        _row("message", None, "sent", id=1),
+        _row("question", "q1", "sent", id=2),           # still open -> counts
+        _row("question", "q2", "sent", id=3),           # answered -> history
+        _row("card", "7", "read", id=4),                # read -> never counts
+        _row("approval", "a1", "snoozed", snoozed_until=NOW - 1, id=5),  # lapsed + open
+        _row("approval", "a2", "snoozed", snoozed_until=NOW + 60, id=6), # live snooze
+    ]
+    items = [_item("question", "q1"), _item("approval", "a1"), _item("approval", "a2")]
+    assert inbox.unread_count(rows, items, NOW) == 3

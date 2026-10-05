@@ -1494,8 +1494,8 @@ def inbox_mark_read(message_id):
 
 def inbox_snooze(message_id, until):
     """Snooze a message out of the owner's sight until `until` (epoch). It
-    resurfaces automatically when the clock passes `until` (inbox_list and
-    inbox_unread_count both treat a lapsed snooze as unread again) — a skipped
+    resurfaces automatically when the clock passes `until` (inbox_list's
+    unread filter treats a lapsed snooze as unread again) — a skipped
     question is never silently dropped, it waits and comes back."""
     with _db() as cur:
         cur.execute("UPDATE inbox_messages SET status = 'snoozed', "
@@ -1515,26 +1515,6 @@ def inbox_decision_refs():
                     "WHERE kind IN %s AND ref_id <> '' AND archived = FALSE",
                     (_DECISION_KINDS,))
         return [dict(r) for r in cur.fetchall()]
-
-
-def inbox_unread_count(session_id=None, project_id=None, kind=None):
-    """How many messages need the owner's eye right now: 'sent' (or a snooze
-    that has lapsed), not archived. The tab's badge number. `kind` narrows the
-    badge to one list view (the UI passes the active filter through)."""
-    clauses, params = ["archived = FALSE"], []
-    if session_id is not None:
-        clauses.append("session_id = %s"); params.append(session_id)
-    if project_id is not None:
-        clauses.append("project_id = %s"); params.append(project_id)
-    if kind is not None:
-        clauses.append("kind = %s"); params.append(kind)
-    clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
-    params.append(_now())
-    with _db() as cur:
-        cur.execute("SELECT count(*) AS n FROM inbox_messages WHERE " +
-                    " AND ".join(clauses), params)
-        row = cur.fetchone()
-    return int(row["n"]) if row else 0
 
 
 def inbox_archive_for_session(session_id, archived):

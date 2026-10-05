@@ -68,20 +68,18 @@ class InboxMixin:
         kind = (q.get("kind") or [None])[0]
         unread_only = (q.get("unread_only") or [None])[0] not in (None, "")
         archived = (q.get("archived") or [None])[0] not in (None, "")
+        pid = int(project) if project else None
+        items = open_decisions_items()
+        unread = inbox.unread_count(
+            db.inbox_list(session_id=session, project_id=pid, kind=kind, unread_only=True), items)
         if (q.get("count_only") or [None])[0] not in (None, ""):
             # The tab badge polls this from every screen: the number only,
             # not the full list it would throw away.
-            self.send_json({"unread": db.inbox_unread_count(
-                session_id=session, project_id=int(project) if project else None, kind=kind)})
+            self.send_json({"unread": unread})
             return
-        rows = db.inbox_list(session_id=session,
-                             project_id=int(project) if project else None,
+        rows = db.inbox_list(session_id=session, project_id=pid,
                              kind=kind, unread_only=unread_only, archived=archived)
-        items = open_decisions_items()
         messages = inbox.attach_state(rows, items)
-        unread = db.inbox_unread_count(session_id=session,
-                                       project_id=int(project) if project else None,
-                                       kind=kind)
         out = {"messages": messages, "unread": unread}
         if p["kind"] == "app":
             qview = inbox.action_queue(messages, items)

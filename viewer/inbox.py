@@ -118,6 +118,15 @@ def visible_queue(items):
     return {"count": len(shown), "decisions": shown}
 
 
+def unread_count(rows, open_items, now=None):
+    """The badge number: rows still waiting on the owner's eye — unread (a
+    lapsed snooze counts) and, for decision kinds, still open. A question
+    already answered or a card already moved out of Review is history, not
+    a call to make, so it never inflates the badge. Pure."""
+    return sum(1 for r in attach_state(rows, open_items, now)
+               if r["effective_status"] == "sent" and r["open"] is not False)
+
+
 def action_queue(rows, open_items, now=None):
     """The 'needs your action' view: decision-kind rows that are still open
     and not snoozed, oldest first (waiting time is the only order before a
