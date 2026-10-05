@@ -56,10 +56,23 @@ export type FsScope = { drive: string } | { host: string } | {}
 /** A connected (or connectable) cloud drive. `authorized` is a "has a usable
  *  token" flag; an unauthorized drive still lists, picking it runs consent. */
 export type Drive = { id: string; label: string; kind: string; status: string; hidden: boolean; authorized: boolean }
-/** One vendor's OAuth client as Integrations sees it — never the secret itself.
- *  `public` marks a PKCE client (Dropbox, OneDrive) that needs no secret. */
-export type DriveClient = { kind: string; label: string; public: boolean; client_id: string; has_secret: boolean; configured: boolean }
-export type DriveClientList = { clients: DriveClient[]; redirect_uri: string }
+/** GET /api/integrations — the Integrations screen in one response, built
+ *  server-side from viewer/integrations.py. No secrets or tokens. */
+export type ServiceState = "on" | "off" | "grant" | "unavailable"
+export type IntegrationService = { id: string; label: string; kind: string; agent: string; available: boolean; unavailable: string }
+export type IntegrationConnection = { id: string; account: string; status: string; authorized: boolean; services: Record<string, ServiceState> }
+export type IntegrationProvider = {
+  id: string
+  label: string
+  /** A PKCE public client — no secret is issued or needed. */
+  public: boolean
+  /** Where the owner creates the OAuth client. */
+  console: string
+  client: { client_id: string; has_secret: boolean; configured: boolean }
+  services: IntegrationService[]
+  connections: IntegrationConnection[]
+}
+export type IntegrationsView = { providers: IntegrationProvider[]; redirect_uri: string }
 export type SessionSummary = {
   lines: number
   userMessages: number
@@ -597,14 +610,21 @@ export const api = {
     req<{ status: "waiting" | "authorized" | "failed" | "expired"; error?: string }>(
       "GET", `/api/drive/oauth/status?pending=${encodeURIComponent(pending)}`
     ),
-  // Harman's own OAuth client per vendor (Integrations). The secret is
-  // write-only: the list reports has_secret, never the value; a save without
-  // client_secret keeps the stored one.
-  driveClients: () => req<DriveClientList>("GET", "/api/drive/clients"),
-  driveClientSave: (body: { kind: string; client_id: string; client_secret?: string }) =>
-    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients", body),
-  driveClientDelete: (kind: string) =>
-    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients/delete", { kind }),
+  // ---- integrations (accounts + the services agents may use on them) ----
+  integrations: () => req<IntegrationsView>("GET", "/api/integrations"),
+  // Consent for `service` on `connection` (adds the permission, keeps the
+  // rest) or, without one, on a new account. Poll with driveOAuthStatus.
+  integrationConnect: (body: { service: string; connection?: string }) =>
+    req<{ url: string; pending: string; connection: string }>("POST", "/api/integrations/connect", body),
+  // The owner's on/off switch for a granted service; returns the fresh view.
+  integrationService: (body: { connection: string; service: string; on: boolean }) =>
+    req<IntegrationsView>("POST", "/api/integrations/service", body),
+  // Harman's own OAuth client per provider. The secret is write-only: a save
+  // without client_secret keeps the stored one; "" clears it.
+  integrationClientSave: (body: { provider: string; client_id: string; client_secret?: string }) =>
+    req<IntegrationsView>("POST", "/api/integrations/client", body),
+  integrationClientDelete: (provider: string) =>
+    req<IntegrationsView>("POST", "/api/integrations/client/delete", { provider }),
 
   // ---- voice (call listening + text-to-speech) ----
   // Spoken text as an AAC stream (Pocket generate_audio_stream -> ffmpeg).

@@ -323,7 +323,7 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
 
-      <Text style={styles.sheetSection}>STORAGE</Text>
+      <Text style={styles.sheetSection}>INTEGRATIONS</Text>
       <TouchableOpacity
         testID="open-integrations"
         style={styles.profileInfoRow}
@@ -331,8 +331,8 @@ export default function ProfileScreen({ navigation }: Props) {
       >
         <Icon name="cloud" size={18} color={t.accent} />
         <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={[styles.profileInfoValue, { color: t.text, textAlign: "left" }]}>Cloud drive integrations</Text>
-          <Text style={styles.ssRowHint}>OAuth clients for Google Drive, Dropbox and OneDrive.</Text>
+          <Text style={[styles.profileInfoValue, { color: t.text, textAlign: "left" }]}>Connected accounts</Text>
+          <Text style={styles.ssRowHint}>Gmail, Calendar, Drive, Dropbox, OneDrive — choose what agents may use.</Text>
         </View>
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>

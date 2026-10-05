@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons"
 export type IconName =
   | "menu"
   | "add"
+  | "plus"
   | "settings"
   | "attach"
   | "send"
@@ -82,6 +83,7 @@ export type IconName =
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
   add: "create-outline",
+  plus: "add",
   settings: "options-outline",
   attach: "image-outline",
   send: "arrow-up",

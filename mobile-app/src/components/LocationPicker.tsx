@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Linking, Text, TouchableOpacity, View } from 
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Drive } from "../api/client"
+import { waitForConsent } from "../lib/integrations"
 import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "../lib/location"
 import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
@@ -46,8 +47,8 @@ export default function LocationPicker({
   const [vendors, setVendors] = useState<string[]>([])
   const [connecting, setConnecting] = useState<string | null>(null) // drive id mid-consent
   const [error, setError] = useState("")
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current) }, [])
+  const unmounted = useRef(false)
+  useEffect(() => () => { unmounted.current = true }, [])
 
   useEffect(() => {
     if (!visible) return
@@ -62,8 +63,8 @@ export default function LocationPicker({
     navigation.navigate("Integrations")
   }
 
-  /** Run consent for `drive`, then select it. Polls every 2s until the flow
-   *  ends; a failed/expired flow leaves the drive listed but unselected, with
+  /** Run consent for `drive`, then select it. Waits on the flow (shared
+   *  waitForConsent) until it ends; a failed/expired flow leaves the drive listed but unselected, with
    *  the reason shown — the user can retry from the same row. */
   async function connect(drive: Drive) {
     setError("")
@@ -82,17 +83,7 @@ export default function LocationPicker({
         throw new Error(r.error)
       }
       await Linking.openURL(r.url)
-      await new Promise<void>((resolve, reject) => {
-        const tick = async () => {
-          try {
-            const s = await api.driveOAuthStatus(r.pending)
-            if (s.status === "authorized") return resolve()
-            if (s.status === "waiting") { pollTimer.current = setTimeout(tick, 2000); return }
-            reject(new Error(s.error || `Consent ${s.status}`))
-          } catch (e) { reject(e) }
-        }
-        tick()
-      })
+      await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => unmounted.current)
       const fresh = await api.drives()
       setDrives(fresh.drives || [])
       onChange(drive.id, fresh.drives || [])

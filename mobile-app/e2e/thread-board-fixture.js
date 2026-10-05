@@ -50,7 +50,31 @@ function validSelection(s) {
       (s.model.kind === "id" && typeof s.model.id === "string" && s.model.id.trim() && Object.keys(s.model).length === 2))
 }
 
-async function startFixture({ ai = false, audit = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+const INTEGRATIONS = {
+  redirect_uri: "http://127.0.0.1/api/drive/oauth/callback",
+  providers: [
+    {
+      id: "google", label: "Google", public: false, console: "https://console.cloud.google.com/apis/credentials",
+      client: { client_id: "fixture.apps.googleusercontent.com", has_secret: true, configured: true },
+      services: [
+        { id: "google.drive", label: "Drive", kind: "files", agent: "Browse and read files", available: true, unavailable: "" },
+        { id: "google.gmail", label: "Gmail", kind: "mail", agent: "Search, read and draft mail", available: true, unavailable: "" },
+        { id: "google.calendar", label: "Calendar", kind: "calendar", agent: "Read events", available: true, unavailable: "" },
+        { id: "google.keep", label: "Keep", kind: "notes", agent: "", available: false, unavailable: "Google offers no Keep API for personal accounts" },
+      ],
+      connections: [{ id: "dr-fixture", account: "owner@example.com", status: "ok", authorized: true,
+        services: { "google.drive": "on", "google.gmail": "grant", "google.calendar": "off", "google.keep": "unavailable" } }],
+    },
+    {
+      id: "dropbox", label: "Dropbox", public: true, console: "https://www.dropbox.com/developers/apps",
+      client: { client_id: "", has_secret: false, configured: false },
+      services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "" }],
+      connections: [],
+    },
+  ],
+}
+
+async function startFixture({ ai = false, audit = false, integrations = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   const boardCards = clone(boardIsolation ? [...cards, ...cards.map(c => ({ ...c, id: c.id + 10, title: `B ${c.title}`, session_id: BOARD_SESSION_B }))] : cards)
@@ -73,6 +97,9 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
     creations: [], failNextSave: false, discoveryFailure: true,
     permissionMode: "acceptEdits",
   }
+  // Mirrors viewer/integrations.view(): one Google account with every service
+  // state represented, and an unconfigured public-client provider.
+  const integrationsState = clone(INTEGRATIONS)
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1")
     const route = `${req.method} ${url.pathname}`
@@ -154,6 +181,18 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
       entry.response = clone(card)
       return send(card)
     }
+    if (integrations && route === "POST /api/integrations/service") {
+      const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
+      if (!conn || !["on", "off"].includes(conn.services[body.service])) return send({ error: "Not granted" }, 409)
+      conn.services[body.service] = body.on ? "on" : "off"
+      return send(integrationsState)
+    }
+    if (integrations && route === "POST /api/integrations/client") {
+      const p = integrationsState.providers.find(x => x.id === body.provider)
+      if (!p || !body.client_id) return send({ error: "Bad client" }, 400)
+      p.client = { client_id: body.client_id, has_secret: p.client.has_secret, configured: p.public || p.client.has_secret }
+      return send(integrationsState)
+    }
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
     if (url.pathname === "/api/org/approvals") return send({ approvals: [] })
@@ -216,6 +255,7 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
     if (url.pathname === "/api/capabilities") return send({ skills: [], mcp: [] })
     if (url.pathname === "/api/projects" && ai) return send([{ name: "Fixture project", cwd: "/fixture" }])
     if (["/api/hosts", "/api/commands", "/api/projects", "/api/loops"].includes(url.pathname)) return send([])
+    if (route === "GET /api/integrations") return send(integrations ? integrationsState : { providers: [], redirect_uri: "" })
     // Files tab: an empty home folder and no cloud drives, so the tab renders its
     // real empty state instead of the fixture's catch-all 404.
     if (route === "GET /api/fs") return send({ path: url.searchParams.get("path") || "~", entries: [] })
