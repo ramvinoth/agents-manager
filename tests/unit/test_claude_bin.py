@@ -31,7 +31,7 @@ class _Probe:
 
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
-    monkeypatch.setattr(config, "_CLAUDE_BIN_CACHE", {"at": 0.0, "bin": ""})
+    monkeypatch.setattr(config, "_CLAUDE_BIN_CACHE", {"at": 0.0, "bin": "", "ttl": 3600})
 
 
 def _mk(tmp_path, *rel):
@@ -222,3 +222,27 @@ class TestVersionGate:
             'error_code":"claude_code_version_too_old')
         assert msg is not None
         assert "claude update" in msg
+
+
+class TestDegradedProbe:
+    def test_failed_probe_is_not_cached(self, monkeypatch, tmp_path):
+        """The 2026-10-05 RSI incident: the nvm claude was mid-auto-update (or
+        slow on first exec), its probe failed, the stale 2.1.84 was the only
+        answer — and got cached for an hour. A degraded pick is held
+        for one minute only; then it re-probes and finds the newest again."""
+        import time as _t
+        which_path = _mk(tmp_path, "usr/claude")
+        nvm_path = _mk(tmp_path, ".nvm/versions/node/v24.19.0/bin/claude")
+        monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
+        monkeypatch.setattr(config.shutil, "which",
+                            lambda name: which_path if name == "claude" else None)
+        probe = _Probe({which_path: (2, 1, 84)})  # nvm probe fails
+        monkeypatch.setattr(config, "_claude_version", probe)
+        assert config.claude_bin() == which_path
+        assert config._CLAUDE_BIN_CACHE["ttl"] == 60  # degraded: short hold
+        probe.versions[nvm_path] = (2, 1, 289)     # update finished
+        config._CLAUDE_BIN_CACHE["at"] = _t.time() - 61
+        assert config.claude_bin() == nvm_path
+        assert config._CLAUDE_BIN_CACHE["ttl"] == 3600  # clean pick: full hour
+        assert config.claude_bin() == nvm_path
+        assert len(probe.calls) == 4  # 2 + 2 probes, then served from cache
