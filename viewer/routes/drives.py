@@ -14,7 +14,7 @@ the file browser with no other change.
 """
 import secrets
 
-from viewer import db, drive_oauth
+from viewer import db, drive_oauth, integrations
 from viewer.drives import DriveError
 from viewer.routes import require_human
 
@@ -34,6 +34,11 @@ def _public_view(d):
     }
 
 
+def _is_drive(d):
+    files = integrations.FILES_SERVICE.get(d.get("kind"))
+    return not integrations.granted(d) or bool(files and integrations.usable(d, files))
+
+
 class DrivesMixin:
     def _err(self, e, req=None):
         """A DriveError is already a finished HTTP response: its .status IS
@@ -44,12 +49,16 @@ class DrivesMixin:
 
     def _g_drives(self, req):
         """Every drive the picker can offer, sanitized. `vendors` is the set
-        the UI may offer for a NEW drive (the built consent flows)."""
+        the UI may offer for a NEW drive (the built consent flows). A
+        connection that holds a grant but not a usable files service (a Gmail-
+        only Google account, or Files switched off in Integrations) is an
+        account, not a drive — it is left out; a never-connected row stays so
+        the picker can offer its sign-in."""
         try:
             rows = [
                 _public_view(d)
                 for d in db.drives_load().values()
-                if not d.get("hidden")
+                if not d.get("hidden") and _is_drive(d)
             ]
         except DriveError as e:
             self._err(e, req)
@@ -98,69 +107,12 @@ class DrivesMixin:
             return
         self.send_json({"ok": True, "drive": did})
 
-    # -- vendor clients (the viewer's own OAuth identity per vendor) ----------
-
-    def _g_drive_clients(self, req):
-        """Per vendor with a built flow: whether a client is on record, its id,
-        whether it needs a secret, and the exact redirect URI to register with
-        that vendor for THIS deployment (from the origin the request came in
-        on). The secret is never returned — `has_secret` is a presence flag."""
-        stored = db.drive_clients_load()
-        redirect_uri = drive_oauth.redirect_uri_for(self.request_origin())
-        out = []
-        for kind in sorted(drive_oauth.available_vendors()):
-            v = drive_oauth.vendor(kind)
-            c = stored.get(kind) or {}
-            out.append({
-                "kind": kind,
-                "label": v["label"],
-                "public": v["public"],
-                "client_id": c.get("client_id") or "",
-                "has_secret": bool(c.get("client_secret")),
-                "configured": bool(c.get("client_id")) and (v["public"] or bool(c.get("client_secret"))),
-            })
-        self.send_json({"clients": out, "redirect_uri": redirect_uri})
-
-    def _p_drive_clients(self, req):
-        """Save one vendor client. Body: {kind, client_id, client_secret?}.
-        Human-only. An omitted client_secret keeps the one on record (the UI
-        never holds it); an empty string clears it. Takes effect immediately —
-        _vendor_client reads the store per call."""
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        kind = (body.get("kind") or "").strip().lower()
-        client_id = (body.get("client_id") or "").strip()
-        if kind not in drive_oauth.available_vendors():
-            self.send_json({"error": "Unknown vendor %r" % kind}, status=404)
-            return
-        if not client_id:
-            self.send_json({"error": "client_id is required"}, status=400)
-            return
-        secret = body.get("client_secret")
-        if secret is not None and not isinstance(secret, str):
-            self.send_json({"error": "client_secret must be a string"}, status=400)
-            return
-        db.drive_client_set(kind, client_id, None if secret is None else secret.strip())
-        self._g_drive_clients(req)
-
-    def _p_drive_clients_delete(self, req):
-        """Forget a vendor client. Body: {kind}. Human-only. Drives of that
-        kind stay listed but can no longer refresh or connect until a client
-        is entered again."""
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        kind = (body.get("kind") or "").strip().lower()
-        if not db.drive_client_delete(kind):
-            self.send_json({"error": "No %r client on record" % kind}, status=404)
-            return
-        self._g_drive_clients(req)
-
     # -- the hosted consent flow ---------------------------------------------
 
     def _p_drive_oauth_start(self, req):
-        """Start a consent flow for an existing drive. Body: {drive}. Returns
+        """Start a consent flow for an existing connection. Body: {drive,
+        service?} — `service` (an integrations service id, default the
+        provider's files service) is what the consent adds. Returns
         the consent URL the UI opens in a browser, the pending handle to poll
         with /api/drive/oauth/status, and the redirect_uri the vendor will send
         the browser back to — derived from the origin THIS request came in on,
@@ -175,7 +127,7 @@ class DrivesMixin:
             self.send_json({"error": "Unknown drive %r" % did}, status=404)
             return
         try:
-            r = drive_oauth.start(drive["kind"], did, self.request_origin())
+            r = drive_oauth.start(did, self.request_origin(), body.get("service") or None)
         except DriveError as e:
             self._err(e, req)
             return

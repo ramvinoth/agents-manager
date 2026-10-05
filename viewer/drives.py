@@ -74,7 +74,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-from viewer import db
+from viewer import db, integrations
 
 # Every drive byte passes through the viewer's memory — a single download is
 # resp.read() and a zip is built in a BytesIO (no vendor has a generic
@@ -188,36 +188,32 @@ def _vendor_client(kind, public=False):
     return c
 
 
-class _OAuthDrive(BaseDrive):
-    """What the three OAuth-backed adapters share, so a vendor adapter is only
-    its REST dialect:
+class OAuthAccount:
+    """The token lifecycle of one signed-in account (a `drives` row), shared by
+    every client that calls a vendor API on it — the file adapters below and
+    the mail/calendar clients in viewer.workspace — so a refresh, a revoked
+    grant and a stale token behave identically everywhere.
 
-    Tokens — config holds {account, access_token, refresh_token, token_expiry}.
+    config holds {account, access_token, refresh_token, token_expiry, scopes}.
     _access_token() serves the cached token until 60 s before expiry, else
-    runs the refresh grant at _TOKEN and persists the new token(s) to the
-    drive row. A refresh failure is a normal lifecycle event (revoked,
-    password change, unused token pruned) surfaced as a 403 the UI turns into
-    a one-click re-authorize. _req() adds the bearer and, on a 401, forces one
-    refresh + retry.
+    runs the refresh grant at the provider's token endpoint and persists the
+    new token(s) to the row. A refresh failure is a normal lifecycle event
+    (revoked, password change, unused token pruned) surfaced as a 403 the UI
+    turns into a one-click re-authorize. _req() adds the bearer and, on a 401,
+    forces one refresh + retry. Endpoints and the public-client flag come from
+    the integrations catalog — no vendor URL is spelled twice."""
 
-    Paths — the routes speak POSIX-ish paths; _norm/_parent_path/_join are
-    the one path grammar every vendor maps onto its own addressing.
+    kind = ""
 
-    Zip — _zip() builds a real zip in memory by walking vendor-neutral NODES:
-    a subclass answers _node(path) → (node, is_dir), _node_children(node) →
-    [(child_node, name, is_dir)] and _node_read(node) → bytes. Google's node
-    is a file id, Dropbox's a path, OneDrive's an item dict.
-    """
+    def __init__(self, drive):
+        self.drive = drive
+        self.config = drive.get("config") or {}
 
-    _TOKEN = ""          # the vendor's token endpoint (refresh grant)
-    _PUBLIC = False      # PKCE public client → no client_secret anywhere
-    caps = {"list": True, "read": True, "upload": True, "mkdir": True,
-            "rename": True, "delete": True, "compress": True, "zip": True}
-
-    # ---- tokens -----------------------------------------------------------
+    def _provider(self):
+        return integrations.PROVIDERS[self.kind]
 
     def _client(self):
-        return _vendor_client(self.kind, public=self._PUBLIC)
+        return _vendor_client(self.kind, public=self._provider()["public"])
 
     def _access_token(self):
         cfg = self.config
@@ -225,7 +221,7 @@ class _OAuthDrive(BaseDrive):
         if at and time.time() < exp - 60:
             return at
         if not cfg.get("refresh_token"):
-            raise DriveError("Drive is not authorized — run the sign-in flow", 403)
+            raise DriveError("Not authorized — connect this account in Integrations", 403)
         return self._refresh()
 
     def _refresh(self):
@@ -237,12 +233,12 @@ class _OAuthDrive(BaseDrive):
         }
         if client.get("client_secret"):
             form["client_secret"] = client["client_secret"]
-        status, _, body = _http("POST", self._TOKEN,
+        status, _, body = _http("POST", self._provider()["token"],
                                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                                 data=urllib.parse.urlencode(form).encode())
         if status != 200:
             # Revoked or expired refresh token → the owner must re-consent.
-            raise DriveError(f"{self.kind} authorization expired — re-authorize this drive", 403)
+            raise DriveError(f"{self._provider()['label']} sign-in expired — reconnect it in Integrations", 403)
         j = json.loads(body)
         self.config["access_token"] = j["access_token"]
         self.config["refresh_token"] = j.get("refresh_token") or self.config.get("refresh_token")
@@ -264,6 +260,24 @@ class _OAuthDrive(BaseDrive):
                 h.update(headers)
             status, _, body = _http(method, url, headers=h, data=data)
         return status, body
+
+
+class _OAuthDrive(OAuthAccount, BaseDrive):
+    """What the three OAuth-backed file adapters share, so a vendor adapter is
+    only its REST dialect: the token lifecycle (OAuthAccount), one path
+    grammar and one client-side zip walker.
+
+    Paths — the routes speak POSIX-ish paths; _norm/_parent_path/_join are
+    the one path grammar every vendor maps onto its own addressing.
+
+    Zip — _zip() builds a real zip in memory by walking vendor-neutral NODES:
+    a subclass answers _node(path) → (node, is_dir), _node_children(node) →
+    [(child_node, name, is_dir)] and _node_read(node) → bytes. Google's node
+    is a file id, Dropbox's a path, OneDrive's an item dict.
+    """
+
+    caps = {"list": True, "read": True, "upload": True, "mkdir": True,
+            "rename": True, "delete": True, "compress": True, "zip": True}
 
     # ---- path grammar -----------------------------------------------------
 
@@ -389,7 +403,6 @@ class GoogleDrive(_OAuthDrive):
     """
 
     kind = "google"
-    _TOKEN = "https://oauth2.googleapis.com/token"
     _API = "https://www.googleapis.com/drive/v3"
     _UPLOAD = "https://www.googleapis.com/upload/drive/v3"
     _FOLDER = "application/vnd.google-apps.folder"
@@ -622,8 +635,6 @@ class DropboxDrive(_OAuthDrive):
     A public PKCE client — no client secret exists for this vendor."""
 
     kind = "dropbox"
-    _PUBLIC = True
-    _TOKEN = "https://api.dropboxapi.com/oauth2/token"
     _API = "https://api.dropboxapi.com/2"
     _CONTENT = "https://content.dropboxapi.com/2"
     _UPLOAD_CAP = 150 * 1024 * 1024   # files/upload single-call limit
@@ -800,8 +811,6 @@ class OneDriveDrive(_OAuthDrive):
     inside responses. A public PKCE client — no client secret."""
 
     kind = "onedrive"
-    _PUBLIC = True
-    _TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
     _GRAPH = "https://graph.microsoft.com/v1.0"
     _API = _GRAPH + "/me/drive"
     _UPLOAD_CAP = 250 * 1024 * 1024   # simple PUT /content limit
@@ -973,4 +982,8 @@ def adapter_for(drive_id):
     cls = ADAPTERS.get(drive["kind"])
     if cls is None:
         raise DriveError(f"No adapter for drive kind {drive['kind']!r}", 501)
+    files = integrations.FILES_SERVICE.get(drive["kind"])
+    if files and integrations.granted(drive) and not integrations.usable(drive, files):
+        raise DriveError("Files is not turned on for this %s account — turn it on in Integrations"
+                         % integrations.PROVIDERS[drive["kind"]]["label"], 403)
     return cls(drive)

@@ -750,6 +750,7 @@ same list, and `docs_read system-status` shows the live posture.
 | **Org control** (manager) | `loop_control_set` |
 | **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote` |
 | **Files** (the file browser's own `/api/fs`, scoped by `drive` or `host`) | `drive_list`, `fs_list`, `fs_read`, `fs_write`, `fs_mkdir` — every session sees the drives the owner connected in the app. No `fs_delete`/`fs_rename`: file deletion is Red and the fs routes do not run through the approval queue |
+| **Accounts** (Integrations page: one Google/Dropbox/Microsoft sign-in per account, services switched on per account) | `integrations_list`, `gmail_search`, `gmail_read`, `gmail_draft`, `calendar_events` — a service the owner has not turned on is refused server-side. Mail is draft-only: no `gmail_send`; the owner presses Send |
 | **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `git/*` |
 
 Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,

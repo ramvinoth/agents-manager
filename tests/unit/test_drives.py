@@ -449,7 +449,7 @@ def test_google_refresh_failure_is_403_reauth(db, monkeypatch):
     a.config["access_token"] = ""
     a.config["token_expiry"] = 0
     err = pytest.raises(DriveError, a._access_token).value
-    assert err.status == 403 and "re-authorize" in str(err)
+    assert err.status == 403 and "reconnect it in Integrations" in str(err)
 
 
 def test_google_401_forces_one_refresh_and_retry(db, monkeypatch):
@@ -851,3 +851,22 @@ def test_http_refuses_a_body_over_the_memory_budget(monkeypatch):
     assert ei.value.status == 413 and "too large" in str(ei.value)
     monkeypatch.setattr(drives.urllib.request, "urlopen", lambda req, timeout=0: _Resp(b"x" * 8))
     assert drives._http("GET", "https://vendor.test/blob")[2] == b"x" * 8
+
+
+def test_files_switched_off_in_integrations_closes_the_drive(db):
+    """The owner's Files toggle is enforced at the one choke point: an account
+    holding the files grant but with Files off is not a drive anywhere."""
+    db.rows["d1"] = _row(kind="google")
+    db.rows["d1"]["config"] = {"refresh_token": "R", "off": ["google.drive"],
+                               "scopes": ["https://www.googleapis.com/auth/drive"]}
+    err = pytest.raises(DriveError, adapter_for, "d1").value
+    assert err.status == 403 and "Integrations" in str(err)
+    db.rows["d1"]["config"]["off"] = []
+    assert isinstance(adapter_for("d1"), GoogleDrive)
+
+
+def test_gmail_only_account_is_not_a_drive(db):
+    db.rows["d1"] = _row(kind="google")
+    db.rows["d1"]["config"] = {"refresh_token": "R",
+                               "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]}
+    assert pytest.raises(DriveError, adapter_for, "d1").value.status == 403

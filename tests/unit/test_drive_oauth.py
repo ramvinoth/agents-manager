@@ -19,7 +19,7 @@ import urllib.parse
 
 import pytest
 
-from viewer import drive_oauth, drives
+from viewer import drive_oauth, drives, integrations
 from viewer.drives import DriveError
 
 ORIGIN = "https://life.example.test"
@@ -107,12 +107,14 @@ def test_redirect_uri_is_the_callback_on_the_requesting_origin():
 
 def test_build_auth_url_has_all_params_and_no_secret():
     client = {"client_id": "CID", "client_secret": "CS"}
-    url = drive_oauth._build_auth_url("google", client, CALLBACK, "STATE-XYZ", "CHALL")
+    url = drive_oauth._build_auth_url("google", client, CALLBACK, "STATE-XYZ", "CHALL",
+                                     integrations.consent_scopes(None, "google.drive"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert q["client_id"] == "CID"
     assert q["redirect_uri"] == CALLBACK
     assert q["response_type"] == "code"
-    assert q["scope"] == "https://www.googleapis.com/auth/drive"
+    assert q["scope"].split() == ["email", "https://www.googleapis.com/auth/drive", "openid"]
+    assert q["include_granted_scopes"] == "true"   # incremental consent keeps earlier grants
     assert q["state"] == "STATE-XYZ"
     assert q["access_type"] == "offline"
     assert q["prompt"] == "consent"
@@ -122,13 +124,15 @@ def test_build_auth_url_has_all_params_and_no_secret():
 
 
 def test_build_auth_url_speaks_each_vendors_offline_dialect():
-    url = drive_oauth._build_auth_url("dropbox", {"client_id": "K"}, CALLBACK, "S", "C")
+    url = drive_oauth._build_auth_url("dropbox", {"client_id": "K"}, CALLBACK, "S", "C",
+                                      integrations.consent_scopes(None, "dropbox.files"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert url.startswith("https://www.dropbox.com/oauth2/authorize?")
     assert q["token_access_type"] == "offline" and "access_type" not in q
     assert q["redirect_uri"] == CALLBACK
     assert "files.content.write" in q["scope"]
-    url = drive_oauth._build_auth_url("onedrive", {"client_id": "E"}, CALLBACK, "S", "C")
+    url = drive_oauth._build_auth_url("onedrive", {"client_id": "E"}, CALLBACK, "S", "C",
+                                      integrations.consent_scopes(None, "onedrive.files"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert url.startswith("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?")
     assert "offline_access" in q["scope"] and "access_type" not in q
@@ -137,12 +141,13 @@ def test_build_auth_url_speaks_each_vendors_offline_dialect():
 # --- pre-flight rejections -----------------------------------------------
 
 def test_unknown_vendor_is_501(env):
-    err = pytest.raises(DriveError, drive_oauth.start, "icloud", "drive1", ORIGIN).value
+    env["db"].rows["drive1"] = _row("icloud")
+    err = pytest.raises(DriveError, drive_oauth.start, "drive1", ORIGIN).value
     assert err.status == 501
 
 
 def test_unknown_drive_is_404(env):
-    err = pytest.raises(DriveError, drive_oauth.start, "google", "nope", ORIGIN).value
+    err = pytest.raises(DriveError, drive_oauth.start, "nope", ORIGIN).value
     assert err.status == 404
 
 
@@ -150,7 +155,7 @@ def test_missing_client_is_403(monkeypatch):
     fake_db = _FakeOAuthDB({"drive1": _row()}, clients={})
     monkeypatch.setattr(drive_oauth, "db", fake_db)
     monkeypatch.setattr(drives, "db", fake_db)
-    err = pytest.raises(DriveError, drive_oauth.start, "google", "drive1", ORIGIN).value
+    err = pytest.raises(DriveError, drive_oauth.start, "drive1", ORIGIN).value
     assert err.status == 403
     assert "Integrations" in str(err)
 
@@ -159,7 +164,7 @@ def test_confidential_client_without_secret_is_403(monkeypatch):
     fake_db = _FakeOAuthDB({"drive1": _row()}, clients={"google": {"client_id": "CID"}})
     monkeypatch.setattr(drive_oauth, "db", fake_db)
     monkeypatch.setattr(drives, "db", fake_db)
-    err = pytest.raises(DriveError, drive_oauth.start, "google", "drive1", ORIGIN).value
+    err = pytest.raises(DriveError, drive_oauth.start, "drive1", ORIGIN).value
     assert err.status == 403 and "secret" in str(err)
 
 
@@ -171,7 +176,7 @@ def test_status_unknown_pid_is_404():
 # --- end-to-end: start → vendor redirect → exchange → persist -------------
 
 def test_full_flow_authorizes_and_persists(env):
-    r = drive_oauth.start("google", "drive1", ORIGIN)
+    r = drive_oauth.start("drive1", ORIGIN)
     assert r["url"].startswith("https://accounts.google.com/o/oauth2/v2/auth?")
     assert r["redirect_uri"] == CALLBACK
     pid = r["pending"]
@@ -203,7 +208,7 @@ def test_full_flow_authorizes_and_persists(env):
 
 
 def test_denied_consent_is_failed(env):
-    pid = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     page = _redirect(pid, error="access_denied", good_state=True)
     assert "did not grant access" in page
     st = drive_oauth.status(pid)
@@ -214,7 +219,7 @@ def test_denied_consent_is_failed(env):
 def test_unknown_state_touches_no_flow(env):
     """A forged or replayed redirect finds no waiting flow: the real flow
     stays 'waiting', nothing is exchanged, the page is a generic failure."""
-    pid = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     page = _redirect(pid, code="C", state="WRONG-STATE")
     assert "didn't complete" in page
     assert drive_oauth.status(pid)["status"] == "waiting"
@@ -223,7 +228,7 @@ def test_unknown_state_touches_no_flow(env):
 
 
 def test_state_is_consumed_exactly_once(env):
-    pid = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     _redirect(pid, code="C1", good_state=True)
     assert drive_oauth.status(pid)["status"] == "authorized"
     _redirect(pid, code="C2", good_state=True)   # replay
@@ -236,7 +241,7 @@ def test_token_exchange_error_is_failed(env, monkeypatch):
         return 400, {}, json.dumps({"error": "invalid_grant",
                                     "error_description": "Invalid Code"}).encode()
     monkeypatch.setattr(drive_oauth, "_http", bad_http)
-    pid = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     page = _redirect(pid, code="C", good_state=True)
     assert "Invalid Code" in page
     st = drive_oauth.status(pid)
@@ -249,7 +254,7 @@ def test_public_client_exchange_sends_no_secret(env):
     """Dropbox/OneDrive are PKCE public clients: the token request proves
     itself with code_verifier only — no client_secret field at all."""
     env["db"].rows["drive1"] = _row("dropbox")
-    r = drive_oauth.start("dropbox", "drive1", ORIGIN)
+    r = drive_oauth.start("drive1", ORIGIN)
     assert r["url"].startswith("https://www.dropbox.com/oauth2/authorize?")
     pid = r["pending"]
     _redirect(pid, code="DBX-CODE", good_state=True)
@@ -265,8 +270,8 @@ def test_concurrent_flows_are_independent(env):
     """Two sign-ins in flight at once (two users, or two drives): each
     redirect completes only its own flow."""
     env["db"].rows["drive2"] = dict(_row("onedrive"), id="drive2")
-    a = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
-    b = drive_oauth.start("onedrive", "drive2", ORIGIN)["pending"]
+    a = drive_oauth.start("drive1", ORIGIN)["pending"]
+    b = drive_oauth.start("drive2", ORIGIN)["pending"]
     _redirect(b, code="MS", good_state=True)
     assert drive_oauth.status(a)["status"] == "waiting"
     assert drive_oauth.status(b)["status"] == "authorized"
@@ -274,7 +279,7 @@ def test_concurrent_flows_are_independent(env):
 
 
 def test_stale_flow_expires_and_is_forgotten(env, monkeypatch):
-    pid = drive_oauth.start("google", "drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     started = drive_oauth._PENDING[pid]["started"]
     monkeypatch.setattr(drive_oauth.time, "time",
                         lambda: started + drive_oauth._CONSENT_TTL + 1)
@@ -286,3 +291,55 @@ def test_stale_flow_expires_and_is_forgotten(env, monkeypatch):
     monkeypatch.setattr(drive_oauth.time, "time",
                         lambda: started + 2 * drive_oauth._CONSENT_TTL + 1)
     assert pytest.raises(DriveError, drive_oauth.status, pid).value.status == 404
+
+
+# --- services: incremental consent on one account ----------------------------
+
+def _id_token(email):
+    seg = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return "%s.%s.sig" % (seg({"alg": "RS256"}), seg({"email": email}))
+
+
+def _grant(monkeypatch, scope, **extra):
+    def fake_http(method, url, headers=None, data=None, timeout=60):
+        return 200, {}, json.dumps(dict({
+            "access_token": "AT-2", "expires_in": 3600, "scope": scope}, **extra)).encode()
+    monkeypatch.setattr(drive_oauth, "_http", fake_http)
+
+
+def test_adding_gmail_asks_for_it_on_top_of_what_the_account_holds(env, monkeypatch):
+    env["db"].rows["drive1"]["config"] = {"refresh_token": "RT-OLD", "scopes": [
+        "email", "openid", "https://www.googleapis.com/auth/drive"]}
+    r = drive_oauth.start("drive1", ORIGIN, "google.gmail")
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(r["url"]).query))
+    asked = set(q["scope"].split())
+    assert "https://www.googleapis.com/auth/drive" in asked              # kept
+    assert "https://www.googleapis.com/auth/gmail.readonly" in asked     # added
+    granted = " ".join(sorted(asked))
+    _grant(monkeypatch, granted, id_token=_id_token("ram@example.test"))
+    _redirect(r["pending"], code="C", good_state=True)
+    assert drive_oauth.status(r["pending"])["status"] == "authorized"
+    cfg = env["db"].rows["drive1"]["config"]
+    assert cfg["refresh_token"] == "RT-OLD"          # Google omits it on re-consent; keep ours
+    assert cfg["account"] == "ram@example.test"      # from the id_token, no extra API call
+    assert integrations.state(env["db"].rows["drive1"], "google.gmail") == "on"
+    assert integrations.state(env["db"].rows["drive1"], "google.drive") == "on"
+
+
+def test_unticked_permission_fails_the_flow_but_keeps_the_grant(env, monkeypatch):
+    r = drive_oauth.start("drive1", ORIGIN, "google.gmail")
+    _grant(monkeypatch, "openid email")              # the user unticked Gmail
+    _redirect(r["pending"], code="C", good_state=True)
+    st = drive_oauth.status(r["pending"])
+    assert st["status"] == "failed" and "Gmail" in st["error"]
+    assert integrations.state(env["db"].rows["drive1"], "google.gmail") == "grant"
+
+
+def test_service_of_another_provider_is_400(env):
+    err = pytest.raises(DriveError, drive_oauth.start, "drive1", ORIGIN, "dropbox.files").value
+    assert err.status == 400
+
+
+def test_unavailable_service_is_409(env):
+    err = pytest.raises(DriveError, drive_oauth.start, "drive1", ORIGIN, "google.keep").value
+    assert err.status == 409

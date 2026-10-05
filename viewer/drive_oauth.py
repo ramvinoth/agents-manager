@@ -30,7 +30,7 @@ import threading
 import time
 import urllib.parse
 
-from viewer import db
+from viewer import db, integrations
 from viewer.drives import ADAPTERS, DriveError, _http, _vendor_client
 
 CALLBACK_PATH = "/api/drive/oauth/callback"
@@ -48,49 +48,12 @@ _BROWSER_HTML = ("<html><head><title>Harman</title>"
                  "<p style='color:#666'>You can close this window.</p>"
                  "</body></html>")
 
-# Endpoints, scope and the vendor-specific authorize parameters for each vendor
-# with a built OAuth flow. `public` marks a PKCE public client (no secret is
-# sent anywhere); `extra` is what that vendor needs on the authorize URL to
-# hand back a refresh token (each spells "offline" its own way).
-_VENDORS = {
-    "google": {
-        "label": "Google Drive",
-        "auth": "https://accounts.google.com/o/oauth2/v2/auth",
-        "token": "https://oauth2.googleapis.com/token",
-        "scope": "https://www.googleapis.com/auth/drive",
-        "extra": {"access_type": "offline", "prompt": "consent"},
-        "public": False,
-    },
-    "dropbox": {
-        "label": "Dropbox",
-        "auth": "https://www.dropbox.com/oauth2/authorize",
-        "token": "https://api.dropboxapi.com/oauth2/token",
-        "scope": "files.metadata.read files.content.read files.content.write account_info.read",
-        "extra": {"token_access_type": "offline"},
-        "public": True,
-    },
-    "onedrive": {
-        "label": "OneDrive",
-        "auth": "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-        "token": "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-        "scope": "Files.ReadWrite offline_access User.Read",
-        "extra": {},
-        "public": True,
-    },
-}
-
-
-def vendor(kind):
-    """The public facts about one vendor's flow (label, public-client flag)
-    the Integrations UI shows; KeyError for a kind outside available_vendors()."""
-    return {"label": _VENDORS[kind]["label"], "public": _VENDORS[kind]["public"]}
-
 
 def available_vendors():
-    """The vendor kinds with a built consent flow — the set the UI may offer for
-    connecting a new drive. A vendor ships by adding a _VENDORS entry; nothing
-    else changes (the route and the picker both read this)."""
-    return frozenset(_VENDORS)
+    """The providers with a built consent flow — the set the UI may offer for
+    connecting a new account. A provider ships by adding an
+    integrations.PROVIDERS entry; nothing else changes."""
+    return frozenset(integrations.PROVIDERS)
 
 
 def _pkce():
@@ -112,14 +75,14 @@ def redirect_uri_for(origin):
     return origin.rstrip("/") + CALLBACK_PATH
 
 
-def _build_auth_url(kind, client, redirect_uri, state, challenge):
+def _build_auth_url(kind, client, redirect_uri, state, challenge, scope):
     """The consent URL the browser opens. Pure (no I/O)."""
-    v = _VENDORS[kind]
+    v = integrations.PROVIDERS[kind]
     q = {
         "client_id": client["client_id"],
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": v["scope"],
+        "scope": scope,
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
@@ -140,26 +103,37 @@ def _expire_stale(now):
             del _PENDING[pid]
 
 
-def start(kind, drive_id, origin):
-    """Begin a consent flow for `drive_id` from a browser that reached us at
-    `origin`. Returns {url, pending, redirect_uri}: the caller opens `url` in
-    a browser and polls status() with `pending`; the vendor lands the user on
-    `redirect_uri` (this server's callback), which completes the exchange."""
-    if kind not in _VENDORS:
-        raise DriveError("No OAuth flow built for vendor '%s' yet" % kind, 501)
+def start(drive_id, origin, service=None):
+    """Begin a consent flow on connection `drive_id` from a browser that
+    reached us at `origin`, asking for `service` (default: the provider's files
+    service) on top of everything the connection already holds. Returns
+    {url, pending, redirect_uri}: the caller opens `url` in a browser and polls
+    status() with `pending`; the vendor lands the user on `redirect_uri` (this
+    server's callback), which completes the exchange."""
     drive = db.drive_get(drive_id)
     if drive is None:
-        raise DriveError("Unknown drive %r" % drive_id, 404)
-    client = _vendor_client(kind, public=_VENDORS[kind]["public"])  # 403 with guidance if unset
+        raise DriveError("Unknown connection %r" % drive_id, 404)
+    kind = drive["kind"]
+    if kind not in integrations.PROVIDERS:
+        raise DriveError("No OAuth flow built for %r yet" % kind, 501)
+    service = service or integrations.FILES_SERVICE[kind]
+    try:
+        if integrations.service(service)["provider"] != kind:
+            raise integrations.IntegrationError("%s is not a %s service" % (service, kind), 400)
+        scope = integrations.consent_scopes(drive, service)
+    except integrations.IntegrationError as e:
+        raise DriveError(str(e), e.status)
+    client = _vendor_client(kind, public=integrations.PROVIDERS[kind]["public"])  # 403 with guidance if unset
 
     verifier, challenge = _pkce()
     state = secrets.token_urlsafe(16)
     redirect_uri = redirect_uri_for(origin)
-    url = _build_auth_url(kind, client, redirect_uri, state, challenge)
+    url = _build_auth_url(kind, client, redirect_uri, state, challenge, scope)
 
-    p = {"kind": kind, "drive_id": drive_id, "client": client,
-         "code_verifier": verifier, "state": state, "redirect_uri": redirect_uri,
-         "started": time.time(), "status": "waiting", "error": None}
+    p = {"kind": kind, "drive_id": drive_id, "client": client, "service": service,
+         "scope": scope, "code_verifier": verifier, "state": state,
+         "redirect_uri": redirect_uri, "started": time.time(),
+         "status": "waiting", "error": None}
     with _LOCK:
         _expire_stale(p["started"])
         pid = secrets.token_urlsafe(8)
@@ -206,7 +180,7 @@ def _exchange(p):
     (runs in the viewer — the token never touches the browser). A public
     client proves itself with the PKCE verifier alone; a confidential one adds
     its secret."""
-    v = _VENDORS[p["kind"]]
+    v = integrations.PROVIDERS[p["kind"]]
     form = {
         "code": p["code"],
         "client_id": p["client"]["client_id"],
@@ -231,31 +205,53 @@ def _exchange(p):
     return json.loads(data.decode("utf-8", "replace"))
 
 
+def _id_token_email(tokens):
+    """The e-mail claim of an OpenID id_token. Decoding without verifying the
+    signature is sound here: the token came straight from the provider's token
+    endpoint over TLS in this process (Google's OpenID guide permits exactly
+    this). Absent or malformed → ""."""
+    try:
+        payload = tokens["id_token"].split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload)).get("email") or ""
+    except Exception:
+        return ""
+
+
 def _store(p, tokens):
-    """Persist the granted tokens into the drive row (the adapter reads them
-    from config on its next call and refreshes via _refresh when expired), and
-    record WHOSE account signed in (best-effort — the picker shows it, and a
-    failed lookup must not undo a successful consent)."""
+    """Persist the grant into the connection row (adapters read the tokens
+    from config on their next call and refresh via _refresh when expired):
+    the tokens, the scopes the vendor ACTUALLY granted (the user may untick
+    some), the service just asked for switched on, and WHOSE account signed in
+    — from the id_token when the provider sends one, else the adapter's
+    whoami (best-effort: a failed lookup must not undo a good consent)."""
     drive = db.drive_get(p["drive_id"])
     if drive is None:
-        raise DriveError("Drive row vanished during OAuth", 404)
-    cfg = dict(drive.get("config") or {})
+        raise DriveError("Connection vanished during OAuth", 404)
+    cfg = integrations.with_service(drive.get("config"), p["service"], True)
     cfg.update({
         "access_token": tokens.get("access_token"),
-        "refresh_token": tokens.get("refresh_token"),
+        "refresh_token": tokens.get("refresh_token") or cfg.get("refresh_token"),
         "token_expiry": int(time.time()) + int(tokens.get("expires_in", 3600)),
+        "scopes": integrations.parse_granted(tokens.get("scope"), p["scope"].split()),
     })
     row = {"label": drive["label"], "kind": drive["kind"], "config": cfg,
            "status": drive.get("status") or "active",
            "hidden": bool(drive.get("hidden"))}
-    try:
-        cls = ADAPTERS.get(drive["kind"])
-        account = cls(dict(row, id=p["drive_id"])).whoami() if cls else ""
-        if account:
-            cfg["account"] = account
-    except Exception:
-        pass
+    account = _id_token_email(tokens)
+    if not account:
+        try:
+            cls = ADAPTERS.get(drive["kind"])
+            account = cls(dict(row, id=p["drive_id"])).whoami() if cls else ""
+        except Exception:
+            account = ""
+    if account:
+        cfg["account"] = account
     db.drive_upsert(p["drive_id"], row)
+    missing = set(integrations.service(p["service"])["scopes"]) - set(cfg["scopes"])
+    if missing:
+        raise DriveError("%s was not granted — tick every permission on the consent screen "
+                         "and try again" % integrations.service(p["service"])["label"], 403)
 
 
 def _page(title, msg):
@@ -275,7 +271,7 @@ def callback(query):
         return _page("Connection didn't complete",
                      "This sign-in link is not for a connection that is still waiting. "
                      "Go back to Harman and click Add again.")
-    label = _VENDORS[p["kind"]]["label"]
+    label = integrations.service(p["service"])["label"]
     error = (query.get("error") or [None])[0]
     code = (query.get("code") or [None])[0]
     if error:
@@ -291,4 +287,4 @@ def callback(query):
         _finish(p, "failed", str(e))
         return _page("Connection didn't complete", str(e))
     _finish(p, "authorized")
-    return _page("%s connected" % label, "Harman can now use this drive.")
+    return _page("%s connected" % label, "Harman's agents can now use it.")

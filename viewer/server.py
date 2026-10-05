@@ -71,13 +71,14 @@ from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
 from viewer.routes.orchestrator import OrchestratorMixin
 from viewer.routes.drives import DrivesMixin
+from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.inbox import InboxMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin, DrivesMixin, InboxMixin,
+    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -385,9 +386,12 @@ class SessionViewerHandler(
         "/api/fs/download": "_g_fs_download",
         "/api/fs/download-zip": "_g_fs_download_zip",
         "/api/drives": "_g_drives",
-        "/api/drive/clients": "_g_drive_clients",
         "/api/drive/oauth/status": "_g_drive_oauth_status",
         "/api/drive/oauth/callback": "_g_drive_oauth_callback",
+        "/api/integrations": "_g_integrations",
+        "/api/gmail/search": "_g_gmail_search",
+        "/api/gmail/read": "_g_gmail_read",
+        "/api/calendar/events": "_g_calendar_events",
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
@@ -464,9 +468,12 @@ class SessionViewerHandler(
         "/api/fs/compress": "_p_fs_compress",
         "/api/drives": "_p_drives_create",
         "/api/drives/delete": "_p_drives_delete",
-        "/api/drive/clients": "_p_drive_clients",
-        "/api/drive/clients/delete": "_p_drive_clients_delete",
         "/api/drive/oauth/start": "_p_drive_oauth_start",
+        "/api/integrations/connect": "_p_integrations_connect",
+        "/api/integrations/client": "_p_integrations_client",
+        "/api/integrations/client/delete": "_p_integrations_client_delete",
+        "/api/integrations/service": "_p_integrations_service",
+        "/api/gmail/draft": "_p_gmail_draft",
         "/api/auth/signup": "_p_auth_signup",
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",

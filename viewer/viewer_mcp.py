@@ -81,6 +81,13 @@ _TOOLS = {
     "fs_read":          ("GET", "/api/fs/download"),
     "fs_write":         ("POST", "/api/fs/write"),
     "fs_mkdir":         ("POST", "/api/fs/mkdir"),
+    # ── The owner's connected accounts (Integrations page). Mail is read +
+    # draft only: an agent never sends — the owner presses Send in Gmail.
+    "integrations_list": ("GET", "/api/integrations"),
+    "gmail_search":     ("GET", "/api/gmail/search"),
+    "gmail_read":       ("GET", "/api/gmail/read"),
+    "gmail_draft":      ("POST", "/api/gmail/draft"),
+    "calendar_events":  ("GET", "/api/calendar/events"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
@@ -122,6 +129,9 @@ _HOST_ARG = {"type": "string",
              "description": "Host id from host_list; omit for this machine."}
 _DRIVE_ARG = {"type": "string",
               "description": "Cloud drive id from drive_list; omit for a machine. Never together with host."}
+
+_CONN_ARG = {"type": "string",
+             "description": "Account id from integrations_list; only needed when several accounts have the service on."}
 
 _TOOL_LIST = [
     # ── See everything ──────────────────────────────────────────────────────
@@ -225,6 +235,29 @@ _TOOL_LIST = [
     {"name": "drive_list",
      "description": "The owner's connected cloud drives (Google Drive, Dropbox, OneDrive) — id, label, kind, whether it is authorized. Pass a drive id as `drive` to the fs_* tools to work in that drive; every session on this server sees the same drives.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    {"name": "integrations_list",
+     "description": "What the owner connected in Integrations: per provider (Google, Dropbox, Microsoft) its services (Drive, Gmail, Calendar, …) and each connected account with every service's state — on (agents may use it), off (owner switched it off), grant (not yet consented). If a tool you need is not 'on', ask the owner to turn it on in Integrations rather than working around it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    {"name": "gmail_search",
+     "description": "Search the owner's Gmail with Gmail search syntax (from:, subject:, newer_than:7d, is:unread, …; default in:inbox). Returns id, thread, from, subject, date, snippet, unread for up to `limit` (≤50) messages. Read one in full with gmail_read.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "q": {"type": "string"}, "limit": {"type": "integer"}, "connection": _CONN_ARG}}},
+    {"name": "gmail_read",
+     "description": "Read one Gmail message by id (from gmail_search): headers, labels, attachment names and the plain-text body (capped).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string"}, "connection": _CONN_ARG}}},
+    {"name": "gmail_draft",
+     "description": "Save a draft in the owner's Gmail Drafts — never sent. Pass reply_to=<message id> to draft a reply in that thread. Tell the owner (card comment) the draft is waiting for their review and Send.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "subject", "body"], "properties": {
+         "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string", "description": "Plain text."},
+         "cc": {"type": "string"}, "reply_to": {"type": "string", "description": "Message id this replies to."},
+         "connection": _CONN_ARG}}},
+    {"name": "calendar_events",
+     "description": "The owner's Google Calendar events between start and end (ISO dates/datetimes; default now → 7 days), recurring events expanded, in start order: title, start, end, all_day, location, attendees, link.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "start": {"type": "string"}, "end": {"type": "string"}, "q": {"type": "string", "description": "Free-text filter."},
+         "calendar": {"type": "string", "description": "Calendar id (default primary)."},
+         "limit": {"type": "integer"}, "connection": _CONN_ARG}}},
     {"name": "fs_list",
      "description": "List a directory: entries with name/type/size/modified. Scope with EXACTLY ONE of `drive` (a cloud drive id from drive_list) or `host` (an SSH host from host_list); neither means this machine. Paths on a drive start at '/'; on a machine '~' is home.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
