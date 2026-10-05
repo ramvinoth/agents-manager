@@ -216,3 +216,10 @@ def test_unread_count_skips_closed_decisions_and_read_rows():
     ]
     items = [_item("question", "q1"), _item("approval", "a1"), _item("approval", "a2")]
     assert inbox.unread_count(rows, items, NOW) == 3
+
+
+def test_unread_count_only_counts_rows_addressed_to_the_owner():
+    outgoing = dict(_row("message", None, "sent", id=1), sender_type="user",
+                    recipient_type="session", recipient_id="s1")
+    peer = dict(_row("message", None, "sent", id=2), recipient_type="session")
+    assert inbox.unread_count([outgoing, peer, _row(id=3)], [], NOW) == 1
