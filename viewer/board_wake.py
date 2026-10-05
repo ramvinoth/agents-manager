@@ -1,9 +1,9 @@
-"""viewer.board_wake — the two wake paths the action gate never sees.
+"""viewer.board_wake — the board sweep, the wake path the action gate never sees.
 
 Every wake in the system is written through boardwatch.schedule_wake (one
 coalesced one-shot per card, origin mirrors the cause). This module only
-COMPOSES the event strings for the two event families the action handlers
-cannot see — both autonomous, so their wakes are harman-origin, gated by the
+COMPOSES the event string for the one event family the action handlers
+cannot see — autonomous, so its wakes are harman-origin, gated by the
 loop-control mode AND the automation master switch (a human's own card moves
 get user-origin wakes from actions._board_followup instead — a person asking,
 never halted):
@@ -19,14 +19,16 @@ never halted):
           card on its own status comments, forever (card 19: five identical
           "still in Review, no decision" comments, each of which was the
           change that caused the next wake). Idle board = zero cost.
-  OPEN QUESTION — when another session's AskUserQuestion / ExitPlanMode
-          becomes a durable open question/plan for the owner, wake the
-          sessions that own OPEN cards (never the source — it is the one
-          waiting, not the one to answer) so one of them can surface it to
-          the owner. Bounded: at most _MAX_WAKES_PER_SWEEP wakes per call.
 
-Both entry points are exception-safe: a failure here must never break the
-scheduler tick or the question that became durable.
+The sweep is exception-safe: a failure here must never break the scheduler
+tick.
+
+There is deliberately NO open-question relay: an open question/plan is
+delivered to the owner's inbox by questions.record (inbox.deliver_decision).
+The former relay woke unrelated open-card sessions to "surface" another
+session's question — they had no context for it and only spent turns
+posting misrouted comments (card 32 got a trading question, then a Tailscale
+one).
 """
 import time
 
@@ -116,37 +118,3 @@ def sweep():
         return fired
     except Exception:
         return []   # a DB error is a missed sweep, not a failed tick
-
-
-def _open_cards():
-    """Cards not in a Done-named column — a Done card's session needs no
-    open-question relay. Resolves names by the board's name contract (same
-    rule as orglogic.project_columns)."""
-    cards = db.card_list()
-    if not cards:
-        return []
-    col_by_id = {}
-    for pid in {c.get("project_id") for c in cards if c.get("project_id")}:
-        for col in db.board_columns_list(pid):
-            col_by_id[col["id"]] = col["name"]
-    return [c for c in cards
-            if (col_by_id.get(c.get("column_id")) or "").lower() != "done"]
-
-
-def wake_on_open_question(source_session, summary):
-    """A session's open question/plan became durable for the owner: wake the
-    sessions that own OPEN cards (never the source — it is the one waiting).
-    Bounded to _MAX_WAKES_PER_SWEEP. Best-effort: never raises."""
-    try:
-        fired = []
-        for card in _open_cards():
-            if len(fired) >= _MAX_WAKES_PER_SWEEP:
-                break
-            if _wake(card,
-                     f"session {str(source_session)[:12]} has an open question/plan "
-                     f"for the owner: {summary[:300]} — surface it to the owner if it "
-                     f"concerns your card", skip={source_session, *fired}):
-                fired.append(card["session_id"])
-        return fired
-    except Exception:
-        return []

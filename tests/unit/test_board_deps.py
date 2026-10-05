@@ -259,24 +259,6 @@ def test_sweep_skips_sessions_the_scheduler_cannot_resume(monkeypatch):
     assert [a[2]["card"] for a in f.audit] == [1, 3, 4], "no audit row for a wake that was never queued"
 
 
-# ── board_wake: other sessions' open questions ────────────────────────────
-
-def test_open_question_wakes_open_card_sessions_never_the_source(monkeypatch):
-    f = FakeWakeDb()
-    f.card_list = lambda: [
-        {"id": 1, "session_id": "sess-A", "title": "a", "project_id": 16, "column_id": 101},
-        {"id": 2, "session_id": "sess-B", "title": "b", "project_id": 16, "column_id": 101},
-    ]
-    f.card_deps_batch = lambda ids: {}
-    monkeypatch.setattr(board_wake, "db", f)
-    wakes = []
-    monkeypatch.setattr(boardwatch, "schedule_wake",
-                        lambda card, event, origin: (wakes.append((card, event)) or "bw"))
-    fired = board_wake.wake_on_open_question("sess-B", "which provider?")
-    assert fired == ["sess-A"], "the source is the one waiting, not the one to answer"
-    assert "sess-B" in wakes[0][1] and "which provider?" in wakes[0][1]
-
-
 # ── actions: the dep handlers wake with the WHY text ──────────────────────
 
 DEP_CARD = {"id": 42, "session_id": "sess-1", "project_id": 16,

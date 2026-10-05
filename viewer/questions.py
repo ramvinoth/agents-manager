@@ -93,20 +93,6 @@ def record(session_id, pending, host="local", run_id=""):
                          "questions": len(pending["questions"] or [])}, "asked")
     except Exception:
         pass
-    # A question became durable for the owner: the sessions that own OPEN cards
-    # are the ones that can surface it to the owner (the source is the one
-    # waiting). Harman-origin wake, so it obeys the mode + the master switch.
-    try:
-        from viewer.orchestrator import loop_mode, automation_enabled
-        if automation_enabled() and loop_mode() in ("harman", "both"):
-            from viewer import board_wake
-            qs = pending.get("questions") or []
-            summary = "; ".join((q.get("question") or q.get("header") or "")
-                                for q in qs[:3]).replace("\n", " ")
-            if summary:
-                board_wake.wake_on_open_question(session_id, summary)
-    except Exception:
-        pass
     # And mirror it into the owner's inbox — the delivery surface: the
     # pending_questions row above stays the one source, the inbox row carries
     # the cold-reader context and a reply path. Exception-safe by contract:
@@ -151,18 +137,6 @@ def clear(session_id):
 
 def record_plan(session_id, pending, host="local"):
     db.pending_plan_set(session_id, pending["tool_use_id"], pending["plan"], host)
-    # Same cross-session surfacing as record(): an open plan is an open request
-    # on the owner, and the open-card sessions are the ones that can surface it.
-    try:
-        from viewer.orchestrator import loop_mode, automation_enabled
-        if automation_enabled() and loop_mode() in ("harman", "both"):
-            from viewer import board_wake
-            plan = (pending.get("plan") or "").replace("\n", " ")
-            if plan:
-                board_wake.wake_on_open_question(session_id,
-                                                f"plan awaiting approval: {plan[:260]}")
-    except Exception:
-        pass
     # Mirror the open plan into the owner's inbox (delivery surface, not a
     # second decision system — pending_plans stays the one source).
     try:
