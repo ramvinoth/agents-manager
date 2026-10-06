@@ -237,7 +237,7 @@ export function Header() {
       {authUser && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 max-w-32 gap-1 px-2 text-xs">
+            <Button variant="ghost" size="sm" className="h-7 max-w-32 gap-1 px-2 text-xs" data-track="account menu">
               <User className="size-3.5 shrink-0" />
               <span className="truncate">{authUser.username}</span>
             </Button>

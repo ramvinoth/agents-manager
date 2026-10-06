@@ -27,6 +27,8 @@ export function controlName(f: ControlFacts): string {
     // A title or visible text longer than a label is CONTENT (a session
     // title, a URL, a prompt): it would make one row per item, so such a
     // control reports by its data-track (list rows set one) or not at all.
+    // An email, path or URL is the owner's data even when short — never a name.
+    if (v !== f.track && /[@/]/.test(clean)) continue
     if ((v === f.text || v === f.title) && (clean.length > TEXT_LABEL_MAX || clean.split(" ").length > 4)) continue
     return clean.slice(0, NAME_MAX)
   }

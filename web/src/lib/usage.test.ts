@@ -17,6 +17,9 @@ eq("unlabeled", controlName({}), "")
 eq("capped", controlName({ ariaLabel: "a".repeat(200) }).length, NAME_MAX)
 eq("long text is content", controlName({ text: "Fix the inbox send delay on mobile" }), "")
 eq("long text, labelled", controlName({ title: "Open session", text: "Fix the inbox send delay on mobile" }), "Open session")
+eq("email is data", controlName({ text: "me@x.io", ariaLabel: "a@b.c" }), "")
+eq("path is data", controlName({ title: "~/srv/app", text: "Files" }), "Files")
+eq("track may hold a slash", controlName({ track: "move/to" }), "move/to")
 
 const ev = (n: number): UsageEvent => ({ kind: "tap", surface: "main", element: String(n), ts: n })
 let q: UsageEvent[] = []
