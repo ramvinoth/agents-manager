@@ -29,20 +29,22 @@ class FakeDB:
         nid = len(self.notes) + 1
         self.notes[nid] = {"id": nid, "title": title, "body": body, "kind": kind,
                            "project_id": project_id, "session_id": session_id,
-                           "created_by": created_by, "pinned": pinned, "archived": False}
+                           "created_by": created_by, "pinned": pinned, "archived": False,
+                           "created_at": 0, "updated_at": nid}
         return self.notes[nid]
 
     def note_update(self, nid, **fields):
         row = self.notes.get(nid)
         if row:
             row.update(fields)
-        return row
+        return dict(row) if row else None
 
     def note_delete(self, nid):
         return bool(self.notes.pop(nid, None))
 
     def note_get(self, nid):
-        return self.notes.get(nid)
+        row = self.notes.get(nid)
+        return dict(row) if row else None   # a fresh row, like Postgres
 
     def note_list(self, session_id=None, project_id=None, archived=False):
         return [n for n in self.notes.values()
@@ -167,3 +169,59 @@ def test_note_route_404s_on_missing(fdb):
 def test_lifecycle_helpers_exist():
     assert callable(db.notes_archive_for_session) and callable(db.notes_delete_for_session)
     assert "journal" in db.NOTE_KINDS
+
+
+# ── linked notes: rename relinks, graph + export routes ──────────────────────
+
+def test_rename_relinks_the_project_but_never_steals_links(fdb):
+    fdb.note_create("Plan", project_id=7)
+    fdb.note_create("Log", "see [[plan#Risks|risks]] and `[[Plan]]`", project_id=7)
+    fdb.note_create("Other", "[[Plan]]", project_id=8)          # another project
+    fdb.note_create("Shelf", "[[Plan]]", project_id=7)
+    fdb.note_update(4, archived=True)                           # archived still relinks
+    it = actions.intent("note_update", {"note_id": 1, "title": "Master Plan"}, "")
+    payload, status = actions.execute(it, "owner", "")
+    assert status == 200 and payload["relinked"] == 2
+    assert fdb.notes[2]["body"] == "see [[Master Plan#Risks|risks]] and `[[Plan]]`"
+    assert fdb.notes[3]["body"] == "[[Plan]]" and fdb.notes[4]["body"] == "[[Master Plan]]"
+    # A second note still answering to the old title keeps its links.
+    fdb.note_create("Master Plan copy", project_id=7)
+    fdb.note_create("Twin", project_id=7)
+    fdb.note_update(6, title="Master Plan")
+    it = actions.intent("note_update", {"note_id": 1, "title": "Renamed"}, "")
+    payload, _ = actions.execute(it, "owner", "")
+    assert payload["relinked"] == 0 and fdb.notes[2]["body"].startswith("see [[Master Plan#")
+
+
+def test_body_only_update_does_not_relink(fdb):
+    fdb.note_create("Plan", project_id=7)
+    it = actions.intent("note_update", {"note_id": 1, "body": "x", "title": "plan"}, "")
+    payload, _ = actions.execute(it, "owner", "")
+    assert "relinked" not in payload
+
+
+def test_graph_route_whole_and_one_note(fdb):
+    fdb.note_create("A", "[[B]] [[Ghost]] #t", project_id=7)
+    fdb.note_create("B", "[[A]]", project_id=7)
+    h = _Handler(); h._g_org_notes_graph(_Req({"project": ["7"]}))
+    g = h.sent[0]
+    assert len(g["edges"]) == 2 and g["ghosts"][0]["title"] == "Ghost"
+    h = _Handler(); h._g_org_notes_graph(_Req({"project": ["7"], "id": ["2"]}))
+    one = h.sent[0]
+    assert [b["title"] for b in one["backlinks"]] == ["A"] and [l["title"] for l in one["links"]] == ["A"]
+    assert one["ghosts"] == []
+
+
+def test_export_route_zips_an_obsidian_vault(fdb):
+    import io, zipfile
+    fdb.note_create("A", "[[B]]", project_id=7)
+    fdb.projects = [{"id": 7, "name": "Empire"}]
+    fdb.project_list = lambda: fdb.projects
+    sent = {}
+    h = _Handler()
+    h._send_attachment = lambda data, name, ctype: sent.update(data=data, name=name, ctype=ctype)
+    h._g_org_notes_export(_Req({"project": ["7"]}))
+    assert sent["name"] == "Empire notes.zip" and sent["ctype"] == "application/zip"
+    z = zipfile.ZipFile(io.BytesIO(sent["data"]))
+    assert z.namelist() == ["Harman Notes/A.md"]
+    assert z.read("Harman Notes/A.md").decode().endswith("---\n[[B]]")

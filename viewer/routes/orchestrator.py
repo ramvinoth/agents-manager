@@ -21,7 +21,10 @@ MCP proxy or the approval path, because none of them carry a second copy of the 
 
 Handlers read req.principal. They never re-authenticate.
 """
-from viewer import actions, db, orglogic
+import io
+import zipfile
+
+from viewer import actions, db, notelinks, orglogic
 
 
 class OrchestratorMixin:
@@ -189,6 +192,44 @@ class OrchestratorMixin:
         if not note:
             self.send_json({"error": "not found"}, status=404); return
         self.send_json({"note": note})
+
+    def _note_corpus(self, req):
+        """Live + archived notes of the requested project (or all of them) —
+        what links resolve against. Archived notes still answer to a link."""
+        project = (req.query.get("project") or [None])[0]
+        pid = int(project) if project else None
+        return [n for shelf in (False, True) for n in db.note_list(project_id=pid, archived=shelf)]
+
+    def _g_org_notes_graph(self, req):
+        """The linked-notes graph: nodes, [[link]] edges with the line they sit
+        on, ghost targets (linked, not written yet), tag counts, and the title
+        index clients resolve [[links]] with. Pass id= for one note's view:
+        just its backlinks and outgoing links."""
+        g = notelinks.graph(self._note_corpus(req))
+        nid = (req.query.get("id") or [None])[0]
+        if nid:
+            nid = int(nid)
+            titles = {n["id"]: n for n in g["nodes"]}
+            g = {"backlinks": [{**e, "title": titles[e["source"]]["title"]}
+                               for e in g["edges"] if e["target"] == nid and e["source"] != nid],
+                 "links": [{**e, "title": titles[e["target"]]["title"]}
+                           for e in g["edges"] if e["source"] == nid],
+                 "ghosts": [x for x in g["ghosts"] if nid in x["from"]],
+                 "tags": g["tags"], "index": g["index"]}
+        self.send_json(g)
+
+    def _g_org_notes_export(self, req):
+        """The notes as an Obsidian vault (zip of .md files with frontmatter) —
+        the owner's knowledge is never locked in this app."""
+        notes = self._note_corpus(req)
+        names = {p["id"]: p["name"] for p in db.project_list()}
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for path, text in notelinks.vault(notes, names).items():
+                z.writestr("Harman Notes/" + path, text)
+        project = (req.query.get("project") or [None])[0]
+        label = names.get(int(project)) if project else None
+        self._send_attachment(buf.getvalue(), f"{label or 'Harman'} notes.zip", "application/zip")
 
     def _p_org_notes(self, req):
         body = self.read_body() or {}

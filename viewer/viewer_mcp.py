@@ -68,6 +68,7 @@ _TOOLS = {
     "card_deps":        ("GET", "/api/org/card_deps"),
     "note_list":        ("GET", "/api/org/notes"),
     "note":             ("GET", "/api/org/note"),
+    "note_graph":       ("GET", "/api/org/notes/graph"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
     "inbox_list":       ("GET", "/api/inbox"),
@@ -128,7 +129,8 @@ _RAW = {"session_read", "fs_read"}
 # board stays inside the project it is working in. card_create is NOT here: the
 # create route resolves the card's project from the session itself (the one rule
 # in routes.orchestrator), so the MCP never carries a second copy of it.
-_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project"}
+_PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project",
+                    "note_graph": "project"}
 
 _HOST_ARG = {"type": "string",
              "description": "Host id from host_list; omit for this machine."}
@@ -233,11 +235,14 @@ _TOOL_LIST = [
     {"name": "note", "description": "Read one note in full (markdown body).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
-    {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
+    {"name": "note_graph", "description": "How notes connect. Notes link like an Obsidian vault: [[Title]], [[Title#Heading]], [[Title|shown text]], and tag themselves with #tag. Returns nodes, link edges (with the line each link sits on), ghosts (titles linked but not written yet), tag counts. Pass id for one note: its backlinks and outgoing links. Read this before writing so you link to what exists instead of duplicating it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "project": {"type": "integer"}, "id": {"type": "integer", "description": "One note's backlinks + links."}}}},
+    {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist. Link related notes with [[Their Title]] and tag with #tag so the knowledge stays a connected graph. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"}, "kind": {"type": "string"},
          "project_id": {"type": "integer"}, "pinned": {"type": "boolean"}}}},
-    {"name": "note_update", "description": "Edit a note's title/body/kind, pin it, or archive/unarchive it.",
+    {"name": "note_update", "description": "Edit a note's title/body/kind, pin it, or archive/unarchive it. Renaming a note rewrites every [[link]] to it in the project.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
          "note_id": {"type": "integer"}, "title": {"type": "string"}, "body": {"type": "string"},
          "kind": {"type": "string"}, "pinned": {"type": "boolean"}, "archived": {"type": "boolean"}}}},

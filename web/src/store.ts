@@ -145,7 +145,7 @@ interface AppState {
   loginUrl: string
   loginNote: string
   needsAuth: boolean
-  authUser: { id: number; username: string } | null
+  authUser: { id: number; username: string; role?: string } | null
   signupOpen: boolean
   signin: (username: string, password: string) => Promise<string | undefined>
   signup: (username: string, password: string, setupCode: string) => Promise<string | undefined>

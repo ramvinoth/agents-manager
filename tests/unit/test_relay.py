@@ -320,3 +320,97 @@ def test_wsclient_ping_then_echo(upstream):
     ws.send_text("frag")
     assert ws.recv() == (wsclient.OP_TEXT, b"echo:frag")
     ws.close()
+
+
+# ---- on / off: Paseo's opt-in, the env pin, runtime start/stop -------------
+
+class _Settings:
+    def __init__(self):
+        self.d = {}
+
+    def setting_get(self, k, default=None):
+        return self.d.get(k, default)
+
+    def setting_set(self, k, v):
+        self.d[k] = v
+
+
+@pytest.fixture
+def switch(monkeypatch):
+    """A fresh install: no env pin, empty settings, a fake client that only
+    records start/stop (no network)."""
+    s = _Settings()
+    monkeypatch.setattr(relay, "db", s)
+    monkeypatch.setattr(relay, "RELAY_ENV", "")
+    monkeypatch.setattr(relay, "_service", None)
+    monkeypatch.setattr(relay, "_live", False)
+    runs = []
+
+    class FakeService:
+        def __init__(self, url, ident):
+            self.url, self.connected, self.stopped = url, threading.Event(), False
+            runs.append(self)
+
+        def run_forever(self):
+            self.connected.set()
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr(relay, "RelayService", FakeService)
+    return s, runs
+
+
+def test_fresh_install_is_off_and_offers_nothing(switch):
+    assert relay.enabled() is False and relay.offer() is None
+    assert relay.url() == relay.DEFAULT_RELAY_URL
+    assert relay.start() is None
+    assert relay.status() == {"enabled": False, "pinned": False,
+                              "url": relay.DEFAULT_RELAY_URL, "connected": False}
+
+
+def test_owner_switch_starts_and_stops_without_restart(switch):
+    s, runs = switch
+    relay.start()                              # live server booted, relay off
+    st = relay.set_enabled(True)
+    assert st["enabled"] and s.d["relay_enabled"] is True
+    assert len(runs) == 1 and runs[0].url == relay.DEFAULT_RELAY_URL
+    assert relay.offer()["url"] == relay.DEFAULT_RELAY_URL
+    relay.set_enabled(True)                    # idempotent: still one client
+    assert len(runs) == 1
+    relay.set_enabled(False)
+    assert runs[0].stopped and relay._service is None and relay.offer() is None
+
+
+def test_switch_in_a_non_live_process_persists_but_never_dials(switch):
+    """A preflight spare (start() never called) must not open a second
+    control socket — it would steal the live server's phones."""
+    s, runs = switch
+    relay.set_enabled(True)
+    assert s.d["relay_enabled"] is True and runs == []
+
+
+def test_remembered_switch_resumes_on_boot(switch):
+    s, runs = switch
+    s.d["relay_enabled"] = True
+    assert relay.start() is runs[0]
+
+
+def test_env_pins_the_choice(switch, monkeypatch):
+    s, runs = switch
+    monkeypatch.setattr(relay, "RELAY_ENV", "wss://relay.example")
+    assert relay.enabled() and relay.pinned() and relay.url() == "wss://relay.example"
+    relay.start()
+    assert runs[0].url == "wss://relay.example"
+    with pytest.raises(ValueError):
+        relay.set_enabled(False)
+    monkeypatch.setattr(relay, "RELAY_ENV", "off")
+    s.d["relay_enabled"] = True                # a stale app choice cannot override "off"
+    assert not relay.enabled() and relay.url() == relay.DEFAULT_RELAY_URL
+
+
+def test_stopped_service_ignores_late_phone_announcements():
+    svc = relay.RelayService("wss://relay.example", {"serverId": "s" * 24, "token": "t" * 40})
+    svc.stop()
+    svc.attach("conn_late")
+    assert svc.connections == {}

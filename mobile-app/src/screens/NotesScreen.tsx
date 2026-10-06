@@ -9,6 +9,9 @@ import { KIND_LABEL, displayTitle, noteTemplates, notesScopeFilter, orderNotes, 
 import { formatActor } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken, username } from "../state/config"
+import * as FileSystem from "expo-file-system"
+import * as Sharing from "expo-sharing"
+import { filterByTags, type NoteGraph } from "../lib/noteLinks"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
 import { useTheme } from "../lib/useTheme"
@@ -19,6 +22,8 @@ type Props = {
   /** Scope of this view: a chat's notes, a project's, or (from the side menu) everything. */
   filter?: NoteFilter
   title?: string
+  /** Open already filtered to this #tag (a tag tapped inside a note). */
+  tag?: string
 }
 
 /**
@@ -33,8 +38,12 @@ type Props = {
  * the editor. Archived notes (a chat's archive shelves its notes) are one
  * toggle away, never gone. Polls like the board so agent-written notes appear
  * without a manual refresh.
+ *
+ * Tags written in note bodies (#idea) are chips above the list; tapping some
+ * shows only notes carrying all of them. Export saves the notes as an
+ * Obsidian vault (.zip of markdown) through the share sheet.
  */
-export default function NotesScreen({ navigation, filter, title }: Props) {
+export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   const t = useTheme()
   const styles = useStyles()
   const scope = useMemo(() => notesScopeFilter(filter), [filter])
@@ -44,6 +53,9 @@ export default function NotesScreen({ navigation, filter, title }: Props) {
   const [query, setQuery] = useState("")
   const [showArchived, setShowArchived] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [graph, setGraph] = useState<NoteGraph | null>(null)
+  const [tags, setTags] = useState<string[]>(tag ? [tag] : [])
+  const [exporting, setExporting] = useState(false)
   const creating = useRef(false)
   const reads = useRef({ issued: 0, applied: 0 })
 
@@ -51,10 +63,14 @@ export default function NotesScreen({ navigation, filter, title }: Props) {
     if (!scope) { setError("This notes view has no valid scope."); setLoading(false); return }
     const request = ++reads.current.issued
     try {
-      const r = await api.orgNotes({ ...scope, archived: showArchived })
+      const [r, g] = await Promise.all([
+        api.orgNotes({ ...scope, archived: showArchived }),
+        api.orgNotesGraph(scope.project).catch(() => null),   // tags are extra; the list still shows
+      ])
       if (request < reads.current.applied) return
       reads.current.applied = request
       setNotes(r.notes || [])
+      if (g) setGraph(g)
       setError("")
     } catch (err) {
       if (request < reads.current.applied) return
@@ -84,7 +100,31 @@ export default function NotesScreen({ navigation, filter, title }: Props) {
     ),
   }), [title, t.accent])
 
-  const shown = useMemo(() => orderNotes(searchNotes(notes, query)), [notes, query])
+  const shown = useMemo(() => orderNotes(filterByTags(searchNotes(notes, query), graph, tags)), [notes, query, graph, tags])
+  // Only the tags on notes this view can show (a chat's view, not the whole org's).
+  const tagChips = useMemo(() => {
+    const here = new Set(notes.map((n) => n.id))
+    const counts = new Map<string, number>()
+    for (const n of graph?.nodes || []) if (here.has(n.id)) for (const tg of n.tags) counts.set(tg, (counts.get(tg) || 0) + 1)
+    for (const tg of tags) if (!counts.has(tg)) counts.set(tg, 0)
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 30)
+  }, [graph, notes, tags])
+
+  async function exportVault() {
+    if (exporting) return
+    setExporting(true)
+    const dest = FileSystem.cacheDirectory + "Harman notes.zip"
+    try {
+      const status = await api.orgNotesExport(scope?.project, dest)
+      if (status >= 400) throw new Error(`Export failed (HTTP ${status})`)
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest, { mimeType: "application/zip", UTI: "public.zip-archive" })
+    } catch (e) {
+      Alert.alert("Could not export notes", (e as Error).message)
+    } finally {
+      FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {})
+      setExporting(false)
+    }
+  }
 
   async function create(kind: Note["kind"], body: string) {
     if (creating.current) return
@@ -125,7 +165,31 @@ export default function NotesScreen({ navigation, filter, title }: Props) {
         >
           <Text style={[styles.filterChipText, showArchived && styles.filterChipTextActive]}>Archived</Text>
         </TouchableOpacity>
+        <TouchableOpacity testID="notes-export" accessibilityLabel="export-notes" onPress={exportVault} hitSlop={8} disabled={exporting}
+          style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+          {exporting ? <ActivityIndicator size="small" color={t.accent} /> : <Icon name="upload" size={20} color={t.accent} />}
+        </TouchableOpacity>
       </View>
+
+      {tagChips.length ? (
+        <FlatList
+          horizontal
+          data={tagChips}
+          keyExtractor={([tg]) => tg}
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 0 }}
+          contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingBottom: 8 }}
+          renderItem={({ item: [tg, n] }) => {
+            const on = tags.includes(tg)
+            return (
+              <TouchableOpacity testID={`notes-tag-${tg}`} onPress={() => setTags((cur) => (on ? cur.filter((x) => x !== tg) : [...cur, tg]))}
+                style={[styles.filterChip, on && styles.filterChipActive]}>
+                <Text style={[styles.filterChipText, on && styles.filterChipTextActive]}>#{tg}{n ? ` ${n}` : ""}</Text>
+              </TouchableOpacity>
+            )
+          }}
+        />
+      ) : null}
 
       {error ? <Text style={{ color: t.danger, paddingHorizontal: 16, paddingBottom: 6 }}>{error}</Text> : null}
 
@@ -141,11 +205,11 @@ export default function NotesScreen({ navigation, filter, title }: Props) {
             <View style={{ alignItems: "center", paddingTop: 60, paddingHorizontal: 32 }}>
               <Icon name="book" size={36} color={t.textMuted} />
               <Text style={{ color: t.text, fontWeight: "600", fontSize: 16, marginTop: 12 }}>
-                {showArchived ? "Nothing archived" : query ? "No matches" : "No notes yet"}
+                {showArchived ? "Nothing archived" : query || tags.length ? "No matches" : "No notes yet"}
               </Text>
-              {!showArchived && !query ? (
+              {!showArchived && !query && !tags.length ? (
                 <Text style={{ color: t.textMuted, textAlign: "center", marginTop: 6 }}>
-                  Tap + for a blank note, a journal entry, meeting notes or a checklist. Agents in your chats can write here too.
+                  Tap + for a blank note, a journal entry, meeting notes or a checklist. Link notes with [[Title]] and group them with #tags. Agents in your chats can write here too.
                 </Text>
               ) : null}
             </View>

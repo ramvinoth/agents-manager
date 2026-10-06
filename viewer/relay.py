@@ -43,7 +43,7 @@ import nacl.bindings as nb
 import nacl.exceptions
 
 from viewer import db, wsclient
-from viewer.config import PORT, RELAY_URL
+from viewer.config import DEFAULT_RELAY_URL, PORT, RELAY_ENV
 
 # ---- mux frame types --------------------------------------------------------
 HTTP_REQ = 0x01        # phone -> server  JSON {method, path, headers}
@@ -106,8 +106,31 @@ def identity():
     return ident
 
 
+# ---- on / off (Paseo's rule: off until the owner pairs through it) ---------
+
+def url():
+    """The relay this server dials: HARMAN_RELAY_URL when it names one, else
+    the hosted Harman relay."""
+    return RELAY_ENV if RELAY_ENV not in ("", "off") else DEFAULT_RELAY_URL
+
+
+def pinned():
+    """True when HARMAN_RELAY_URL decides on/off, so the app cannot."""
+    return RELAY_ENV != ""
+
+
 def enabled():
-    return bool(RELAY_URL)
+    if pinned():
+        return RELAY_ENV != "off"
+    return bool(db.setting_get("relay_enabled", False))
+
+
+def status():
+    """What the Pair-a-phone dialog shows: whether the relay is on, whether
+    the owner may change that, and whether the control socket is up now."""
+    svc = _service
+    return {"enabled": enabled(), "pinned": pinned(), "url": url(),
+            "connected": bool(svc and svc.connected.is_set())}
 
 
 def offer():
@@ -116,7 +139,7 @@ def offer():
     if not enabled():
         return None
     ident = identity()
-    return {"url": RELAY_URL, "serverId": ident["serverId"], "publicKey": ident["publicKey"]}
+    return {"url": url(), "serverId": ident["serverId"], "publicKey": ident["publicKey"]}
 
 
 # ---- encrypted channel ------------------------------------------------------
@@ -473,6 +496,20 @@ class RelayService:
         self.ident = ident
         self.connections = {}
         self.lock = threading.Lock()
+        self.connected = threading.Event()
+        self.stopped = threading.Event()
+        self._control = None
+
+    def stop(self):
+        """Hang up: the control socket and every phone's data socket."""
+        self.stopped.set()
+        ws = self._control
+        if ws:
+            ws.close()
+        with self.lock:
+            conns, self.connections = list(self.connections.values()), {}
+        for conn in conns:
+            conn.close()
 
     def dial(self, connection_id=None):
         params = {"serverId": self.ident["serverId"], "role": "server"}
@@ -483,7 +520,7 @@ class RelayService:
 
     def attach(self, connection_id, ip=""):
         with self.lock:
-            if connection_id in self.connections:
+            if self.stopped.is_set() or connection_id in self.connections:
                 return
             conn = Connection(self, connection_id, ip)
             self.connections[connection_id] = conn
@@ -523,11 +560,14 @@ class RelayService:
 
     def run_forever(self):
         backoff = 1
-        while True:
+        while not self.stopped.is_set():
             ws = None
             try:
-                ws = self.dial()
+                ws = self._control = self.dial()
+                if self.stopped.is_set():
+                    break
                 ws.sock.settimeout(PING_EVERY)
+                self.connected.set()
                 print(f"[relay] connected to {self.relay_url} as {self.ident['serverId']}", flush=True)
                 backoff = 1
                 while True:
@@ -548,20 +588,55 @@ class RelayService:
                 print(f"[relay] refused by relay: {e}", flush=True)
                 backoff = MAX_BACKOFF
             except (wsclient.WSError, OSError) as e:
-                print(f"[relay] control lost: {e}; retrying in {backoff}s", flush=True)
+                if not self.stopped.is_set():
+                    print(f"[relay] control lost: {e}; retrying in {backoff}s", flush=True)
             finally:
+                self.connected.clear()
+                self._control = None
                 if ws:
                     ws.close()
-            time.sleep(backoff + secrets.randbelow(1000) / 1000)
+            if self.stopped.wait(backoff + secrets.randbelow(1000) / 1000):
+                break
             backoff = min(backoff * 2, MAX_BACKOFF)
+        print("[relay] stopped", flush=True)
+
+
+# The one running client, or None. Only the live server owns one: start() is
+# called from its boot (never a VIEWER_PREFLIGHT spare — a spare would replace
+# the live server's control socket at the relay), and set_enabled() only
+# starts or stops it once start() has marked this process as the live server.
+_service = None
+_live = False
+_svc_lock = threading.Lock()
+
+
+def _sync():
+    """Make the running client match enabled(): start it, stop it, or leave it."""
+    global _service
+    with _svc_lock:
+        want = enabled()
+        if want and _service is None:
+            _service = RelayService(url(), identity())
+            threading.Thread(target=_service.run_forever, daemon=True, name="relay-control").start()
+        elif not want and _service is not None:
+            _service.stop()
+            _service = None
+        return _service
 
 
 def start():
-    """Start the relay client in the background if HARMAN_RELAY_URL is set.
-    Called only by the live server (never a VIEWER_PREFLIGHT spare: a spare
-    would replace the live server's control socket at the relay)."""
-    if not enabled():
-        return None
-    service = RelayService(RELAY_URL, identity())
-    threading.Thread(target=service.run_forever, daemon=True, name="relay-control").start()
-    return service
+    """Boot hook of the live server: run the relay client if it is on."""
+    global _live
+    _live = True
+    return _sync()
+
+
+def set_enabled(on):
+    """The owner's switch (Pair a phone). Persisted, applied without a
+    restart. Refused when HARMAN_RELAY_URL pins the choice."""
+    if pinned():
+        raise ValueError("The relay is set by HARMAN_RELAY_URL on this server, so it can't be changed here.")
+    db.setting_set("relay_enabled", bool(on))
+    if _live:
+        _sync()
+    return status()

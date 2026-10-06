@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { serviceAction, waitForConsent } from "@/lib/integrations"
@@ -346,22 +347,12 @@ function ServiceRow({ s, state, busy, disabled, onToggle, onGrant }: {
       {busy ? (
         <Loader2 className="size-4 animate-spin text-muted-foreground" />
       ) : action === "toggle" ? (
-        <button
-          role="switch"
-          aria-checked={state === "on"}
-          aria-label={`${s.label}: ${STATE_TEXT[state]}`}
+        <Switch
+          on={state === "on"}
+          label={`${s.label}: ${STATE_TEXT[state]}`}
           disabled={disabled}
           onClick={() => onToggle(state !== "on")}
-          className={cn(
-            "relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:opacity-50",
-            state === "on" ? "bg-primary" : "bg-muted"
-          )}
-        >
-          <span className={cn(
-            "absolute top-0.5 size-5 rounded-full bg-background shadow transition-transform",
-            state === "on" ? "translate-x-[18px]" : "translate-x-0.5"
-          )} />
-        </button>
+        />
       ) : action === "grant" ? (
         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onGrant} disabled={disabled}>
           {STATE_TEXT.grant}

@@ -13,6 +13,8 @@
  * DUPLICATED (parser side) in mobile-app/src/lib/pairLink.ts; the two apps share no build.
  */
 export type RelayOffer = { url: string; serverId: string; publicKey: string }
+/** GET/POST /api/relay — `pinned` means HARMAN_RELAY_URL decides, not the app. */
+export type RelayStatus = { enabled: boolean; pinned: boolean; url: string; connected: boolean }
 
 export function buildPairLink(serverUrl: string, code: string, relay?: RelayOffer | null): string {
   const q = [`code=${encodeURIComponent(code)}`]

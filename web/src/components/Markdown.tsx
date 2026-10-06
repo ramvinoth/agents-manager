@@ -1,16 +1,28 @@
-import { useMemo } from "react"
-import { renderMarkdownSegments } from "@/lib/markdown"
+import { useMemo, type MouseEvent } from "react"
+import { renderMarkdownSegments, type NoteSyntax } from "@/lib/markdown"
 import { MermaidDiagram } from "./MermaidDiagram"
 
-export function Markdown({ text }: { text: string }) {
+/** `notes` turns on note syntax ([[links]] and #tags) and receives their
+ *  clicks — one delegated handler, since the HTML is injected. */
+export type NoteLinkHandlers = NoteSyntax & { onLink: (target: string) => void; onTag?: (tag: string) => void }
+
+export function Markdown({ text, notes }: { text: string; notes?: NoteLinkHandlers }) {
   // Split into segments so ```mermaid fences render as React-owned <MermaidDiagram>
   // components (SVG in state) instead of imperatively-injected SVG inside
   // dangerouslySetInnerHTML — the latter was wiped by every streaming re-render /
   // poll / scroll, causing the diagram to flicker and reset to code.
   const dark = document.documentElement.classList.contains("dark")
-  const segments = useMemo(() => renderMarkdownSegments(text), [text])
+  const segments = useMemo(() => renderMarkdownSegments(text, notes), [text, notes])
+  function onClick(e: MouseEvent<HTMLDivElement>) {
+    if (!notes) return
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-note],[data-tag]")
+    if (!el) return
+    e.preventDefault()
+    if (el.dataset.note !== undefined) notes.onLink(el.dataset.note)
+    else if (el.dataset.tag) notes.onTag?.(el.dataset.tag)
+  }
   return (
-    <div className="markdown-content">
+    <div className="markdown-content" onClick={onClick}>
       {segments.map((seg, i) =>
         seg.type === "mermaid" ? (
           <MermaidDiagram key={i} source={seg.source} dark={dark} />

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react"
+import React, { useContext, useMemo } from "react"
 import { Linking, ScrollView, Text, View } from "react-native"
 import { blockGap, parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
 import { texToUnicode } from "../lib/texUnicode"
@@ -24,30 +24,47 @@ function isDarkBg(hex: string): boolean {
  * `color` sets the body-text colour (the bubble supplies it so text stays
  * legible on its background); code blocks and tables theme themselves off the
  * OS light/dark setting so they never render as a bright panel in dark mode.
+ *
+ * `notes` turns on Obsidian syntax for a note body: [[links]] become tappable
+ * (dashed when the note is not written yet) and #tags become chips.
  */
+export type NoteLinkHandlers = {
+  resolves: (target: string) => boolean
+  onLink: (target: string) => void
+  onTag?: (tag: string) => void
+}
+
 export default function Markdown({
   text,
   color,
   selectable,
   onLongPress,
+  notes,
 }: {
   text: string
   color?: string
   selectable?: boolean
   onLongPress?: () => void
+  notes?: NoteLinkHandlers
 }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text])
+  const blocks = useMemo(() => parseMarkdown(text, !!notes), [text, !!notes])
   const t = useTheme()
   return (
     <View>
       {blocks.map((b, i) => (
         <View key={i} style={{ marginTop: blockGap(blocks[i - 1], b) }}>
-          <Block b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+          <NotesContext.Provider value={notes}>
+            <Block b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+          </NotesContext.Provider>
         </View>
       ))}
     </View>
   )
 }
+
+// Handlers reach the spans of every block kind (heading, list, quote…) without
+// threading a prop through each.
+const NotesContext = React.createContext<NoteLinkHandlers | undefined>(undefined)
 
 function Inline({
   spans,
@@ -61,6 +78,8 @@ function Inline({
   onLongPress?: () => void
 }) {
   const styles = useStyles()
+  const notes = useContext(NotesContext)
+  const t = useTheme()
   return (
     <Text style={style} selectable={selectable} onLongPress={onLongPress}>
       {spans.map((s, i) => {
@@ -74,6 +93,22 @@ function Inline({
           const u = texToUnicode(s.s)
           return <Text key={i} style={u ? styles.mdItalic : styles.mdCodeInline}>{u ?? s.s}</Text>
         }
+        if (s.t === "wikilink") {
+          const ghost = !notes?.resolves(s.target)
+          return (
+            <Text key={i} onPress={() => notes?.onLink(s.target)} accessibilityHint={ghost ? "Not written yet — tap to create" : undefined}
+              style={ghost ? { color: t.textMuted, textDecorationLine: "underline", textDecorationStyle: "dashed" } : { color: t.accent, fontWeight: "600" }}>
+              {s.s}
+            </Text>
+          )
+        }
+        if (s.t === "tag")
+          return (
+            <Text key={i} onPress={notes?.onTag ? () => notes.onTag!(s.tag) : undefined}
+              style={{ color: t.accent, backgroundColor: t.chipBg }}>
+              {s.s}
+            </Text>
+          )
         if (s.t === "link")
           return (
             <Text key={i} style={styles.mdLink} onPress={() => { if (s.href) Linking.openURL(s.href).catch(() => {}) }}>

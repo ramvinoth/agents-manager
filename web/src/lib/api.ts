@@ -2,10 +2,11 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
+import type { NoteGraph } from "./noteLinks"
 import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
-import type { RelayOffer } from "./pairLink"
+import type { RelayOffer, RelayStatus } from "./pairLink"
 
 type Body = Record<string, unknown>
 
@@ -250,7 +251,17 @@ class ApiClient {
     return this.postJSON<Note>("/api/org/notes", body)
   }
   orgUpdateNote(body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) {
-    return this.postJSON<Note>("/api/org/notes/update", body)
+    // `relinked`: on a rename, how many notes had their [[links]] rewritten.
+    return this.postJSON<Note & { relinked?: number }>("/api/org/notes/update", body)
+  }
+  /** The linked-notes graph of a project (both shelves): nodes, [[link]]
+   *  edges, ghosts, tag counts and the title index links resolve through. */
+  orgNotesGraph(project: number) {
+    return this.getJSON<NoteGraph>(`/api/org/notes/graph?project=${project}`)
+  }
+  /** URL of the project's notes as an Obsidian vault (.zip of .md files). */
+  orgNotesExportUrl(project: number): string {
+    return `/api/org/notes/export?project=${project}`
   }
   // `note_delete` is Red like card_delete: an agent's delete queues for the owner.
   orgDeleteNote(noteId: number) {
@@ -674,6 +685,14 @@ class ApiClient {
     return this.postStrict<{ code: string; expiresAt: number; ttl: number; publicUrl?: string; relay?: RelayOffer | null }>(
       "/api/auth/pair/start"
     )
+  }
+  /** The Harman relay: on/off, whether HARMAN_RELAY_URL pins it, live link. */
+  relayStatus() {
+    return this.getStrict<RelayStatus>("/api/relay")
+  }
+  /** The owner's relay switch — persisted, applied without a restart. */
+  setRelay(enabled: boolean) {
+    return this.postStrict<RelayStatus>("/api/relay", { enabled })
   }
   getPrefs<T = any>() {
     return this.getJSON<T>("/api/prefs")

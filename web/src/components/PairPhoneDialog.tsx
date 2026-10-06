@@ -4,8 +4,10 @@ import { renderSVG } from "uqr"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
-import { buildPairLink, type RelayOffer, unreachableReason } from "@/lib/pairLink"
+import { buildPairLink, type RelayOffer, type RelayStatus, unreachableReason } from "@/lib/pairLink"
+import { useStore } from "@/store"
 
 // The address a phone uses can differ from the one this tab is on (localhost on
 // the box itself). Precedence: what the user typed here (remembered per browser)
@@ -21,11 +23,18 @@ const URL_KEY = "pairServerUrl"
  * When the server runs the Harman relay (pair/start returns `relay`), the QR
  * also carries the relay route, so a phone pairs even when this server has no
  * address it can reach — the direct address becomes optional, not a blocker.
+ *
+ * The relay is off until the owner switches it on here (Paseo's rule: a new
+ * route into this machine is the owner's call, made where it matters). The
+ * switch applies at once and re-mints the code so the QR carries the route.
  */
 export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
   const [typedUrl, setTypedUrl] = useState(() => localStorage.getItem(URL_KEY) || "")
   const [publicUrl, setPublicUrl] = useState("")
   const [relay, setRelay] = useState<RelayOffer | null>(null)
+  const [relayState, setRelayState] = useState<RelayStatus | null>(null)
+  const [relayBusy, setRelayBusy] = useState(false)
+  const isOwner = useStore((s) => s.authUser?.role === "owner")
   const serverUrl = typedUrl || publicUrl || window.location.origin
   const [code, setCode] = useState<{ code: string; expiresAt: number } | null>(null)
   const [error, setError] = useState("")
@@ -45,6 +54,31 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
     )
   }, [])
   useEffect(mint, [mint])
+  useEffect(() => {
+    api.relayStatus().then(setRelayState, () => setRelayState(null))
+  }, [])
+  // While switched on but not yet linked, re-read so "connecting…" turns into
+  // "connected" (or stays, which tells the owner the relay is unreachable).
+  const linking = !!relayState?.enabled && !relayState.connected
+  useEffect(() => {
+    if (!linking) return
+    const t = setInterval(() => api.relayStatus().then(setRelayState, () => {}), 2000)
+    return () => clearInterval(t)
+  }, [linking])
+
+  async function toggleRelay() {
+    if (!relayState) return
+    setRelayBusy(true)
+    setError("")
+    try {
+      setRelayState(await api.setRelay(!relayState.enabled))
+      mint()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRelayBusy(false)
+    }
+  }
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now() / 1000), 1000)
     return () => clearInterval(t)
@@ -98,6 +132,37 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
             <img src={qr} alt="Pairing QR code" className="size-56 rounded-md bg-white" />
           )}
         </div>
+
+        {relayState && (
+          <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2" data-testid="relay-row">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm">Reach this computer from anywhere</div>
+              <div className="text-[11px] text-muted-foreground">
+                {relayState.pinned
+                  ? `Set by this server's configuration (${relayState.enabled ? "on" : "off"}).`
+                  : !relayState.enabled
+                    ? problem
+                      ? "Your phone can't reach the address above. Turn this on to connect through the Harman relay instead."
+                      : "Off — your phone only connects on this address. Turn on to use the encrypted Harman relay everywhere else."
+                    : relayState.connected
+                      ? "On — connected to the Harman relay."
+                      : "On — connecting to the Harman relay…"}
+                {!isOwner && !relayState.pinned && " Only the owner can change this."}
+              </div>
+            </div>
+            {relayBusy ? (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            ) : (
+              <Switch
+                on={relayState.enabled}
+                disabled={relayState.pinned || !isOwner}
+                onClick={toggleRelay}
+                label="Harman relay"
+                testId="relay-switch"
+              />
+            )}
+          </div>
+        )}
 
         {link && left > 0 && relay && (
           <p className="text-[11px] text-muted-foreground">

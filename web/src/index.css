@@ -158,6 +158,9 @@
 .markdown-content blockquote { border-left: 2px solid var(--border); padding-left: 0.6rem; color: var(--muted-foreground); }
 .markdown-content table { border-collapse: collapse; font-size: 0.82rem; display: block; overflow-x: auto; }
 .markdown-content th, .markdown-content td { border: 1px solid var(--border); padding: 0.3rem 0.5rem; text-align: left; }
+.markdown-content a.wikilink { text-decoration: none; border-bottom: 1px solid color-mix(in oklch, var(--primary) 40%, transparent); cursor: pointer; }
+.markdown-content a.wikilink.ghost { color: var(--muted-foreground); border-bottom-style: dashed; }
+.markdown-content .note-tag { color: var(--primary); background: color-mix(in oklch, var(--primary) 10%, transparent); border-radius: 9999px; padding: 0 0.4em; cursor: pointer; }
 .markdown-content hr { border: none; border-top: 1px solid var(--border); }
 .sh-keyword { color: #8b5cf6; } .dark .sh-keyword { color: #c4b5fd; }
 .sh-string { color: #16a34a; } .dark .sh-string { color: #86efac; }

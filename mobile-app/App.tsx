@@ -53,7 +53,7 @@ export type RootStackParamList = {
   Calendar: undefined
   Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
   CardDetail: { id: number }
-  Notes: { session?: string; project?: number; title?: string } | undefined
+  Notes: { session?: string; project?: number; title?: string; tag?: string } | undefined
   Files: undefined
   Agents: undefined
   NoteEditor: { id: number }
@@ -231,7 +231,7 @@ export default function App() {
             <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
             <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
             <Stack.Screen name="Notes" options={{ title: "Notes" }}>
-              {({ navigation, route }) => <NotesScreen navigation={navigation} filter={route.params} title={route.params?.title} />}
+              {({ navigation, route }) => <NotesScreen navigation={navigation} filter={route.params} title={route.params?.title} tag={route.params?.tag} />}
             </Stack.Screen>
             <Stack.Screen name="Inbox" options={{ title: "Inbox" }}>
               {({ navigation, route }) => (

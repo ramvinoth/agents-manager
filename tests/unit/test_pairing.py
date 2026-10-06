@@ -3,7 +3,7 @@ session token. Codes are single-use, short-lived, capped per user, and only a
 person (never an agent's MCP session) can mint one."""
 import pytest
 
-from viewer import db, pairing
+from viewer import db, pairing, relay
 from viewer.routes import auth
 from viewer.routes.auth import AuthMixin
 
@@ -12,6 +12,8 @@ from viewer.routes.auth import AuthMixin
 def clean(monkeypatch):
     monkeypatch.setattr(pairing, "_codes", {})
     monkeypatch.setattr(auth, "_login_hits", {})
+    # Hermetic whatever HARMAN_RELAY_URL the shell exports: relay off, no DB.
+    monkeypatch.setattr(relay, "RELAY_ENV", "off")
 
 
 class _Req:
@@ -79,6 +81,20 @@ def test_start_tells_the_qr_the_public_address(monkeypatch):
     h = _Handler()
     h._p_auth_pair_start(_Req(APP))
     assert h.sent[0]["publicUrl"] == "https://law.suhai.ai"
+
+
+def test_start_offers_the_relay_only_when_it_is_on(monkeypatch):
+    """Paseo's rule: a QR carries the relay route only once the owner switched
+    it on, and never the secret key or the relay token."""
+    h = _Handler()
+    h._p_auth_pair_start(_Req(APP))
+    assert h.sent[0]["relay"] is None
+    monkeypatch.setattr(relay, "RELAY_ENV", "wss://relay.example")
+    monkeypatch.setattr(relay, "identity", lambda: {"serverId": "S", "publicKey": "P",
+                                                    "secretKey": "SECRET", "token": "TOKEN"})
+    h = _Handler()
+    h._p_auth_pair_start(_Req(APP))
+    assert h.sent[0]["relay"] == {"url": "wss://relay.example", "serverId": "S", "publicKey": "P"}
 
 
 def test_redeem_issues_token_for_the_minting_user(monkeypatch):

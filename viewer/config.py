@@ -53,10 +53,14 @@ VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
 # Tunnel hostname). The Pair-a-phone QR defaults to it, so a customer never has
 # to know or type it. Empty = the QR falls back to the browser's own address.
 PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
-# Harman relay (relay/ — Cloudflare Worker): wss:// URL this server dials out
-# to so phones can reach it from anywhere with no tunnel or open port. Empty =
-# off. See viewer/relay.py.
-RELAY_URL = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
+# Harman relay (relay/ — Cloudflare Worker) this server dials out to so phones
+# reach it from anywhere with no tunnel or open port. Like Paseo, a fresh
+# install ships pointed at the hosted relay but leaves it OFF until the owner
+# switches it on while pairing a phone (persisted in settings; viewer/relay.py).
+# HARMAN_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
+# "off" = never (the owner cannot switch it on from the app).
+DEFAULT_RELAY_URL = "wss://relay.suhai.ai"
+RELAY_ENV = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 
 

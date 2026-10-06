@@ -23,6 +23,9 @@ const ALLOWED = new Set([
 ])
 // Shadow black and translucent scrims are colour-neutral, not palette choices.
 const NEUTRAL = /shadowColor: "#000"|rgba\(0,0,0,/
+// A colour is a 6/8-digit hex anywhere, or 3/4-digit shorthand given to a colour
+// prop, e.g. color set to a quoted #333. Elsewhere "#107" is the board's card-number syntax.
+const HEX = /#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b|(?:[cC]olou?r|[bB]ackground|[bB]order|[tT]int)\w*\s*[:=]\s*\{?\s*["'`]#[0-9a-fA-F]{3,4}["'`]/
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -39,7 +42,7 @@ for (const sub of ["screens", "components", "lib"]) {
     const rel = file.slice(ROOT.length + 1)
     if (ALLOWED.has(rel)) continue
     readFileSync(file, "utf8").split("\n").forEach((line, i) => {
-      if (/#[0-9a-fA-F]{3,8}\b/.test(line) && !NEUTRAL.test(line)) offenders.push(`${rel}:${i + 1}: ${line.trim()}`)
+      if (HEX.test(line) && !NEUTRAL.test(line)) offenders.push(`${rel}:${i + 1}: ${line.trim()}`)
     })
   }
 }

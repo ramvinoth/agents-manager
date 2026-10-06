@@ -15,6 +15,8 @@ export type Span =
   | { t: "code"; s: string }
   | { t: "link"; s: string; href: string }
   | { t: "math"; s: string }   // inline TeX (between $…$ / \(…\)) — rendered natively-ish
+  | { t: "wikilink"; s: string; target: string }   // [[Target#Heading|shown]] — notes only
+  | { t: "tag"; s: string; tag: string }           // #tag (s as written, tag lower-cased) — notes only
 
 export type MdBlock =
   | { t: "p"; spans: Span[] }
@@ -26,13 +28,23 @@ export type MdBlock =
   | { t: "hr" }
   | { t: "mathblock"; text: string }   // display TeX (between $$…$$ / \[…\]) — WebView
 
+// $…$ | \(…\) math | `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | url
+const INLINE =
+  /\$([^\n$]+?)\$|\\\(([^]+?)\\\)|(`+)([^`]+?)\3|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/
+// Notes add Obsidian syntax (same grammar as viewer/notelinks.py): [[Target#Heading|alias]]
+// and #tag (after a space/"(", not a digit first, so "#42" and "C#" stay text).
+const NOTE_SYNTAX =
+  /\[\[([^[\]|#\n]*)(#[^[\]|\n]*)?(\|[^[\]\n]*)?\]\]|(?<![^\s(])#(?![0-9])([^\s!"#$%&'()*+,.:;<=>?@[\]^`{|}~\\]+)/
+const CHAT_RE = new RegExp(INLINE.source, "g")
+const NOTE_RE = new RegExp(INLINE.source + "|" + NOTE_SYNTAX.source, "g")
+
 /** Inline spans. Math is matched FIRST so `_`/`*` inside a formula (A_k, \phi_k)
- *  can't be mis-read as italic; code next so **bold** inside `code` stays literal. */
-export function parseInline(src: string): Span[] {
+ *  can't be mis-read as italic; code next so **bold** inside `code` stays literal.
+ *  `notes` turns on [[links]] and #tags — never in chat, where "#" is just text. */
+export function parseInline(src: string, notes = false): Span[] {
   const out: Span[] = []
-  // $…$ | \(…\) math | `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | url
-  const re =
-    /\$([^\n$]+?)\$|\\\(([^]+?)\\\)|(`+)([^`]+?)\3|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g
+  const re = notes ? NOTE_RE : CHAT_RE
+  re.lastIndex = 0
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(src))) {
@@ -51,6 +63,18 @@ export function parseInline(src: string): Span[] {
     else if (m[8] !== undefined) out.push({ t: "italic", s: m[8] })
     else if (m[9] !== undefined) out.push({ t: "link", s: m[9], href: m[10] })
     else if (m[11] !== undefined) out.push({ t: "link", s: m[11], href: m[11] })
+    else if (m[12] !== undefined) {
+      const target = m[12].trim(), head = (m[13] || "").slice(1).trim(), alias = (m[14] || "").slice(1).trim()
+      if (!target) out.push({ t: "text", s: m[0] })   // [[#Heading]]: a link inside the note itself
+      else out.push({ t: "wikilink", target, s: alias || (head ? `${target} › ${head}` : target) })
+    } else if (m[15] !== undefined) {
+      const tag = m[15].replace(/[/-]+$/, "")
+      if (!tag) out.push({ t: "text", s: m[0] })
+      else {
+        out.push({ t: "tag", s: "#" + tag, tag: tag.toLowerCase() })
+        if (tag.length < m[15].length) out.push({ t: "text", s: m[15].slice(tag.length) })
+      }
+    }
     last = re.lastIndex
   }
   if (last < src.length) out.push({ t: "text", s: src.slice(last) })
@@ -81,14 +105,15 @@ export function blockGap(prev: MdBlock | undefined, next: MdBlock): number {
   return 12
 }
 
-export function parseMarkdown(src: string): MdBlock[] {
+export function parseMarkdown(src: string, notes = false): MdBlock[] {
+  const inline = (s: string) => parseInline(s, notes)
   const lines = (src || "").replace(/\r\n?/g, "\n").split("\n")
   const blocks: MdBlock[] = []
   let para: string[] = []
 
   const flushPara = () => {
     if (!para.length) return
-    blocks.push({ t: "p", spans: parseInline(para.join("\n").trim()) })
+    blocks.push({ t: "p", spans: inline(para.join("\n").trim()) })
     para = []
   }
 
@@ -147,7 +172,7 @@ export function parseMarkdown(src: string): MdBlock[] {
     const h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
     if (h) {
       flushPara()
-      blocks.push({ t: "h", level: h[1].length, spans: parseInline(h[2].trim()) })
+      blocks.push({ t: "h", level: h[1].length, spans: inline(h[2].trim()) })
       continue
     }
 
@@ -166,7 +191,7 @@ export function parseMarkdown(src: string): MdBlock[] {
     const q = line.match(/^\s{0,3}>\s?(.*)$/)
     if (q) {
       flushPara()
-      blocks.push({ t: "quote", spans: parseInline(q[1]) })
+      blocks.push({ t: "quote", spans: inline(q[1]) })
       continue
     }
 
@@ -178,7 +203,7 @@ export function parseMarkdown(src: string): MdBlock[] {
         t: "li",
         ordered,
         marker: ordered ? li[2].replace(/[.)]$/, ".") : "•",
-        spans: parseInline(li[3]),
+        spans: inline(li[3]),
         depth: Math.floor(li[1].replace(/\t/g, "  ").length / 2),
       })
       continue

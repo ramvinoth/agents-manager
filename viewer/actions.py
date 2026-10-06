@@ -20,7 +20,7 @@ and writes the audit trail; it is the only place that does.
 import sys
 import time
 
-from viewer import db, orglogic
+from viewer import db, notelinks, orglogic
 
 
 def _card_create(a):
@@ -121,7 +121,39 @@ def _note_create(a):
 def _note_update(a):
     fields = {k: v for k, v in a.items()
               if k in ("title", "body", "kind", "project_id", "pinned", "archived")}
-    return db.note_update(a.get("note_id"), **fields) or {"error": "not found"}
+    before = db.note_get(a.get("note_id")) if "title" in fields else None
+    note = db.note_update(a.get("note_id"), **fields)
+    if not note:
+        return {"error": "not found"}
+    if before and notelinks.norm(before["title"]) != notelinks.norm(note["title"]):
+        note["relinked"] = _relink(before, note["title"])
+        if note["relinked"]:   # the note may link to itself — return what is stored
+            note = {**(db.note_get(note["id"]) or note), "relinked": note["relinked"]}
+    return note
+
+
+def _relink(before, new_title):
+    """A rename carries its links along (Obsidian's behavior): every
+    [[old title]] in the note's project now says [[new title]]. Skipped when
+    another note still answers to the old title (those links are its) or
+    already answers to the new one (merging them would change what resolves).
+    Runs here, so a rename by HTTP, MCP or approval replay all relink alike.
+    Returns how many notes were rewritten."""
+    pid = before.get("project_id")
+    corpus = [n for shelf in (False, True)
+              for n in db.note_list(project_id=pid, archived=shelf)
+              if n.get("project_id") == pid]
+    if (not notelinks.norm(before["title"]) or not notelinks.norm(new_title)
+            or notelinks.owner_of(corpus, pid, before["title"], before["id"])
+            or notelinks.owner_of(corpus, pid, new_title, before["id"])):
+        return 0
+    count = 0
+    for n in corpus:
+        body = notelinks.rename(n["body"], before["title"], new_title)
+        if body is not n["body"]:
+            db.note_update(n["id"], body=body)
+            count += 1
+    return count
 
 
 def _note_delete(a):

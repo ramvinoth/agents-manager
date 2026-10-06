@@ -189,6 +189,27 @@ class AuthMixin:
         self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
                         "publicUrl": PUBLIC_URL, "relay": relay.offer()})
 
+    def _g_relay(self, req):
+        """Is the relay on, may the owner change that, is it connected now."""
+        self.send_json(relay.status())
+
+    def _p_relay(self, req):
+        """The owner's relay switch (Pair a phone). Owner only: turning it on
+        opens a route to this server from the internet, end-to-end encrypted
+        but still a route — the same call Paseo asks before relaying."""
+        p = req.principal or {}
+        if p.get("kind") != "app" or (p.get("user") or {}).get("role") != "owner":
+            self.send_json({"error": "Only the owner can turn the relay on or off"}, status=403)
+            return
+        body = self.read_body() or {}
+        if not isinstance(body.get("enabled"), bool):
+            self.send_json({"error": "enabled (true/false) required"}, status=400)
+            return
+        try:
+            self.send_json(relay.set_enabled(body["enabled"]))
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=409)
+
     def _p_auth_pair_redeem(self, req):
         """Swap a pairing code for a session token (the scanning phone). Public:
         the code IS the credential. Throttled like sign-in."""

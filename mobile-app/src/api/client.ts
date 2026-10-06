@@ -9,6 +9,7 @@ import { serverFetch, serverMedia, serverSocket, serverUpload, serverDownload } 
 import { normModel } from "../lib/model"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
+import type { NoteGraph } from "../lib/noteLinks"
 
 export type User = { id: number; username: string }
 export type Host = {
@@ -810,7 +811,14 @@ export const api = {
   orgCreateNote: (body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) =>
     req<Note>("POST", "/api/org/notes", body),
   orgUpdateNote: (body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) =>
-    req<Note>("POST", "/api/org/notes/update", body),
+    // relinked: a rename rewrote [[links]] in that many notes (viewer/notelinks.py)
+    req<Note & { relinked?: number }>("POST", "/api/org/notes/update", body),
+  /** How a project's notes link ([[Title]], #tags) — see lib/noteLinks.ts. */
+  orgNotesGraph: (project?: number | null) =>
+    req<NoteGraph>("GET", `/api/org/notes/graph${project ? `?project=${project}` : ""}`),
+  /** The notes as an Obsidian vault (.zip of markdown) saved to `dest`; returns the HTTP status. */
+  orgNotesExport: (project: number | null | undefined, dest: string) =>
+    serverDownload(`/api/org/notes/export${project ? `?project=${project}` : ""}`, dest),
   // `note_delete` is Red: an agent's delete queues; the owner's runs.
   orgDeleteNote: (body: { note_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/notes/delete", body),

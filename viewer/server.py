@@ -375,6 +375,7 @@ class SessionViewerHandler(
         "/api/decisions/open": "_g_decisions_open",
         "/api/auth/status": "_g_auth_status",
         "/api/auth/me": "_g_auth_me",
+        "/api/relay": "_g_relay",
         "/api/auth/state": "_g_auth_state",
         "/api/prefs": "_g_prefs",
         "/api/auth/login/poll": "_g_auth_login_poll",
@@ -433,6 +434,8 @@ class SessionViewerHandler(
         "/api/org/cards": "_g_org_cards",
         "/api/org/notes": "_g_org_notes",
         "/api/org/note": "_g_org_note",
+        "/api/org/notes/graph": "_g_org_notes_graph",
+        "/api/org/notes/export": "_g_org_notes_export",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
         "/api/org/harman": "_g_org_harman",
@@ -487,6 +490,7 @@ class SessionViewerHandler(
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",
         "/api/auth/pair/start": "_p_auth_pair_start",
+        "/api/relay": "_p_relay",
         "/api/auth/pair/redeem": "_p_auth_pair_redeem",
         "/api/prefs": "_p_prefs",
         "/api/auth/login/start": "_p_auth_login_start",
@@ -718,12 +722,12 @@ def main():
             if ids:
                 print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
         threading.Thread(target=_resume_cut_turns, daemon=True).start()
-        # Outbound to the Harman relay (off unless HARMAN_RELAY_URL is set). Never
-        # from a preflight spare: the relay keeps ONE control socket per server,
-        # so a spare would steal the live server's phones.
+        # Outbound to the Harman relay when it is on (the owner's switch, or
+        # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
+        # control socket per server, so a spare would steal the live server's phones.
         from viewer import relay
         if relay.start():
-            print(f"  Relay:     {relay.RELAY_URL} (server {relay.identity()['serverId']})")
+            print(f"  Relay:     {relay.url()} (server {relay.identity()['serverId']})")
     server = PooledHTTPServer((os.environ.get("VIEWER_HOST","0.0.0.0"), PORT), SessionViewerHandler)
 
     print("Agents")

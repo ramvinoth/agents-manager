@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { ChevronRight, History, Plug, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
@@ -25,37 +26,6 @@ function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ clas
       <Icon className="size-3.5 text-muted-foreground" />
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
     </div>
-  )
-}
-
-/** A pill toggle built from a plain button — the web has no Switch primitive. */
-function Toggle({
-  on,
-  disabled,
-  onClick,
-}: {
-  on: boolean
-  disabled?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={on}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:opacity-50",
-        on ? "bg-primary" : "bg-muted"
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 size-5 rounded-full bg-background shadow transition-transform",
-          on ? "translate-x-[18px]" : "translate-x-0.5"
-        )}
-      />
-    </button>
   )
 }
 
@@ -177,7 +147,7 @@ export function ProfilePanel() {
                 {autoHint}
               </div>
             </div>
-            <Toggle
+            <Switch
               on={harman?.automation_enabled === true}
               disabled={!autoKnown || autoBusy}
               onClick={toggleAutomation}
