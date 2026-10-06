@@ -13,7 +13,7 @@ const N = (o: Partial<Note> & { id: number }): Note => ({
 
 // templates: every kind present, journal dated from the injected clock
 const tpl = noteTemplates(new Date("2026-09-26T10:00:00Z"))
-eq("template kinds", tpl.map((t) => t.kind), ["note", "journal", "meeting", "idea", "checklist"])
+eq("template kinds", tpl.map((t) => t.kind), ["note", "journal", "meeting", "idea", "checklist", "discussion"])
 eq("journal dated", tpl[1].body.startsWith("# 2026-09-26"), true)
 eq("blank note", tpl[0].body, "")
 

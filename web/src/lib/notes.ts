@@ -27,11 +27,13 @@ export function noteTemplates(now: Date = new Date()): NoteTemplate[] {
       body: `# Idea\n\n**One line:** \n\n## Why it matters\n\n\n## First step\n\n` },
     { kind: "checklist", label: "Checklist", hint: "Tasks you tick off",
       body: `# Checklist\n\n- [ ] \n- [ ] \n- [ ] \n` },
+    { kind: "discussion", label: "Discussion", hint: "Open a question for agents to debate",
+      body: `# Question\n\n\n## Context\n\n\n## What a good answer looks like\n\n` },
   ]
 }
 
 export const KIND_LABEL: Record<NoteKind, string> =
-  { note: "Note", journal: "Journal", meeting: "Meeting", idea: "Idea", checklist: "Checklist" }
+  { note: "Note", journal: "Journal", meeting: "Meeting", idea: "Idea", checklist: "Checklist", discussion: "Discussion" }
 
 /** The scope of a notes VIEW: a chat's notes, a project's, or (the Notes tab)
  *  every note — unlike the board, notes need no columns, so an unscoped view is

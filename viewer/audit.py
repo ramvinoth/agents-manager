@@ -81,6 +81,8 @@ _ACTIONS = {
     "card_assign": ("Assign card", ("Card", "card_id", "card")),
     "card_delete": ("Delete card", ("Card", "card_id", None)),
     "card_comment": ("Comment on card", ("Card", "card_id", None)),
+    "note_comment": ("Comment on note", ("Note", "note_id", None)),
+    "note_vote": ("Vote on note comment", None),
     "card_dep_add": ("Add card dependency", ("Card", "card_id", None)),
     "card_dep_remove": ("Remove card dependency", ("Card", "card_id", None)),
     "task_done": ("Mark card done", ("Card", "card_id", None)),

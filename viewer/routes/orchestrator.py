@@ -24,7 +24,7 @@ Handlers read req.principal. They never re-authenticate.
 import io
 import zipfile
 
-from viewer import actions, db, notelinks, orglogic
+from viewer import actions, db, discussion, notelinks, orglogic
 
 
 class OrchestratorMixin:
@@ -180,9 +180,14 @@ class OrchestratorMixin:
         session = (req.query.get("session") or [None])[0]
         project = (req.query.get("project") or [None])[0]
         archived = (req.query.get("archived") or ["0"])[0] in ("1", "true")
-        self.send_json({"notes": db.note_list(
-            session_id=session, project_id=int(project) if project else None,
-            archived=archived)})
+        notes = db.note_list(session_id=session, project_id=int(project) if project else None,
+                             archived=archived)
+        # Each row carries its discussion's size and last activity, so a list
+        # can show "3 replies · active 2h ago" without a call per note.
+        stats = db.note_comment_stats()
+        for n in notes:
+            n.update(stats.get(n["id"], {"replies": 0, "last_reply_at": None}))
+        self.send_json({"notes": notes})
 
     def _g_org_note(self, req):
         nid = (req.query.get("id") or [None])[0]
@@ -251,6 +256,38 @@ class OrchestratorMixin:
         if not body.get("note_id"):
             self.send_json({"error": "note_id required"}, status=400); return
         self._org_send(req, "note_delete", body)
+
+    # ── note discussions (the message board under every note) ───────────────
+    @staticmethod
+    def _voter(req):
+        """Who a vote belongs to: an agent votes as its SESSION (two sessions
+        sharing an employee are two voices), a human as their user."""
+        return req.principal.get("session") or req.principal["actor"]
+
+    def _g_org_note_comments(self, req):
+        """A note's discussion as a nested thread (discussion.thread), sorted
+        best (votes) | new | old, with the caller's own vote on each comment."""
+        nid = (req.query.get("note_id") or [None])[0]
+        if not nid:
+            self.send_json({"error": "note_id required"}, status=400); return
+        flat = db.note_comment_list(int(nid), voter=self._voter(req))
+        sort = (req.query.get("sort") or ["best"])[0]
+        self.send_json({"comments": discussion.thread(flat, sort), "count": len(flat)})
+
+    def _p_org_note_comment(self, req):
+        """Comment on a note (or reply to a comment: parent_id). Author and
+        session are stamped from the principal, never from the body."""
+        body = self.read_body() or {}
+        self._org_send(req, "note_comment",
+                       {"note_id": body.get("note_id"), "parent_id": body.get("parent_id"),
+                        "body": body.get("body", ""), "author": req.principal["actor"],
+                        "session_id": req.principal.get("session") or ""})
+
+    def _p_org_note_vote(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "note_vote",
+                       {"comment_id": body.get("comment_id"), "value": body.get("value"),
+                        "voter": self._voter(req)})
 
     def _g_org_card_deps(self, req):
         """One card's dependency edges — the read side of the dual control: the

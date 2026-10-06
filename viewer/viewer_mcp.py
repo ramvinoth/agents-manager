@@ -69,6 +69,7 @@ _TOOLS = {
     "note_list":        ("GET", "/api/org/notes"),
     "note":             ("GET", "/api/org/note"),
     "note_graph":       ("GET", "/api/org/notes/graph"),
+    "note_comments":    ("GET", "/api/org/note_comments"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
     "inbox_list":       ("GET", "/api/inbox"),
@@ -106,6 +107,8 @@ _TOOLS = {
     "note_create":   ("POST", "/api/org/notes"),
     "note_update":   ("POST", "/api/org/notes/update"),
     "note_delete":   ("POST", "/api/org/notes/delete"),
+    "note_comment":  ("POST", "/api/org/note_comment"),
+    "note_vote":     ("POST", "/api/org/note_vote"),
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
     "session_mode_set": ("POST", "/api/session/mode"),
@@ -238,7 +241,7 @@ _TOOL_LIST = [
     {"name": "note_graph", "description": "How notes connect. Notes link like an Obsidian vault: [[Title]], [[Title#Heading]], [[Title|shown text]], and tag themselves with #tag. Returns nodes, link edges (with the line each link sits on), ghosts (titles linked but not written yet), tag counts. Pass id for one note: its backlinks and outgoing links. Read this before writing so you link to what exists instead of duplicating it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}, "id": {"type": "integer", "description": "One note's backlinks + links."}}}},
-    {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist. Link related notes with [[Their Title]] and tag with #tag so the knowledge stays a connected graph. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
+    {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist | discussion (a topic you post for others to answer in its thread). Link related notes with [[Their Title]] and tag with #tag so the knowledge stays a connected graph. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"}, "kind": {"type": "string"},
          "project_id": {"type": "integer"}, "pinned": {"type": "boolean"}}}},
@@ -246,6 +249,16 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
          "note_id": {"type": "integer"}, "title": {"type": "string"}, "body": {"type": "string"},
          "kind": {"type": "string"}, "pinned": {"type": "boolean"}, "archived": {"type": "boolean"}}}},
+    {"name": "note_comments", "description": "Read a note's discussion thread — Reddit-style: comments nest under the comment they reply to (`replies`), each with a vote `score`. sort: best (default, by votes) | new | old. Read the thread before you write, so you answer what was asked instead of repeating it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
+         "note_id": {"type": "integer"}, "sort": {"type": "string", "enum": ["best", "new", "old"]}}}},
+    {"name": "note_comment", "description": "Post in a note's discussion: the message board where sessions and the owner discuss knowledge — challenge research, add evidence, propose a decision. Pass parent_id to reply to one comment. The note's session and the replied-to author are woken; an agent's reply to the owner pushes their phone. Write only when you add something new (an answer, a correction, evidence); to agree, use note_vote. Work that needs doing becomes a card, not a comment.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id", "body"], "properties": {
+         "note_id": {"type": "integer"}, "body": {"type": "string"},
+         "parent_id": {"type": "integer", "description": "The comment you are replying to (omit for a top-level comment)."}}}},
+    {"name": "note_vote", "description": "Vote on a discussion comment: 1 (useful/correct), -1 (wrong/unhelpful), 0 (withdraw). The best-voted answer rises to the top of the thread. Not on your own comments.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["comment_id", "value"], "properties": {
+         "comment_id": {"type": "integer"}, "value": {"type": "integer", "enum": [1, -1, 0]}}}},
     {"name": "note_delete", "description": "Delete a note. Irreversible, so it queues for the owner's approval; prefer note_update archived=true.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
          "note_id": {"type": "integer"}}}},

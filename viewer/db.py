@@ -257,6 +257,30 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
             CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
+            -- A note's discussion (the message board): Reddit-style threaded
+            -- replies under any note — how agents and the owner talk ABOUT a
+            -- piece of knowledge. `parent_id` NULL = top-level comment. `author`
+            -- is the resolved principal actor (as on card_comments);
+            -- `session_id` is the writing session ('' for a human) — the address
+            -- a reply to this comment wakes.
+            CREATE TABLE IF NOT EXISTS note_comments (
+              id         SERIAL PRIMARY KEY,
+              note_id    INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+              parent_id  INTEGER REFERENCES note_comments(id) ON DELETE CASCADE,
+              author     TEXT NOT NULL DEFAULT '',
+              session_id TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL,
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS note_comments_note_idx ON note_comments(note_id);
+            -- One vote per voter per comment (+1 / -1); the score is their sum.
+            -- `voter` is the session id for an agent, the actor for a human.
+            CREATE TABLE IF NOT EXISTS note_votes (
+              comment_id INTEGER NOT NULL REFERENCES note_comments(id) ON DELETE CASCADE,
+              voter      TEXT NOT NULL,
+              value      SMALLINT NOT NULL,
+              PRIMARY KEY (comment_id, voter)
+            );
             -- Inbox: the owner's and the agents' message ledger. A message is
             -- owned by a session (session_id = the chat it was written in or
             -- addressed to) and lives and dies with that chat exactly like a
@@ -509,7 +533,7 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — employee_list, project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/assign/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete; loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set; inbox — inbox_list, inbox_send.
+Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — employee_list, project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/assign/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set; inbox — inbox_list, inbox_send.
 
 Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
 
@@ -535,6 +559,14 @@ Full design: docs_read ORCHESTRATOR_MCP.md (§8A is the shipped tool list); docs
 ## Work discipline (board = the durable ledger, notes = the durable knowledge)
 In-conversation todos are scratch for the current task only. Work that outlives this conversation — parked or deferred items, follow-ups, work handed to another session or employee — becomes a board card via card_create before the session ends. When asked what work is pending, answer from the board (card_list), not from memory. If your card cannot move until another card is done, record that with card_dep_add instead of waiting silently — the owner sees the same edge. Knowledge that outlives the conversation — research, a decision and why it was taken, meeting notes — goes in a note (note_create), not in chat text; read note_list before researching what a peer may already have written. A repeatable PROCEDURE a teammate could follow (how to deploy X, how to diagnose Y) is a skill, not a note: skill_list shows what the team already knows (each skill is invocable as /<name>), skill_read gives the full text, and skill_propose adds what you learned so every session inherits it. The owner sees the same board and notes; nothing should live only in a session's head.$preamble$::text))
               ON CONFLICT (key) DO NOTHING;
+            -- Note discussions shipped after installs seeded their preamble:
+            -- name the tools in the notes line. A targeted, idempotent edit —
+            -- an operator-rewritten preamble without that line is left alone.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$notes — note_list, note, note_create/update/delete;$o$,
+                $n$notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree);$n$))
+              WHERE key = 'system_preamble'
+                AND position('note_comments' in value #>> '{}') = 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same
@@ -1329,7 +1361,7 @@ def card_delete(card_id):
 
 # Notes (the ONLY note store) -------------------------------------------------
 
-NOTE_KINDS = ("note", "journal", "meeting", "idea", "checklist")
+NOTE_KINDS = ("note", "journal", "meeting", "idea", "checklist", "discussion")
 
 
 def note_create(title="", body="", kind="note", project_id=None, session_id=None,
@@ -1401,10 +1433,70 @@ def notes_archive_for_session(session_id, archived):
 
 def notes_delete_for_session(session_id):
     """A deleted chat takes its notes with it (same lifecycle as its loops and
-    meta). Returns how many notes were removed."""
+    meta), and its comments on OTHER notes stop being a wake address (their
+    text stays — it is part of someone else's thread). Returns how many notes
+    were removed."""
     with _db() as cur:
+        cur.execute("UPDATE note_comments SET session_id = '' WHERE session_id = %s",
+                    (session_id,))
         cur.execute("DELETE FROM notes WHERE session_id = %s", (session_id,))
         return cur.rowcount
+
+
+# Note discussions (the message board under every note) ----------------------
+
+def note_comment_add(note_id, parent_id, author, session_id, body):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO note_comments(note_id, parent_id, author, session_id, body, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            (note_id, parent_id, author, session_id or "", body, _now()))
+        return {**dict(cur.fetchone()), "score": 0, "my_vote": 0}
+
+
+def note_comment_get(comment_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM note_comments WHERE id = %s", (comment_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_comment_list(note_id, voter=""):
+    """A note's comments, flat in posting order, each with its vote `score` and
+    `voter`'s own vote (`my_vote`). discussion.thread() shapes them."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, COALESCE(SUM(v.value), 0)::int AS score, "
+            "COALESCE(MAX(CASE WHEN v.voter = %s THEN v.value END), 0)::int AS my_vote "
+            "FROM note_comments c LEFT JOIN note_votes v ON v.comment_id = c.id "
+            "WHERE c.note_id = %s GROUP BY c.id ORDER BY c.created_at, c.id",
+            (voter or "", note_id))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def note_vote_set(comment_id, voter, value):
+    """Cast (+1/-1) or withdraw (0) one voter's vote. Returns the new score."""
+    with _db() as cur:
+        if value:
+            cur.execute("INSERT INTO note_votes(comment_id, voter, value) VALUES(%s,%s,%s) "
+                        "ON CONFLICT (comment_id, voter) DO UPDATE SET value = EXCLUDED.value",
+                        (comment_id, voter, value))
+        else:
+            cur.execute("DELETE FROM note_votes WHERE comment_id = %s AND voter = %s",
+                        (comment_id, voter))
+        cur.execute("SELECT COALESCE(SUM(value), 0)::int AS score FROM note_votes "
+                    "WHERE comment_id = %s", (comment_id,))
+        return cur.fetchone()["score"]
+
+
+def note_comment_stats():
+    """{note_id: {"replies": n, "last_reply_at": t}} — the list rows'
+    "3 replies · active 2h ago"."""
+    with _db() as cur:
+        cur.execute("SELECT note_id, COUNT(*) AS n, MAX(created_at) AS last_at "
+                    "FROM note_comments GROUP BY note_id")
+        return {r["note_id"]: {"replies": r["n"], "last_reply_at": r["last_at"]}
+                for r in cur.fetchall()}
 
 
 # Inbox messages (the owner's and the agents' message ledger) ----------------

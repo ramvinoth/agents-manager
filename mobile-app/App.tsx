@@ -89,6 +89,11 @@ async function navToTarget(data: Record<string, unknown>): Promise<void> {
     navigationRef.navigate("CardDetail", { id: card })
     return
   }
+  const note = Number(data.note)
+  if (Number.isInteger(note) && note > 0) {
+    navigationRef.navigate("NoteEditor", { id: note })
+    return
+  }
   const session = typeof data.session === "string" ? data.session : ""
   const host = typeof data.host === "string" ? data.host : "local"
   if (!session) return
@@ -106,7 +111,7 @@ async function navToTarget(data: Record<string, unknown>): Promise<void> {
 // Handle a tap: if the tree is ready, navigate now; otherwise stash it so
 // flushPendingNav can complete the jump once the container mounts.
 function openFromNotification(data: Record<string, unknown>): void {
-  if (!data.card && !data.session) return
+  if (!data.card && !data.note && !data.session) return
   if (navigationRef.isReady()) void navToTarget(data)
   else pendingNav = data
 }

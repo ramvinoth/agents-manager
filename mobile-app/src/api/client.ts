@@ -185,8 +185,12 @@ export type Approval = { id: number; kind: string; summary: string; detail: unkn
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 // A note: the org's knowledge ledger next to the board (server: viewer/db notes).
 // `kind` is its template; `archived` follows the owning chat's archive flag.
-export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist"
-export type Note = { id: number; title: string; body: string; kind: NoteKind; project_id: number | null; session_id: string | null; pinned: boolean; archived: boolean; created_by: string; created_at: number; updated_at: number }
+export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"
+// replies / last_reply_at: the discussion thread's stats, on the list read only.
+export type Note = { id: number; title: string; body: string; kind: NoteKind; project_id: number | null; session_id: string | null; pinned: boolean; archived: boolean; created_by: string; created_at: number; updated_at: number; replies?: number; last_reply_at?: number | null }
+// One comment of a note's discussion, nested + sorted by the server (viewer/discussion.thread).
+export type NoteComment = { id: number; note_id: number; parent_id: number | null; author: string; session_id: string; body: string; created_at: number; score: number; my_vote: -1 | 0 | 1; replies: NoteComment[] }
+export type NoteCommentSort = "best" | "new" | "old"
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 // ---- inbox (the channel: you ↔ owner ↔ peer sessions) ----
 // A row of the message ledger. `kind` is "message" for a free message, or a
@@ -799,6 +803,13 @@ export const api = {
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
   // ---- notes (the knowledge ledger; scoped like cards) ----
+  orgNoteComments: (noteId: number, sort: NoteCommentSort = "best") =>
+    req<{ comments: NoteComment[]; count: number }>("GET", `/api/org/note_comments?note_id=${noteId}&sort=${sort}`),
+  orgNoteComment: (body: { note_id: number; body: string; parent_id?: number | null }) =>
+    req<NoteComment>("POST", "/api/org/note_comment", body),
+  // value 0 withdraws the reader's vote.
+  orgNoteVote: (commentId: number, value: -1 | 0 | 1) =>
+    req<{ comment_id: number; my_vote: number; score: number }>("POST", "/api/org/note_vote", { comment_id: commentId, value }),
   orgNotes: (filter: NoteFilter = {}) => {
     const p = new URLSearchParams()
     if (filter.session !== undefined) p.set("session", filter.session)

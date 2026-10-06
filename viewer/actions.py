@@ -160,6 +160,47 @@ def _note_delete(a):
     return {"deleted": bool(db.note_delete(a.get("note_id")))}
 
 
+def _note_comment(a):
+    """Post a comment in a note's discussion, optionally as a reply. Author and
+    session are stamped by the route from the resolved principal (never the
+    body), as on card comments. A reply must answer a comment of the SAME
+    note — a cross-note parent would graft one thread into another."""
+    note = db.note_get(a.get("note_id"))
+    if not note:
+        return {"error": "not found"}
+    body = (a.get("body") or "").strip()
+    if not body:
+        return {"error": "empty comment"}
+    parent_id = a.get("parent_id") or None
+    if parent_id:
+        parent = db.note_comment_get(parent_id)
+        if not parent or parent["note_id"] != note["id"]:
+            return {"error": "parent comment not in this note"}
+    return db.note_comment_add(note["id"], parent_id, a.get("author", ""),
+                               a.get("session_id") or "", body)
+
+
+def _note_vote(a):
+    """Up (+1), down (-1) or withdraw (0) the caller's vote on a comment. One
+    vote per voter (route-stamped: the session for an agent, the user for a
+    human). Voting on one's own comment is refused — a score is what OTHERS
+    think of it."""
+    try:
+        value = int(a.get("value", 0))
+    except (TypeError, ValueError):
+        value = 2
+    if value not in (-1, 0, 1):
+        return {"error": "value must be 1, -1 or 0"}
+    comment = db.note_comment_get(a.get("comment_id"))
+    if not comment:
+        return {"error": "not found"}
+    voter = a.get("voter") or ""
+    if voter in (comment.get("author"), comment.get("session_id") or None):
+        return {"error": "cannot vote on your own comment"}
+    return {"comment_id": comment["id"], "my_vote": value,
+            "score": db.note_vote_set(comment["id"], voter, value)}
+
+
 def _task_done(a, *, by_agent=False):
     """Move a card to the Done column of its own project's board.
 
@@ -504,6 +545,8 @@ ACTIONS = {
     "note_update": _note_update,
     "note_delete": _note_delete,
     "card_comment": _card_comment,
+    "note_comment": _note_comment,
+    "note_vote": _note_vote,
     "inbox_send": _inbox_send,
     "card_dep_add": _card_dep_add,
     "card_dep_remove": _card_dep_remove,
@@ -724,4 +767,7 @@ def execute(it, human_role, session_level, acting_session=""):
     db.audit_append(actor, action, it, "done")
     if not (payload or {}).get("error"):
         _board_followup(action, args, actor, session_level, acting_session, payload)
+        if action == "note_comment":
+            from viewer import discussion
+            discussion.followup(payload, actor, bool(session_level))
     return payload, 200

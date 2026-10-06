@@ -55,6 +55,9 @@ class FakeDB:
     def session_meta_get(self, sid):
         return self.meta.get(sid)
 
+    def note_comment_stats(self):
+        return {}
+
 
 @pytest.fixture
 def fdb(monkeypatch):

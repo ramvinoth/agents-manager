@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils"
 import { TONE_CLASS, columnTone } from "@/lib/tone"
 import { api } from "@/lib/api"
 import { fmtAgo } from "@/lib/format"
-import { decisionActions, formatActor, nextPosition, type ActorKind, type DecisionAction } from "@/lib/board"
+import { decisionActions, formatActor, nextPosition, type DecisionAction } from "@/lib/board"
+import { ActorName } from "@/components/ActorName"
 import type { BoardColumn, Card, CardComment, CardDep, Employee } from "@/lib/types"
 
 const UNASSIGNED = "__unassigned__"
@@ -340,15 +341,6 @@ function DecisionBar({ actions, columnName, sessionTitle, busy, onPick }: {
         </Button>
       ))}
     </div>
-  )
-}
-
-function ActorName({ name, kind }: { name: string; kind: ActorKind }) {
-  return (
-    <span className="inline-flex items-center gap-1 font-medium text-foreground">
-      {kind === "you" ? "you" : name}
-      {kind === "agent" && <span className="rounded bg-primary/10 px-1 text-[10px] font-medium text-primary">agent</span>}
-    </span>
   )
 }
 

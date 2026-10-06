@@ -232,6 +232,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
                 ) : null}
                 <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 4 }}>
                   {KIND_LABEL[n.kind] || "Note"} · {who.kind === "you" ? "you" : who.kind === "agent" ? `agent ${who.name}` : who.name}
+                  {n.replies ? ` · ${n.replies} repl${n.replies === 1 ? "y" : "ies"}` : ""}
                 </Text>
               </TouchableOpacity>
             )

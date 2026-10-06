@@ -52,7 +52,6 @@ def schedule_wake(card, event, origin):
     if not sid or not (event or "").strip():
         return None
     lid = wake_id(card["id"])
-    now = time.time()
     prompt = (
         f"[board-watch] Card {card['id']} \"{card.get('title', '')}\" — {event.strip()}. "
         "Read the card and its comments (card_comments), then act on what it says: "
@@ -60,8 +59,18 @@ def schedule_wake(card, event, origin):
         "Declined means stop that work; a comment is a message from the person who "
         "manages the board. Report back by commenting on the card."
     )
+    schedule_once(lid, sid, prompt, origin)
+    return lid
+
+
+def schedule_once(lid, sid, prompt, origin):
+    """Queue (or refresh) the coalesced one-shot `lid` that resumes session
+    `sid` with `prompt`. The ONE wake mechanism for every "someone outside
+    this session did something it must see" event — card events here, note
+    discussions in viewer.discussion."""
+    now = time.time()
     if db.loop_get(lid):
-        # A wake is already pending for this card: replace its payload and
+        # A wake is already pending for this target: replace its payload and
         # re-arm. Never stack — the session reads current state on pickup.
         # `origin` is patched too: the mode filter acts on the LATEST cause, so
         # a coalesced event must never keep a stale one (a human's comment
@@ -76,7 +85,6 @@ def schedule_wake(card, event, origin):
             "nextRun": now + _WAKE_DELAY, "runs": 0, "created": now,
             "model": "", "provider": "", "enabled": True, "origin": origin,
         })
-    return lid
 
 
 def cancel_wake(card_id):

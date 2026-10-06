@@ -3,7 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
@@ -262,6 +262,17 @@ class ApiClient {
   /** URL of the project's notes as an Obsidian vault (.zip of .md files). */
   orgNotesExportUrl(project: number): string {
     return `/api/org/notes/export?project=${project}`
+  }
+  /** A note's discussion thread, nested and sorted server-side. */
+  orgNoteComments(noteId: number, sort: NoteCommentSort = "best") {
+    return this.getJSON<{ comments: NoteComment[]; count: number }>(`/api/org/note_comments?note_id=${noteId}&sort=${sort}`)
+  }
+  orgNoteComment(body: { note_id: number; body: string; parent_id?: number | null }) {
+    return this.postJSON<NoteComment>("/api/org/note_comment", body)
+  }
+  /** value: 1 up, -1 down, 0 withdraws the reader's vote. */
+  orgNoteVote(commentId: number, value: -1 | 0 | 1) {
+    return this.postJSON<{ comment_id: number; my_vote: number; score: number }>("/api/org/note_vote", { comment_id: commentId, value })
   }
   // `note_delete` is Red like card_delete: an agent's delete queues for the owner.
   orgDeleteNote(noteId: number) {

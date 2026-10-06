@@ -744,8 +744,8 @@ same list, and `docs_read system-status` shows the live posture.
 
 | Tier | Tools |
 |---|---|
-| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list` |
-| **Act on the board** (Green at ic) | `card_create/move/update/comment`, `card_dep_add/remove`, `task_done`, `note_create/update`, `session_seen`, `inbox_send`, `skill_propose` (overlap → `skill_promote`, Red) |
+| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `note_graph`, `note_comments`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list` |
+| **Act on the board** (Green at ic) | `card_create/move/update/comment`, `card_dep_add/remove`, `task_done`, `note_create/update`, `note_comment`, `note_vote`, `session_seen`, `inbox_send`, `skill_propose` (overlap → `skill_promote`, Red) |
 | **Shape work** (lead) | `card_assign`, `loop_create/update`, `loop_delete` (Red) |
 | **Org control** (manager) | `loop_control_set` |
 | **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote` |

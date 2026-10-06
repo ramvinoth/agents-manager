@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Archive, ArchiveRestore, ArrowLeft, Download, Eye, Loader2, Network, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, ArrowLeft, Download, Eye, Loader2, MessageSquare, Network, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,6 +12,7 @@ import { KIND_LABEL, displayTitle, noteTemplates, orderNotes, previewLine, searc
 import { Markdown, type NoteLinkHandlers } from "@/components/Markdown"
 import { completeLink, filterByTags, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "@/lib/noteLinks"
 import { NoteGraphView } from "./NoteGraphView"
+import { NoteThread } from "./NoteThread"
 import { isQueued } from "@/lib/types"
 import type { Note, NoteKind, OrgProject } from "@/lib/types"
 
@@ -117,7 +118,8 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
   }), [graph, project, openId, archived, notes])
 
   function patchLocal(n: Note) {
-    setNotes((all) => all.map((x) => (x.id === n.id ? n : x)))
+    // A write returns the bare row; the thread stats ride only on the list read.
+    setNotes((all) => all.map((x) => (x.id === n.id ? { ...x, ...n } : x)))
   }
 
   async function create(kind: NoteKind, body: string, title = "") {
@@ -246,7 +248,10 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
                       <span className="text-xs text-muted-foreground">{fmtAgo(n.updated_at)}</span>
                     </div>
                     {previewLine(n) && <div className="truncate text-xs text-muted-foreground">{previewLine(n)}</div>}
-                    <div className="text-[11px] text-muted-foreground">{KIND_LABEL[n.kind]} · {n.created_by.replace(/^(user|session):/, "")}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {KIND_LABEL[n.kind]} · {n.created_by.replace(/^(user|session):/, "")}
+                      {!!n.replies && <> · <MessageSquare className="inline size-3" /> {n.replies}</>}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -267,6 +272,7 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
                   neighbourhood={neighbours(graph, open.id)}
                   onOpen={(id) => go(id)}
                   onBack={trail.length ? back : undefined}
+                  onReplies={(n) => setNotes((ns) => ns.map((x) => (x.id === open.id ? { ...x, replies: n } : x)))}
                 />
               ) : (
                 <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -320,6 +326,7 @@ function NoteEditor({
   neighbourhood,
   onOpen,
   onBack,
+  onReplies,
 }: {
   note: Note
   onChange: (f: { title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) => Promise<Note & { relinked?: number }>
@@ -331,6 +338,7 @@ function NoteEditor({
   neighbourhood: ReturnType<typeof neighbours>
   onOpen: (id: number) => void
   onBack?: () => void
+  onReplies: (n: number) => void
 }) {
   const [title, setTitle] = useState(note.title)
   const [body, setBody] = useState(note.body)
@@ -505,6 +513,7 @@ function NoteEditor({
           )}
         </div>
       )}
+      <NoteThread noteId={note.id} onCount={onReplies} />
     </div>
   )
 }

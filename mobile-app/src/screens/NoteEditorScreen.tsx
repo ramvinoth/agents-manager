@@ -9,6 +9,7 @@ import { formatActor } from "../lib/board"
 import { setToken, username } from "../state/config"
 import Icon from "../components/Icon"
 import Markdown, { type NoteLinkHandlers } from "../components/Markdown"
+import NoteThread from "../components/NoteThread"
 import { completeLink, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "../lib/noteLinks"
 import { useTheme } from "../lib/useTheme"
 
@@ -29,7 +30,8 @@ const SAVE_DEBOUNCE_MS = 700
  * Notes link like an Obsidian vault. While reading, a [[link]] opens its note
  * (pushed, so Back retraces the trail) or — dashed, not written yet — creates
  * it; a #tag opens the notes carrying it. While writing, `[[` offers titles.
- * Under the body: the notes that link here, and what this one links to.
+ * Under the body: the notes that link here, what this one links to, and the
+ * note's discussion thread (components/NoteThread).
  */
 export default function NoteEditorScreen({ route, navigation }: Props) {
   const t = useTheme()
@@ -290,6 +292,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             ) : null}
           </View>
         ) : null}
+        <NoteThread noteId={note.id} />
       </ScrollView>
     </KeyboardAvoidingView>
   )

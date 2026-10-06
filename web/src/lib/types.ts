@@ -420,7 +420,7 @@ export type InboxFilter = { session?: string; project?: number; kind?: InboxKind
 export type CardFilter = { session?: string; project?: number; assignee?: number }
 /** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared
  *  by the owner and every agent session's note_* MCP tools. */
-export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist"
+export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"
 export interface Note {
   id: number
   title: string
@@ -433,7 +433,25 @@ export interface Note {
   created_by: string
   created_at: number
   updated_at: number
+  /** Discussion thread size and last activity (viewer/routes/orchestrator _g_org_notes). */
+  replies?: number
+  last_reply_at?: number | null
 }
+/** One comment in a note's discussion thread, nested by the server
+ *  (viewer/discussion.thread): `score` is the vote sum, `my_vote` the reader's. */
+export interface NoteComment {
+  id: number
+  note_id: number
+  parent_id: number | null
+  author: string
+  session_id: string
+  body: string
+  created_at: number
+  score: number
+  my_vote: -1 | 0 | 1
+  replies: NoteComment[]
+}
+export type NoteCommentSort = "best" | "new" | "old"
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
