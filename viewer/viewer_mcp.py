@@ -267,7 +267,7 @@ _TOOL_LIST = [
      "description": "The owner's connected cloud drives (Google Drive, Dropbox, OneDrive) — id, label, kind, whether it is authorized. Pass a drive id as `drive` to the fs_* tools to work in that drive; every session on this server sees the same drives.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "integrations_list",
-     "description": "What the owner connected in Integrations: per provider (Google, Dropbox, Microsoft) its services (Drive, Gmail, Calendar, …) and each connected account with every service's state — on (agents may use it), off (owner switched it off), grant (not yet consented). If a tool you need is not 'on', ask the owner to turn it on in Integrations rather than working around it.",
+     "description": "What you may use right now: each connected service (Drive, Gmail, Calendar, Dropbox, OneDrive) per account with the operations you may do (`may`), the ones only the owner can turn on (`ask_owner`), the tools that reach it, and whether its sign-in expired; plus this machine's folders. Your system prompt already carries this as of the start of the run — call it to re-check. If what you need is not there, ask the owner to connect or turn it on in Integrations rather than working around it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "gmail_search",
      "description": "Search the owner's Gmail with Gmail search syntax (from:, subject:, newer_than:7d, is:unread, …; default in:inbox). Returns id, thread, from, subject, date, snippet, unread for up to `limit` (≤50) messages. Read one in full with gmail_read.",

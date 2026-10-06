@@ -207,6 +207,13 @@ def test_full_flow_authorizes_and_persists(env):
     assert form["redirect_uri"] == CALLBACK
 
 
+def test_consent_clears_an_expired_sign_in(env):
+    env["db"].rows["drive1"]["config"]["expired"] = 1
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
+    _redirect(pid, code="CODE-1", good_state=True)
+    assert "expired" not in env["db"].upserts[-1][1]["config"]
+
+
 def test_denied_consent_is_failed(env):
     pid = drive_oauth.start("drive1", ORIGIN)["pending"]
     page = _redirect(pid, error="access_denied", good_state=True)

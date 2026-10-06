@@ -66,21 +66,24 @@ export type IntegrationService = { id: string; label: string; kind: string; agen
 export type IntegrationConnection = {
   id: string
   account: string
-  status: string
   authorized: boolean
+  /** The vendor refused the refresh token; only Reconnect (a new consent) revives it. */
+  expired: boolean
   services: Record<string, ServiceState>
   /** Per service, per op: may AGENTS do it here ("grant" = needs extra consent). */
   ops: Record<string, Record<string, ServiceState>>
   /** The folder a files connection is narrowed to ("/" = the whole account). */
   root: string
 }
+/** One step of a provider's client setup; `redirect` shows the copyable redirect URI under it. */
+export type SetupStep = { text: string; redirect: boolean; links: { label: string; url: string }[] }
 export type IntegrationProvider = {
   id: string
   label: string
   /** A PKCE public client — no secret is issued or needed. */
   public: boolean
-  /** Where the owner creates the OAuth client. */
-  console: string
+  /** The vendor-console checklist for creating the OAuth client, in order. */
+  setup: SetupStep[]
   client: { client_id: string; has_secret: boolean; configured: boolean }
   services: IntegrationService[]
   connections: IntegrationConnection[]

@@ -51,9 +51,27 @@ Vendor facts (VERIFIED 2026-10-05 against developers.google.com):
   - calendar.events lets an app read and write events on every calendar the
     user can access (events.list/insert/patch/delete all accept it);
     events.patch/delete take sendUpdates=all|externalOnly|none.
+  - An External app left in "Testing" gets refresh tokens that expire in 7
+    days (unless it asks only for name/email/profile) — so setup tells the
+    owner to publish it; every agent integration would otherwise silently
+    die a week after connecting.
+  - Enable-API links: console.cloud.google.com/flows/enableapi?apiid=<api>
+    (drive, gmail, calendar-json .googleapis.com) — from Google's quickstarts.
   - Google Keep's API is Workspace-only (domain-wide delegation or an
     admin-approved client); a personal Google account cannot grant it.
+Microsoft (VERIFIED 2026-10-06, learn.microsoft.com quickstart-register-app):
+"Personal accounts only" is the account type the /consumers endpoints serve.
+HYPOTHESIS (not exercised end to end): the code is redeemed server-side with
+PKCE and no secret, which needs the "Mobile and desktop" platform — a "Web"
+platform demands a secret and an "SPA" one refuses non-browser redemption.
+
+Setup. Each provider carries `setup`: the ordered steps the owner follows in
+the vendor's console, with deep links; a step marked `redirect` is where the
+page shows this deployment's callback address. Clients render the list — no
+client spells a vendor console step.
 """
+
+_ENABLE = "https://console.cloud.google.com/flows/enableapi?apiid="
 
 PROVIDERS = {
     "google": {
@@ -66,7 +84,20 @@ PROVIDERS = {
         "extra": {"access_type": "offline", "prompt": "consent",
                   "include_granted_scopes": "true"},
         "public": False,
-        "console": "https://console.cloud.google.com/apis/credentials",
+        "setup": (
+            {"text": "Create an OAuth client of type Web application (any Google Cloud project).",
+             "links": (("Credentials", "https://console.cloud.google.com/apis/credentials"),)},
+            {"text": "Under Authorized redirect URIs, add this address:", "redirect": True},
+            {"text": "Enable the APIs for the services you want.",
+             "links": (("Drive", _ENABLE + "drive.googleapis.com"),
+                       ("Gmail", _ENABLE + "gmail.googleapis.com"),
+                       ("Calendar", _ENABLE + "calendar-json.googleapis.com"))},
+            {"text": "Under Audience, choose External and press Publish app. While an app is in "
+                     "Testing, Google ends every sign-in after 7 days. When you connect, Google warns "
+                     "the app is unverified: choose Advanced, then continue.",
+             "links": (("Audience", "https://console.cloud.google.com/auth/audience"),)},
+            {"text": "Paste the client ID and secret below."},
+        ),
     },
     "dropbox": {
         "label": "Dropbox",
@@ -75,7 +106,14 @@ PROVIDERS = {
         "base_scopes": ("account_info.read",),
         "extra": {"token_access_type": "offline"},
         "public": True,
-        "console": "https://www.dropbox.com/developers/apps",
+        "setup": (
+            {"text": "Create an app with Scoped access and Full Dropbox.",
+             "links": (("App console", "https://www.dropbox.com/developers/apps"),)},
+            {"text": "On its Settings tab, add this redirect URI:", "redirect": True},
+            {"text": "On its Permissions tab, tick files.metadata.read, files.content.read and "
+                     "files.content.write, then Submit."},
+            {"text": "Paste the App key below. Dropbox issues no secret for this kind of sign-in."},
+        ),
     },
     "onedrive": {
         "label": "Microsoft",
@@ -84,7 +122,13 @@ PROVIDERS = {
         "base_scopes": ("offline_access", "User.Read"),
         "extra": {},
         "public": True,
-        "console": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps",
+        "setup": (
+            {"text": "Register an app; under Supported account types choose Personal accounts only.",
+             "links": (("App registrations", "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps"),)},
+            {"text": "Under Authentication, add a Mobile and desktop applications platform with this "
+                     "redirect URI:", "redirect": True},
+            {"text": "Paste the Application (client) ID below. No secret is needed."},
+        ),
     },
 }
 
@@ -307,6 +351,13 @@ def _pick(conns, sid, connection_id):
     return on[0]
 
 
+def expired(conn):
+    """The vendor refused this account's refresh token (revoked, password
+    change, a Google app left in Testing) — only a new consent revives it.
+    drives.OAuthAccount records it; a later good refresh or consent clears it."""
+    return bool((conn.get("config") or {}).get("expired"))
+
+
 def account_of(conn):
     return (conn.get("config") or {}).get("account") or conn.get("label") or conn["id"]
 
@@ -323,7 +374,9 @@ def view(conns, clients, redirect_uri):
             "id": pid,
             "label": p["label"],
             "public": p["public"],
-            "console": p["console"],
+            "setup": [{"text": st["text"], "redirect": bool(st.get("redirect")),
+                       "links": [{"label": l, "url": u} for l, u in st.get("links", ())]}
+                      for st in p["setup"]],
             "client": {
                 "client_id": c.get("client_id") or "",
                 "has_secret": bool(c.get("client_secret")),
@@ -337,8 +390,8 @@ def view(conns, clients, redirect_uri):
             "connections": [{
                 "id": conn["id"],
                 "account": (conn.get("config") or {}).get("account") or "",
-                "status": conn.get("status") or "active",
                 "authorized": bool(granted(conn)),
+                "expired": expired(conn),
                 "services": {s["id"]: state(conn, s["id"]) for s in svcs},
                 "ops": {s["id"]: {o: op_state(conn, s["id"], o) for o in s["ops"]}
                         for s in svcs if s["available"]},
@@ -346,6 +399,66 @@ def view(conns, clients, redirect_uri):
             } for conn in conns if conn.get("kind") == pid and not conn.get("hidden")],
         })
     return {"providers": out, "redirect_uri": redirect_uri}
+
+
+def agent_view(conns, rules):
+    """What an AGENT needs to know: one entry per usable service per account,
+    with the operations it may do there. No client ids, setup steps or
+    redirect URIs — those are the owner's page (view())."""
+    out = []
+    for conn in conns:
+        if conn.get("hidden") or conn.get("kind") not in PROVIDERS:
+            continue
+        for s in services_of(conn["kind"]):
+            if not s["available"] or state(conn, s["id"]) != "on":
+                continue
+            ops = {o: op_state(conn, s["id"], o) for o in s["ops"]}
+            entry = {"service": s["id"], "label": s["label"], "account": account_of(conn),
+                     "tools": KIND_TOOLS.get(s["kind"], ""),
+                     "connection": conn["id"],
+                     "may": [o for o, st in ops.items() if st == "on"],
+                     "ask_owner": [o for o, st in ops.items() if st != "on"]}
+            if expired(conn):
+                entry["expired"] = "sign-in expired — the owner reconnects it in Integrations"
+            if s["kind"] == "files":
+                entry["drive"] = conn["id"]
+                entry["root"] = (conn.get("config") or {}).get("root") or "/"
+            out.append(entry)
+    have = {e["service"] for e in out}
+    return {"services": out,
+            "not_connected": [s["label"] for s in SERVICES
+                              if s["available"] and s["id"] not in have],
+            "this_machine": {"folders": rules["roots"], "may": rules["ops"]}}
+
+
+# The MCP tools that reach each kind of service (viewer_mcp.py), so the
+# summary tells an agent how to use what is connected, not just that it is.
+KIND_TOOLS = {"files": "fs_list/fs_read/fs_write/fs_mkdir with drive=",
+              "mail": "gmail_search/gmail_read/gmail_draft",
+              "calendar": "calendar_events/calendar_create/calendar_update/calendar_delete"}
+
+
+def agent_summary(av):
+    """agent_view() as the few lines every session's system prompt carries,
+    so an agent knows what it can use without a tool call."""
+    lines = []
+    for e in av["services"]:
+        bits = ["%s (%s): may %s" % (e["label"], e["account"], ", ".join(e["may"]) or "nothing")]
+        if e["ask_owner"]:
+            bits.append("not %s" % ", ".join(e["ask_owner"]))
+        if e["tools"]:
+            bits.append("tools " + e["tools"] + (e["drive"] if "drive" in e else ""))
+        if e.get("expired"):
+            bits.append("SIGN-IN EXPIRED")
+        lines.append("- " + "; ".join(bits))
+    m = av["this_machine"]
+    lines.append("- This machine: %s in %s (fs_* tools, no drive=)" % (", ".join(m["may"]) or "nothing",
+                                                ", ".join(m["folders"]) or "no folder"))
+    if av["not_connected"]:
+        lines.append("- Not connected (ask the owner to add it in Integrations): "
+                     + ", ".join(av["not_connected"]))
+    return ("Integrations connected right now (the owner manages them in Integrations; "
+            "integrations_list re-checks):\n" + "\n".join(lines))
 
 
 # --- local disk ------------------------------------------------------------

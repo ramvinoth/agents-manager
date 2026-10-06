@@ -78,9 +78,10 @@ export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 // after a warm tap). Bailing on !isReady() was why the tap only foregrounded the app.
 let pendingNav: Record<string, unknown> | null = null
 
-// Resolve a push payload to a screen. Two shapes exist, matching the two
-// things the server pushes about: `{card}` (a board card the owner was asked
-// about) opens that card; `{session, host}` (a chat turn) opens the Thread. Thread
+// Resolve a push payload to a screen: `{card}` (a board card the owner was asked
+// about) opens that card; `{note}` opens the note; `{screen: "Integrations"}` (an
+// account whose sign-in expired) opens Integrations; `{session, host}` (a chat
+// turn) opens the Thread. Thread
 // navigates by `path` (unique; id is not), so the session is looked up on its
 // host. Best-effort — a stale id or offline host just no-ops rather than throwing.
 async function navToTarget(data: Record<string, unknown>): Promise<void> {
@@ -92,6 +93,10 @@ async function navToTarget(data: Record<string, unknown>): Promise<void> {
   const note = Number(data.note)
   if (Number.isInteger(note) && note > 0) {
     navigationRef.navigate("NoteEditor", { id: note })
+    return
+  }
+  if (data.screen === "Integrations") {
+    navigationRef.navigate("Integrations")
     return
   }
   const session = typeof data.session === "string" ? data.session : ""
@@ -111,7 +116,7 @@ async function navToTarget(data: Record<string, unknown>): Promise<void> {
 // Handle a tap: if the tree is ready, navigate now; otherwise stash it so
 // flushPendingNav can complete the jump once the container mounts.
 function openFromNotification(data: Record<string, unknown>): void {
-  if (!data.card && !data.note && !data.session) return
+  if (!data.card && !data.note && !data.screen && !data.session) return
   if (navigationRef.isReady()) void navToTarget(data)
   else pendingNav = data
 }

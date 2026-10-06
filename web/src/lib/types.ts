@@ -510,21 +510,24 @@ export interface IntegrationConnection {
   id: string
   /** The signed-in account's address ("" for a connection made before it was recorded). */
   account: string
-  status: string
   authorized: boolean
+  /** The vendor refused the refresh token; only Reconnect (a new consent) revives it. */
+  expired: boolean
   services: Record<string, ServiceState>
   /** Per service, per op: the owner's switch for AGENTS (humans are bounded by the grant only). */
   ops: Record<string, Record<string, ServiceState>>
   /** The folder a files account is narrowed to; "/" is the whole account. */
   root: string
 }
+/** One step of a provider's client setup; `redirect` shows the copyable redirect URI under it. */
+export interface SetupStep { text: string; redirect: boolean; links: { label: string; url: string }[] }
 export interface IntegrationProvider {
   id: string
   label: string
   /** A PKCE public client — no secret is issued or needed. */
   public: boolean
-  /** Where the owner creates the OAuth client. */
-  console: string
+  /** The vendor-console checklist for creating the OAuth client, in order. */
+  setup: SetupStep[]
   client: { client_id: string; has_secret: boolean; configured: boolean }
   services: IntegrationService[]
   connections: IntegrationConnection[]

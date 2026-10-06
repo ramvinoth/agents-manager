@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { serviceAction, waitForConsent } from "@/lib/integrations"
+import { reconnectService, serviceAction, waitForConsent } from "@/lib/integrations"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
@@ -31,8 +31,10 @@ const STATE_TEXT: Record<ServiceState, string> = {
  * Calendar (read). Renders GET /api/integrations verbatim — the server owns
  * the catalog and every rule, so a new service needs no client change.
  *
- * Per provider: its OAuth client (entered once, with this deployment's
- * redirect URI to register), then each signed-in account with a row per
+ * Per provider: its OAuth client (entered once, by following the server's
+ * numbered setup checklist with deep links and this deployment's redirect
+ * URI), then each signed-in account (a red Reconnect banner when the vendor
+ * ended its sign-in), then each signed-in account with a row per
  * service. A granted service is an on/off switch (the grant is kept); a
  * missing one runs consent that ADDS the permission and keeps the rest; an
  * unavailable one (Google Keep) says why instead of hiding. Under a service
@@ -198,6 +200,17 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                             <Trash2 className="size-3.5" />
                           </button>
                         </div>
+                        {c.expired && (
+                          <div className="mb-1 flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" data-testid={`expired-${c.id}`}>
+                            <span className="min-w-0 flex-1">
+                              {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
+                            </span>
+                            <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={!!busy}
+                              onClick={() => connect(reconnectService(p, c), c.id)}>
+                              Reconnect
+                            </Button>
+                          </div>
+                        )}
                         {p.services.map((s) => (
                           <div key={s.id}>
                             <ServiceRow
@@ -283,20 +296,26 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
 }) {
   return (
     <div className="flex flex-col gap-2 border-t px-3 py-2">
-      <p className="text-xs text-muted-foreground">
-        Create an OAuth client in the{" "}
-        <a className="inline-flex items-center gap-0.5 underline" href={p.console} target="_blank" rel="noreferrer">
-          {p.label} developer console <ExternalLink className="size-3" />
-        </a>
-        , register this redirect URI on it, then paste its id{p.public ? "" : " and secret"} here.
-        {p.id === "google" && " Enable the Drive, Gmail and Calendar APIs in the same project."}
-      </p>
-      <div className="flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1 text-xs">
-        <code className="min-w-0 flex-1 select-all break-all font-mono">{redirectUri || "…"}</code>
-        <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={onCopy} disabled={!redirectUri} title="Copy">
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </Button>
-      </div>
+      <ol className="flex list-decimal flex-col gap-1.5 pl-4 text-xs text-muted-foreground" data-testid={`setup-${p.id}`}>
+        {p.setup.map((st, i) => (
+          <li key={i}>
+            {st.text}
+            {st.links.map((l) => (
+              <a key={l.url} className="ml-1.5 inline-flex items-center gap-0.5 text-foreground underline" href={l.url} target="_blank" rel="noreferrer">
+                {l.label} <ExternalLink className="size-3" />
+              </a>
+            ))}
+            {st.redirect && (
+              <div className="mt-1 flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1">
+                <code className="min-w-0 flex-1 select-all break-all font-mono text-foreground">{redirectUri || "…"}</code>
+                <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={onCopy} disabled={!redirectUri} title="Copy">
+                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                </Button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
       <Input
         className="h-8 font-mono text-xs"
         placeholder={p.public ? "App key / Application (client) ID" : "Client ID"}
@@ -306,9 +325,7 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
         autoCapitalize="none"
         autoFocus
       />
-      {p.public ? (
-        <p className="text-xs text-muted-foreground">{p.label} uses a public PKCE client — no secret is issued or needed.</p>
-      ) : (
+      {!p.public && (
         <Input
           className="h-8 font-mono text-xs"
           type="password"

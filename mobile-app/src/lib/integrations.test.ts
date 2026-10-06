@@ -1,5 +1,11 @@
 import assert from "node:assert"
-import { serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import type { ServiceState } from "../api/client.ts"
+const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", available, unavailable: "", ops: [] })
+const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
+  services: [svc("keep", false), svc("drive"), svc("gmail")], connections: [] }
+const conn = (services: Record<string, ServiceState>) => ({ id: "c", account: "", authorized: true, expired: true, services, ops: {}, root: "/" })
+
 
 let passed = 0
 async function test(name: string, fn: () => void | Promise<void>) {
@@ -32,6 +38,10 @@ async function main() {
   })
   await test("an expired consent without a reason still says why", async () => {
     await assert.rejects(waitForConsent(seq({ status: "expired" }), noSleep), /Consent expired/)
+  })
+  await test("reconnect prefers a service the owner has on, else the first connectable", async () => {
+    assert.strictEqual(reconnectService(prov, conn({ drive: "off", gmail: "on" })), "gmail")
+    assert.strictEqual(reconnectService(prov, conn({ drive: "grant", gmail: "grant" })), "drive")
   })
   await test("leaving the screen stops polling", async () => {
     let polls = 0

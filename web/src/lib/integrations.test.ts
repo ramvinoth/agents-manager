@@ -1,4 +1,10 @@
-import { serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import type { ServiceState } from "./types.ts"
+const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", available, unavailable: "", ops: [] })
+const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
+  services: [svc("keep", false), svc("drive"), svc("gmail")], connections: [] }
+const conn = (services: Record<string, ServiceState>) => ({ id: "c", account: "", authorized: true, expired: true, services, ops: {}, root: "/" })
+
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -10,6 +16,9 @@ eq("on toggles", serviceAction("on"), "toggle")
 eq("off toggles", serviceAction("off"), "toggle")
 eq("missing permission asks for consent", serviceAction("grant"), "grant")
 eq("unavailable has no control", serviceAction("unavailable"), "none")
+
+eq("reconnect prefers a service the owner has on", reconnectService(prov, conn({ drive: "off", gmail: "on" })), "gmail")
+eq("reconnect falls back to the first connectable service", reconnectService(prov, conn({ drive: "grant", gmail: "grant" })), "drive")
 
 const seq = (...s: ConsentStatus[]) => { let i = 0; return async () => s[Math.min(i++, s.length - 1)] }
 const noSleep = async () => {}

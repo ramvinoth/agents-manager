@@ -74,7 +74,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-from viewer import db, integrations
+from viewer import db, integrations, push
 
 # Every drive byte passes through the viewer's memory — a single download is
 # resp.read() and a zip is built in a BytesIO (no vendor has a generic
@@ -237,14 +237,32 @@ class OAuthAccount:
                                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                                 data=urllib.parse.urlencode(form).encode())
         if status != 200:
-            # Revoked or expired refresh token → the owner must re-consent.
-            raise DriveError(f"{self._provider()['label']} sign-in expired — reconnect it in Integrations", 403)
+            # 400/401 is the vendor refusing the grant itself (invalid_grant:
+            # revoked, password change, a Google app left in Testing) — only a
+            # new consent fixes it, so it is recorded and the owner is told
+            # once. Anything else (5xx, rate limit) is transient: just fail.
+            label = self._provider()["label"]
+            if status in (400, 401):
+                self._mark_expired()
+                raise DriveError(f"{label} sign-in expired — reconnect it in Integrations", 403)
+            raise DriveError(f"{label} sign-in service unavailable (HTTP {status}) — try again shortly", 502)
         j = json.loads(body)
+        self.config.pop("expired", None)
         self.config["access_token"] = j["access_token"]
         self.config["refresh_token"] = j.get("refresh_token") or self.config.get("refresh_token")
         self.config["token_expiry"] = time.time() + int(j.get("expires_in") or 3600)
         db.drive_upsert(self.drive["id"], self.drive)
         return j["access_token"]
+
+    def _mark_expired(self):
+        if self.config.get("expired"):
+            return
+        self.config["expired"] = int(time.time())
+        db.drive_upsert(self.drive["id"], self.drive)
+        who = self.config.get("account") or self._provider()["label"]
+        push.notify_all(f"{self._provider()['label']} sign-in expired",
+                        f"Agents can no longer use {who}. Open Integrations and tap Reconnect.",
+                        data={"screen": "Integrations"})
 
     def _req(self, method, url, data=None, headers=None):
         """An authenticated request. Adds the Bearer token; on a 401 (stale

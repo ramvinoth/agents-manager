@@ -104,6 +104,40 @@ def test_view_has_state_and_no_secrets():
     assert "SECRET" not in str(v)
 
 
+def test_view_has_a_setup_checklist_with_the_redirect_step():
+    for p in I.view([], {}, "https://h/cb")["providers"]:
+        assert p["setup"] and sum(st["redirect"] for st in p["setup"]) == 1, p["id"]
+        assert all(l["url"].startswith("https://") for st in p["setup"] for l in st["links"])
+
+
+def test_view_flags_an_expired_sign_in():
+    c = _conn(scopes=[G + "drive"], expired=1)
+    g = I.view([c], {}, "")["providers"][0]
+    assert g["connections"][0]["expired"] is True
+
+
+def test_agent_view_lists_what_agents_may_do_and_what_is_missing():
+    c = _conn(scopes=[G + "drive", G + "gmail.readonly", G + "gmail.compose"], account="r@x", expired=1)
+    av = I.agent_view([c, dict(_conn("h"), hidden=True)], I.local_rules(None))
+    by = {e["service"]: e for e in av["services"]}
+    assert set(by) == {"google.drive", "google.gmail"}
+    assert by["google.drive"]["may"] == ["read", "write"] and by["google.drive"]["ask_owner"] == ["delete"]
+    assert by["google.drive"]["drive"] == "c1" and "expired" in by["google.gmail"]
+    assert "Google Calendar" in av["not_connected"] and "Google Keep" not in av["not_connected"]
+    text = I.agent_summary(av)
+    assert "Gmail (r@x): may read, draft" in text and "SIGN-IN EXPIRED" in text
+    assert "drive=c1" in text and "Not connected" in text and "SECRET" not in text
+
+
+def test_agents_get_the_agent_view_humans_the_page(rows):
+    rows["c1"] = _conn(scopes=[G + "drive"], refresh_token="SECRET-RT")
+    h = _H()
+    h._g_integrations(_Req(human=False))
+    assert set(h.sent[0]) == {"services", "not_connected", "this_machine"} and "SECRET" not in str(h.sent)
+    h._g_integrations(_Req())
+    assert "providers" in h.sent[0]
+
+
 # --- routes ---------------------------------------------------------------------
 
 class _H(IntegrationsMixin, DrivesMixin):

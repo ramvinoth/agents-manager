@@ -232,6 +232,7 @@ def _store(p, tokens):
     cfg = integrations.with_service(drive.get("config"), p["service"], True)
     if p.get("op"):
         cfg = integrations.with_op(cfg, p["service"], p["op"], True)
+    cfg.pop("expired", None)
     cfg.update({
         "access_token": tokens.get("access_token"),
         "refresh_token": tokens.get("refresh_token") or cfg.get("refresh_token"),

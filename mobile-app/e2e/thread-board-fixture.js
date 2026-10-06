@@ -62,7 +62,8 @@ const INTEGRATIONS = {
   redirect_uri: "http://127.0.0.1/api/drive/oauth/callback",
   providers: [
     {
-      id: "google", label: "Google", public: false, console: "https://console.cloud.google.com/apis/credentials",
+      id: "google", label: "Google", public: false,
+      setup: [{ text: "Create an OAuth client.", redirect: false, links: [{ label: "Credentials", url: "https://console.cloud.google.com/apis/credentials" }] }, { text: "Add this redirect URI:", redirect: true, links: [] }],
       client: { client_id: "fixture.apps.googleusercontent.com", has_secret: true, configured: true },
       services: [
         { id: "google.drive", label: "Drive", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS },
@@ -71,7 +72,7 @@ const INTEGRATIONS = {
           ops: [{ id: "read", label: "Read" }, { id: "create", label: "Create" }, { id: "update", label: "Update" }, { id: "delete", label: "Delete" }] },
         { id: "google.keep", label: "Keep", kind: "notes", agent: "", available: false, unavailable: "Google offers no Keep API for personal accounts", ops: [] },
       ],
-      connections: [{ id: "dr-fixture", account: "owner@example.com", status: "ok", authorized: true,
+      connections: [{ id: "dr-fixture", account: "owner@example.com", authorized: true, expired: false,
         services: { "google.drive": "on", "google.gmail": "grant", "google.calendar": "off", "google.keep": "unavailable" },
         ops: {
           "google.drive": { read: "on", write: "on", delete: "off" },
@@ -81,7 +82,8 @@ const INTEGRATIONS = {
         root: "/" }],
     },
     {
-      id: "dropbox", label: "Dropbox", public: true, console: "https://www.dropbox.com/developers/apps",
+      id: "dropbox", label: "Dropbox", public: true,
+      setup: [{ text: "Create an app.", redirect: false, links: [{ label: "App console", url: "https://www.dropbox.com/developers/apps" }] }, { text: "Add this redirect URI:", redirect: true, links: [] }],
       client: { client_id: "", has_secret: false, configured: false },
       services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS }],
       connections: [],

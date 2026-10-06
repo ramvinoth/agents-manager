@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
-import { serviceAction, waitForConsent } from "../lib/integrations"
+import { reconnectService, serviceAction, waitForConsent } from "../lib/integrations"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -19,8 +19,10 @@ type Draft = { provider: string; client_id: string; client_secret: string }
  * IntegrationsDialog; both share lib/integrations for the state→control map
  * and the consent wait.
  *
- * Per provider: its OAuth client (entered once, with this deployment's
- * redirect URI), then each signed-in account with a row per service. A granted
+ * Per provider: its OAuth client (entered once, by following the server's
+ * numbered setup checklist with deep links and this deployment's redirect
+ * URI), then each signed-in account (a red Reconnect banner when the vendor
+ * ended its sign-in), then each signed-in account with a row per service. A granted
  * service is a switch (the grant is kept); a missing one runs consent in the
  * system browser that ADDS the permission and keeps the rest; an unavailable
  * one (Google Keep) says why. Under a switched-on service, one chip per
@@ -192,6 +194,16 @@ export default function IntegrationsScreen() {
                       <Icon name="trash" size={16} color={t.danger} />
                     </TouchableOpacity>
                   </View>
+                  {c.expired ? (
+                    <View testID={`expired-${c.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 18, marginBottom: 6, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
+                      <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
+                        {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
+                      </Text>
+                      <TouchableOpacity testID={`integration-reconnect-${c.id}`} disabled={!!busy} onPress={() => connect(reconnectService(p, c), c.id)} hitSlop={8}>
+                        <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>Reconnect</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                   {p.services.map((s) => (
                     <React.Fragment key={s.id}>
                       <ServiceRow
@@ -456,20 +468,34 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
   const canSave = !!draft.client_id.trim() && !busy
   return (
     <View style={{ paddingHorizontal: 18, gap: 10 }}>
-      <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
-        Create an OAuth client in the {p.label} developer console, register this redirect URI on it, then
-        paste its id{p.public ? "" : " and secret"} here.{p.id === "google" ? " Enable the Drive, Gmail and Calendar APIs in the same project." : ""}
-      </Text>
-      <TouchableOpacity onPress={() => Linking.openURL(p.console)}>
-        <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Open the {p.label} console</Text>
-      </TouchableOpacity>
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Text testID="integrations-redirect-uri" selectable style={{ color: t.text, flex: 1, fontFamily: "Menlo", fontSize: 12 }}>
-          {redirectUri || "…"}
-        </Text>
-        <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={{ padding: 6 }}>
-          <Icon name={copied ? "check" : "copy"} size={18} color={t.accent} />
-        </TouchableOpacity>
+      <View testID={`setup-${p.id}`} style={{ gap: 8 }}>
+        {p.setup.map((st, i) => (
+          <View key={i} style={{ flexDirection: "row", gap: 6 }}>
+            <Text style={[styles.ssRowHint, { width: 16 }]}>{i + 1}.</Text>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{st.text}</Text>
+              {st.links.length ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+                  {st.links.map((l) => (
+                    <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
+                      <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>{l.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+              {st.redirect ? (
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text testID="integrations-redirect-uri" selectable style={{ color: t.text, flex: 1, fontFamily: "Menlo", fontSize: 12 }}>
+                    {redirectUri || "…"}
+                  </Text>
+                  <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={{ padding: 6 }}>
+                    <Icon name={copied ? "check" : "copy"} size={18} color={t.accent} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        ))}
       </View>
       <TextInput
         testID="integrations-client-id"
@@ -485,9 +511,7 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
         blurOnSubmit={p.public}
         onSubmitEditing={() => (p.public ? canSave && onSave() : secret.current?.focus())}
       />
-      {p.public ? (
-        <Text style={styles.sheetHint}>{p.label} uses a public PKCE client — no secret is issued or needed.</Text>
-      ) : (
+      {!p.public ? (
         <TextInput
           testID="integrations-client-secret"
           ref={secret}
@@ -502,7 +526,7 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
           returnKeyType="done"
           onSubmitEditing={() => canSave && onSave()}
         />
-      )}
+      ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
         <TouchableOpacity
           testID="integrations-save"

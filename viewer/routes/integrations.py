@@ -44,6 +44,11 @@ class IntegrationsMixin:
     # -- the page ----------------------------------------------------------
 
     def _g_integrations(self, req):
+        """The owner's page view; an agent (MCP principal) gets agent_view —
+        what it may use, not how the owner set it up."""
+        if (getattr(req, "principal", None) or {}).get("kind") == "mcp":
+            self.send_json(integrations.agent_view(list(db.drives_load().values()), local_rules()))
+            return
         self.send_json(dict(integrations.view(
             list(db.drives_load().values()), db.drive_clients_load(),
             drive_oauth.redirect_uri_for(self.request_origin())),

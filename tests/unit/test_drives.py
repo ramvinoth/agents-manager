@@ -457,8 +457,28 @@ def test_google_refresh_failure_is_403_reauth(db, monkeypatch):
     fake.fail_refresh = True
     a.config["access_token"] = ""
     a.config["token_expiry"] = 0
+    pushes = []
+    monkeypatch.setattr(drives.push, "notify_all", lambda *a, **k: pushes.append((a, k)))
     err = pytest.raises(DriveError, a._access_token).value
     assert err.status == 403 and "reconnect it in Integrations" in str(err)
+    # The dead grant is recorded on the row (the page shows Reconnect, agents
+    # are told) and the owner is pushed once — not on every later failure.
+    assert db.rows["d1"]["config"]["expired"]
+    pytest.raises(DriveError, a._access_token)
+    assert len(pushes) == 1 and pushes[0][1]["data"] == {"screen": "Integrations"}
+    # A later good refresh (or a new consent) clears it.
+    fake.fail_refresh = False
+    a._access_token()
+    assert "expired" not in db.rows["d1"]["config"]
+
+
+def test_transient_refresh_failure_is_not_an_expired_sign_in(db, monkeypatch):
+    a, fake = _gdrive(db, monkeypatch)
+    a.config["access_token"], a.config["token_expiry"] = "", 0
+    real = fake._http
+    monkeypatch.setattr(drives, "_http", lambda m, u, **k: (503, {}, b"") if "oauth2" in u else real(m, u, **k))
+    err = pytest.raises(DriveError, a._access_token).value
+    assert err.status == 502 and "expired" not in a.config
 
 
 def test_google_401_forces_one_refresh_and_retry(db, monkeypatch):

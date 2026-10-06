@@ -3,7 +3,7 @@
 // (GET /api/integrations) and this module only turns a service's state into
 // the control the owner sees, and runs the consent wait both the
 // Integrations page and the file browser's location picker use.
-import type { ServiceState } from "./types"
+import type { IntegrationConnection, IntegrationProvider, ServiceState } from "./types"
 
 /** What tapping a service row does. `toggle` flips the owner's switch (the
  *  grant is untouched); `grant` runs consent for the missing permission;
@@ -14,6 +14,14 @@ export function serviceAction(state: ServiceState): ServiceAction {
   if (state === "on" || state === "off") return "toggle"
   if (state === "grant") return "grant"
   return "none"
+}
+
+/** The service an expired account's Reconnect consents for. Any one will do —
+ *  the server's consent re-asks for every scope the account already holds —
+ *  so prefer one the owner has on, else the first connectable one. */
+export function reconnectService(p: IntegrationProvider, c: IntegrationConnection): string {
+  const usable = p.services.filter((s) => s.available)
+  return (usable.find((s) => c.services[s.id] === "on") || usable[0]).id
 }
 
 export type ConsentStatus = { status: "waiting" | "authorized" | "failed" | "expired"; error?: string }

@@ -1493,6 +1493,20 @@ def _perm_push_body(tool_name, tinput, host):
     return body
 
 
+def _integrations_summary():
+    """What this run may use right now (accounts, services, operations, local
+    folders), so an agent knows its integrations natively. Built per run from
+    the same rules the routes enforce; a failure never blocks the turn."""
+    try:
+        from viewer import integrations
+        from viewer.routes.integrations import local_rules
+        return integrations.agent_summary(
+            integrations.agent_view(list(db.drives_load().values()), local_rules()))
+    except Exception as e:
+        print(f"[engine] integrations summary failed: {e}", flush=True)
+        return ""
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -1617,6 +1631,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     preamble = db.setting_get("system_preamble", "") or ""
     if preamble.strip():
         extra.append(preamble)
+    summary = _integrations_summary()
+    if summary:
+        extra.append(summary)
     if meta.get("systemPrompt"):
         extra.append(meta["systemPrompt"])
     if meta.get("goal"):
