@@ -239,6 +239,7 @@ export function InboxDialog({
                   return (
                     <button
                       key={m.id}
+                      data-track="message row"
                       onClick={() => { setOpenId(m.id); if (eff === "sent") markRead(m) }}
                       className={cn("flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left hover:bg-accent", openId === m.id && "bg-accent")}
                     >

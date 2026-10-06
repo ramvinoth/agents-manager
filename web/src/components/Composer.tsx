@@ -124,6 +124,7 @@ function StashButton({
                 <button
                   className="min-w-0 flex-1 truncate text-left text-xs"
                   title={s}
+                  data-track="stashed draft"
                   onClick={() => {
                     onRestore(s)
                     setOpen(false)

@@ -493,7 +493,7 @@ function CardFace({
         <button className="mt-0.5 cursor-grab text-muted-foreground/50 active:cursor-grabbing" {...handleProps} title="Drag">
           <GripVertical className="size-3.5" />
         </button>
-        <button className="min-w-0 flex-1 text-left" onClick={onEdit}>
+        <button className="min-w-0 flex-1 text-left" onClick={onEdit} data-track="card row">
           <div className="font-medium leading-snug">
             <span className="mr-1 font-normal tabular-nums text-muted-foreground">#{card.id}</span>
             {card.title}

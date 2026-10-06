@@ -258,6 +258,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
                 t.active && "bg-white/15 text-white"
               )}
               title={t.url}
+              data-track="browser tab"
             >
               <span className="truncate">{t.title || t.url || "about:blank"}</span>
               <button

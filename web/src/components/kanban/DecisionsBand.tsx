@@ -96,6 +96,7 @@ export function DecisionsBand({
             return (
               <li key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.card}`}>
                 <button
+                  data-track="decision row"
                   disabled={!open}
                   onClick={open || undefined}
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent disabled:cursor-default"

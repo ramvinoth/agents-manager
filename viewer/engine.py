@@ -298,6 +298,7 @@ def loop_scheduler(launch):
             try:
                 rc = db.retention_config()
                 db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
+                db.ui_events_purge(rc["ui_events_days"])
             except Exception:
                 pass
             # Credentials of runs this process never saw (they predate a restart)

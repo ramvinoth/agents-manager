@@ -74,12 +74,13 @@ from viewer.routes.drives import DrivesMixin
 from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.inbox import InboxMixin
 from viewer.routes.marketplace import MarketplaceMixin
+from viewer.routes.usage import UsageMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin,
+    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -447,12 +448,14 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
+        "/api/usage/report": "_g_usage_report",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
     ]
     POST_ROUTES = {
         "/api/chat": "_p_chat",
+        "/api/usage": "_p_usage",
         "/api/push/register": "_p_push_register",
         "/api/push/unregister": "_p_push_unregister",
         "/api/agents/install": "_p_agents_install",

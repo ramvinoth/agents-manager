@@ -10,6 +10,7 @@ import { normModel } from "../lib/model"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
+import type { UsageEvent } from "../lib/usage"
 
 export type User = { id: number; username: string }
 export type Host = {
@@ -865,6 +866,8 @@ export const api = {
     req<InboxMessage>("POST", "/api/inbox/send", body),
   // Owner surface only: mark read / snooze (a snooze is "later", never delete).
   inboxRead: (id: number) => req<{ ok?: boolean }>("POST", "/api/inbox/read", { id }),
+  usageSend: (events: UsageEvent[]) =>
+    req<{ ok?: boolean }>("POST", "/api/usage", { client: "ios", events }),
   inboxSnooze: (id: number, hours: number) =>
     req<{ ok?: boolean; snoozed_until?: number }>("POST", "/api/inbox/snooze", { id, hours }),
   orgResolveApproval: (body: { id: number; resolution: string }) =>

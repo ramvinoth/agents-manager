@@ -299,6 +299,7 @@ export function AISelectionDialog({
                                 on && "bg-primary/10 text-foreground"
                               )}
                               title={c.id}
+                              data-track="model option"
                             >
                               <span className="min-w-0 flex-1 truncate font-mono">{c.id}</span>
                               {c.label !== c.id && <span className="shrink-0 truncate text-muted-foreground">{c.label}</span>}

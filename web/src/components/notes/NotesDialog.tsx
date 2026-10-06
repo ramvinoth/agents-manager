@@ -222,6 +222,7 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
                   {graph.tags.slice(0, 30).map(({ tag, count }) => (
                     <button
                       key={tag}
+                      data-track="tag filter"
                       onClick={() => setTags((cur) => (cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag]))}
                       className={cn("rounded-full px-1.5 text-[11px]", tags.includes(tag) ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary")}
                     >
@@ -239,6 +240,7 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
                 {shown.map((n) => (
                   <button
                     key={n.id}
+                    data-track="note row"
                     onClick={() => { setShowGraph(false); setTrail([]); setOpenId(n.id) }}
                     className={cn("flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left hover:bg-accent", n.id === openId && "bg-accent")}
                   >

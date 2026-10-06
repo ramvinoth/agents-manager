@@ -12,6 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { hasServer, loadConfig, token } from "./src/state/config"
+import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
 import { registerForPush, onNotificationTap } from "./src/lib/notify"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
@@ -216,7 +217,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer theme={navTheme} ref={navigationRef} onReady={flushPendingNav}>
+        <NavigationContainer
+          theme={navTheme}
+          ref={navigationRef}
+          onReady={() => { flushPendingNav(); startUsageReporting(); recordScreen(navigationRef.getCurrentRoute()?.name) }}
+          onStateChange={() => recordScreen(navigationRef.getCurrentRoute()?.name)}
+        >
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
             initialRouteName={initial}

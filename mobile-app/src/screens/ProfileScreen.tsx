@@ -18,6 +18,7 @@ import {
 import { effectiveScheme } from "../lib/theme"
 import { useTheme, useThemePref } from "../lib/useTheme"
 import { unregisterPush } from "../lib/notify"
+import { recordFeedback } from "../lib/usageReporter"
 import Icon from "../components/Icon"
 import ProviderPicker from "../components/ProviderPicker"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
@@ -56,6 +57,8 @@ export default function ProfileScreen({ navigation }: Props) {
   const pref = useThemePref()
   const os = useColorScheme()
   const [notify, setNotify] = useState(notifyEveryReply())
+  const [feedback, setFeedback] = useState("")
+  const [feedbackSent, setFeedbackSent] = useState(false)
   // The automation master switch. Null while unknown (not yet loaded, or the
   // server is unreachable) — the row renders disabled rather than guessing,
   // because a switch showing "off" that never reached the server would be the
@@ -420,6 +423,31 @@ export default function ProfileScreen({ navigation }: Props) {
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
       <HostPicker visible={hostOpen} onClose={() => setHostOpen(false)} navigation={navigation} />
+
+      <Text style={styles.sheetSection}>FEEDBACK</Text>
+      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
+        What is confusing, slow, missing or never used? Agents read every note and turn it into work on the board.
+      </Text>
+      <TextInput
+        testID="feedback-input"
+        style={[styles.input, { marginHorizontal: 18, marginTop: 8, minHeight: 80, textAlignVertical: "top", fontSize: 14 }]}
+        value={feedback}
+        onChangeText={(v) => { setFeedback(v); if (feedbackSent) setFeedbackSent(false) }}
+        multiline
+        placeholder="e.g. The Skip button in the inbox is hard to reach."
+        placeholderTextColor={t.textMuted}
+      />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 18, marginTop: 8 }}>
+        <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }]}>{feedbackSent ? "Sent — thank you." : ""}</Text>
+        <TouchableOpacity
+          testID="send-feedback"
+          style={[styles.button, { marginTop: 0, paddingVertical: 10, paddingHorizontal: 20, opacity: feedback.trim() ? 1 : 0.5 }]}
+          disabled={!feedback.trim()}
+          onPress={() => { recordFeedback("Profile", feedback.trim()); setFeedback(""); setFeedbackSent(true) }}
+        >
+          <Text style={styles.buttonText}>Send</Text>
+        </TouchableOpacity>
+      </View>
 
       <TouchableOpacity
         testID="sign-out"

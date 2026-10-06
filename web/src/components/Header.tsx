@@ -17,11 +17,14 @@ import {
   LogOut,
   KeyRound,
   Plug,
+  MessageSquarePlus,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
 import { HostDialog } from "./HostDialog"
 import { EnvDialog } from "./EnvDialog"
 import { IntegrationsDialog } from "./IntegrationsDialog"
+import { TextFieldDialog } from "./settings/TextFieldDialog"
+import { recordFeedback } from "@/usageTracker"
 import { SessionActions } from "./SessionActions"
 import { MobileNav } from "./MobileNav"
 import { Button } from "@/components/ui/button"
@@ -52,6 +55,7 @@ export function Header() {
   const [nsOpen, setNsOpen] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
   const [intOpen, setIntOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
   const currentHost = useStore((s) => s.currentHost)
@@ -243,6 +247,9 @@ export function Header() {
               {authUser.username}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setFeedbackOpen(true)}>
+              <MessageSquarePlus className="size-3.5" /> Send feedback
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => signout()}>
               <LogOut className="size-3.5" /> Log out
             </DropdownMenuItem>
@@ -265,6 +272,18 @@ export function Header() {
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {intOpen && <IntegrationsDialog onClose={() => setIntOpen(false)} />}
+      {feedbackOpen && (
+        <TextFieldDialog
+          title="Send feedback"
+          description="What is confusing, slow, missing or never used? Agents read every note in the usage report and turn it into work on the board."
+          value=""
+          saveLabel="Send"
+          clearable={false}
+          placeholder="e.g. I never use the Terminal panel; the Inbox Skip button is hard to find."
+          onSave={(v) => v && recordFeedback("main", v)}
+          onClose={() => setFeedbackOpen(false)}
+        />
+      )}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>
   )

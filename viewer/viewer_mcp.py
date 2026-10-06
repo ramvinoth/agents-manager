@@ -61,6 +61,7 @@ _TOOLS = {
     "docs_read":        ("GET", "/api/org/docs/read"),
     "approval_list":    ("GET", "/api/org/approvals"),
     "audit_tail":       ("GET", "/api/org/audit"),
+    "usage_report":     ("GET", "/api/usage/report"),
     "board_list":       ("GET", "/api/org/board"),
     "card_list":        ("GET", "/api/org/cards"),
     "card":             ("GET", "/api/org/card"),
@@ -209,6 +210,10 @@ _TOOL_LIST = [
      "description": "Recent audit entries: who did what, and whether it ran, queued or was denied.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "limit": {"type": "integer", "description": "How many entries (default 100)."}}}},
+    {"name": "usage_report",
+     "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Read it before proposing UI changes; cite it on the card.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
+         "days": {"type": "integer", "description": "Window in days (default 30)."}}}},
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},

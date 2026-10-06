@@ -580,6 +580,21 @@ In-conversation todos are scratch for the current task only. Work that outlives 
               last_seen DOUBLE PRECISION NOT NULL,
               PRIMARY KEY (reader, session)
             );
+            -- First-party product usage: what the owner's clients actually touch.
+            -- One row per tap / screen view / control-seen / feedback, written by
+            -- the owner's own web and phone clients to the owner's own server —
+            -- nothing leaves the box. Bounded by retention (ui_events_days).
+            CREATE TABLE IF NOT EXISTS ui_events (
+              id       BIGSERIAL PRIMARY KEY,
+              ts       DOUBLE PRECISION NOT NULL,
+              actor    TEXT NOT NULL DEFAULT '',
+              client   TEXT NOT NULL DEFAULT '',
+              surface  TEXT NOT NULL DEFAULT '',
+              element  TEXT NOT NULL DEFAULT '',
+              kind     TEXT NOT NULL,
+              detail   TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS ui_events_ts ON ui_events (ts);
             """
         )
     _seed_agent_templates()
@@ -2379,6 +2394,58 @@ def session_seen_set(reader, session, ts=None):
         )
 
 
+# Product usage (ui_events) ----------------------------------------------------
+
+def ui_events_insert(actor, events):
+    """Append a validated batch (viewer.usage.clean_events) for one actor.
+    One statement per batch; returns the number written."""
+    if not events:
+        return 0
+    rows = [(e["ts"], actor, e["client"], e["surface"], e["element"],
+             e["kind"], e["detail"]) for e in events]
+    with _db() as cur:
+        cur.executemany(
+            "INSERT INTO ui_events (ts, actor, client, surface, element, kind, detail) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)", rows)
+    return len(rows)
+
+
+def ui_usage_rows(since):
+    """Per (client, surface, element, kind) counts over the whole retained
+    history, split at `since`: n = events in the window, actors = distinct
+    actors in the window, n_before = events before it (what lets the report
+    tell a control that went cold from one that was never used)."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT client, surface, element, kind, "
+            "  count(*) FILTER (WHERE ts >= %s) AS n, "
+            "  count(DISTINCT actor) FILTER (WHERE ts >= %s) AS actors, "
+            "  count(*) FILTER (WHERE ts < %s) AS n_before, "
+            "  max(ts) AS last_ts "
+            "FROM ui_events WHERE kind <> 'feedback' "
+            "GROUP BY client, surface, element, kind", (since, since, since))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def ui_feedback_list(since, limit=50):
+    """Newest feedback notes in the window, with where they were written."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT ts, actor, client, surface, detail FROM ui_events "
+            "WHERE kind = 'feedback' AND ts >= %s ORDER BY ts DESC LIMIT %s",
+            (since, int(limit)))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def ui_events_purge(max_age_days):
+    """Drop usage older than the retention window. Returns rows removed."""
+    if not max_age_days or max_age_days <= 0:
+        return 0
+    with _db() as cur:
+        cur.execute("DELETE FROM ui_events WHERE ts < %s", (_now() - float(max_age_days) * 86400,))
+        return cur.rowcount
+
+
 # Hosts (SSH registry) --------------------------------------------------------
 # The hosts store keeps the same {id: {label, host, user, port, claudeHome,
 # password, keyFile, keyPassphrase}} shape the config file had, so remote.py /
@@ -2639,7 +2706,7 @@ def drive_client_delete(kind):
 # Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
 # per plan/license without a deploy; falls back to the seeded defaults when the
 # row is missing or a value is malformed (never returns junk the purge can't use).
-_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500}
+_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500, "ui_events_days": 180}
 
 
 def retention_config():

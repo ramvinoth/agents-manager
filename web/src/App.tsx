@@ -13,6 +13,7 @@ import { LoginPanel } from "@/components/LoginPanel"
 import { AuthGate } from "@/components/AuthGate"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { useStore, useAgentLabel } from "@/store"
+import { startUsageTracking } from "@/usageTracker"
 
 // Lazy — pulls xterm + the CDP/PTY panel code only when a panel is opened.
 const PanelDock = lazy(() =>
@@ -69,6 +70,13 @@ function App() {
   useEffect(() => {
     init()
   }, [init])
+
+  // Usage reporting starts once a human is signed in (the server only accepts
+  // a human's events) and runs for the life of the page.
+  const signedIn = useStore((s) => !!s.authUser)
+  useEffect(() => {
+    if (signedIn) startUsageTracking()
+  }, [signedIn])
 
   useEffect(() => {
     follow.current = true
