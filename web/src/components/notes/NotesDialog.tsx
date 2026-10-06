@@ -164,7 +164,12 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[90vh] max-w-[95vw] flex-col sm:max-w-[95vw]">
+      <DialogContent
+        className="flex h-[90vh] max-w-[95vw] flex-col sm:max-w-[95vw]"
+        // Radix catches Escape on the document before the editor sees it: while
+        // the [[ suggestion list is open, Escape closes that list, not the notes.
+        onEscapeKeyDown={(e) => { if ((e.target as HTMLElement | null)?.getAttribute?.("aria-expanded") === "true") e.preventDefault() }}
+      >
         <DialogHeader>
           <DialogTitle>Notes · {project?.name || name}</DialogTitle>
           <DialogDescription>
@@ -388,7 +393,6 @@ function NoteEditor({
       pickSuggestion(suggest.items[suggest.sel])
     } else if (e.key === "Escape") {
       e.preventDefault()
-      e.stopPropagation()   // close the list, not the dialog
       setSuggest(null)
     }
   }
@@ -448,6 +452,7 @@ function NoteEditor({
             value={body}
             onChange={(e) => { setBody(e.target.value); queue({ body: e.target.value }); track(e.target.value, e.target.selectionStart) }}
             onKeyDown={onKey}
+            aria-expanded={!!suggest}
             onClick={(e) => track(body, e.currentTarget.selectionStart)}
             onBlur={() => setTimeout(() => setSuggest(null), 150)}
             placeholder="Write in markdown — # headings, - lists, **bold**. Type [[ to link another note, #tag to group notes."
