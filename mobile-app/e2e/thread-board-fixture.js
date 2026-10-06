@@ -98,9 +98,11 @@ const MARKET_MCP = [
   { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
 ]
 
-async function startFixture({ ai = false, audit = false, integrations = false, inbox = false, market = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+async function startFixture({ ai = false, audit = false, integrations = false, inbox = false, market = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
+  // `reply` swaps the newest agent message, so a spec can render any markdown in a real bubble.
+  const thread = reply ? [...lines.slice(0, -1), record("assistant", reply, lines.length - 1)] : lines
   const boardCards = clone(boardIsolation ? [...cards, ...cards.map(c => ({ ...c, id: c.id + 10, title: `B ${c.title}`, session_id: BOARD_SESSION_B }))] : cards)
   let nextCardId = Math.max(...boardCards.map(c => c.id)) + 1
   const boardSessions = boardIsolation || inbox ? [SESSION, BOARD_SESSION_B] : [SESSION]
@@ -316,10 +318,10 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
       // Offsets are line counts here (the real server uses bytes); ?from= is the
       // live-run incremental poll and, like the server, returns only newer lines.
       if (url.searchParams.has("from")) {
-        const from = Math.min(Number(url.searchParams.get("from")) || 0, lines.length)
-        return send({ lines: lines.slice(from), start: from, end: lines.length, size: lines.length })
+        const from = Math.min(Number(url.searchParams.get("from")) || 0, thread.length)
+        return send({ lines: thread.slice(from), start: from, end: thread.length, size: thread.length })
       }
-      return send({ lines, start: 0, end: lines.length, size: lines.length })
+      return send({ lines: thread, start: 0, end: thread.length, size: thread.length })
     }
     if (url.pathname === "/api/session-meta") return send({ pinned: [], cwd: "/fixture" })
     if (url.pathname === "/api/session-summary") return send({ models: [], messages: 20, toolCalls: 0 })

@@ -186,7 +186,7 @@ export function ExchangeView({
   const { thinking: think, body } = useMemo(() => splitThinking(finalText), [finalText])
   const [thinkOpen, setThinkOpen] = useState(false)
   return (
-    <View style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
+    <View testID="agent-bubble" style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
       {/* Steps (tool calls + narration) render ABOVE the final answer: the steps
           are the work, the final text is the conclusion, so reading top-to-bottom
           mirrors how the turn actually unfolded. */}
