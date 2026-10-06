@@ -1094,7 +1094,6 @@ def validate_session_credential(session_id, token):
     # is a per-run snapshot (not persisted), so a run outliving a restart
     # degrades to "" — the caller falls back to the session's short id.
     try:
-        from viewer import db
         row = db.session_token_get(session_id)
         if not row or token not in (row.get("kanban_token") or None,
                                     row.get("perm_token") or None):
@@ -1247,7 +1246,6 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
         # No live job (e.g. server restarted) — validate against the persisted
         # token so a durable AskUserQuestion/ExitPlanMode can still be answered.
         try:
-            from viewer import db
             row = db.session_token_get(session_id)
             authed = bool(row and row.get("perm_token") and row["perm_token"] == token)
         except Exception:
@@ -1541,8 +1539,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # leaves the row behind and boot resumes it (viewer/resume.py).
     try:
         db.inflight_run_start(session_id, host, cwd, mode, model, job["started"])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  ⚠ could not record in-flight turn {session_id[:8]} (a restart will not resume it): {e}")
 
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
@@ -1584,7 +1582,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # reaped. Best-effort — a DB hiccup must not block the run from starting.
     try:
         emp = job.get("employee") or {}
-        from viewer import db
         db.session_token_set(session_id, perm_token, kanban_token,
                              emp.get("id"), job.get("employee_level") or "ic",
                              cwd, host)
@@ -1672,14 +1669,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 # find-or-create the org project for this (host, cwd) so the agent
                 # only ever sees/edits tasks under the project it's working in.
                 try:
-                    from viewer import db as _db
-                    proj = _db.project_ensure(host, cwd, os.path.basename(cwd.rstrip("/")) or cwd)
+                    proj = db.project_ensure(host, cwd, os.path.basename(cwd.rstrip("/")) or cwd)
                     kanban_project = str(proj["id"])
                     env["VIEWER_KANBAN_PROJECT"] = kanban_project
                     # Persist session -> project so read-only consumers (the
                     # board route's ?session= resolution) can find it without
                     # re-deriving the session's cwd. Meta dies with the session.
-                    _db.session_meta_patch(session_id, {"kanbanProject": kanban_project})
+                    db.session_meta_patch(session_id, {"kanbanProject": kanban_project})
                 except Exception:
                     kanban_project = ""
             # Fall back to a setup-token captured by the viewer's login flow
