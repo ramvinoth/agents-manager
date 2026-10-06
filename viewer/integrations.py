@@ -109,7 +109,7 @@ PROVIDERS = {
         "setup": (
             {"text": "Create an app with Scoped access and Full Dropbox.",
              "links": (("App console", "https://www.dropbox.com/developers/apps"),)},
-            {"text": "On its Settings tab, add this redirect URI:", "redirect": True},
+            {"text": "In the app's OAuth 2 settings, add this redirect URI:", "redirect": True},
             {"text": "On its Permissions tab, tick files.metadata.read, files.content.read and "
                      "files.content.write, then Submit."},
             {"text": "Paste the App key below. Dropbox issues no secret for this kind of sign-in."},

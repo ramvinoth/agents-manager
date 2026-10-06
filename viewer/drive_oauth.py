@@ -99,6 +99,7 @@ def _expire_stale(now):
         age = now - p["started"]
         if p["status"] == "waiting" and age > _CONSENT_TTL:
             p["status"], p["error"] = "expired", "no consent received in time"
+            _drop_if_empty(p["drive_id"])
         if age > 2 * _CONSENT_TTL:
             del _PENDING[pid]
 
@@ -157,6 +158,21 @@ def status(pid):
         return out
 
 
+def _drop_if_empty(drive_id):
+    """A connection created for a consent that never completed holds no
+    tokens — nothing the owner or an agent can use — so it goes with the flow
+    instead of lingering as a blank account row. One that ever signed in
+    (an expired account being reconnected) keeps its row, and so does one
+    another consent is still under way for. Caller holds _LOCK."""
+    if any(p["drive_id"] == drive_id and p["status"] in ("waiting", "exchanging")
+           for p in _PENDING.values()):
+        return
+    d = db.drive_get(drive_id)
+    cfg = (d or {}).get("config") or {}
+    if d is not None and not (cfg.get("refresh_token") or cfg.get("access_token")):
+        db.drive_delete(drive_id)
+
+
 def _claim(state):
     """Consume the waiting flow whose state matches — exactly once. A replayed
     or forged redirect finds nothing and is answered with a generic page; it
@@ -174,6 +190,8 @@ def _finish(p, status_, error=None):
     with _LOCK:
         p["status"] = status_
         p["error"] = error
+        if status_ != "authorized":
+            _drop_if_empty(p["drive_id"])
 
 
 def _exchange(p):

@@ -54,6 +54,9 @@ class _FakeOAuthDB:
     def drive_client_get(self, kind):
         return self.clients.get(kind)
 
+    def drive_delete(self, did):
+        return self.rows.pop(did, None) is not None
+
 
 def _row(kind="google"):
     return {"id": "drive1", "label": "My Drive", "kind": kind,
@@ -298,6 +301,35 @@ def test_stale_flow_expires_and_is_forgotten(env, monkeypatch):
     monkeypatch.setattr(drive_oauth.time, "time",
                         lambda: started + 2 * drive_oauth._CONSENT_TTL + 1)
     assert pytest.raises(DriveError, drive_oauth.status, pid).value.status == 404
+
+
+def test_unfinished_new_account_leaves_no_blank_row(env, monkeypatch):
+    """A new account row holds nothing until consent completes: denied or
+    abandoned, it goes with the flow instead of showing as a blank account —
+    but not while a second consent for it is still open."""
+    other = drive_oauth.start("drive1", ORIGIN)["pending"]
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
+    _redirect(pid, error="access_denied", good_state=True)
+    assert "drive1" in drive_oauth.db.rows
+    _redirect(other, error="access_denied", good_state=True)
+    assert "drive1" not in drive_oauth.db.rows
+
+    drive_oauth.db.rows["drive1"] = _row()
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
+    started = drive_oauth._PENDING[pid]["started"]
+    monkeypatch.setattr(drive_oauth.time, "time",
+                        lambda: started + drive_oauth._CONSENT_TTL + 1)
+    assert drive_oauth.status(pid)["status"] == "expired"
+    assert "drive1" not in drive_oauth.db.rows
+
+
+def test_failed_reconnect_keeps_a_signed_in_account(env):
+    """An account that once signed in (e.g. expired, being reconnected) keeps
+    its row and settings when the new consent is denied."""
+    drive_oauth.db.rows["drive1"]["config"] = {"refresh_token": "RT", "expired": True}
+    pid = drive_oauth.start("drive1", ORIGIN)["pending"]
+    _redirect(pid, error="access_denied", good_state=True)
+    assert drive_oauth.db.rows["drive1"]["config"]["refresh_token"] == "RT"
 
 
 # --- services: incremental consent on one account ----------------------------

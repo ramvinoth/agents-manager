@@ -60,8 +60,8 @@ export function LocationPicker({
   }
 
   /** Run consent for `drive`, then select it. Waits on the flow (shared
-   *  waitForConsent) until it ends; a failed/expired flow leaves the drive listed but unselected, with
-   *  the reason shown — the user can retry from the same menu entry. */
+   *  waitForConsent) until it ends; a failed/expired flow leaves the selection unchanged, with the reason
+   *  shown; an account that never signed in is gone, others can be retried. */
   async function connect(drive: Drive) {
     setError(null)
     setConnecting(drive.id)
@@ -80,6 +80,8 @@ export function LocationPicker({
       onChange(drive.id)
     } catch (e: any) {
       setError(e?.message || String(e))
+      // A new account whose consent failed is removed server-side — drop it here too.
+      await refresh().catch(() => {})
     }
     setConnecting(null)
   }

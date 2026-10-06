@@ -64,8 +64,8 @@ export default function LocationPicker({
   }
 
   /** Run consent for `drive`, then select it. Waits on the flow (shared
-   *  waitForConsent) until it ends; a failed/expired flow leaves the drive listed but unselected, with
-   *  the reason shown — the user can retry from the same row. */
+   *  waitForConsent) until it ends; a failed/expired flow leaves the selection unchanged, with the reason
+   *  shown; an account that never signed in is gone, others can be retried. */
   async function connect(drive: Drive) {
     setError("")
     setConnecting(drive.id)
@@ -90,6 +90,8 @@ export default function LocationPicker({
       onClose()
     } catch (e) {
       setError((e as Error).message)
+      // A new account whose consent failed is removed server-side — drop it here too.
+      api.drives().then((fresh) => setDrives(fresh.drives || [])).catch(() => {})
     } finally {
       setConnecting(null)
     }
