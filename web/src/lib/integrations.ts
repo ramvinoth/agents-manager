@@ -3,7 +3,7 @@
 // (GET /api/integrations) and this module only turns a service's state into
 // the control the owner sees, and runs the consent wait both the
 // Integrations page and the file browser's location picker use.
-import type { IntegrationConnection, IntegrationProvider, ServiceState } from "./types"
+import type { IntegrationConnection, IntegrationProvider, IntegrationService, ServiceState } from "./types"
 
 /** What tapping a service row does. `toggle` flips the owner's switch (the
  *  grant is untouched); `grant` runs consent for the missing permission;
@@ -22,6 +22,20 @@ export function serviceAction(state: ServiceState): ServiceAction {
 export function reconnectService(p: IntegrationProvider, c: IntegrationConnection): string {
   const usable = p.services.filter((s) => s.available)
   return (usable.find((s) => c.services[s.id] === "on") || usable[0]).id
+}
+
+/** What an unconfigured provider unlocks once its one-time client setup is done. */
+export function setupHint(p: IntegrationProvider): string {
+  const names = p.services.filter((s) => s.available).map((s) => s.label)
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0]
+  return `Set up once, then connect your ${list}.`
+}
+
+/** The first message of a "Try it in a chat" session: the service's sample
+ *  task, pinned to this account when it has a name — with several accounts
+ *  connected the agent would otherwise have to ask which one. */
+export function tryPrompt(s: IntegrationService, c: IntegrationConnection): string {
+  return c.account ? `${s.try} Use my ${s.label} account ${c.account}.` : s.try
 }
 
 export type ConsentStatus = { status: "waiting" | "authorized" | "failed" | "expired"; error?: string }

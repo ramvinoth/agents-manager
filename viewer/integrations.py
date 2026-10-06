@@ -145,12 +145,14 @@ SERVICES = (
     {"id": "google.drive", "provider": "google", "label": "Google Drive", "kind": "files",
      "scopes": (_G + "drive",), "ops": _FILE_OPS,
      "agent": "Browse, read and save files; files appear in the Files tab.",
+     "try": "List the ten most recently changed files in my Google Drive and summarize the newest document.",
      "available": True},
     {"id": "google.gmail", "provider": "google", "label": "Gmail", "kind": "mail",
      "scopes": (_G + "gmail.readonly", _G + "gmail.compose"),
      "ops": {"read": {"scopes": (), "default": True},
              "draft": {"scopes": (), "default": True}},
      "agent": "Search and read mail, and write drafts. Agents never send — you send a draft from Gmail.",
+     "try": "Summarize my unread email from the last two days and tell me which ones need a reply from me.",
      "available": True},
     {"id": "google.calendar", "provider": "google", "label": "Google Calendar", "kind": "calendar",
      "scopes": (_G + "calendar.readonly",),
@@ -160,20 +162,24 @@ SERVICES = (
              "delete": {"scopes": (_G + "calendar.events",), "default": False}},
      "agent": "Read your events to plan around them; add or move events if you allow it. "
               "Agents never email your guests.",
+     "try": "What is on my calendar for the next seven days? Point out conflicts and free blocks of two hours or more.",
      "available": True},
     {"id": "google.keep", "provider": "google", "label": "Google Keep", "kind": "notes",
      "scopes": (), "ops": {},
      "agent": "",
+     "try": "",
      "available": False,
      "unavailable": "Google only opens the Keep API to Workspace admins, not personal "
                     "accounts. Use Harman Notes — agents already read and write them."},
     {"id": "dropbox.files", "provider": "dropbox", "label": "Dropbox", "kind": "files",
      "scopes": ("files.metadata.read", "files.content.read", "files.content.write"), "ops": _FILE_OPS,
      "agent": "Browse, read and save files; files appear in the Files tab.",
+     "try": "List the ten most recently changed files in my Dropbox and summarize the newest document.",
      "available": True},
     {"id": "onedrive.files", "provider": "onedrive", "label": "OneDrive", "kind": "files",
      "scopes": ("Files.ReadWrite",), "ops": _FILE_OPS,
      "agent": "Browse, read and save files; files appear in the Files tab.",
+     "try": "List the ten most recently changed files in my OneDrive and summarize the newest document.",
      "available": True},
 )
 
@@ -384,7 +390,7 @@ def view(conns, clients, redirect_uri):
             },
             "services": [{
                 "id": s["id"], "label": s["label"], "kind": s["kind"], "agent": s["agent"],
-                "available": s["available"], "unavailable": s.get("unavailable", ""),
+                "try": s["try"], "available": s["available"], "unavailable": s.get("unavailable", ""),
                 "ops": [{"id": o, "label": OP_LABELS[o]} for o in s["ops"]],
             } for s in svcs],
             "connections": [{

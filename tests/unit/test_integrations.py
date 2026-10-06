@@ -23,7 +23,7 @@ def test_every_service_belongs_to_a_provider_and_ids_are_unique():
         assert s["provider"] in I.PROVIDERS
         assert s["id"].startswith(s["provider"] + ".")
         assert s["label"]
-        assert (s["scopes"] and s["agent"]) or not s["available"]
+        assert (s["scopes"] and s["agent"] and s["try"]) or not s["available"]
         assert s["available"] or s.get("unavailable")
 
 

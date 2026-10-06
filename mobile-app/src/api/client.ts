@@ -62,7 +62,7 @@ export type Drive = { id: string; label: string; kind: string; status: string; h
 export type ServiceState = "on" | "off" | "grant" | "unavailable"
 /** One thing an agent may do with a service (read, draft, create, delete…). */
 export type IntegrationOp = { id: string; label: string }
-export type IntegrationService = { id: string; label: string; kind: string; agent: string; available: boolean; unavailable: string; ops: IntegrationOp[] }
+export type IntegrationService = { id: string; label: string; kind: string; agent: string; try: string; available: boolean; unavailable: string; ops: IntegrationOp[] }
 export type IntegrationConnection = {
   id: string
   account: string

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Check, Copy, ExternalLink, Folder, Loader2, Plus, Trash2, X } from "lucide-react"
+import { Check, Copy, ExternalLink, Folder, Loader2, MessageSquarePlus, Plus, Trash2, X } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { reconnectService, serviceAction, waitForConsent } from "@/lib/integrations"
+import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent } from "@/lib/integrations"
+import { useStore } from "@/store"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
@@ -41,7 +42,7 @@ const STATE_TEXT: Record<ServiceState, string> = {
  * that is on, chips say what AGENTS may do with it (read, write, delete…);
  * a files account can be narrowed to one folder; and "This machine" lists
  * the folders agents may work in on the server's own disk. Opened from
- * Profile → Integrations and from the file browser's location picker.
+ * the header, Profile → Integrations and the file browser's location picker.
  */
 export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void; onChanged?: () => void }) {
   const [view, setView] = useState<IntegrationsView | null>(null)
@@ -51,6 +52,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   const [error, setError] = useState<string | null>(null)
   const [consenting, setConsenting] = useState(false) // a vendor tab is open on a consent
   const closed = useRef(false)
+  const startNewSession = useStore((s) => s.startNewSession)
 
   useEffect(() => () => { closed.current = true }, [])
 
@@ -91,6 +93,13 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
         if (!closed.current) setConsenting(false)
       }
     })
+  }
+
+  /** Close the page and open a fresh chat already doing a real task with
+   *  this service — connecting is only worth it once the owner sees it used. */
+  function tryInChat(s: IntegrationService, c: IntegrationConnection) {
+    onClose()
+    startNewSession({ cwd: "~", title: `Try ${s.label}`, message: tryPrompt(s, c) })
   }
 
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
@@ -181,7 +190,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                   />
                 ) : !p.client.configured ? (
                   <div className="px-3 pb-3 text-xs text-muted-foreground">
-                    Set up the {p.label} client to connect: {p.services.map((s) => s.label).join(", ")}.
+                    {setupHint(p)}
                   </div>
                 ) : (
                   <div className="flex flex-col divide-y border-t">
@@ -231,6 +240,17 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                                   onToggle={(op, on) => setOp(c, s.id, op, on)}
                                   onGrant={(op) => connect(s.id, c.id, op)}
                                 />
+                                {s.try && !c.expired && (
+                                  <button
+                                    className="mb-1 flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
+                                    onClick={() => tryInChat(s, c)}
+                                    disabled={!!busy}
+                                    title={tryPrompt(s, c)}
+                                    data-testid={`try-${c.id}-${s.id}`}
+                                  >
+                                    <MessageSquarePlus className="size-3" /> Try it in a chat
+                                  </button>
+                                )}
                                 {s.kind === "files" && (
                                   <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(r) => setRoot(c, r)} />
                                 )}

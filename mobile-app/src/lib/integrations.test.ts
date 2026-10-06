@@ -1,7 +1,7 @@
 import assert from "node:assert"
-import { reconnectService, serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
-const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", available, unavailable: "", ops: [] })
+const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
   services: [svc("keep", false), svc("drive"), svc("gmail")], connections: [] }
 const conn = (services: Record<string, ServiceState>) => ({ id: "c", account: "", authorized: true, expired: true, services, ops: {}, root: "/" })
@@ -22,6 +22,13 @@ const seq = (...s: ConsentStatus[]) => { let i = 0; return async () => s[Math.mi
 const noSleep = async () => {}
 
 async function main() {
+  await test("setup hint lists only connectable services", () => {
+    assert.strictEqual(setupHint(prov), "Set up once, then connect your drive and gmail.")
+  })
+  await test("try names the account so the agent need not ask", () => {
+    assert.strictEqual(tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")
+    assert.strictEqual(tryPrompt(svc("Drive"), conn({})), "List my files.")
+  })
   await test("each state maps to its control", () => {
     assert.deepStrictEqual(
       (["on", "off", "grant", "unavailable"] as const).map(serviceAction),

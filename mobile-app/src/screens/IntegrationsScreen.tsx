@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
-import { reconnectService, serviceAction, waitForConsent } from "../lib/integrations"
+import { useNavigation } from "@react-navigation/native"
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
+import type { RootStackParamList } from "../../App"
+import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent } from "../lib/integrations"
+import { resolveSessionPath } from "../lib/session"
+import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -42,6 +47,8 @@ export default function IntegrationsScreen() {
   const [error, setError] = useState("")
   const [consenting, setConsenting] = useState(false) // the system browser is open on a consent
   const left = useRef(false)
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>()
+  const { host } = useHost()
   useEffect(() => () => { left.current = true }, [])
 
   const load = useCallback(async () => setView(await api.integrations()), [])
@@ -83,6 +90,19 @@ export default function IntegrationsScreen() {
 
   function setLocal(roots: string[], ops: string[]) {
     return run("local", async () => { await api.integrationLocal({ roots, ops }) })
+  }
+
+  /** Open a fresh chat already doing a real task with this service —
+   *  connecting is only worth it once the owner sees it used. */
+  function tryInChat(s: IntegrationService, c: IntegrationConnection) {
+    return run(`${c.id}:${s.id}:try`, async () => {
+      const title = `Try ${s.label}`
+      const res = await api.newSession({ message: tryPrompt(s, c), cwd: "~", host, agent: "claude", title })
+      const path = res.path ?? (await resolveSessionPath(res.session, host))
+      if (!path) throw new Error("The chat started but its transcript wasn't found yet. Find it in Chats shortly.")
+      api.renameSession({ session: path, title, host }).catch(() => {})
+      if (!left.current) navigation.navigate("Thread", { host, label: title, path })
+    })
   }
 
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
@@ -179,7 +199,7 @@ export default function IntegrationsScreen() {
             />
           ) : !p.client.configured ? (
             <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
-              {p.client.client_id ? "Client secret missing. " : ""}Set up the {p.label} client to connect: {p.services.map((s) => s.label).join(", ")}.
+              {p.client.client_id ? "Client secret missing. " : ""}{setupHint(p)}
             </Text>
           ) : (
             <>
@@ -223,6 +243,18 @@ export default function IntegrationsScreen() {
                           onToggle={(op, on) => setOp(c, s.id, op, on)}
                           onGrant={(op) => connect(s.id, c.id, op)}
                         />
+                      ) : null}
+                      {c.services[s.id] === "on" && s.try && !c.expired ? (
+                        <TouchableOpacity
+                          testID={`try-${c.id}-${s.id}`}
+                          onPress={() => tryInChat(s, c)}
+                          disabled={!!busy}
+                          hitSlop={8}
+                          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 42, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}
+                        >
+                          {busy === `${c.id}:${s.id}:try` ? <ActivityIndicator size="small" /> : <Icon name="chat" size={14} color={t.accent} />}
+                          <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Try it in a chat</Text>
+                        </TouchableOpacity>
                       ) : null}
                       {c.services[s.id] === "on" && s.kind === "files" ? (
                         <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(root) => setRoot(c, root)} />

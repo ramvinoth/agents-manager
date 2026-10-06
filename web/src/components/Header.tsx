@@ -16,10 +16,12 @@ import {
   User,
   LogOut,
   KeyRound,
+  Plug,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
 import { HostDialog } from "./HostDialog"
 import { EnvDialog } from "./EnvDialog"
+import { IntegrationsDialog } from "./IntegrationsDialog"
 import { SessionActions } from "./SessionActions"
 import { MobileNav } from "./MobileNav"
 import { Button } from "@/components/ui/button"
@@ -49,6 +51,7 @@ export function Header() {
   const { dark, toggle } = useTheme()
   const [nsOpen, setNsOpen] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
+  const [intOpen, setIntOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
   const currentHost = useStore((s) => s.currentHost)
@@ -164,6 +167,16 @@ export function Header() {
         variant="outline"
         size="icon"
         className="size-7"
+        onClick={() => setIntOpen(true)}
+        title="Integrations: connect your accounts so agents can use them"
+      >
+        <Plug className="size-4 text-muted-foreground" />
+      </Button>
+
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-7"
         onClick={openFs}
         title={`Browse files on ${hostLabel} or a cloud drive`}
       >
@@ -251,6 +264,7 @@ export function Header() {
 
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
+      {intOpen && <IntegrationsDialog onClose={() => setIntOpen(false)} />}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>
   )

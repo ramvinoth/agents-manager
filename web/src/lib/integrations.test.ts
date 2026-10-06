@@ -1,6 +1,6 @@
-import { reconnectService, serviceAction, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
-const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", available, unavailable: "", ops: [] })
+const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
   services: [svc("keep", false), svc("drive"), svc("gmail")], connections: [] }
 const conn = (services: Record<string, ServiceState>) => ({ id: "c", account: "", authorized: true, expired: true, services, ops: {}, root: "/" })
@@ -12,6 +12,9 @@ function eq(label: string, got: unknown, want: unknown) {
   else { fail++; console.log(`FAIL ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`) }
 }
 
+eq("try names the account so the agent need not ask", tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")
+eq("try without an account name is the sample task", tryPrompt(svc("Drive"), conn({})), "List my files.")
+eq("setup hint lists only connectable services", setupHint(prov), "Set up once, then connect your drive and gmail.")
 eq("on toggles", serviceAction("on"), "toggle")
 eq("off toggles", serviceAction("off"), "toggle")
 eq("missing permission asks for consent", serviceAction("grant"), "grant")

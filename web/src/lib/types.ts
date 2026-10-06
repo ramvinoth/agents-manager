@@ -501,6 +501,8 @@ export interface IntegrationService {
   kind: string
   /** What agents will do with it — read before granting. */
   agent: string
+  /** A sample first task for "Try it in a chat" ("" when unavailable). */
+  try: string
   available: boolean
   /** Why it can't be connected, when !available. */
   unavailable: string
