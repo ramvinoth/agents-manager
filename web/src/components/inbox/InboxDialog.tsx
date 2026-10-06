@@ -314,7 +314,7 @@ function RowDetail({
   canReply: boolean
 }) {
   const [reply, setReply] = useState("")
-  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState("")
   const [snoozeMenu, setSnoozeMenu] = useState(false)
   const isDecision = msg.kind !== "message"
   const eff = msg.effective_status ?? msg.status
@@ -322,15 +322,18 @@ function RowDetail({
     ? `snoozed until ${new Date((msg.snoozed_until ?? 0) * 1000).toLocaleString()}`
     : eff
 
+  // Optimistic: the field clears on send; a failure returns the words.
   async function sendReply() {
     const to = replyTo(msg)
-    if (!to || !reply.trim()) return
-    setSending(true)
+    const body = reply.trim()
+    if (!to || !body) return
+    setReply("")
+    setSendError("")
     try {
-      await api.inboxSend({ to, body: reply.trim(), in_reply_to: msg.id })
-      setReply("")
-    } finally {
-      setSending(false)
+      await api.inboxSend({ to, body, in_reply_to: msg.id })
+    } catch (e) {
+      setReply((d) => (d ? `${body}\n${d}` : body))
+      setSendError(`Not sent: ${(e as Error).message || "try again"}`)
     }
   }
 
@@ -391,11 +394,12 @@ function RowDetail({
               className="min-h-[34px] flex-1"
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendReply() } }}
             />
-            <Button size="sm" onClick={sendReply} disabled={sending || !reply.trim()}>
+            <Button size="sm" onClick={sendReply} disabled={!reply.trim()}>
               <Send className="size-3.5" />
             </Button>
           </div>
         )}
+        {sendError && <p className="w-full text-xs text-destructive">{sendError}</p>}
       </div>
     </div>
   )
@@ -414,7 +418,7 @@ function Composer({
   const sessions = useStore((s) => s.sessions)
   const [to, setTo] = useState<string>("")
   const [text, setText] = useState("")
-  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
 
   const targets = useMemo(() => {
     const withId = (s: { path: string } & { title?: string; id?: string }) => {
@@ -433,43 +437,48 @@ function Composer({
       .filter(Boolean) as { id: string; title: string }[]
   }, [sessions, scope, name])
 
+  // Optimistic: the field clears on send; a failure returns the words.
   async function send() {
     const dest = typeof scope === "string" ? scope : to
-    if (!dest || !text.trim()) return
-    setBusy(true)
+    const body = text.trim()
+    if (!dest || !body) return
+    setText("")
+    setError("")
     try {
-      const m = await api.inboxSend({ to: `session:${dest}`, body: text.trim() })
-      setText("")
-      onSent(m)
-    } finally {
-      setBusy(false)
+      onSent(await api.inboxSend({ to: `session:${dest}`, body }))
+    } catch (e) {
+      setText((d) => (d ? `${body}\n${d}` : body))
+      setError(`Not sent: ${(e as Error).message || "try again"}`)
     }
   }
 
   return (
-    <div className="flex items-center gap-1.5">
-      {typeof scope !== "string" && (
-        <select
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          className="h-8 max-w-[130px] rounded-md border border-border bg-background px-1 text-xs"
-        >
-          <option value="">To…</option>
-          {targets.map((t) => (
-            <option key={t.id} value={t.id}>{t.title}</option>
-          ))}
-        </select>
-      )}
-      <Input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") send() }}
-        placeholder={typeof scope === "string" ? `Message ${name}` : "Message a session…"}
-        className="h-8 text-sm"
-      />
-      <Button size="icon" variant="ghost" className="shrink-0" onClick={send} disabled={busy || !text.trim()}>
-        <Send className="size-4" />
-      </Button>
+    <div className="flex flex-col gap-1">
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex items-center gap-1.5">
+        {typeof scope !== "string" && (
+          <select
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="h-8 max-w-[130px] rounded-md border border-border bg-background px-1 text-xs"
+          >
+            <option value="">To…</option>
+            {targets.map((t) => (
+              <option key={t.id} value={t.id}>{t.title}</option>
+            ))}
+          </select>
+        )}
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") send() }}
+          placeholder={typeof scope === "string" ? `Message ${name}` : "Message a session…"}
+          className="h-8 text-sm"
+        />
+        <Button size="icon" variant="ghost" className="shrink-0" onClick={send} disabled={!text.trim()}>
+          <Send className="size-4" />
+        </Button>
+      </div>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, threadTimeline, waitsOnOwner, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -12,6 +12,17 @@ const M = (o: Partial<InboxMessage> & { id: number }): InboxMessage => ({
   ref_id: "", in_reply_to: 0, status: "sent", snoozed_until: null, archived: false,
   created_at: 0, updated_at: 0, ...o,
 })
+
+// optimistic send: pending row → server row, never twice, survives a poll
+const p1 = pendingMessage("s1", "hi", 7, 100)
+const p2 = pendingMessage("s1", "again", 0, 101)
+eq("pending ids negative and distinct", [p1.id < 0, p2.id < 0, p1.id !== p2.id], [true, true, true])
+eq("pending is the owner's", [p1.sender_type, p1.recipient_id, p1.in_reply_to, p1.pending], ["user", "s1", 7, true])
+const server = M({ id: 50, body: "hi" })
+eq("poll keeps in-flight sends", withPending([M({ id: 1 })], [M({ id: 9 }), p1]).map((m) => m.id), [1, p1.id])
+eq("confirm swaps in place", confirmSent([M({ id: 1 }), p1], p1.id, server).map((m) => m.id), [1, 50])
+eq("confirm after a poll already brought it: once", confirmSent([M({ id: 1 }), server, p1], p1.id, server).map((m) => m.id), [1, 50])
+eq("confirmed row is not pending", confirmSent([p1], p1.id, server)[0].pending, undefined)
 
 // labels: the chip contract
 eq("kind labels", INBOX_FILTERS, ["all", "question", "plan", "approval", "card", "message"])

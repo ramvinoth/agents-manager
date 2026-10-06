@@ -223,3 +223,25 @@ def test_unread_count_only_counts_rows_addressed_to_the_owner():
                     recipient_type="session", recipient_id="s1")
     peer = dict(_row("message", None, "sent", id=2), recipient_type="session")
     assert inbox.unread_count([outgoing, peer, _row(id=3)], [], NOW) == 1
+
+
+# ── deliver_message: the sender's ack never waits on the wake ─────────────
+
+def test_deliver_returns_before_a_slow_wake(monkeypatch):
+    import threading
+    gate, woke = threading.Event(), threading.Event()
+    monkeypatch.setattr(inbox.db, "inbox_create", lambda *a, **k: {"id": 1})
+    monkeypatch.setattr(inbox.db, "audit_append", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "session_project", lambda sid: None)
+    monkeypatch.setattr(inbox, "_push_owner", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "_label", lambda sid: "S")
+
+    def slow_wake(sid, prompt):  # a resume that reads a huge transcript
+        gate.wait(5)
+        woke.set()
+    monkeypatch.setattr(inbox, "_wake_session", slow_wake)
+
+    assert inbox.deliver_message("user", "", "session", "s1", "hi") == {"id": 1}
+    assert not woke.is_set()          # returned while the wake is still running
+    gate.set()
+    assert woke.wait(5)               # and the wake still happens

@@ -224,6 +224,8 @@ export type InboxMessage = {
   open?: boolean | null
   effective_status?: InboxStatus
   snoozed?: boolean
+  /** Client-only: an optimistic row the server has not acknowledged yet. */
+  pending?: boolean
 }
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN

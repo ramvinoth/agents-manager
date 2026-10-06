@@ -22,6 +22,7 @@ never dropped: a lapsed snooze counts as unread again (effective_status), and
 re-delivery of a still-open item refreshes the row back to 'sent' unless the
 owner snoozed it (db.inbox_create).
 """
+import threading
 import time
 
 from viewer import db
@@ -295,7 +296,14 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
     try:
         if recipient_type == "session":
             if wake:
-                _wake_session(str(recipient_id), f"[inbox] From {_who(sender_type, sender_id)}:\n{body}")
+                # Off the request thread: the row above is the durable
+                # record, so the sender's ack must not wait on a resume
+                # (reading the transcript, spawning claude, SSH for remote).
+                threading.Thread(
+                    target=_wake_session, daemon=True, name="inbox-wake",
+                    args=(str(recipient_id),
+                          f"[inbox] From {_who(sender_type, sender_id)}:\n{body}"),
+                ).start()
             _push_owner(f"{_who(sender_type, sender_id)} · inbox",
                         body.replace("\n", " ")[:180],
                         {"session": str(recipient_id)})
@@ -320,15 +328,19 @@ def _wake_session(session_id, prompt):
     """Wake a session with an incoming message: into its running turn's queue
     when a run is live, else a fresh resumed turn on its original host.
     Best-effort — a failed wake means the message sits in its inbox, where
-    the session's next run will list it (the inbox is the durable surface)."""
+    the session's next run will list it (the inbox is the durable surface).
+    Logs how the wake landed and how long it took (the send-to-agent leg of
+    the owner's wait)."""
+    t0 = time.time()
+    how = "failed"
     try:
         from viewer import engine
         with engine.CHAT_LOCK:
             job = engine.CHAT_JOBS.get(session_id)
             running = bool(job and job.get("running"))
             host = (job or {}).get("host", "local")
-        if running:
-            engine.enqueue_chat(session_id, prompt)
+        if running and engine.enqueue_chat(session_id, prompt):
+            how = "queued"
             return
         cwd = "~"
         if host != "local":
@@ -341,8 +353,15 @@ def _wake_session(session_id, prompt):
             full = transcript_path(session_id)
             if full:
                 cwd = sessions_mod.extract_cwd(full) or cwd
-        if not engine.start_claude_run(session_id, ["--resume", session_id],
-                                      prompt, "acceptEdits", cwd, "", host):
-            return  # a run is already in flight — it will read the inbox
-    except Exception:
-        pass
+        if engine.start_claude_run(session_id, ["--resume", session_id],
+                                   prompt, "acceptEdits", cwd, "", host):
+            how = "resumed"
+        elif engine.enqueue_chat(session_id, prompt):
+            # Another wake started a run between our check and our start:
+            # ride its queue instead of leaving this message unannounced.
+            how = "queued"
+    except Exception as e:
+        print(f"[inbox] wake {session_id[:8]} error: {e}", flush=True)
+    finally:
+        print(f"[inbox] wake {session_id[:8]} {how} in {int((time.time() - t0) * 1000)}ms",
+              flush=True)

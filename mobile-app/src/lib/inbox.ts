@@ -149,3 +149,27 @@ export function threadTimeline(messages: InboxMessage[], dayOf: (ts: number) => 
   }
   return out
 }
+
+let pendingSeq = 0
+/** The owner's just-sent message, shown before the server acknowledges it.
+ *  A negative id can never collide with a server row. */
+export function pendingMessage(session: string, body: string, inReplyTo: number, now = Date.now() / 1000): InboxMessage {
+  return {
+    id: -++pendingSeq, session_id: session, project_id: null, sender_type: "user", sender_id: "",
+    recipient_type: "session", recipient_id: session, body, kind: "message", ref_id: "",
+    in_reply_to: inReplyTo, status: "sent", snoozed_until: null, archived: false,
+    created_at: now, updated_at: now, pending: true,
+  }
+}
+
+/** A poll's fresh rows plus the sends still in flight (a poll that lands
+ *  mid-send must not erase the bubble the owner just saw appear). */
+export function withPending(fresh: InboxMessage[], current: InboxMessage[]): InboxMessage[] {
+  return [...fresh, ...current.filter((m) => m.pending)]
+}
+
+/** Swap the optimistic row for the server's. Drops any copy a poll already
+ *  brought in, so the message never shows twice. */
+export function confirmSent(all: InboxMessage[], pendingId: number, row: InboxMessage): InboxMessage[] {
+  return all.filter((m) => m.id !== row.id).map((m) => (m.id === pendingId ? row : m))
+}

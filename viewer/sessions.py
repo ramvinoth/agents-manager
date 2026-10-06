@@ -4,8 +4,8 @@ summaries, digests, and the StatCache utility.
 Every function that reads or mutates a session JSONL lives here. The single
 extract_cwd() replaces three divergent implementations (local full-scan,
 remote first-100, remote-summary first-200) with one correct algorithm:
-scan all lines, return the LAST cwd (matching Claude CLI's behaviour on
-forks). For remote use, callers ship this function's source to the host
+return the LAST cwd (matching Claude CLI's behaviour on forks), read
+backwards so a huge transcript costs milliseconds. For remote use, callers ship this function's source to the host
 via inspect.getsource, so local and remote results can never drift.
 """
 import glob as _glob_mod
@@ -61,24 +61,42 @@ class StatCache:
 # --------------------------------------------------------------------------- #
 # extract_cwd — THE single implementation                                     #
 # --------------------------------------------------------------------------- #
-def extract_cwd_from_lines(lines):
-    """Pure function: given an iterable of JSONL strings, return the LAST cwd.
+def last_cwd_in_file(fh, chunk=1 << 20):
+    """Return the LAST non-empty top-level cwd in a JSONL file opened in
+    BINARY mode, or None.
 
-    This is the ONE correct algorithm. Claude CLI uses the last cwd when
-    resuming a forked session. Both local and remote code paths must use
-    this (remote ships this source via inspect.getsource).
-
-    Returns the cwd string, or None if no cwd field was found.
+    This is the ONE algorithm. Claude CLI uses the last cwd when resuming a
+    forked session, so the last one is the truth. It reads the file
+    backwards in chunks and stops at the first (= last) cwd line. Long
+    transcripts (hundreds of MB) answer in milliseconds, not the seconds a
+    forward scan of every line costs. Both local and remote paths use this
+    function (remote ships its source via inspect.getsource), so it must
+    stay self-contained: only the `json` module.
     """
-    last_cwd = None
-    for line in lines:
+    def cwd_of(line):
+        if b'"cwd"' not in line:
+            return None
         try:
             obj = json.loads(line)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            continue
-        if obj.get("cwd"):
-            last_cwd = obj["cwd"]
-    return last_cwd
+        except ValueError:
+            return None
+        cwd = obj.get("cwd") if isinstance(obj, dict) else None
+        return cwd if isinstance(cwd, str) and cwd else None
+
+    fh.seek(0, 2)
+    pos = fh.tell()
+    tail = b""
+    while pos > 0:
+        step = min(chunk, pos)
+        pos -= step
+        fh.seek(pos)
+        lines = (fh.read(step) + tail).split(b"\n")
+        tail = lines.pop(0)  # may be cut mid-line; finished on the next chunk
+        for line in reversed(lines):
+            cwd = cwd_of(line)
+            if cwd:
+                return cwd
+    return cwd_of(tail)
 
 
 def extract_cwd(session_file):
@@ -92,8 +110,8 @@ def extract_cwd(session_file):
     CLI assigned (the canonical project path), then to $HOME.
     """
     try:
-        with open(session_file, "r") as f:
-            cwd = extract_cwd_from_lines(f)
+        with open(session_file, "rb") as f:
+            cwd = last_cwd_in_file(f)
     except Exception:
         cwd = None
     if cwd:

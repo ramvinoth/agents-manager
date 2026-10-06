@@ -925,19 +925,19 @@ def remote_read_session(hid, rel, q):
 
 def remote_extract_cwd(hid, rel):
     """Extract the cwd from a remote session using the unified last-cwd strategy.
-    Ships extract_cwd_from_lines to the host via remote_run_python so the
+    Ships last_cwd_in_file to the host via remote_run_python so the
     algorithm is identical to local — the LAST cwd wins (correct for forks)."""
     full = remote_full_path(hid, rel)
     if not full:
         return None
     import inspect
-    from viewer.sessions import extract_cwd_from_lines
+    from viewer.sessions import last_cwd_in_file
     script = ("import json, sys\n"
-              + inspect.getsource(extract_cwd_from_lines)
+              + inspect.getsource(last_cwd_in_file)
               + "P = json.loads(%r)\n" % json.dumps({"path": full})
               + "try:\n"
-                "    with open(P['path'], errors='replace') as fh:\n"
-                "        cwd = extract_cwd_from_lines(fh)\n"
+                "    with open(P['path'], 'rb') as fh:\n"
+                "        cwd = last_cwd_in_file(fh)\n"
                 "except OSError:\n"
                 "    cwd = None\n"
                 "print(json.dumps(cwd))\n")

@@ -1,6 +1,7 @@
 """Unit tests for viewer.sessions and viewer.loops — the I/O-core functions
 that previously had zero test coverage. Pure-function tests: no simulator,
 no network, no database."""
+import io
 import json
 import os
 import tempfile
@@ -14,7 +15,7 @@ from viewer.sessions import (
     compute_session_summary,
     create_backup,
     extract_cwd,
-    extract_cwd_from_lines,
+    last_cwd_in_file,
     restore_session,
     session_digest_from_lines,
     _compress,
@@ -25,8 +26,11 @@ from viewer.sessions import (
 from viewer.loops import parse_interval
 
 
-class TestExtractCwdFromLines(unittest.TestCase):
-    """extract_cwd_from_lines is a pure function: lines in, cwd out."""
+class TestLastCwdInFile(unittest.TestCase):
+    """last_cwd_in_file reads backwards and returns the LAST cwd."""
+
+    def cwd(self, lines, chunk=1 << 20):
+        return last_cwd_in_file(io.BytesIO("\n".join(lines).encode()), chunk)
 
     def test_returns_last_cwd(self):
         lines = [
@@ -35,30 +39,40 @@ class TestExtractCwdFromLines(unittest.TestCase):
             json.dumps({"type": "assistant"}),
             json.dumps({"type": "fork", "cwd": "/third"}),
         ]
-        self.assertEqual(extract_cwd_from_lines(lines), "/third")
+        self.assertEqual(self.cwd(lines), "/third")
 
     def test_returns_none_when_no_cwd(self):
-        lines = [json.dumps({"type": "user", "message": "hello"})]
-        self.assertIsNone(extract_cwd_from_lines(lines))
+        self.assertIsNone(self.cwd([json.dumps({"type": "user", "message": "hello"})]))
 
     def test_skips_malformed_json(self):
-        lines = [
-            "not json",
-            json.dumps({"cwd": "/good"}),
-            "{broken",
-        ]
-        self.assertEqual(extract_cwd_from_lines(lines), "/good")
+        self.assertEqual(self.cwd(["not json", json.dumps({"cwd": "/good"}), '{broken "cwd"']), "/good")
 
     def test_empty_input(self):
-        self.assertIsNone(extract_cwd_from_lines([]))
+        self.assertIsNone(self.cwd([]))
 
     def test_ignores_empty_cwd_string(self):
-        lines = [json.dumps({"cwd": ""}), json.dumps({"cwd": "/real"})]
-        self.assertEqual(extract_cwd_from_lines(lines), "/real")
+        self.assertEqual(self.cwd([json.dumps({"cwd": "/real"}), json.dumps({"cwd": ""})]), "/real")
 
-    def test_single_cwd(self):
-        lines = [json.dumps({"type": "init", "cwd": "/only"})]
-        self.assertEqual(extract_cwd_from_lines(lines), "/only")
+    def test_ignores_cwd_mentioned_inside_message_text(self):
+        lines = [json.dumps({"cwd": "/real"}),
+                 json.dumps({"message": 'the "cwd" key', "x": {"cwd": "/nested"}})]
+        self.assertEqual(self.cwd(lines), "/real")
+
+    def test_trailing_newline_and_unicode(self):
+        lines = [json.dumps({"cwd": "/é/proj"}, ensure_ascii=False), ""]
+        self.assertEqual(self.cwd(lines), "/é/proj")
+
+    def test_lines_split_across_chunks_match_forward_scan(self):
+        # Tiny chunks force every line to straddle chunk boundaries; the
+        # answer must equal a plain forward scan for the last cwd.
+        lines = [json.dumps({"cwd": f"/d{i}", "pad": "x" * (i * 7 % 50)}) if i % 3 else
+                 json.dumps({"type": "noise", "pad": "y" * i}) for i in range(60)]
+        expected = [json.loads(l)["cwd"] for l in lines if "cwd" in json.loads(l)][-1]
+        for chunk in (1, 2, 7, 64, 4096):
+            self.assertEqual(self.cwd(lines, chunk), expected, chunk)
+
+    def test_only_line_is_the_first(self):
+        self.assertEqual(self.cwd([json.dumps({"cwd": "/only"})], chunk=3), "/only")
 
 
 class TestExtractCwd(unittest.TestCase):

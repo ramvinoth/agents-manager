@@ -9,6 +9,7 @@ import {
   kindLabel, SNOOZE_OPTIONS,
   conversationPreview, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
+  confirmSent, pendingMessage, withPending,
 } from "../lib/inbox"
 import { fmtWaiting } from "../lib/decisions"
 import { fmtClock, fmtDate } from "../lib/thread"
@@ -66,7 +67,6 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const [composeOpen, setComposeOpen] = useState(false)
   const [snoozeFor, setSnoozeFor] = useState<number | null>(null)
   const [draft, setDraft] = useState("")
-  const [sending, setSending] = useState(false)
   const reads = useRef({ issued: 0, applied: 0 })
   const marked = useRef(new Set<number>())
 
@@ -77,7 +77,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       const r = await api.inboxList(scope)
       if (request < reads.current.applied) return
       reads.current.applied = request
-      setMessages(r.messages || [])
+      setMessages((cur) => withPending(r.messages || [], cur))
       setUnread(r.unread || 0)
       setError("")
     } catch (err) {
@@ -164,21 +164,25 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     }
   }, [session, title, labels, isTab, unread, t.accent, openChat])
 
+  // Optimistic: the box clears and the bubble shows the moment you tap send
+  // (a messenger never makes you watch your words sit in the field); a failed
+  // send takes the bubble back and returns the words to the box.
   const send = useCallback(async () => {
     const body = draft.trim()
-    if (!body || sending || !session) return
-    setSending(true)
+    if (!body || !session) return
+    const lastTheirs = [...messages].filter((m) => m.sender_type !== "user").sort((a, b) => b.created_at - a.created_at)[0]
+    const pending = pendingMessage(session, body, lastTheirs?.id ?? 0)
+    setDraft("")
+    setMessages((all) => [...all, pending])
     try {
-      const lastTheirs = [...messages].filter((m) => m.sender_type !== "user").sort((a, b) => b.created_at - a.created_at)[0]
-      await api.inboxSend({ to: `session:${session}`, body, in_reply_to: lastTheirs?.id })
-      setDraft("")
-      await load()
+      const row = await api.inboxSend({ to: `session:${session}`, body, in_reply_to: lastTheirs?.id })
+      setMessages((all) => confirmSent(all, pending.id, row))
     } catch (e) {
-      Alert.alert("Could not send", userError(e, "send the message"))
-    } finally {
-      setSending(false)
+      setMessages((all) => all.filter((m) => m.id !== pending.id))
+      setDraft((d) => (d ? `${body}\n${d}` : body))
+      Alert.alert("Not sent", userError(e, "send the message"))
     }
-  }, [draft, sending, session, messages, load])
+  }, [draft, session, messages])
 
   const snooze = async (hours: number) => {
     if (snoozeFor == null) return
@@ -261,7 +265,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                   ) : null}
                 </View>
               ) : null}
-              <Text style={styles.msgTime}>{fmtClock(iso(m.created_at))}</Text>
+              <Text style={styles.msgTime}>{m.pending ? "Sending…" : fmtClock(iso(m.created_at))}</Text>
             </View>
           )
         }}
@@ -281,8 +285,8 @@ export default function InboxScreen({ navigation, session, title, host, path, is
             testID="inbox-send"
             accessibilityLabel="Send"
             onPress={() => void send()}
-            disabled={sending || !draft.trim()}
-            style={[styles.circleBtn, sending || !draft.trim() ? styles.sendBtnDisabled : styles.sendBtn]}
+            disabled={!draft.trim()}
+            style={[styles.circleBtn, !draft.trim() ? styles.sendBtnDisabled : styles.sendBtn]}
           >
             <Icon name="send" size={20} color={t.onAccent} />
           </TouchableOpacity>
