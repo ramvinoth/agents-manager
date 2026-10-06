@@ -1,6 +1,8 @@
 name = "harman-relay"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
+# The stable public address phones store at pairing time — never the workers.dev URL.
+routes = [{ pattern = "relay.suhai.ai", custom_domain = true }]
 
 [observability]
 enabled = true
