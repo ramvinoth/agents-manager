@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { completesBoardSwipe, shouldClaimBoardSwipe } from "./boardSwipe.ts"
+import { completesBoardSwipe, completesMenuSwipe, shouldClaimBoardSwipe } from "./boardSwipe.ts"
 
 const start = { x0: 390, left: 0, width: 400, dx: -25, dy: 2, touches: 1 }
 for (const [name, patch, expected] of [
@@ -36,4 +36,14 @@ for (const [name, dx, dy, expected] of [
 ] as const) {
   assert.equal(completesBoardSwipe({ dx, dy }), expected, name)
 }
-console.log("boardSwipe: 26 assertions passed")
+for (const [name, dx, dy, expected] of [
+  ["menu complete", 80, 2, true],
+  ["menu boundary", 56, 0, true],
+  ["menu short", 55, 0, false],
+  ["leftward pages to Inbox", -80, 0, false],
+  ["menu diagonal", 60, 40, false],
+  ["menu invalid", NaN, 0, false],
+] as const) {
+  assert.equal(completesMenuSwipe({ dx, dy }), expected, name)
+}
+console.log("boardSwipe: 32 assertions passed")

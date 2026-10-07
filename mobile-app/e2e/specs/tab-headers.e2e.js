@@ -95,6 +95,12 @@ describe("Tab header ownership — every transition", function () {
     }
     for (let i = 1; i < TABS.length; i++) { await swipe(-1); await assertHeader(TABS[i], "swipe left") }
     for (let i = TABS.length - 2; i >= 0; i--) { await swipe(1); await assertHeader(TABS[i], "swipe right") }
+    // Chats is the leftmost page: one more swipe right opens the side menu.
+    await swipe(1)
+    await $("~side-menu").waitForDisplayed()
+    await tapOutsidePanel()
+    await $("~side-menu").waitForDisplayed({ reverse: true })
+    await assertHeader("Chats", "menu swipe closed")
   })
 
   it("the side menu opens from every tab and its pages push with a working Back", async () => {

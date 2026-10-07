@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import { Text, View } from "react-native"
+import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import { createMaterialTopTabNavigator } from "@react-navigation/material-top-tabs"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
@@ -11,6 +12,7 @@ import SideMenu, { SideMenuProvider } from "../components/SideMenu"
 import Icon, { type IconName } from "../components/Icon"
 import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
+import { completesMenuSwipe } from "../lib/boardSwipe"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -65,6 +67,17 @@ export default function HomeTabs({ navigation }: Props) {
     const id = setInterval(poll, 15000)
     return () => { alive.current = false; clearInterval(id) }
   }, [])
+
+  // Chats is the leftmost page: a rightward drag there has no page to reach, so
+  // it opens the side menu. Only rightward horizontal drags activate; leftward
+  // ones fail at once so the pager still pages to Inbox, vertical ones fail so
+  // the list scrolls.
+  const menuSwipe = useMemo(() => Gesture.Pan()
+    .runOnJS(true)
+    .activeOffsetX(14)
+    .failOffsetX(-14)
+    .failOffsetY([-12, 12])
+    .onEnd((e) => { if (completesMenuSwipe({ dx: e.translationX, dy: e.translationY })) setMenuOpen(true) }), [])
 
   return (
     <SideMenuProvider value={() => setMenuOpen(true)}>
@@ -132,7 +145,11 @@ export default function HomeTabs({ navigation }: Props) {
         },
       })}
     >
-      <Tab.Screen name="Chats">{() => <ChatsScreen navigation={navigation} />}</Tab.Screen>
+      <Tab.Screen name="Chats">{() => (
+        <GestureDetector gesture={menuSwipe}>
+          <View style={{ flex: 1 }}><ChatsScreen navigation={navigation} /></View>
+        </GestureDetector>
+      )}</Tab.Screen>
       <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
