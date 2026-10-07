@@ -34,7 +34,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import db, inference_health, orglogic
+from viewer import db, inference_health, orglogic, resume
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -1543,7 +1543,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "interrupted": False, "host": host,
                "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
                "pending_approvals": [], "perm_token": "", "version_gate": "",
-               "endpoint_issue": "", "model_wait": inference_health.ModelWait()}
+               "endpoint_issue": "", "model_wait": inference_health.ModelWait(),
+               # The last message sent has had no result yet: a run that ends
+               # with this set was cut off mid-turn (resume.was_cut_off).
+               "turn_open": True}
         CHAT_JOBS[session_id] = job
     # Durable "this turn is in flight" record: a restart that kills the run
     # leaves the row behind and boot resumes it (viewer/resume.py).
@@ -1779,6 +1782,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
+                job["turn_open"] = False
                 # Capture the final assistant text so the push notification can
                 # show the actual reply, not a generic "finished" message.
                 res_text = ev.get("result") or ev.get("subtype") or ""
@@ -1789,6 +1793,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     nxt = job["queue"].pop(0) if job["queue"] else None
                     if nxt is None:
                         job["stdin_open"] = False
+                    else:
+                        job["turn_open"] = True
                     backlog = list(job["queue"])
                 if nxt is not None:
                     _persist_queue(session_id, backlog)
@@ -1842,13 +1848,22 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     # The clients show the stderr tail as the turn's error: lead
                     # with the explanation, not the CLI's "try again in a moment".
                     job["stderr"] = endpoint_issue
-            # The turn ended on its own (finished, failed or interrupted): not
-            # for boot to resume. Before the leftovers follow-up below records
-            # its own row.
+            # A run that died mid-turn (CLI crash, killed, idle timeout) resumes
+            # itself, so the owner never has to type "Continue"; one that ended
+            # on its own (finished, failed with a reason, interrupted) clears its
+            # in-flight row — not for boot to resume. Before the leftovers
+            # follow-up below records its own row.
+            resumed = False
             try:
-                db.inflight_run_clear(session_id, job["started"])
-            except Exception:
-                pass
+                if resume.was_cut_off(job["turn_open"], interrupted,
+                                      bool(version_gate or endpoint_issue)):
+                    resumed = _resume_cut_turn(session_id, job, leftovers)
+                else:
+                    db.inflight_run_clear(session_id, job["started"])
+            except Exception as e:
+                print(f"  ⚠ could not resume cut-off turn {session_id[:8]}: {e}")
+            if resumed:
+                leftovers = []  # the resumed run carries them; don't also notify
             # Self-heal the stale half of the 2.1.84 incident: the provider
             # rejected this run for a too-old CLI, so force the next run to
             # re-resolve the binary from disk — if the user has since run
@@ -1872,7 +1887,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # Background push: tell the app the turn finished (best-effort, async).
             # Skip when a follow-up resumed run is still carrying queued work, and
             # when the user interrupted (they're already looking).
-            if not leftovers and not interrupted:
+            if not leftovers and not interrupted and not resumed:
                 try:
                     from viewer.push import notify_all, push_preview
                     label = _push_label(session_id, cwd)
@@ -1903,6 +1918,23 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
 
     threading.Thread(target=run, daemon=True).start()
     return True
+
+
+RESUME_SETTLE = 5  # s: launchd's restart SIGTERMs the whole process group at once
+
+
+def _resume_cut_turn(session_id, job, leftovers):
+    """Resume a run that died mid-turn, through the same path a restart uses.
+    A server restart kills the whole process group, this thread included; if we
+    are still here after RESUME_SETTLE the cut was not a restart, and boot's
+    resume_inflight is not about to resume the same row."""
+    time.sleep(RESUME_SETTLE)
+    row = db.inflight_run_get(session_id, job["started"])
+    if not row:
+        return False  # a newer run of this session already replaced the row
+    row["queue"] = leftovers
+    print(f"  ↻ turn {session_id[:8]} was cut off mid-way (rc={job.get('returncode')}); resuming it")
+    return resume.resume_one(row)
 
 
 def _watch_endpoint(job, proc, base_url, model):

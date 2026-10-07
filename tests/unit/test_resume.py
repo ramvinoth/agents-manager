@@ -102,3 +102,37 @@ def test_start_skips_session_without_transcript(monkeypatch):
     from viewer import config
     monkeypatch.setattr(config, "transcript_path", lambda sid: None)
     assert resume._start(_row("s")) is False
+
+
+def test_was_cut_off_only_when_nobody_decided_the_turn_should_end():
+    assert resume.was_cut_off(turn_open=True, interrupted=False, explained=False)
+    assert not resume.was_cut_off(turn_open=False, interrupted=False, explained=False)  # finished
+    assert not resume.was_cut_off(turn_open=True, interrupted=True, explained=False)   # owner's Esc
+    assert not resume.was_cut_off(turn_open=True, interrupted=False, explained=True)   # pushed reason
+
+
+def test_resume_one_counts_and_stops_at_the_cap(store):
+    rows, told = store
+    rows["d"] = _row("d")
+    launched = []
+    for _ in range(resume.MAX_RESUMES):
+        assert resume.resume_one(dict(rows["d"]), lambda r: launched.append(1) or True)
+    assert len(launched) == resume.MAX_RESUMES
+    assert not resume.resume_one(dict(rows["d"]), lambda r: pytest.fail("must not launch"))
+    assert "d" not in rows and told[0][0][4].startswith("Should I keep retrying")
+
+
+def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
+    """The finalizer's hand-off: the run's own row (with its leftovers) goes to
+    resume_one; a row a newer run already replaced is left alone."""
+    from viewer import engine
+    monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
+    got = []
+    monkeypatch.setattr(resume, "resume_one", lambda row: got.append(row) or True)
+    job = {"started": 5.0, "returncode": -15}
+    monkeypatch.setattr(db, "inflight_run_get",
+                        lambda sid, started: _row(sid) if started == 5.0 else None)
+    assert engine._resume_cut_turn("s", job, ["queued"]) is True
+    assert got[0]["session_id"] == "s" and got[0]["queue"] == ["queued"]
+    job["started"] = 6.0
+    assert engine._resume_cut_turn("s", job, []) is False

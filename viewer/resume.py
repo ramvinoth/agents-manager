@@ -1,18 +1,25 @@
-"""viewer.resume — a server restart pauses agent turns instead of killing them.
+"""viewer.resume — a cut-off agent turn is resumed, not dropped.
 
-A restart (planned update, crash, launchd kickstart) takes every running claude
-child down with the server process. engine.start_claude_run records each turn in
-`inflight_runs` and deletes the row when the turn ends on its own, so whatever
-is still there at boot was cut off by the restart. resume_inflight() re-launches
-each of those sessions with RESUME_PROMPT (verified 2026-10-04: a resumed claude
-told this checks what really finished and redoes only the rest), then hands it
-the messages that were queued behind the cut turn.
+A turn can end before it finishes without anyone asking it to: a server
+restart (update, crash, kickstart) takes every claude child down with it, and
+a run can die on its own mid-turn (the CLI crashes, the process is killed, the
+idle timeout fires). engine.start_claude_run records each turn in
+`inflight_runs` and deletes the row when the turn ends on its own, so:
+
+- at boot, every row still there was cut off by the restart: resume_inflight();
+- at run end, the finalizer asks was_cut_off() and, if so, resume_one().
+
+Either way the session is re-launched with RESUME_PROMPT (verified 2026-10-04:
+a resumed claude told this checks what really finished and redoes only the
+rest), then handed the messages queued behind the cut turn. The owner no
+longer has to type "Continue".
 
 Not resumed:
 - a session with an open question/plan: it is waiting on the owner, and the
   answer already resumes it (routes/chat._resume_with_reply);
-- a turn already auto-resumed MAX_RESUMES times without ending: it may be what
-  keeps taking the server down, so the owner is told instead.
+- a turn already auto-resumed MAX_RESUMES times without ending: something about
+  it keeps cutting it off (or taking the server down), so the owner is told.
+  The counter lives on the row and resets only when a turn ends normally.
 Claude runs only (local and SSH hosts); the codex/copilot/pi/custom-chat runners
 do not record in-flight turns.
 """
@@ -24,8 +31,8 @@ MAX_RESUMES = 2
 BOOT_DELAY = 3  # seconds: the resumed run's permission tool calls back into this server
 
 RESUME_PROMPT = (
-    "The Harman server restarted (an update or a crash) while your last turn was "
-    "running, so that turn was cut off mid-way. Check what actually completed before "
+    "Your last turn was cut off mid-way (the Harman server restarted, or the agent "
+    "process was stopped) before it finished. Check what actually completed before "
     "the cut (files, commands, background jobs) and then finish the task. Do not "
     "repeat a step that already finished.")
 
@@ -40,33 +47,49 @@ def _tell_owner(session_id, body):
     inbox.deliver_message("session", session_id, "user", "", body, wake=False)
 
 
-def resume_inflight(start=None, sleep=time.sleep):
-    """Resume every turn the last restart cut off. Returns the resumed session
-    ids. `start(row) -> bool` launches one resumed turn (injected in tests)."""
+def was_cut_off(turn_open, interrupted, explained):
+    """Did a run end mid-turn without anyone deciding it should? `turn_open`:
+    the last message sent got no result. An interrupt is the owner's call, and an
+    explained stop (unreachable model server, too-old CLI) was already pushed to
+    the owner with what to do — resuming would only hit the same wall."""
+    return bool(turn_open and not interrupted and not explained)
+
+
+def resume_one(row, start=None):
+    """Resume one cut-off turn from its in-flight row, within MAX_RESUMES.
+    Returns True if a resumed run started; otherwise the row is cleared.
+    `start(row) -> bool` launches it (injected in tests)."""
     start = start or _start
+    sid = row["session_id"]
+    if _waiting_on_owner(sid):
+        db.inflight_run_clear(sid, row["started_at"])
+        return False
+    if row["resumes"] >= MAX_RESUMES:
+        db.inflight_run_clear(sid, row["started_at"])
+        _tell_owner(sid, (
+            "Should I keep retrying my last task? It was cut off "
+            f"{row['resumes'] + 1} times in a row before it finished (a server restart, "
+            "or the agent process stopping), so I stopped resuming it automatically in "
+            "case something about it keeps causing that. Reply in this chat to continue."))
+        return False
+    db.inflight_run_bump_resumes(sid)
+    if start(row):
+        return True
+    db.inflight_run_clear(sid, row["started_at"])
+    return False
+
+
+def resume_inflight(start=None, sleep=time.sleep):
+    """At boot: resume every turn the last restart cut off. Returns the resumed
+    session ids."""
     sleep(BOOT_DELAY)
     resumed = []
     for row in db.inflight_runs_all():
-        sid = row["session_id"]
         try:
-            if _waiting_on_owner(sid):
-                db.inflight_run_clear(sid)
-                continue
-            if row["resumes"] >= MAX_RESUMES:
-                db.inflight_run_clear(sid)
-                _tell_owner(sid, (
-                    "Should I keep retrying my last task? The Harman server restarted "
-                    f"{row['resumes'] + 1} times while it was running, so I stopped "
-                    "resuming it automatically in case it is what crashes the server. "
-                    "Reply in this chat to continue."))
-                continue
-            db.inflight_run_bump_resumes(sid)
-            if start(row):
-                resumed.append(sid)
-            else:
-                db.inflight_run_clear(sid)
+            if resume_one(row, start):
+                resumed.append(row["session_id"])
         except Exception as e:
-            print(f"  ⚠ could not resume interrupted turn {sid[:8]}: {e}")
+            print(f"  ⚠ could not resume interrupted turn {row['session_id'][:8]}: {e}")
     return resumed
 
 

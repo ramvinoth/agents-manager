@@ -126,14 +126,21 @@ def test_diagnose_names_the_524_and_the_zone():
 
 
 def test_probe_classifies_by_http_answer(monkeypatch):
-    answers = {"/health": (200, ""), "/upstream/m/metrics": (200, METRICS.replace("qwen3.8-27b", "m"))}
-    monkeypatch.setattr(h, "_get", lambda url: answers.get(url.split("example")[1], (404, "")))
+    answers = {"/upstream/m/metrics": (200, METRICS.replace("qwen3.8-27b", "m"))}
+    asked = []
+
+    def get(url):
+        path = url.split("example")[1]
+        asked.append(path)
+        return answers.get(path, (404, ""))
+    monkeypatch.setattr(h, "_get", get)
+    # Any HTTP answer at the root is alive, even a 404 (vLLM has no root page).
     assert h.probe("https://example/", "m") == {"state": h.REACHABLE, "load": (1, 2)}
-    answers["/health"] = answers["/"] = (0, "")
+    # Never /health: a deep check there (LiteLLM, 8-30s) is not a dead host.
+    assert "/health" not in asked
+    answers["/"] = (0, "")
     assert h.probe("https://example", "m")["state"] == h.UNREACHABLE
-    answers["/"] = (200, "")  # slow deep /health (LiteLLM) but the server answers
-    assert h.probe("https://example", "m")["state"] == h.REACHABLE
-    answers["/health"] = (530, "")
+    answers["/"] = (530, "")
     assert h.probe("https://example", "m")["state"] == h.ORIGIN_DOWN
-    answers["/health"] = (503, "")  # warming up, not gone
+    answers["/"] = (503, "")  # warming up, not gone
     assert h.probe("https://example", "m")["state"] == h.REACHABLE

@@ -121,9 +121,9 @@ def init_db():
               revision    INTEGER NOT NULL DEFAULT 1,
               created_at  DOUBLE PRECISION NOT NULL
             );
-            -- Turns in flight, so a server restart (planned update or crash)
-            -- pauses them instead of killing them: boot resumes every row left
-            -- behind (viewer/resume.py). Written when a run starts, kept in step
+            -- Turns in flight, so a server restart or a run that dies mid-turn
+            -- pauses them instead of dropping them: boot resumes every row left
+            -- behind, and the run finalizer resumes its own (viewer/resume.py). Written when a run starts, kept in step
             -- with its message queue, deleted when the run ends.
             CREATE TABLE IF NOT EXISTS inflight_runs (
               session_id TEXT PRIMARY KEY,
@@ -990,6 +990,15 @@ def inflight_runs_all():
     with _db() as cur:
         cur.execute("SELECT * FROM inflight_runs ORDER BY started_at")
         return [dict(r) for r in cur.fetchall()]
+
+
+def inflight_run_get(session_id, started):
+    """The row of the run that started at `started`, or None (already replaced)."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM inflight_runs WHERE session_id = %s AND started_at = %s",
+                    (session_id, started))
+        r = cur.fetchone()
+        return dict(r) if r else None
 
 
 def inflight_run_bump_resumes(session_id):

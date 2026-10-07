@@ -81,12 +81,11 @@ def _get(url):
 def probe(base_url, model=""):
     """{"state": reachable|unreachable|origin_down, "load": (running, waiting)|None}."""
     base = (base_url or "").rstrip("/")
-    status, _ = _get(base + "/health")
-    if status == 0:
-        # Some servers' /health is a deep check, not a liveness read: LiteLLM's
-        # calls every model behind it (8-26s, measured 2026-10-07), so a timeout
-        # there is not a dead host. Any HTTP answer at the root proves it is up.
-        status, _ = _get(base + "/")
+    # Liveness is "does it answer HTTP at all", read at the root. Not /health:
+    # on some servers that is a deep check (LiteLLM's calls every model behind
+    # it, 8-30s measured 2026-10-07), and reading it as liveness stopped live
+    # turns as "unreachable". A Cloudflare origin-down answer comes on any path.
+    status, _ = _get(base + "/")
     if status == 0:
         return {"state": UNREACHABLE, "load": None}
     if status in _ORIGIN_DOWN:
