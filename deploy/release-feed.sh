@@ -2,7 +2,7 @@
 #
 # deploy/release-feed.sh — the Mac side of the private update feed (Card 121).
 #
-# Customer boxes poll https://releases.suhai.ai (release-feed/ Worker + R2) and
+# Customer boxes poll https://releases.suhai.ai (release-feed/ Worker + Workers KV) and
 # install what this script publishes. Code stays private: every download needs a
 # per-customer token, and every box verifies the release key's signature.
 #
@@ -18,14 +18,13 @@ set -euo pipefail
 
 HM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FEED_DIR="$HM_DIR/../release-feed"
-BUCKET="harman-releases"
 KEY="${HARMAN_RELEASE_KEY:-$HOME/.harman/release-signing.key}"
 PY=/usr/bin/python3   # has pynacl; the same interpreter launchd runs
 
 die() { echo "release-feed: $*" >&2; exit 1; }
-r2_put() {  # <key> <file> <content-type>
-  ( cd "$FEED_DIR" && npx --no-install wrangler r2 object put "$BUCKET/$1" \
-      --file "$2" --content-type "$3" --remote >/dev/null )
+kv_put() {  # <key> <file>
+  ( cd "$FEED_DIR" && npx --no-install wrangler kv key put "$1" --path "$2" \
+      --binding RELEASES --remote >/dev/null )
 }
 
 cmd="${1:-}"; shift || true
@@ -41,8 +40,8 @@ case "$cmd" in
     "$PY" "$HM_DIR/release_manifest.py" verify "$(cat "$HM_DIR/release-pubkey.txt")" < "$tmp" >/dev/null \
       || die "signature does not verify against deploy/release-pubkey.txt — wrong key?"
     # Bundle first, manifest last: a box never sees a manifest whose bundle isn't there yet.
-    r2_put "bundles/$ver.bundle" "$bundle" application/octet-stream
-    r2_put latest.json "$tmp" application/json
+    kv_put "bundles/$ver.bundle" "$bundle"
+    kv_put latest.json "$tmp"
     echo "published $ver ($sha) to the release feed"
     ;;
   token-add)
@@ -51,14 +50,14 @@ case "$cmd" in
     hash="$(printf '%s' "$token" | shasum -a 256 | cut -d' ' -f1)"
     tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$1" > "$tmp"
-    r2_put "tokens/$hash" "$tmp" text/plain
+    kv_put "tokens/$hash" "$tmp"
     echo "token for '$1' (shown once — put it in the box's /opt/harman/update.env as HARMAN_FEED_TOKEN):"
     echo "  $token"
     echo "revoke later with: $0 token-revoke $hash"
     ;;
   token-revoke)
     (( $# == 1 )) || die "usage: token-revoke <sha256>"
-    ( cd "$FEED_DIR" && npx --no-install wrangler r2 object delete "$BUCKET/tokens/$1" --remote )
+    ( cd "$FEED_DIR" && npx --no-install wrangler kv key delete "tokens/$1" --binding RELEASES --remote )
     ;;
   *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

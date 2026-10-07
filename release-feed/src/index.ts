@@ -3,15 +3,15 @@
  * from (Card 121, option b: code stays private, nothing on public GitHub).
  *
  * Read-only by design. Publishing happens from the release Mac with
- * `wrangler r2 object put` (deploy/release-feed.sh), so this Worker exposes no
+ * `wrangler kv key put` (deploy/release-feed.sh), so this Worker exposes no
  * write path at all.
  *
  *   GET /latest.json              signed manifest (deploy/release_manifest.py)
  *   GET /bundles/<X.Y.Z>.bundle   the git bundle that manifest names
  *
  * Every request needs `Authorization: Bearer <customer token>`. A token is
- * valid while R2 holds `tokens/<sha256(token)>`; revoking one customer is
- * deleting that object. Only hashes are stored, so a bucket read leaks no
+ * valid while KV holds `tokens/<sha256(token)>`; revoking one customer is
+ * deleting that object. Only hashes are stored, so a namespace read leaks no
  * usable token.
  *
  * Integrity is NOT this Worker's job: boxes verify the ed25519 signature and
@@ -19,7 +19,7 @@
  * but cannot make a box install unsigned code.
  */
 export interface Env {
-  RELEASES: R2Bucket;
+  RELEASES: KVNamespace;
 }
 
 const BUNDLE_RE = /^\/bundles\/(\d+\.\d+\.\d+)\.bundle$/;
@@ -33,8 +33,8 @@ async function authorized(request: Request, env: Env): Promise<boolean> {
   const header = request.headers.get("Authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (token.length < 32) return false;
-  // R2 lookup by hash: an existence check, so no string comparison to time.
-  return (await env.RELEASES.head(`tokens/${await sha256Hex(token)}`)) !== null;
+  // Lookup by hash: an existence check, so no string comparison to time.
+  return (await env.RELEASES.get(`tokens/${await sha256Hex(token)}`)) !== null;
 }
 
 export default {
@@ -51,12 +51,11 @@ export default {
     }
     if (!key) return new Response("not found", { status: 404 });
 
-    const obj = await env.RELEASES.get(key);
-    if (!obj) return new Response("not found", { status: 404 });
-    return new Response(obj.body, {
+    const body = await env.RELEASES.get(key, "stream");
+    if (!body) return new Response("not found", { status: 404 });
+    return new Response(body, {
       headers: {
         "Content-Type": key.endsWith(".json") ? "application/json" : "application/octet-stream",
-        "Content-Length": String(obj.size),
         // Per-customer auth: never let a shared cache serve one customer's response to another.
         "Cache-Control": "private, no-store",
       },

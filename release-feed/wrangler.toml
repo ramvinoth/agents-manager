@@ -6,6 +6,10 @@ workers_dev = false
 # releases.suhai.ai — suhai.ai's zone is already on this Cloudflare account.
 routes = [{ pattern = "releases.suhai.ai", custom_domain = true }]
 
-[[r2_buckets]]
+# Workers KV, not R2: R2 needs a paid-plan checkout on this account, KV is on the
+# free plan. Limits that matter (developers.cloudflare.com/kv/platform/limits,
+# checked 2026-10-06): 25 MiB per value (a release bundle is ~2.4 MB), 100k
+# reads/day (each box polls hourly: one token read + one manifest read).
+[[kv_namespaces]]
 binding = "RELEASES"
-bucket_name = "harman-releases"
+id = "32d76dfb417f4ebdb9b094a53d472a37"
