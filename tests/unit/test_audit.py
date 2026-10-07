@@ -351,6 +351,7 @@ def test_safe_defaults(monkeypatch):
 class DispatchHandler(Handler):
     GET_ROUTES = server.SessionViewerHandler.GET_ROUTES
     PUBLIC_API = server.SessionViewerHandler.PUBLIC_API
+    PUBLIC_PREFIX = server.SessionViewerHandler.PUBLIC_PREFIX
     _gated = server.SessionViewerHandler._gated
     _resolve_principal = server.SessionViewerHandler._resolve_principal
     _g_org_audit = OrchestratorMixin._g_org_audit

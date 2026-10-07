@@ -75,12 +75,14 @@ from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.inbox import InboxMixin
 from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
+from viewer.routes.intake import IntakeMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
+    IntakeMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -103,6 +105,10 @@ class SessionViewerHandler(
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
                   "/api/auth/pair/redeem",
                   "/api/push/unregister", "/api/drive/oauth/callback"}
+    # Prefixes whose route authenticates by its OWN credential: an intake door
+    # (/api/intake/<channel>) is called by outside senders that hold only that
+    # channel's token — verified in routes/intake.py, never a login.
+    PUBLIC_PREFIX = ("/api/intake/",)
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -201,7 +207,8 @@ class SessionViewerHandler(
     def _gated(self, req):
         """True if this request must be blocked. Resolves the principal as a side
         effect, so authentication happens exactly once per request."""
-        if not req.path.startswith("/api/") or req.path in self.PUBLIC_API:
+        if (not req.path.startswith("/api/") or req.path in self.PUBLIC_API
+                or req.path.startswith(self.PUBLIC_PREFIX)):
             return False
         return self._resolve_principal(req) is None
 
@@ -449,6 +456,7 @@ class SessionViewerHandler(
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
         "/api/usage/report": "_g_usage_report",
+        "/api/org/intake": "_g_org_intake",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
@@ -564,9 +572,14 @@ class SessionViewerHandler(
         "/api/inbox/send": "_p_inbox_send",
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
+        "/api/org/intake": "_p_org_intake",
+        "/api/org/intake/update": "_p_org_intake_update",
+        "/api/org/intake/rotate": "_p_org_intake_rotate",
+        "/api/org/intake/delete": "_p_org_intake_delete",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),
+        ("/api/intake/", "_p_intake"),
     ]
 
 

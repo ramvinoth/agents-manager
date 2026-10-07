@@ -117,6 +117,8 @@ _RED_ACTIONS = {
     # green: a harman-origin loop cannot FIRE until the owner licenses that origin
     # via the loop_control dropdown, so creation alone is contained and reversible.
     "loop_delete",
+    # a new door from outside the org onto a board, and a fresh key to it
+    "intake_create", "intake_rotate",
     # secrets / keys
     "create_secret", "reveal_secret", "rotate_secret", "write_api_key",
     # money / leaving the perimeter
@@ -216,6 +218,15 @@ _MIN_LEVEL = {
     "loop_create": "lead",
     "loop_update": "lead",
     "loop_delete": "lead",
+    # lead: intake channels — inbound doors from the outside world onto a board
+    # (viewer.intake). Opening one or minting a new token is ALSO red: it lets
+    # outside text create cards and wake a session, the "leaving the perimeter"
+    # class. Renaming/rebinding and closing a door stay green — closing is the
+    # safe direction (the automation_pause rule).
+    "intake_create": "lead",
+    "intake_rotate": "lead",
+    "intake_update": "lead",
+    "intake_delete": "lead",
     # manager: hire / change the org
     "employee_create": "manager",
     "employee_update": "manager",

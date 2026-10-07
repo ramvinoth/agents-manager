@@ -595,6 +595,26 @@ In-conversation todos are scratch for the current task only. Work that outlives 
               detail   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS ui_events_ts ON ui_events (ts);
+            -- Intake channels: inbound doors from the outside world onto ONE board.
+            -- Anything that can POST (a website form, a CI job, a monitoring alert,
+            -- the owner's own in-app feedback) lands as a card on `project_id`,
+            -- bound to `session_id` so the board-watch wake hands it to that
+            -- session — the same path as a card the owner types. Only the token's
+            -- sha256 is kept; the token itself is shown once, at creation.
+            -- `app_feedback` marks the (at most one) channel that also receives
+            -- the owner's in-app feedback notes (viewer.usage kind 'feedback').
+            CREATE TABLE IF NOT EXISTS intake_channels (
+              id           TEXT PRIMARY KEY,
+              name         TEXT NOT NULL,
+              project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              session_id   TEXT NOT NULL DEFAULT '',
+              token_hash   TEXT NOT NULL,
+              app_feedback BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by   TEXT NOT NULL DEFAULT '',
+              created_at   DOUBLE PRECISION NOT NULL,
+              last_used    DOUBLE PRECISION NOT NULL DEFAULT 0,
+              received     INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
     _seed_agent_templates()
@@ -2647,6 +2667,83 @@ def provider_delete(pid):
     with _db() as cur:
         cur.execute("DELETE FROM providers WHERE id = %s RETURNING id", (pid,))
         return cur.fetchone() is not None
+
+
+# Intake channels (viewer.intake) --------------------------------------------
+
+def intake_create(cid, name, project_id, session_id, token_hash, app_feedback, created_by):
+    with _db() as cur:
+        if app_feedback:
+            cur.execute("UPDATE intake_channels SET app_feedback = FALSE WHERE app_feedback")
+        cur.execute(
+            "INSERT INTO intake_channels(id, name, project_id, session_id, token_hash, "
+            "app_feedback, created_by, created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (cid, name, project_id, session_id or "", token_hash, bool(app_feedback),
+             created_by, _now()))
+        return dict(cur.fetchone())
+
+
+def intake_list():
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels ORDER BY created_at")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def intake_get(cid):
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels WHERE id = %s", (cid,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_feedback_channel():
+    """The channel the owner's in-app feedback goes to, or None."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels WHERE app_feedback LIMIT 1")
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_update(cid, **fields):
+    """Change name / session_id / app_feedback. Turning app_feedback on clears it
+    on every other channel in the same transaction (at most one receives it)."""
+    allowed = {k: v for k, v in fields.items() if k in ("name", "session_id", "app_feedback")}
+    if not allowed:
+        return intake_get(cid)
+    with _db() as cur:
+        if allowed.get("app_feedback"):
+            cur.execute("UPDATE intake_channels SET app_feedback = FALSE "
+                        "WHERE app_feedback AND id <> %s", (cid,))
+        sets = ", ".join(f"{k} = %s" for k in allowed)
+        cur.execute(f"UPDATE intake_channels SET {sets} WHERE id = %s RETURNING *",
+                    (*allowed.values(), cid))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_set_token(cid, token_hash):
+    with _db() as cur:
+        cur.execute("UPDATE intake_channels SET token_hash = %s WHERE id = %s RETURNING *",
+                    (token_hash, cid))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_delete(cid):
+    with _db() as cur:
+        cur.execute("DELETE FROM intake_channels WHERE id = %s RETURNING id", (cid,))
+        return cur.fetchone() is not None
+
+
+def intake_touch(cid):
+    """Record one delivery: bump the counter, stamp last_used. Returns the count
+    of cards this channel created in the last hour (the rate-limit input)."""
+    with _db() as cur:
+        cur.execute("UPDATE intake_channels SET received = received + 1, last_used = %s "
+                    "WHERE id = %s", (_now(), cid))
+        cur.execute("SELECT count(*) AS n FROM cards WHERE created_by = %s AND created_at > %s",
+                    (f"intake:{cid}", _now() - 3600))
+        return cur.fetchone()["n"]
 
 
 # Settings (singleton key/value) ----------------------------------------------

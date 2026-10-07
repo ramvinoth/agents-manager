@@ -3,7 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
@@ -630,6 +630,26 @@ class ApiClient {
     )
   }
 
+  // ---- intake channels: outside doors onto a board (viewer/intake.py) ----
+  orgProjects() {
+    return this.getJSON<{ projects: OrgProject[] }>("/api/org/projects")
+  }
+  intakeList() {
+    return this.getJSON<{ channels: IntakeChannel[] }>("/api/org/intake")
+  }
+  /** Opening a door is Red: the owner self-approves and gets the token back once. */
+  intakeCreate(body: { name: string; project_id: number; for_session?: string; app_feedback?: boolean }) {
+    return this.postJSON<IntakeChannel | Queued | { error: string }>("/api/org/intake", body)
+  }
+  intakeUpdate(body: { id: string; name?: string; for_session?: string; app_feedback?: boolean }) {
+    return this.postJSON<IntakeChannel | { error: string }>("/api/org/intake/update", body)
+  }
+  intakeRotate(id: string) {
+    return this.postJSON<IntakeChannel | Queued | { error: string }>("/api/org/intake/rotate", { id })
+  }
+  intakeDelete(id: string) {
+    return this.postJSON<{ deleted: boolean }>("/api/org/intake/delete", { id })
+  }
   // ---- integrations (accounts + the services agents may use on them) ----
   integrations() {
     return this.getJSON<IntegrationsView>("/api/integrations")

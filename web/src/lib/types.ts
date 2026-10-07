@@ -317,6 +317,22 @@ export interface OrgProject {
   created_by: string
   created_at: number
 }
+/** An intake channel (viewer/intake.py): a door from outside onto one board.
+ *  POST to `path` with the channel token → a card there, waking `session_id`. */
+export interface IntakeChannel {
+  id: string
+  name: string
+  project_id: number
+  session_id: string
+  app_feedback: boolean
+  created_by: string
+  created_at: number
+  last_used: number
+  received: number
+  path: string
+  /** Only on create / new token, never on a list: shown once. */
+  token?: string
+}
 export interface BoardColumn {
   id: number
   project_id: number

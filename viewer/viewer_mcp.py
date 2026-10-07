@@ -62,6 +62,7 @@ _TOOLS = {
     "approval_list":    ("GET", "/api/org/approvals"),
     "audit_tail":       ("GET", "/api/org/audit"),
     "usage_report":     ("GET", "/api/usage/report"),
+    "intake_list":      ("GET", "/api/org/intake"),
     "board_list":       ("GET", "/api/org/board"),
     "card_list":        ("GET", "/api/org/cards"),
     "card":             ("GET", "/api/org/card"),
@@ -119,6 +120,7 @@ _TOOLS = {
     "loop_update":   ("POST", "/api/org/loops/update"),
     "loop_delete":   ("POST", "/api/org/loops/delete"),
     "loop_control_set": ("POST", "/api/org/loop-control"),
+    "intake_create": ("POST", "/api/org/intake"),
 }
 
 # Tools whose URL is completed at call time from an argument rather than being a
@@ -214,6 +216,16 @@ _TOOL_LIST = [
      "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Read it before proposing UI changes; cite it on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "days": {"type": "integer", "description": "Window in days (default 30)."}}}},
+    {"name": "intake_list",
+     "description": "Intake channels: doors from the outside world onto a board. Each is a URL (path) + secret token bound to one project board and optionally one session; any POST to it (a website form, CI failure, alert, support tool, or the owner's in-app feedback when app_feedback is true) becomes a card on that board and wakes that session. Shows name, project_id, session_id, app_feedback, received, last_used — never the token.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    {"name": "intake_create",
+     "description": "Request a new intake channel onto a project board, optionally bound to a session (that session is woken per card) and optionally receiving the owner's in-app feedback (app_feedback; at most one channel does). Red: an outside door, so it queues for the owner's approval. The token is never shown to an agent: after approving, the owner takes it from Integrations → Intake channels (New token).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "project_id"], "properties": {
+         "name": {"type": "string", "description": "What feeds it, e.g. 'Website contact form'."},
+         "project_id": {"type": "integer"},
+         "for_session": {"type": "string", "description": "Session to wake for each new card; omit for board-only."},
+         "app_feedback": {"type": "boolean"}}}},
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},

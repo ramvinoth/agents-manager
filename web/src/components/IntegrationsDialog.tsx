@@ -14,6 +14,7 @@ import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent } from "@/lib/integrations"
 import { useStore } from "@/store"
+import { IntakeSection } from "@/components/IntakeSection"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
@@ -266,6 +267,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
               </section>
             ))}
             <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
+            <IntakeSection />
           </div>
         )}
 
