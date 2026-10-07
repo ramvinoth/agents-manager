@@ -38,6 +38,7 @@ import AuditScreen from "./src/screens/AuditScreen"
 import AuditEntryScreen from "./src/screens/AuditEntryScreen"
 import type { AuditEntry } from "./src/lib/audit"
 import HostEditScreen from "./src/screens/HostEditScreen"
+import type { StartingChat } from "./src/lib/session"
 import TerminalScreen from "./src/screens/TerminalScreen"
 
 export type RootStackParamList = {
@@ -45,7 +46,9 @@ export type RootStackParamList = {
   Login: undefined
   Home: undefined
   NewChat: { template?: import("./src/api/client").AgentTemplate } | undefined
-  Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string }
+  // `starting`: a chat that was just started and whose transcript isn't written
+  // yet — the thread opens at once and resolves it (see ThreadScreen).
+  Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
   Call: { label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
   Capabilities: { host?: string; cwd?: string; title?: string } | undefined

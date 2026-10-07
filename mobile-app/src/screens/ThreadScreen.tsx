@@ -40,6 +40,7 @@ import PlanCard from "../components/PlanCard"
 import { ItemView, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
 import { useStyles } from "./styles"
+import { resolveSessionPath } from "../lib/session"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -52,7 +53,7 @@ type ListItem = ThreadItem | typeof WORKING
 // then tap a step to see its result). Composer: send / steer / queue, a
 // permission-mode + model dropdown, and in-thread Allow/Deny cards.
 export default function ThreadScreen({ route, navigation }: Props) {
-  const { host, path, label, agent = "claude" } = route.params
+  const { host, path, label, agent = "claude", starting } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
   // How many trailing transcript lines to fetch. Grows when the user scrolls to
@@ -388,6 +389,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
             if (s.running && !pollRef.current) {
               setBusy(true)
               startPoll(sid)
+            } else if (!s.running && !pollRef.current) {
+              setBusy(false) // a just-started chat that finished before it was adopted
             }
           })
           .catch(() => {})
@@ -400,6 +403,32 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [])
+
+  // A chat opened the moment it was started (`starting`): its transcript isn't
+  // written until the CLI is up, so show the sent message and the working
+  // bubble now, wait for the file, then adopt its path — the focus effect above
+  // then loads it and attaches the live poll like any running chat.
+  useEffect(() => {
+    if (path || !starting) return
+    setSessionId(starting.session)
+    setLoading(false)
+    setBusy(true)
+    pendingSteers.current = [{ kind: "user", id: "local-start", text: starting.message }]
+    setItems([...pendingSteers.current])
+    // Not stopped when the owner leaves: the title must still be saved.
+    resolveSessionPath(() => api.resolve(starting.session, host))
+      .then((found) => {
+        if (found && starting.title) api.renameSession({ session: found, title: starting.title, host }).catch(() => {})
+        if (!isCurrentThread()) return
+        if (!found) {
+          setBusy(false)
+          setError("This chat stopped before it wrote anything. Try sending the message again.")
+          setInput(starting.message)
+          return
+        }
+        navigation.setParams({ path: found, starting: undefined })
+      })
+  }, [path, starting?.session]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist the composer draft per session so it survives going back / app
   // close. Debounced so we don't hit SecureStore on every keystroke. Keyed by

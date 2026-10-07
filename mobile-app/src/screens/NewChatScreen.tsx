@@ -124,11 +124,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
       let sessionPath: string | undefined = res.path
       if (!sessionPath) {
         setBusyText("Waiting for session…")
-        const resolved = await resolveSessionPath(res.session, host)
+        const resolved = await resolveSessionPath(() => api.resolve(res.session, host))
         if (resolved) sessionPath = resolved
       }
       if (!sessionPath) {
-        setError("Session started but transcript not found. Check the Chats tab.")
+        setError("The session stopped before it wrote anything. Check the Chats tab.")
         setBusy(false)
         return
       }

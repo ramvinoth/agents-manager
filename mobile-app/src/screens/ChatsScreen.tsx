@@ -11,6 +11,7 @@ import { useReachability } from "../lib/useReachability"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
+import type { StartingChat } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useHost } from "../lib/useHost"
@@ -57,6 +58,8 @@ export default function ChatsScreen({ navigation }: Props) {
   // all: OFF → no pinned Harman entry, the plain chat-session list it is.
   const [automationOn, setAutomationOn] = useState(false)
   const [harmanBusy, setHarmanBusy] = useState(false)
+  // The Harman just started here: it's untitled until its transcript exists.
+  const startedHarman = useRef<{ host: string; starting: StartingChat; at: number } | null>(null)
   const t = useTheme()
   const styles = useStyles()
   const { online } = useReachability()
@@ -185,6 +188,12 @@ export default function ChatsScreen({ navigation }: Props) {
   async function openHarman() {
     if (harmanBusy) return
     const existing = sessions.find((s) => s.title === HARMAN_TITLE)
+    // Started moments ago but not titled yet: reopen that one, never a second.
+    const fresh = startedHarman.current
+    if (!existing && fresh && fresh.host === host && Date.now() - fresh.at < 180_000) {
+      navigation.navigate("Thread", { host, label: HARMAN_TITLE, starting: fresh.starting })
+      return
+    }
     if (existing) {
       markSeen(existing.path)
       navigation.navigate("Thread", { host, label: HARMAN_TITLE, path: existing.path })
@@ -192,14 +201,11 @@ export default function ChatsScreen({ navigation }: Props) {
     }
     setHarmanBusy(true)
     try {
-      const path = await createHarman(host)
-      if (path) {
-        markSeen(path)
-        navigation.navigate("Thread", { host, label: HARMAN_TITLE, path })
-        load(true)
-      } else {
-        setError("Harman started but its transcript wasn't found. Check back shortly.")
-      }
+      const { path, starting } = await createHarman(host)
+      startedHarman.current = { host, starting, at: Date.now() }
+      if (path) markSeen(path)
+      navigation.navigate("Thread", { host, label: HARMAN_TITLE, path, starting })
+      load(true)
     } catch (e) {
       setError(userError(e, "Harman", "start"))
     } finally {

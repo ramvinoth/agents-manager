@@ -478,6 +478,7 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
           <span className={cn("min-w-0 truncate text-xs", state === "on" ? "text-foreground/70" : "text-muted-foreground")}>
             · {summary}
           </span>
+          <ChevronRight className={cn("ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
         </button>
         {busy ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground" />

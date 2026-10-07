@@ -6,7 +6,6 @@ import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { folderLabel, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
-import { resolveSessionPath } from "../lib/session"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -120,11 +119,11 @@ export default function IntegrationsScreen() {
   function tryInChat(s: IntegrationService, c: IntegrationConnection) {
     return run(`${c.id}:${s.id}:try`, async () => {
       const title = `Try ${s.label}`
-      const res = await api.newSession({ message: tryPrompt(s, c), cwd: "~", host, agent: "claude", title })
-      const path = res.path ?? (await resolveSessionPath(res.session, host))
-      if (!path) throw new Error("The chat started but its transcript wasn't found yet. Find it in Chats shortly.")
-      api.renameSession({ session: path, title, host }).catch(() => {})
-      if (!left.current) navigation.navigate("Thread", { host, label: title, path })
+      const message = tryPrompt(s, c)
+      const res = await api.newSession({ message, cwd: "~", host, agent: "claude", title })
+      // Open it now — the agent takes a while to start and answer; the thread
+      // shows it working and picks up the transcript once it's written.
+      if (!left.current) navigation.navigate("Thread", { host, label: title, path: res.path, starting: { session: res.session, message, title } })
     })
   }
 
@@ -388,6 +387,8 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
             <Text style={styles.ssRowLabel}>{s.label}</Text>
             <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }, state === "on" && { color: t.text }]}>{summary}</Text>
           </View>
+          {/* Says the row opens — the switch alone reads as the only control. */}
+          <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
         </TouchableOpacity>
         {busy ? (
           <ActivityIndicator />

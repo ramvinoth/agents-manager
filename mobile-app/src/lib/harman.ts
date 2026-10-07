@@ -1,5 +1,5 @@
 import { api } from "../api/client"
-import { resolveSessionPath } from "./session"
+import type { StartingChat } from "./session"
 
 // Harman (Harness Manager): an orchestrator session created in the home
 // directory so it can see and coordinate every project on the machine. This is
@@ -20,14 +20,14 @@ const BOOTSTRAP =
   "You are online as Harman. Confirm briefly, then list the project directories you can see under your home directory with a one-line note for each."
 
 /**
- * Create the Harman orchestrator session on `host` and return its transcript
- * path, or null if the session started but its transcript never resolved.
+ * Start the Harman orchestrator session on `host` and return what the Thread
+ * needs to open it at once (it resolves the transcript itself).
  *
  * cwd "~" is expanded to the home dir server-side so Harman can reach every
- * project. The title is saved via renameSession because the server's
- * new-session handler doesn't persist it for Claude (same as NewChatScreen).
+ * project. The title travels with `starting` and is saved once the transcript
+ * exists, because the server's new-session handler doesn't persist it for Claude.
  */
-export async function createHarman(host: string): Promise<string | null> {
+export async function createHarman(host: string): Promise<{ path?: string; starting: StartingChat }> {
   const res = await api.newSession({
     message: BOOTSTRAP,
     cwd: "~",
@@ -36,8 +36,5 @@ export async function createHarman(host: string): Promise<string | null> {
     title: HARMAN_TITLE,
     systemPrompt: DEFAULT_CHARACTER,
   })
-  const path = res.path ?? (await resolveSessionPath(res.session, host))
-  if (!path) return null
-  api.renameSession({ session: path, title: HARMAN_TITLE, host }).catch(() => {})
-  return path
+  return { path: res.path, starting: { session: res.session, message: BOOTSTRAP, title: HARMAN_TITLE } }
 }
