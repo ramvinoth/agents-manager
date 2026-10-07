@@ -455,7 +455,7 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
 }
 
 /** One service on one account: a single line saying what agents may do
- *  there now, with its switch (or Grant access). Clicking the line opens the
+ *  there now, with its switch (or Connect). Clicking the line opens the
  *  details — what agents will do with it, plus `children` (op chips, folder
  *  limit, Try it) when it is on. */
 function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onToggle, onGrant, children }: {
@@ -488,7 +488,7 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
           <Switch on={state === "on"} label={`${s.label}: ${state === "on" ? "On" : "Off"}`} disabled={disabled} onClick={() => onToggle(state !== "on")} />
         ) : action === "grant" ? (
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onGrant} disabled={disabled}>
-            Grant access
+            Connect
           </Button>
         ) : null}
       </div>

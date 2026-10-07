@@ -20,7 +20,7 @@ type Draft = { provider: string; client_id: string; client_secret: string }
 const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 ? 12 : 0
 
 /** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
-const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "clock" }
+const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "calendar" }
 
 /**
  * Integrations — the one place the owner connects outside accounts (Google,
@@ -360,7 +360,7 @@ export default function IntegrationsScreen() {
 }
 
 /** One service on one account: a single line saying what agents may do there
- *  now, with its switch (or Grant access). Tapping the line opens the details —
+ *  now, with its switch (or Connect). Tapping the line opens the details —
  *  what agents will do with it, plus `children` (op chips, folder limit, Try
  *  it) when it is on. */
 function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onToggle, onGrant, children }: {
@@ -396,7 +396,7 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
             style={{ marginRight: SWITCH_OVERHANG }} />
         ) : action === "grant" ? (
           <TouchableOpacity testID={`service-grant-${s.id}`} onPress={onGrant} disabled={disabled} hitSlop={8}>
-            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Grant access</Text>
+            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Connect</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -530,9 +530,9 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
       </Text>
       <View style={styles.spCard}>
       {local.roots.map((r, i) => (
-        <View key={r} style={[styles.profileInfoRow, { alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }]}>
+        <View key={r} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
           <Icon name="folder" size={16} color={t.textMuted} />
-          <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{folderLabel(r)}</Text>
+          <Text testID={`local-root-${i}`} numberOfLines={1} style={{ flex: 1, color: t.text, fontSize: 15 }}>{folderLabel(r)}</Text>
           <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
             onPress={() => Alert.alert(`Stop agents using ${folderLabel(r)}?`, "Nothing on disk is deleted; agents just can't reach it until you add it again.", [
               { text: "Cancel", style: "cancel" },

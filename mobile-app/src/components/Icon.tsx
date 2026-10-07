@@ -34,6 +34,7 @@ export type IconName =
   | "check"
   | "flash"
   | "clock"
+  | "calendar"
   | "help"
   | "search"
   | "user"
@@ -107,6 +108,7 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   check: "checkmark",
   flash: "flash-outline",
   clock: "time-outline",
+  calendar: "calendar-outline",
   help: "help-circle-outline",
   search: "search",
   user: "person-outline",

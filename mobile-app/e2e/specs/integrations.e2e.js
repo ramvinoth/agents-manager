@@ -23,7 +23,7 @@ const switchOn = async id => (await $("~" + id).getAttribute("value")) === "1"
 
 // Integrations against a stateful local fixture: one Google account carrying every
 // service state (on / off / grant / unavailable) and an unconfigured Dropbox client.
-// Grant access is never tapped — it opens the system browser on a real consent page.
+// Connect is never tapped — it opens the system browser on a real consent page.
 describe("Native integrations — one catalog, every service state", () => {
   let fixture
   const writes = () => fixture.requests.filter(r => r.route.startsWith("POST /api/integrations"))
@@ -56,7 +56,7 @@ describe("Native integrations — one catalog, every service state", () => {
     assert(await shown("integration-conn-dr-fixture"), "The connected Google account is listed")
     assert(await switchOn("service-switch-google.drive"), "Drive is on")
     assert(!(await switchOn("service-switch-google.calendar")), "Calendar is granted but off")
-    assert(await shown("service-grant-google.gmail"), "Gmail is not granted yet: offers Grant access")
+    assert(await shown("service-grant-google.gmail"), "Gmail is not granted yet: offers Connect")
     assert(!(await $("~root-edit-dr-fixture").isExisting()), "A collapsed row keeps its details (folder limit) hidden")
     const { width } = await browser.getWindowSize()
     const sw = await $("~service-switch-google.drive")
