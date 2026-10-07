@@ -121,7 +121,7 @@ if [[ -n "$DRY_RUN" ]]; then
 fi
 
 # ── 3. cut the release commit + tag ─────────────────────────────────────────────
-log "Writing VERSION and committing $TAG…"
+log "Writing VERSION and committing ${TAG}…"
 printf '%s\n' "$NEW_VER" > VERSION
 git add VERSION
 git commit -q -m "release $TAG"
@@ -148,7 +148,7 @@ if [[ -n "$PUBLISH" ]]; then
 fi
 
 # ── 5. ship it + kick off a detached update on the box ──────────────────────────
-log "Copying bundle to $HARMAN_HOST:$REMOTE_BUNDLE…"
+log "Copying bundle to $HARMAN_HOST:${REMOTE_BUNDLE}…"
 scp -q "$BUNDLE_LOCAL" "$HARMAN_HOST:$REMOTE_BUNDLE"
 DEPLOY_STARTED=1
 log "Starting detached update on the box (survives an SSH drop)…"
