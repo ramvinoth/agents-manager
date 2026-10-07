@@ -30,7 +30,7 @@ export function reconnectService(p: IntegrationProvider, c: IntegrationConnectio
 export function serviceSummary(s: IntegrationService, c: IntegrationConnection): string {
   const state = c.services[s.id] || "grant"
   if (state === "unavailable") return "Not available"
-  if (state === "grant") return "Needs access"
+  if (state === "grant") return "Not connected yet" // the row's own button says how
   if (state === "off") return "Off"
   const may = s.ops.filter((o) => c.ops[s.id]?.[o.id] === "on").map((o) => o.label)
   const what = s.ops.length ? (may.length ? may.join(", ") : "Nothing allowed") : "On"

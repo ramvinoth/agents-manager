@@ -411,7 +411,8 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
 }
 
 /** What agents may do with one switched-on service on one account: a chip per
- *  operation. Filled = allowed, outlined = not, "+" = needs a wider grant. */
+ *  operation. Filled with a tick = allowed, plain outline = not (no ✕: it read
+ *  as "remove this chip"), "+" = needs a wider grant. */
 function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
   testPrefix: string
   ops: { id: string; label: string; state: ServiceState }[]
@@ -442,7 +443,7 @@ function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
             style={[styles.filterChip, on && styles.filterChipActive, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy && busy !== busyPrefix + o.id ? 0.5 : 1 }]}
           >
             {busy === busyPrefix + o.id ? <ActivityIndicator size="small" />
-              : <Icon name={action === "grant" ? "plus" : on ? "check" : "close"} size={12} color={on ? t.onAccent : t.textMuted} />}
+              : action === "grant" || on ? <Icon name={on ? "check" : "plus"} size={12} color={on ? t.onAccent : t.textMuted} /> : null}
             <Text style={[styles.filterChipText, on && styles.filterChipTextActive]}>{o.label}</Text>
           </TouchableOpacity>
         )
@@ -533,7 +534,10 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           <Icon name="folder" size={16} color={t.textMuted} />
           <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{folderLabel(r)}</Text>
           <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
-            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)} accessibilityLabel={`Remove ${folderLabel(r)}`}>
+            onPress={() => Alert.alert(`Stop agents using ${folderLabel(r)}?`, "Nothing on disk is deleted; agents just can't reach it until you add it again.", [
+              { text: "Cancel", style: "cancel" },
+              { text: "Remove", style: "destructive", onPress: () => onSave(local.roots.filter((x) => x !== r), ops) },
+            ])} accessibilityLabel={`Remove ${folderLabel(r)}`}>
             <Icon name="trash" size={16} color={t.textMuted} />
           </TouchableOpacity>
         </View>

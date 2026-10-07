@@ -41,7 +41,7 @@ eq("summary lists what agents may do", serviceSummary(files, on({ read: "on", wr
 eq("summary names a folder limit", serviceSummary(files, on({ read: "on" }, "/Work")), "Read · only /Work")
 eq("summary when every op is off", serviceSummary(files, on({ read: "off" })), "Nothing allowed")
 eq("summary off", serviceSummary(files, conn({ drive: "off" })), "Off")
-eq("summary missing grant", serviceSummary(files, conn({})), "Needs access")
+eq("summary missing grant", serviceSummary(files, conn({})), "Not connected yet")
 eq("summary unavailable", serviceSummary(files, conn({ drive: "unavailable" })), "Not available")
 eq("summary for a service without ops", serviceSummary(svc("drive"), conn({ drive: "on" })), "On")
 

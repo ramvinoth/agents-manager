@@ -87,7 +87,7 @@ async function main() {
     assert.strictEqual(serviceSummary(files, on({ read: "off" })), "Nothing allowed")
     assert.deepStrictEqual(
       (["off", "grant", "unavailable"] as const).map((st) => serviceSummary(files, conn({ drive: st }))),
-      ["Off", "Needs access", "Not available"],
+      ["Off", "Not connected yet", "Not available"],
     )
     assert.strictEqual(serviceSummary(svc("drive"), conn({ drive: "on" })), "On")
   })

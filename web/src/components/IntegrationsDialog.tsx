@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { CalendarDays, Check, ChevronRight, Cloud, Copy, ExternalLink, Folder, Loader2, Mail, MessageSquarePlus, Plus, Settings2, Trash2, X } from "lucide-react"
+import { CalendarDays, Check, ChevronRight, Cloud, Copy, ExternalLink, Folder, Loader2, Mail, MessageSquarePlus, Plus, Settings2, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -535,7 +535,7 @@ function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
             )}
           >
             {busy === busyPrefix + o.id ? <Loader2 className="size-3 animate-spin" />
-              : action === "grant" ? <Plus className="size-3" /> : on ? <Check className="size-3" /> : <X className="size-3" />}
+              : action === "grant" ? <Plus className="size-3" /> : on ? <Check className="size-3" /> : null}
             {o.label}
           </button>
         )
@@ -602,7 +602,9 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
             <Folder className="size-3.5 text-muted-foreground" />
             <span className={cn("min-w-0 flex-1 truncate text-xs", folderLabel(r) === r && "font-mono")}>{folderLabel(r)}</span>
             <button className="text-muted-foreground hover:text-destructive disabled:opacity-50" disabled={disabled}
-              title="Remove folder" onClick={() => onSave(local.roots.filter((x) => x !== r), ops)}>
+              title="Remove folder" onClick={() => {
+                if (window.confirm(`Stop agents using ${folderLabel(r)}? Nothing on disk is deleted; agents just can't reach it until you add it again.`)) onSave(local.roots.filter((x) => x !== r), ops)
+              }}>
               <Trash2 className="size-3.5" />
             </button>
           </div>
