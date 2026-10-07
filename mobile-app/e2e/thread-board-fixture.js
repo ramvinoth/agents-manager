@@ -310,6 +310,8 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
       marketCaps.skills.push({ name: "pdf", description: "PDF work", source: body.scope, path: "/fixture/skills/pdf/SKILL.md", editable: true })
       return send({ installed: "pdf", scope: body.scope })
     }
+    // Usage telemetry (src/lib/usage.ts) is the owner's own screen-open counter, not a mutation.
+    if (route === "POST /api/usage") return send({ ok: true })
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
     if (url.pathname === "/api/org/approvals") return send({ approvals: [] })

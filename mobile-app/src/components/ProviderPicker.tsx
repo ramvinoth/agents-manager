@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Modal, SafeAreaView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, Modal, SafeAreaView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { api, type Provider } from "../api/client"
 import { aiError, modelChoices, sameAI, switchAIProvider, type AIConfig, type AISelection, type ModelDiscovery } from "../lib/aiSelection"
 import { useTheme } from "../lib/useTheme"
@@ -52,12 +52,13 @@ export default function ProviderPicker({ config, scope, providers, title, localO
     return () => { alive = false }
   }, [draft.provider, retry])
 
+  // Inline, not Alert.alert: a native alert raised from inside this full-screen
+  // Modal never presented (ai-settings e2e, 2026-10-06), so Cancel looked dead.
+  const [confirming, setConfirming] = useState(false)
   function close() {
     if (busy) return
     if (!dirty) return onClose()
-    Alert.alert("Discard changes?", "Your saved settings are unchanged.", [
-      {text: "Keep editing", style: "cancel"}, {text: "Discard changes", style: "destructive", onPress: onClose},
-    ])
+    setConfirming(true)
   }
   function provider(id: string) {
     if (id === draft.provider) return
@@ -108,6 +109,11 @@ export default function ProviderPicker({ config, scope, providers, title, localO
         <Text accessibilityRole="header" style={{flex: 1, color: t.text, fontWeight: "700"}}>{title}</Text>
         <TouchableOpacity testID="ai-save" onPress={save} disabled={(!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || !!capError} style={{padding: 8, opacity: (!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || capError ? .4 : 1}}><Text style={{color: t.accent}}>{busy ? "Saving…" : localOnly ? "Use for this chat" : "Save"}</Text></TouchableOpacity>
       </View>
+      {confirming ? <View testID="ai-discard-confirm" style={{flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingBottom: 10}}>
+        <Text style={{flex: 1, color: t.text}}>Discard changes? Your saved settings are unchanged.</Text>
+        <TouchableOpacity accessibilityLabel="Keep editing" onPress={() => setConfirming(false)} style={{padding: 8}}><Text style={{color: t.accent}}>Keep editing</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityLabel="Discard changes" onPress={onClose} style={{padding: 8}}><Text style={{color: t.danger, fontWeight: "600"}}>Discard</Text></TouchableOpacity>
+      </View> : null}
       <FlatList data={modelChoices(discovery, draft.model, search)} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
           <Text style={styles.sheetHint}>{localOnly ? "Only this unsent chat. Defaults are unchanged." : scope.id ? "Changes apply to future runs, not a response already in progress." : "For new chats on this Harman server. Existing chats are unchanged."}</Text>
@@ -121,7 +127,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
           <Text style={styles.sheetSection}>EFFORT</Text>
           {caps?.efforts.length ? segGroup("ai-effort", caps.efforts.map(e => ({key: e, id: `ai-effort-${e || "default"}`, label: EFFORT_LABEL[e] ?? (e || "Auto")})), draft.effort, e => setDraft({...draft, effort: e})) : null}
           <Text style={styles.sheetSection}>MODEL</Text>
-          {row("ai-model-default", "Runner / provider default", draft.model?.kind === "default", () => setDraft({...draft, model: {kind: "default"}}))}
+          {row("ai-model-default", "Default model", draft.model?.kind === "default", () => setDraft({...draft, model: {kind: "default"}}))}
           {scope.id ? row("ai-model-legacy", "Remove explicit override (legacy request behavior)", draft.model === null, () => setDraft({...draft, model: null})) : null}
           {caps?.manualModelId ? <TextInput testID="ai-model-manual" accessibilityLabel="Explicit model ID" style={styles.ssInput} placeholder="Enter full model ID" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} editable={!busy} value={draft.model?.kind === "id" ? draft.model.id : ""} onChangeText={id => setDraft({...draft, model: {kind: "id", id}})}/> : null}
           <Text testID="ai-discovery-status" style={styles.sheetHint}>{loading ? "Loading model choices…" : discovery?.status === "error" ? discovery.error || "Model discovery failed." : discovery?.status === "unsupported" ? "Discovery is unsupported. Use runner default or enter a model ID." : discovery?.status === "empty" ? "No models returned. Enter an explicit ID or use runner default." : "A discovered model is not a guarantee of execution access."}</Text>

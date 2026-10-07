@@ -5,7 +5,7 @@ const shown = id => $("~" + id).isDisplayed()
 async function tap(id) { const el = await $("~" + id); await el.waitForDisplayed(); await el.click() }
 async function scroll(direction = "up") {
   const { width, height } = await browser.getWindowSize()
-  const x = Math.round(width * .5), top = Math.round(height * .3), bottom = Math.round(height * .68)
+  const x = Math.round(width * .5), top = Math.round(height * .3), bottom = Math.round(height * .6) // above the keyboard (top at ~67%): a swipe starting on it never scrolls the list
   await browser.performActions([{ type: "pointer", id: "ai-scroll", parameters: { pointerType: "touch" }, actions: [
     { type: "pointerMove", duration: 0, x, y: direction === "up" ? bottom : top },
     { type: "pointerDown", button: 0 },
@@ -160,6 +160,7 @@ describe("Native AI settings — isolated transactional API", () => {
     assert.deepEqual(Object.keys(saved.body).sort(), ["agent", "host", "id", "revision", "selection"])
     assert.equal(saved.body.id, SESSION)
     assert.deepEqual(saved.body.selection.model, { kind: "id", id: opus })
+    await reveal("sp-ai-row", "down") // the save can leave the card list scrolled past the row
     await tap("sp-ai-row")
     await reveal("ai-model-manual")
     assert.equal(await $("~ai-model-manual").getText(), opus)

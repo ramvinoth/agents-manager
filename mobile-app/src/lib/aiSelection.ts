@@ -18,13 +18,10 @@ export function switchAIProvider(current: AISelection, provider: string, previou
   return { provider, model: { kind: "default" }, convMode: "agent", effort: "" }
 }
 
-export function modelLabel(model: AIModel): string {
-  return model === null ? "Legacy request / runner selection" : model.kind === "default" ? "Runner / provider default" : model.id
-}
-
 export function aiSummary(selection: AISelection, providers: { id: string; name: string }[]): string {
   const name = selection.provider ? providers.find(p => p.id === selection.provider)?.name || `Unavailable connection (${selection.provider})` : "Built-in"
-  return `${name} · ${modelLabel(selection.model)}`
+  // No explicit model (null or "default") reads the same to the owner: the runner picks.
+  return `${name} · ${selection.model?.kind === "id" ? selection.model.id : "default model"}`
 }
 
 export function aiError(error: unknown): string {

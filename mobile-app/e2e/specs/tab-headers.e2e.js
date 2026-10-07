@@ -9,7 +9,7 @@ const TABS = ["Chats", "Inbox", "Profile"]
 const OWN = {
   Chats: ["menu-button", "new-chat-button", "chats-terminal"],
   Inbox: ["menu-button"],
-  Profile: ["menu-button", "theme-toggle"],
+  Profile: ["menu-button"],
 }
 const ALL = [...new Set(Object.values(OWN).flat())]
 
