@@ -13,7 +13,7 @@ The key never leaves the box.
 import re
 import uuid as _uuid
 
-from viewer import db
+from viewer import db, inference_health
 
 _ID_RE = re.compile(r"[A-Za-z0-9_-]+$")
 
@@ -110,6 +110,9 @@ def anthropic_env(pid, model=None, preset=None):
         "ANTHROPIC_API_KEY": rec.get("apiKey", "") or "dummy_key",
         "ANTHROPIC_AUTH_TOKEN": "",
         "ANTHROPIC_MODEL": selected_model,
+        # Few CLI retries: liveness is judged by inference_health.Watch, not by
+        # retrying a dead or overloaded endpoint ten times with backoff.
+        "CLAUDE_CODE_MAX_RETRIES": inference_health.MAX_RETRIES,
     }
     # Declare the context window so Claude Code compacts BEFORE the endpoint's hard
     # limit. For an unrecognized model id (our Qwen etc.) the docs say

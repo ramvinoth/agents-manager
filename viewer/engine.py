@@ -34,7 +34,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import db, orglogic
+from viewer import db, inference_health, orglogic
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -1542,7 +1542,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "stdin_open": False, "mode": mode, "model": model, "cwd": cwd,
                "interrupted": False, "host": host,
                "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
-               "pending_approvals": [], "perm_token": "", "version_gate": ""}
+               "pending_approvals": [], "perm_token": "", "version_gate": "",
+               "endpoint_issue": "", "model_wait": inference_health.ModelWait()}
         CHAT_JOBS[session_id] = job
     # Durable "this turn is in flight" record: a restart that kills the run
     # leaves the row behind and boot resumes it (viewer/resume.py).
@@ -1614,6 +1615,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # inline (the CLI accepts a path or a JSON string): a local temp path means
     # nothing on the other host, and its shell command already carries the
     # per-run tokens as exports, so argv adds no new exposure there.
+    # A custom endpoint driven from this machine gets a liveness Watch (below),
+    # so the CLI's own blind ceilings are lifted and the Watch decides when the
+    # endpoint has actually failed. Remote runs keep the CLI defaults: a probe
+    # from here says nothing about that host's route to the endpoint.
+    watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if not remote else ""
+    if watch_url:
+        provider_env = {**provider_env, **inference_health.WATCHED_ENV}
     run_settings = _run_settings(provider_env)
     settings_path = None
     if remote:
@@ -1746,6 +1754,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 stderr_buf.append(data.decode("utf-8", "replace") if isinstance(data, bytes) else data)
             threading.Thread(target=_drain_stderr, daemon=True).start()
             stream_user_message(proc, message)
+            if watch_url:
+                threading.Thread(target=_watch_endpoint, args=(job, proc, watch_url,
+                                 provider_env.get("ANTHROPIC_MODEL", "")), daemon=True).start()
 
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
                 # Provider verdict "this model needs a newer claude CLI" arrives
@@ -1757,10 +1768,14 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     gate = claude_version_gate(line)
                     if gate:
                         job["version_gate"] = gate
+                if not job["endpoint_issue"]:
+                    job["endpoint_issue"] = inference_health.diagnose(line) or ""
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if watch_url:
+                    job["model_wait"].update(ev, time.time())
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
@@ -1778,6 +1793,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 if nxt is not None:
                     _persist_queue(session_id, backlog)
                     stream_user_message(proc, nxt)
+                    if watch_url:
+                        job["model_wait"].turn_sent(time.time())
                 else:
                     try:
                         proc.stdin.close()
@@ -1820,6 +1837,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 interrupted = job.get("interrupted")
                 last_result = job.get("last_result", "")
                 version_gate = job.get("version_gate", "")
+                endpoint_issue = job.get("endpoint_issue", "")
+                if endpoint_issue:
+                    # The clients show the stderr tail as the turn's error: lead
+                    # with the explanation, not the CLI's "try again in a moment".
+                    job["stderr"] = endpoint_issue
             # The turn ended on its own (finished, failed or interrupted): not
             # for boot to resume. Before the leftovers follow-up below records
             # its own row.
@@ -1858,10 +1880,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     if rc == 0 and last_result:
                         body = push_preview(last_result)
                         notify_all(label, body, data={"session": session_id, "host": phost})
-                    elif version_gate:
+                    elif version_gate or endpoint_issue:
                         # Actionable, self-contained: a human reading this on a
                         # phone with no context knows exactly what to do.
-                        notify_all(label, version_gate, data={"session": session_id, "host": phost})
+                        notify_all(label, version_gate or endpoint_issue,
+                                   data={"session": session_id, "host": phost})
                     else:
                         body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
                         notify_all(label, body, data={"session": session_id, "host": phost})
@@ -1880,6 +1903,31 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
 
     threading.Thread(target=run, daemon=True).start()
     return True
+
+
+def _watch_endpoint(job, proc, base_url, model):
+    """Liveness watch for a run on a custom model endpoint: while the CLI waits
+    on the model, probe the endpoint every POLL_INTERVAL; stop the turn only on
+    the Watch's verdict (unreachable, or no longer working on our request), and
+    record why so the finalizer surfaces it. A slow but progressing prefill is
+    never cut off by a clock."""
+    watch = inference_health.Watch(base_url)
+    while True:
+        time.sleep(inference_health.POLL_INTERVAL)
+        if not job["running"] or job.get("proc") is not proc:
+            return
+        since = job["model_wait"].since
+        if since is None:
+            watch.reset()
+            continue
+        verdict = watch.observe(inference_health.probe(base_url, model), time.time() - since)
+        if verdict and job["running"] and job["model_wait"].since is not None:
+            job["endpoint_issue"] = verdict
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            return
 
 
 def _persist_queue(session_id, backlog):
