@@ -197,6 +197,13 @@ export default function IntegrationsScreen() {
       <Text style={[styles.sheetHint, { marginTop: 12 }]}>
         Connect once; every agent chat can use it, within your limits.
       </Text>
+      {/* Up here, not at the end: the owner acts on a row near the top and would never see a note below the fold. */}
+      {consenting ? (
+        <Text style={[styles.sheetHint, { color: t.accent }]}>
+          Finish signing in in the browser, then come back — this screen updates on its own.
+        </Text>
+      ) : null}
+      {error ? <Text testID="integrations-error" style={[styles.error, { paddingHorizontal: 18, marginTop: 6 }]}>{error}</Text> : null}
 
       <Text style={styles.sheetSection}>ACCOUNTS</Text>
       {accounts.length === 0 ? (
@@ -205,7 +212,6 @@ export default function IntegrationsScreen() {
       {accounts.map(({ p, c }) => (
         <View key={c.id} testID={`integration-conn-${c.id}`} style={styles.spCard}>
           <View style={styles.spCardHead}>
-            <View style={styles.spCardIcon}><Icon name="cloud" size={16} color={t.textMuted} /></View>
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={styles.spCardTitle}>{c.account || `${p.label} account`}</Text>
               <Text style={styles.spCardSummary}>{p.label}</Text>
@@ -349,12 +355,6 @@ export default function IntegrationsScreen() {
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
 
-      {consenting ? (
-        <Text style={[styles.sheetHint, { marginTop: 10 }]}>
-          Finish signing in in the browser, then come back — this screen updates on its own.
-        </Text>
-      ) : null}
-      {error ? <Text testID="integrations-error" style={[styles.error, { paddingHorizontal: 18, marginTop: 10 }]}>{error}</Text> : null}
     </ScrollView>
   )
 }
