@@ -1,4 +1,4 @@
-import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -12,6 +12,9 @@ function eq(label: string, got: unknown, want: unknown) {
   else { fail++; console.log(`FAIL ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`) }
 }
 
+eq("setup-only providers fold once one is ready", setupFold([prov, { ...prov, id: "dropbox", client: { ...prov.client, configured: false } }]).map((p) => p.id), ["dropbox"])
+eq("with none ready nothing folds", setupFold([{ ...prov, client: { ...prov.client, configured: false } }]), [])
+eq("home reads as a word, other folders as typed", ["~", "~/", "~/Projects", "/srv"].map(folderLabel), ["Home folder", "Home folder", "~/Projects", "/srv"])
 eq("try names the account so the agent need not ask", tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")
 eq("try without an account name is the sample task", tryPrompt(svc("Drive"), conn({})), "List my files.")
 eq("unavailable services collapse into one note", unavailableNote({ ...prov, services: [{ ...svc("Keep", false), unavailable: "no API" }, svc("drive")] }), "Keep can't be connected: no API.")

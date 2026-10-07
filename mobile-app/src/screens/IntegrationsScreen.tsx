@@ -5,12 +5,12 @@ import { api, type IntegrationConnection, type IntegrationProvider, type Integra
 import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
+import { folderLabel, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
 import { resolveSessionPath } from "../lib/session"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
-import Icon from "../components/Icon"
+import Icon, { type IconName } from "../components/Icon"
 import { useStyles } from "./styles"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
@@ -18,6 +18,9 @@ type Draft = { provider: string; client_id: string; client_secret: string }
 /** iOS 26 draws a Switch ~12pt wider than the frame RN lays out, so it spills
  *  past the row's padding; this margin keeps it inside the card. */
 const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 ? 12 : 0
+
+/** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
+const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "clock" }
 
 /**
  * Integrations — the one place the owner connects outside accounts (Google,
@@ -34,7 +37,9 @@ const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 
  * consent in the system browser that ADDS the permission and keeps the rest.
  * A service nobody can connect (Google Keep) gets no row — one line under
  * "Add an account" says why. Once an account exists, each "Add an account"
- * row folds to one line until tapped, so the page reads as the accounts. Tapping a line opens its details: one chip per
+ * row folds to one line until tapped, so the page reads as the accounts;
+ * providers still needing developer setup fold behind one "More services"
+ * row (setupFold). Tapping a service line opens its details: one chip per
  * operation (read, write, delete, create…) saying what AGENTS may do there; a
  * chip that needs a wider grant runs consent for just that op. A files account
  * can be narrowed to one folder. Last, "This machine": the folders agents may
@@ -51,6 +56,7 @@ export default function IntegrationsScreen() {
   const [busy, setBusy] = useState<string | null>(null) // key of the control mid-request
   const [copied, setCopied] = useState(false)
   const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
+  const [more, setMore] = useState(false) // the providers that need setup are shown
   const [error, setError] = useState("")
   const [consenting, setConsenting] = useState(false) // the system browser is open on a consent
   const left = useRef(false)
@@ -182,11 +188,14 @@ export default function IntegrationsScreen() {
   }
 
   const accounts = view.providers.flatMap((p) => p.connections.map((c) => ({ p, c })))
+  const folded = setupFold(view.providers)
+  const showFolded = more || folded.some((p) => p.id === editing?.provider)
+  const shown = view.providers.filter((p) => showFolded || !folded.includes(p))
 
   return (
     <ScrollView testID="integrations-screen" style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
       <Text style={[styles.sheetHint, { marginTop: 12 }]}>
-        Connect an account once; every agent chat can then use it, within the limits you set here.
+        Connect once; every agent chat can use it, within your limits.
       </Text>
 
       <Text style={styles.sheetSection}>ACCOUNTS</Text>
@@ -265,7 +274,7 @@ export default function IntegrationsScreen() {
 
       <Text style={styles.sheetSection}>ADD AN ACCOUNT</Text>
       <View style={styles.spCard}>
-        {view.providers.map((p, i) => {
+        {shown.map((p, i) => {
           const isOpen = providerOpen(p, adding, accounts.length > 0)
           return (
           <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
@@ -326,6 +335,16 @@ export default function IntegrationsScreen() {
           </View>
           )
         })}
+        {folded.length && !showFolded ? (
+          <TouchableOpacity testID="integrations-more" onPress={() => setMore(true)} accessibilityRole="button"
+            style={[{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }, shown.length > 0 && divider]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.ssRowLabel}>More services</Text>
+              <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{folded.map((p) => p.label).join(", ")} · one-time setup</Text>
+            </View>
+            <Icon name="chevronRight" size={14} color={t.textMuted} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
@@ -362,9 +381,9 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
   return (
     <View testID={`service-${s.id}`} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, gap: 10 }}>
-        <TouchableOpacity testID={`service-expand-${s.id}`} onPress={() => onExpand(!expanded)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6 }}
-          accessibilityRole="button" accessibilityState={{ expanded }}>
-          <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
+        <TouchableOpacity testID={`service-expand-${s.id}`} onPress={() => onExpand(!expanded)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}
+          accessibilityRole="button" accessibilityState={{ expanded }} accessibilityHint={expanded ? "Hides the details" : "Shows what agents may do"}>
+          <Icon name={KIND_ICON[s.kind] || "cloud"} size={16} color={state === "on" ? t.accent : t.textMuted} />
           <View style={{ flex: 1 }}>
             <Text style={styles.ssRowLabel}>{s.label}</Text>
             <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }, state === "on" && { color: t.text }]}>{summary}</Text>
@@ -382,7 +401,7 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
         ) : null}
       </View>
       {expanded ? (
-        <View style={{ paddingLeft: 34, paddingRight: 14, paddingBottom: 12, gap: 8 }}>
+        <View style={{ paddingLeft: 40, paddingRight: 14, paddingBottom: 12, gap: 8 }}>
           <Text style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{s.available ? s.agent : s.unavailable}</Text>
           {children}
         </View>
@@ -506,15 +525,15 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
     <View testID="integration-local">
       <Text style={styles.sheetSection}>THIS MACHINE</Text>
       <Text style={styles.sheetHint}>
-        Folders agents may use on the computer running Harman{local.roots.length ? "" : " — none yet, so agents can't touch its disk"}. Limits apply to agents only, never to you.
+        Folders agents may use on the computer running Harman{local.roots.length ? "." : " — none yet."}
       </Text>
       <View style={styles.spCard}>
       {local.roots.map((r, i) => (
         <View key={r} style={[styles.profileInfoRow, { alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }]}>
           <Icon name="folder" size={16} color={t.textMuted} />
-          <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{r}</Text>
+          <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{folderLabel(r)}</Text>
           <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
-            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)} accessibilityLabel={`Remove ${r}`}>
+            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)} accessibilityLabel={`Remove ${folderLabel(r)}`}>
             <Icon name="trash" size={16} color={t.textMuted} />
           </TouchableOpacity>
         </View>

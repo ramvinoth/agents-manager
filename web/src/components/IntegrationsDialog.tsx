@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Check, ChevronRight, Copy, ExternalLink, Folder, Loader2, MessageSquarePlus, Plus, Settings2, Trash2, X } from "lucide-react"
+import { CalendarDays, Check, ChevronRight, Cloud, Copy, ExternalLink, Folder, Loader2, Mail, MessageSquarePlus, Plus, Settings2, Trash2, X } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -13,12 +13,15 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
+import { folderLabel, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
 import { useStore } from "@/store"
 import { IntakeSection } from "@/components/IntakeSection"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
+
+/** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
+const KIND_ICON: Record<string, typeof Folder> = { files: Folder, mail: Mail, calendar: CalendarDays }
 
 /**
  * IntegrationsDialog — the one place the owner connects outside accounts
@@ -32,8 +35,8 @@ type Draft = { provider: string; client_id: string; client_secret: string }
  *    change it (op chips, a folder limit, Try it in a chat); a service the
  *    owner just switched on opens itself so its limits are seen.
  *  - "How do I add one?" → Add an account: one row per provider with a
- *    button per service, or "Set up" for the provider's one-time OAuth
- *    client. Client credentials sit behind that row's gear — set once, so
+ *    button per service. Providers still needing their one-time OAuth
+ *    client fold behind one "More services" row (setupFold). Client credentials sit behind that row's gear — set once, so
  *    they get no permanent place on the page.
  * This machine's folders and Intake channels are separate concerns, so they
  * are separate tabs. Opened from the header, Profile → Integrations and the
@@ -46,6 +49,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   const [busy, setBusy] = useState<string | null>(null) // key of the control mid-request
   const [copied, setCopied] = useState(false)
   const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
+  const [more, setMore] = useState(false) // the providers that need setup are shown
   const [error, setError] = useState<string | null>(null)
   const [consenting, setConsenting] = useState(false) // a vendor tab is open on a consent
   const closed = useRef(false)
@@ -162,6 +166,8 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   }
 
   const accounts = view ? view.providers.flatMap((p) => p.connections.map((c) => ({ p, c }))) : []
+  const folded = view ? setupFold(view.providers) : []
+  const showFolded = more || folded.some((p) => p.id === editing?.provider)
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -169,7 +175,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
         <DialogHeader>
           <DialogTitle>Integrations</DialogTitle>
           <DialogDescription>
-            Connect an account once; every agent chat can then use it, within the limits you set here.
+            Connect once; every agent chat can use it, within your limits.
           </DialogDescription>
         </DialogHeader>
 
@@ -267,7 +273,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
               <div className="flex flex-col gap-2">
                 <h3 className="text-xs font-medium text-muted-foreground">Add an account</h3>
                 <div className="divide-y rounded-lg border">
-                  {view.providers.map((p) => (
+                  {view.providers.filter((p) => showFolded || !folded.includes(p)).map((p) => (
                     <ProviderRow
                       key={p.id}
                       p={p}
@@ -293,6 +299,16 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                       )}
                     </ProviderRow>
                   ))}
+                  {folded.length > 0 && !showFolded && (
+                    <button type="button" className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40"
+                      onClick={() => setMore(true)} data-testid="integrations-more">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium">More services</span>
+                        <span className="block text-[11px] text-muted-foreground">{folded.map((p) => p.label).join(", ")} · one-time setup</span>
+                      </span>
+                      <ChevronRight className="size-3.5 text-muted-foreground" />
+                    </button>
+                  )}
                 </div>
               </div>
             </TabsContent>
@@ -455,11 +471,12 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
   children?: React.ReactNode
 }) {
   const action = serviceAction(state)
+  const KindIcon = KIND_ICON[s.kind] || Cloud
   return (
     <div data-testid={`service-${s.id}`}>
       <div className="flex items-center gap-2 px-3 py-2">
         <button className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => onExpand(!expanded)} aria-expanded={expanded}>
-          <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+          <KindIcon className={cn("size-3.5 shrink-0", state === "on" ? "text-primary" : "text-muted-foreground")} />
           <span className="shrink-0 text-sm">{s.label}</span>
           <span className={cn("min-w-0 truncate text-xs", state === "on" ? "text-foreground/70" : "text-muted-foreground")}>
             · {summary}
@@ -575,7 +592,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
     <section className="rounded-md border" data-testid="integration-local">
       <p className="flex gap-2 px-3 py-2.5 text-xs text-muted-foreground">
         <span className="flex-1">
-          Folders agents may work in on the computer Harman runs on{local.roots.length ? "" : " — none yet, so agents cannot touch its disk"}. You are never limited.
+          Folders agents may use on the computer running Harman{local.roots.length ? "." : " — none yet."}
         </span>
         {busy && <Loader2 className="size-3.5 animate-spin" />}
       </p>
@@ -583,7 +600,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
         {local.roots.map((r) => (
           <div key={r} className="flex items-center gap-2 px-3 py-1.5 text-sm">
             <Folder className="size-3.5 text-muted-foreground" />
-            <code className="min-w-0 flex-1 truncate font-mono text-xs">{r}</code>
+            <span className={cn("min-w-0 flex-1 truncate text-xs", folderLabel(r) === r && "font-mono")}>{folderLabel(r)}</span>
             <button className="text-muted-foreground hover:text-destructive disabled:opacity-50" disabled={disabled}
               title="Remove folder" onClick={() => onSave(local.roots.filter((x) => x !== r), ops)}>
               <Trash2 className="size-3.5" />

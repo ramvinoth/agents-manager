@@ -66,6 +66,20 @@ export function providerHint(p: IntegrationProvider, open: boolean): string {
   return p.services.filter((s) => s.available).map((s) => s.label).join(", ")
 }
 
+/** The providers "Add an account" folds behind one "More services" row: those
+ *  still needing their one-time developer setup, once some provider is ready
+ *  to sign in. Setup is a developer chore most owners never do, so it should
+ *  not crowd the providers they can use now; with none ready, setup IS the
+ *  way in, so nothing folds. */
+export function setupFold(providers: IntegrationProvider[]): IntegrationProvider[] {
+  return providers.some((p) => p.client.configured) ? providers.filter((p) => !p.client.configured) : []
+}
+
+/** A folder as the owner reads it: "~" is their home folder, not a symbol. */
+export function folderLabel(root: string): string {
+  return root === "~" || root === "~/" ? "Home folder" : root
+}
+
 /** The first message of a "Try it in a chat" session: the service's sample
  *  task, pinned to this account when it has a name — with several accounts
  *  connected the agent would otherwise have to ask which one. */

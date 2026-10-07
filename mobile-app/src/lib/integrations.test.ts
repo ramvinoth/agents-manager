@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -39,6 +39,15 @@ async function main() {
     assert.strictEqual(providerHint(prov, false), "drive, gmail")
     assert.strictEqual(providerHint(prov, true), "Pick what to start with. You can add the rest later.")
     assert.strictEqual(providerHint({ ...prov, client: { client_id: "x", has_secret: false, configured: false } }, false), "Client secret missing. Set up once, then connect your drive and gmail.")
+  })
+  await test("setup-only providers fold away once one is ready to sign in", () => {
+    const off = { ...prov, id: "dropbox", client: { ...prov.client, configured: false } }
+    assert.deepStrictEqual(setupFold([prov, off]).map((p) => p.id), ["dropbox"])
+    assert.deepStrictEqual(setupFold([off]), [])
+    assert.deepStrictEqual(setupFold([prov]), [])
+  })
+  await test("home reads as a word, other folders as typed", () => {
+    assert.deepStrictEqual(["~", "~/", "~/Projects", "/srv"].map(folderLabel), ["Home folder", "Home folder", "~/Projects", "/srv"])
   })
   await test("try names the account so the agent need not ask", () => {
     assert.strictEqual(tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")

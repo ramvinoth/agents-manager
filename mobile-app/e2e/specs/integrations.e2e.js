@@ -112,6 +112,7 @@ describe("Native integrations — one catalog, every service state", () => {
     await $("~local-add-input").setValue("~/Projects")
     await tap("local-add")
     await reveal("local-root-1")
+    assert.equal(await $("~local-root-0").getText(), "Home folder", "~ reads as the home folder")
     assert.equal(await $("~local-root-1").getText(), "~/Projects")
     assert.deepEqual(writes().at(-1).body, { roots: ["~", "~/Projects"], ops: ["read", "write"] })
     await reveal("local-op-delete")
@@ -121,6 +122,9 @@ describe("Native integrations — one catalog, every service state", () => {
   })
 
   it("setting up a public client needs only the id and unlocks connecting", async () => {
+    assert(!(await $("~integrations-edit-dropbox").isExisting()), "Providers needing setup fold behind More services")
+    await reveal("integrations-more")
+    await tap("integrations-more")
     await reveal("integrations-edit-dropbox")
     await tap("integrations-edit-dropbox")
     assert(!(await $("~integrations-client-secret").isExisting()), "Dropbox is a PKCE public client: no secret field")
