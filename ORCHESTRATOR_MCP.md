@@ -735,7 +735,7 @@ The exclusion is deliberate: wrapping `fs/*` and `git/*` duplicates Read/Write/G
 which is the duplicate-implementation trap CLAUDE.md forbids. The MCP exposes what Claude
 *cannot* do — act on the system running it.
 
-### 8A. Shipped manifest (as of 2026-09-27 — `viewer/viewer_mcp.py`, 50 tools)
+### 8A. Shipped manifest (as of 2026-10-06 — `viewer/viewer_mcp.py`, 64 tools)
 
 The table above is the plan. This is what an agent session actually holds today; every
 tool is dumb transport to one `/api/*` route, gated server-side by `orglogic._MIN_LEVEL`
@@ -744,13 +744,14 @@ same list, and `docs_read system-status` shows the live posture.
 
 | Tier | Tools |
 |---|---|
-| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `note_graph`, `note_comments`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list`, `usage_report` |
+| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `note_graph`, `note_comments`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list`, `usage_report`, `intake_list` |
 | **Act on the board** (Green at ic) | `card_create/move/update/comment`, `card_dep_add/remove`, `task_done`, `note_create/update`, `note_comment`, `note_vote`, `session_seen`, `inbox_send`, `skill_propose` (overlap → `skill_promote`, Red) |
 | **Shape work** (lead) | `card_assign`, `loop_create/update`, `loop_delete` (Red) |
 | **Org control** (manager) | `loop_control_set` |
-| **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote` |
+| **Red — always queues for the owner** | `session_mode_set` (never one's own), `note_delete`, `loop_delete`, `skill_promote`, `intake_create` (lead; opens a door from outside onto a board — the token is shown only to the owner, never to an agent) |
 | **Files** (the file browser's own `/api/fs`, scoped by `drive` or `host`) | `drive_list`, `fs_list`, `fs_read`, `fs_write`, `fs_mkdir` — every session sees the drives the owner connected in the app. No `fs_delete`/`fs_rename`: file deletion is Red and the fs routes do not run through the approval queue |
-| **Accounts** (Integrations page: one Google/Dropbox/Microsoft sign-in per account, services switched on per account) | `integrations_list`, `gmail_search`, `gmail_read`, `gmail_draft`, `calendar_events` — a service the owner has not turned on is refused server-side. Mail is draft-only: no `gmail_send`; the owner presses Send |
+| **Accounts** (Integrations page: one Google/Dropbox/Microsoft sign-in per account, services switched on per account) | `integrations_list`, `gmail_search`, `gmail_read`, `gmail_draft`, `calendar_events`, `calendar_create/update/delete` — a service the owner has not turned on (or an op not allowed for it) is refused server-side. Mail is draft-only: no `gmail_send`; the owner presses Send |
+| **Intake** (`viewer/intake.py`: a URL + hashed token bound to one board and optionally one session; each POST becomes a card through `card_create` and wakes that session; outside senders act at ic, the owner's in-app feedback keeps the owner as actor; 30 cards/h per channel) | `intake_list`, `intake_create` (Red). Rotate/rename/close are owner UI actions (Integrations → Intake channels) |
 | **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `git/*` |
 
 Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,
