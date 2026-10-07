@@ -83,6 +83,11 @@ def probe(base_url, model=""):
     base = (base_url or "").rstrip("/")
     status, _ = _get(base + "/health")
     if status == 0:
+        # Some servers' /health is a deep check, not a liveness read: LiteLLM's
+        # calls every model behind it (8-26s, measured 2026-10-07), so a timeout
+        # there is not a dead host. Any HTTP answer at the root proves it is up.
+        status, _ = _get(base + "/")
+    if status == 0:
         return {"state": UNREACHABLE, "load": None}
     if status in _ORIGIN_DOWN:
         return {"state": ORIGIN_DOWN, "load": None}

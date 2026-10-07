@@ -129,8 +129,10 @@ def test_probe_classifies_by_http_answer(monkeypatch):
     answers = {"/health": (200, ""), "/upstream/m/metrics": (200, METRICS.replace("qwen3.8-27b", "m"))}
     monkeypatch.setattr(h, "_get", lambda url: answers.get(url.split("example")[1], (404, "")))
     assert h.probe("https://example/", "m") == {"state": h.REACHABLE, "load": (1, 2)}
-    answers["/health"] = (0, "")
+    answers["/health"] = answers["/"] = (0, "")
     assert h.probe("https://example", "m")["state"] == h.UNREACHABLE
+    answers["/"] = (200, "")  # slow deep /health (LiteLLM) but the server answers
+    assert h.probe("https://example", "m")["state"] == h.REACHABLE
     answers["/health"] = (530, "")
     assert h.probe("https://example", "m")["state"] == h.ORIGIN_DOWN
     answers["/health"] = (503, "")  # warming up, not gone
