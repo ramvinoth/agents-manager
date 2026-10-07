@@ -24,6 +24,19 @@ export function reconnectService(p: IntegrationProvider, c: IntegrationConnectio
   return (usable.find((s) => c.services[s.id] === "on") || usable[0]).id
 }
 
+/** The one line a collapsed service row shows: what agents may do there now,
+ *  so the owner reads the whole account at a glance and opens a row only to
+ *  change it. */
+export function serviceSummary(s: IntegrationService, c: IntegrationConnection): string {
+  const state = c.services[s.id] || "grant"
+  if (state === "unavailable") return "Not available"
+  if (state === "grant") return "Needs access"
+  if (state === "off") return "Off"
+  const may = s.ops.filter((o) => c.ops[s.id]?.[o.id] === "on").map((o) => o.label)
+  const what = s.ops.length ? (may.length ? may.join(", ") : "Nothing allowed") : "On"
+  return s.kind === "files" && c.root && c.root !== "/" ? `${what} · only ${c.root}` : what
+}
+
 /** What an unconfigured provider unlocks once its one-time client setup is done. */
 export function setupHint(p: IntegrationProvider): string {
   const names = p.services.filter((s) => s.available).map((s) => s.label)

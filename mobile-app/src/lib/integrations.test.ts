@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -54,6 +54,18 @@ async function main() {
     let polls = 0
     await assert.rejects(waitForConsent(async () => { polls++; return { status: "waiting" } }, noSleep, () => polls >= 1), /Cancelled/)
     assert.strictEqual(polls, 1)
+  })
+  await test("a collapsed row summarizes what agents may do there", () => {
+    const files = { ...svc("drive"), kind: "files", ops: [{ id: "read", label: "Read" }, { id: "write", label: "Save files" }] }
+    const on = (ops: Record<string, ServiceState>, root = "/") => ({ ...conn({ drive: "on" }), ops: { drive: ops }, root })
+    assert.strictEqual(serviceSummary(files, on({ read: "on", write: "on" })), "Read, Save files")
+    assert.strictEqual(serviceSummary(files, on({ read: "on", write: "off" }, "/Work")), "Read · only /Work")
+    assert.strictEqual(serviceSummary(files, on({ read: "off" })), "Nothing allowed")
+    assert.deepStrictEqual(
+      (["off", "grant", "unavailable"] as const).map((st) => serviceSummary(files, conn({ drive: st }))),
+      ["Off", "Needs access", "Not available"],
+    )
+    assert.strictEqual(serviceSummary(svc("drive"), conn({ drive: "on" })), "On")
   })
   console.log(`integrations: ${passed} passed`)
 }

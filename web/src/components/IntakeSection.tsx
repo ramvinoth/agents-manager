@@ -71,14 +71,13 @@ export function IntakeSection() {
 
   return (
     <section className="rounded-md border" data-testid="integration-intake">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <Inbox className="size-4 text-muted-foreground" />
-        <span className="font-medium">Intake channels</span>
-        {busy && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-      </div>
-      <p className="px-3 pb-2 text-xs text-muted-foreground">
-        A link anything outside can post to — a website form, a failing build, an alert, your own app feedback.
-        Each post becomes a card on the board you pick and wakes the chat you pick to work on it.
+      <p className="flex gap-2 px-3 py-2.5 text-xs text-muted-foreground">
+        <Inbox className="mt-0.5 size-3.5 shrink-0" />
+        <span className="flex-1">
+          A link anything outside can post to — a website form, a failing build, an alert, your own app feedback.
+          Each post becomes a card on the board you pick and wakes the chat you pick to work on it.
+        </span>
+        {busy && <Loader2 className="size-3.5 animate-spin" />}
       </p>
       <div className="flex flex-col divide-y border-t">
         {channels === null && <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>}

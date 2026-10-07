@@ -1,4 +1,4 @@
-import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -22,6 +22,16 @@ eq("unavailable has no control", serviceAction("unavailable"), "none")
 
 eq("reconnect prefers a service the owner has on", reconnectService(prov, conn({ drive: "off", gmail: "on" })), "gmail")
 eq("reconnect falls back to the first connectable service", reconnectService(prov, conn({ drive: "grant", gmail: "grant" })), "drive")
+
+const files = { ...svc("drive"), kind: "files", ops: [{ id: "read", label: "Read" }, { id: "write", label: "Save files" }, { id: "delete", label: "Delete" }] }
+const on = (ops: Record<string, ServiceState>, root = "/") => ({ ...conn({ drive: "on" }), ops: { drive: ops }, root })
+eq("summary lists what agents may do", serviceSummary(files, on({ read: "on", write: "on", delete: "off" })), "Read, Save files")
+eq("summary names a folder limit", serviceSummary(files, on({ read: "on" }, "/Work")), "Read · only /Work")
+eq("summary when every op is off", serviceSummary(files, on({ read: "off" })), "Nothing allowed")
+eq("summary off", serviceSummary(files, conn({ drive: "off" })), "Off")
+eq("summary missing grant", serviceSummary(files, conn({})), "Needs access")
+eq("summary unavailable", serviceSummary(files, conn({ drive: "unavailable" })), "Not available")
+eq("summary for a service without ops", serviceSummary(svc("drive"), conn({ drive: "on" })), "On")
 
 const seq = (...s: ConsentStatus[]) => { let i = 0; return async () => s[Math.min(i++, s.length - 1)] }
 const noSleep = async () => {}

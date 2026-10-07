@@ -57,6 +57,7 @@ describe("Native integrations — one catalog, every service state", () => {
     assert(await switchOn("service-switch-google.drive"), "Drive is on")
     assert(!(await switchOn("service-switch-google.calendar")), "Calendar is granted but off")
     assert(await shown("service-grant-google.gmail"), "Gmail is not granted yet: offers Grant access")
+    assert(!(await $("~root-edit-dr-fixture").isExisting()), "A collapsed row keeps its details (folder limit) hidden")
     const { width } = await browser.getWindowSize()
     const sw = await $("~service-switch-google.drive")
     const x = (await sw.getLocation()).x + (await sw.getSize()).width
@@ -73,7 +74,7 @@ describe("Native integrations — one catalog, every service state", () => {
   })
 
   it("ops: a chip per operation once the service is on; a click writes the owner's choice", async () => {
-    // Calendar was switched on above: its op chips appear, defaulting create/update on, delete off.
+    // Calendar was switched on above, which opens its row: op chips default create/update on, delete off.
     await reveal("op-dr-fixture-google.calendar-delete")
     assert(!(await switchOn("op-dr-fixture-google.calendar-delete")), "Calendar delete defaults off for agents")
     await tap("op-dr-fixture-google.calendar-delete")
@@ -83,6 +84,8 @@ describe("Native integrations — one catalog, every service state", () => {
   })
 
   it("a files account can be narrowed to one folder; a missing folder is refused with the server's words", async () => {
+    await reveal("service-expand-google.drive")
+    await tap("service-expand-google.drive")
     await reveal("root-edit-dr-fixture")
     await tap("root-edit-dr-fixture")
     await $("~root-input-dr-fixture").setValue("/Missing")

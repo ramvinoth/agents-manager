@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
 import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { reconnectService, serviceAction, setupHint, tryPrompt, waitForConsent } from "../lib/integrations"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent } from "../lib/integrations"
 import { resolveSessionPath } from "../lib/session"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
@@ -42,6 +42,7 @@ export default function IntegrationsScreen() {
   const t = useTheme()
   const [view, setView] = useState<IntegrationsView | null>(null)
   const [editing, setEditing] = useState<Draft | null>(null)
+  const [open, setOpen] = useState<Set<string>>(new Set()) // `${conn}:${service}` rows showing their details
   const [busy, setBusy] = useState<string | null>(null) // key of the control mid-request
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
@@ -105,7 +106,15 @@ export default function IntegrationsScreen() {
     })
   }
 
+  const expand = (key: string, on: boolean) => setOpen((o) => {
+    const n = new Set(o)
+    if (on) n.add(key)
+    else n.delete(key)
+    return n
+  })
+
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
+    if (on) expand(`${conn.id}:${service}`, true)
     return run(`${conn.id}:${service}`, async () => { await api.integrationService({ connection: conn.id, service, on }) })
   }
 
@@ -147,6 +156,7 @@ export default function IntegrationsScreen() {
   }
 
   const link = { color: t.accent, fontSize: 13, fontWeight: "600" as const }
+  const divider = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }
 
   if (view === null) {
     return (
@@ -163,130 +173,150 @@ export default function IntegrationsScreen() {
     )
   }
 
+  const accounts = view.providers.flatMap((p) => p.connections.map((c) => ({ p, c })))
+
   return (
     <ScrollView testID="integrations-screen" style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
-      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, paddingTop: 12, maxWidth: undefined }]}>
-        Connect your accounts and choose what agents may use on each. Mail is draft-only: agents write
-        drafts, you press Send in Gmail.
+      <Text style={[styles.sheetHint, { marginTop: 12 }]}>
+        Connect an account once; every agent chat can then use it, within the limits you set here.
       </Text>
 
-      {view.providers.map((p) => (
-        <View key={p.id} testID={`integration-${p.id}`}>
-          <View style={{ flexDirection: "row", alignItems: "center", paddingRight: 18, marginTop: 16, marginBottom: 6 }}>
-            <Text style={[styles.sheetSection, { flex: 1, marginTop: 0, marginBottom: 0 }]}>{p.label.toUpperCase()}</Text>
-            <TouchableOpacity
-              testID={`integrations-edit-${p.id}`}
-              onPress={() => setEditing({ provider: p.id, client_id: p.client.client_id, client_secret: "" })}
-              disabled={!!busy}
-              hitSlop={8}
-            >
-              <Text style={[link, { fontSize: 12 }]}>{p.client.client_id ? "Edit client" : "Set up client"}</Text>
+      <Text style={styles.sheetSection}>ACCOUNTS</Text>
+      {accounts.length === 0 ? (
+        <Text style={styles.sheetHint}>None yet. Add one below — agents can use it the moment you sign in.</Text>
+      ) : null}
+      {accounts.map(({ p, c }) => (
+        <View key={c.id} testID={`integration-conn-${c.id}`} style={styles.spCard}>
+          <View style={styles.spCardHead}>
+            <View style={styles.spCardIcon}><Icon name="user" size={16} color={t.textMuted} /></View>
+            <View style={{ flex: 1 }}>
+              <Text numberOfLines={1} style={styles.spCardTitle}>{c.account || `${p.label} account`}</Text>
+              <Text style={styles.spCardSummary}>{p.label}</Text>
+            </View>
+            <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={{ padding: 4 }}>
+              <Icon name="trash" size={16} color={t.danger} />
             </TouchableOpacity>
           </View>
+          {c.expired ? (
+            <View testID={`expired-${c.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
+              <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
+                {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
+              </Text>
+              <TouchableOpacity testID={`integration-reconnect-${c.id}`} disabled={!!busy} onPress={() => connect(reconnectService(p, c), c.id)} hitSlop={8}>
+                <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>Reconnect</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {p.services.map((s) => {
+            const key = `${c.id}:${s.id}`
+            const state = c.services[s.id] || "grant"
+            return (
+              <ServiceRow
+                key={s.id}
+                s={s}
+                state={state}
+                summary={serviceSummary(s, c)}
+                expanded={open.has(key)}
+                onExpand={(on) => expand(key, on)}
+                busy={busy === key}
+                disabled={!!busy}
+                onToggle={(on) => toggle(c, s.id, on)}
+                onGrant={() => connect(s.id, c.id)}
+              >
+                {state === "on" && s.ops.length ? (
+                  <OpChips
+                    testPrefix={`op-${c.id}-${s.id}`}
+                    ops={s.ops.map((o) => ({ ...o, state: c.ops[s.id]?.[o.id] || "grant" }))}
+                    busy={busy}
+                    busyPrefix={`${key}:`}
+                    onToggle={(op, on) => setOp(c, s.id, op, on)}
+                    onGrant={(op) => connect(s.id, c.id, op)}
+                  />
+                ) : null}
+                {state === "on" && s.kind === "files" ? (
+                  <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(root) => setRoot(c, root)} />
+                ) : null}
+                {state === "on" && s.try && !c.expired ? (
+                  <TouchableOpacity
+                    testID={`try-${c.id}-${s.id}`}
+                    onPress={() => tryInChat(s, c)}
+                    disabled={!!busy}
+                    hitSlop={8}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4, opacity: busy ? 0.5 : 1 }}
+                  >
+                    {busy === `${key}:try` ? <ActivityIndicator size="small" /> : <Icon name="chat" size={14} color={t.accent} />}
+                    <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Try it in a chat</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </ServiceRow>
+            )
+          })}
+        </View>
+      ))}
 
-          {editing?.provider === p.id ? (
-            <ClientForm
-              p={p}
-              draft={editing}
-              redirectUri={view.redirect_uri}
-              copied={copied}
-              busy={busy === `client:${p.id}`}
-              onCopy={copyUri}
-              onChange={setEditing}
-              onCancel={() => setEditing(null)}
-              onSave={saveClient}
-              onForget={() => forgetClient(p)}
-            />
-          ) : !p.client.configured ? (
-            <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
-              {p.client.client_id ? "Client secret missing. " : ""}{setupHint(p)}
-            </Text>
-          ) : (
-            <>
-              {p.connections.map((c) => (
-                <View key={c.id} testID={`integration-conn-${c.id}`} style={{ marginBottom: 6 }}>
-                  <View style={[styles.profileInfoRow, { alignItems: "center" }]}>
-                    <Icon name="user" size={16} color={t.textMuted} />
-                    <Text numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>
-                      {c.account || `${p.label} account`}
-                    </Text>
-                    <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={{ padding: 4 }}>
-                      <Icon name="trash" size={16} color={t.danger} />
-                    </TouchableOpacity>
-                  </View>
-                  {c.expired ? (
-                    <View testID={`expired-${c.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 18, marginBottom: 6, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
-                      <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
-                        {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
-                      </Text>
-                      <TouchableOpacity testID={`integration-reconnect-${c.id}`} disabled={!!busy} onPress={() => connect(reconnectService(p, c), c.id)} hitSlop={8}>
-                        <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>Reconnect</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                  {p.services.map((s) => (
-                    <React.Fragment key={s.id}>
-                      <ServiceRow
-                        s={s}
-                        state={c.services[s.id] || "grant"}
-                        busy={busy === `${c.id}:${s.id}`}
-                        disabled={!!busy}
-                        onToggle={(on) => toggle(c, s.id, on)}
-                        onGrant={() => connect(s.id, c.id)}
-                      />
-                      {c.services[s.id] === "on" && s.ops.length ? (
-                        <OpChips
-                          testPrefix={`op-${c.id}-${s.id}`}
-                          ops={s.ops.map((o) => ({ ...o, state: c.ops[s.id]?.[o.id] || "grant" }))}
-                          busy={busy}
-                          busyPrefix={`${c.id}:${s.id}:`}
-                          onToggle={(op, on) => setOp(c, s.id, op, on)}
-                          onGrant={(op) => connect(s.id, c.id, op)}
-                        />
-                      ) : null}
-                      {c.services[s.id] === "on" && s.try && !c.expired ? (
-                        <TouchableOpacity
-                          testID={`try-${c.id}-${s.id}`}
-                          onPress={() => tryInChat(s, c)}
-                          disabled={!!busy}
-                          hitSlop={8}
-                          style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 42, paddingVertical: 6, opacity: busy ? 0.5 : 1 }}
-                        >
-                          {busy === `${c.id}:${s.id}:try` ? <ActivityIndicator size="small" /> : <Icon name="chat" size={14} color={t.accent} />}
-                          <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Try it in a chat</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                      {c.services[s.id] === "on" && s.kind === "files" ? (
-                        <RootRow conn={c} busy={busy === `${c.id}:root`} disabled={!!busy} onSave={(root) => setRoot(c, root)} />
-                      ) : null}
-                    </React.Fragment>
-                  ))}
-                </View>
-              ))}
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 18, paddingVertical: 6, alignItems: "center" }}>
-                <Text style={styles.ssRowHint}>{p.connections.length ? "Add another account with" : "Connect an account with"}</Text>
+      <Text style={styles.sheetSection}>ADD AN ACCOUNT</Text>
+      <View style={styles.spCard}>
+        {view.providers.map((p, i) => (
+          <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ssRowLabel}>{p.label}</Text>
+                {!p.client.configured ? (
+                  <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
+                    {p.client.client_id ? "Client secret missing. " : ""}{setupHint(p)}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity
+                testID={`integrations-edit-${p.id}`}
+                onPress={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
+                disabled={!!busy}
+                hitSlop={8}
+                accessibilityLabel={`${p.label} app credentials`}
+              >
+                {p.client.configured
+                  ? <Icon name="settings" size={18} color={t.textMuted} />
+                  : <Text style={link}>Set up</Text>}
+              </TouchableOpacity>
+            </View>
+            {p.client.configured ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {p.services.filter((s) => s.available).map((s) => (
                   <TouchableOpacity
                     key={s.id}
                     testID={`integration-new-${s.id}`}
-                    style={[styles.ssAddBtn, { opacity: busy ? 0.5 : 1, flexDirection: "row", alignItems: "center", gap: 4 }]}
+                    style={[styles.filterChip, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }]}
                     disabled={!!busy}
                     onPress={() => connect(s.id)}
                   >
-                    {busy === `new:${s.id}` ? <ActivityIndicator size="small" /> : <Icon name="plus" size={14} color={t.onAccent} />}
-                    <Text style={styles.ssAddBtnText}>{s.label}</Text>
+                    {busy === `new:${s.id}` ? <ActivityIndicator size="small" /> : <Icon name="plus" size={12} color={t.textMuted} />}
+                    <Text style={styles.filterChipText}>{s.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            </>
-          )}
-        </View>
-      ))}
+            ) : null}
+            {editing?.provider === p.id ? (
+              <ClientForm
+                p={p}
+                draft={editing}
+                redirectUri={view.redirect_uri}
+                copied={copied}
+                busy={busy === `client:${p.id}`}
+                onCopy={copyUri}
+                onChange={setEditing}
+                onCancel={() => setEditing(null)}
+                onSave={saveClient}
+                onForget={() => forgetClient(p)}
+              />
+            ) : null}
+          </View>
+        ))}
+      </View>
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
 
       {consenting ? (
-        <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 10, maxWidth: undefined }]}>
+        <Text style={[styles.sheetHint, { marginTop: 10 }]}>
           Finish signing in in the browser, then come back — this screen updates on its own.
         </Text>
       ) : null}
@@ -295,34 +325,52 @@ export default function IntegrationsScreen() {
   )
 }
 
-function ServiceRow({ s, state, busy, disabled, onToggle, onGrant }: {
+/** One service on one account: a single line saying what agents may do there
+ *  now, with its switch (or Grant access). Tapping the line opens the details —
+ *  what agents will do with it, plus `children` (op chips, folder limit, Try
+ *  it) when it is on. */
+function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onToggle, onGrant, children }: {
   s: IntegrationService
   state: ServiceState
+  summary: string
+  expanded: boolean
+  onExpand: (on: boolean) => void
   busy: boolean
   disabled: boolean
   onToggle: (on: boolean) => void
   onGrant: () => void
+  children?: React.ReactNode
 }) {
   const styles = useStyles()
   const t = useTheme()
   const action = serviceAction(state)
   return (
-    <View testID={`service-${s.id}`} style={[styles.profileInfoRow, { alignItems: "center", paddingLeft: 42 }]}>
-      <View style={{ flex: 1, marginRight: 10 }}>
-        <Text style={styles.ssRowLabel}>{s.label}</Text>
-        <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{s.available ? s.agent : s.unavailable}</Text>
-      </View>
-      {busy ? (
-        <ActivityIndicator />
-      ) : action === "toggle" ? (
-        <Switch testID={`service-switch-${s.id}`} value={state === "on"} disabled={disabled} onValueChange={onToggle} trackColor={{ true: t.accent, false: t.border }} />
-      ) : action === "grant" ? (
-        <TouchableOpacity testID={`service-grant-${s.id}`} onPress={onGrant} disabled={disabled} hitSlop={8}>
-          <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Grant access</Text>
+    <View testID={`service-${s.id}`} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, gap: 10 }}>
+        <TouchableOpacity testID={`service-expand-${s.id}`} onPress={() => onExpand(!expanded)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6 }}
+          accessibilityRole="button" accessibilityState={{ expanded }}>
+          <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.ssRowLabel}>{s.label}</Text>
+            <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }, state === "on" && { color: t.text }]}>{summary}</Text>
+          </View>
         </TouchableOpacity>
-      ) : (
-        <Text style={styles.ssRowHint}>Not available</Text>
-      )}
+        {busy ? (
+          <ActivityIndicator />
+        ) : action === "toggle" ? (
+          <Switch testID={`service-switch-${s.id}`} value={state === "on"} disabled={disabled} onValueChange={onToggle} trackColor={{ true: t.accent, false: t.border }} />
+        ) : action === "grant" ? (
+          <TouchableOpacity testID={`service-grant-${s.id}`} onPress={onGrant} disabled={disabled} hitSlop={8}>
+            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Grant access</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {expanded ? (
+        <View style={{ paddingLeft: 34, paddingRight: 14, paddingBottom: 12, gap: 8 }}>
+          <Text style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{s.available ? s.agent : s.unavailable}</Text>
+          {children}
+        </View>
+      ) : null}
     </View>
   )
 }
@@ -341,8 +389,8 @@ function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
   const styles = useStyles()
   const t = useTheme()
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingLeft: 42, paddingRight: 18, paddingBottom: 8 }}>
-      <Text style={[styles.ssRowHint, { width: "100%", maxWidth: undefined }]}>Agents may</Text>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+      <Text style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>Agents may</Text>
       {ops.map((o) => {
         const action = serviceAction(o.state)
         if (action === "none") return null
@@ -380,7 +428,7 @@ function RootRow({ conn, busy, disabled, onSave }: {
   const [draft, setDraft] = useState<string | null>(null)
   if (draft === null) {
     return (
-      <View style={[styles.profileInfoRow, { alignItems: "center", paddingLeft: 42 }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 4 }}>
         <Icon name="folder" size={14} color={t.textMuted} />
         <Text testID={`root-${conn.id}`} numberOfLines={1} style={[styles.ssRowHint, { flex: 1, marginLeft: 6, maxWidth: undefined }]}>
           {conn.root === "/" ? "Whole account" : `Only ${conn.root}`}
@@ -395,7 +443,7 @@ function RootRow({ conn, busy, disabled, onSave }: {
   }
   const save = () => { onSave(draft.trim() || "/"); setDraft(null) }
   return (
-    <View style={{ paddingLeft: 42, paddingRight: 18, paddingBottom: 8, gap: 6 }}>
+    <View style={{ gap: 6 }}>
       <TextInput
         testID={`root-input-${conn.id}`}
         style={styles.ssInput}
@@ -440,12 +488,13 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
   }
   return (
     <View testID="integration-local">
-      <Text style={[styles.sheetSection, { marginTop: 16, marginBottom: 6 }]}>THIS MACHINE</Text>
-      <Text style={[styles.ssRowHint, { paddingHorizontal: 18, maxWidth: undefined }]}>
-        Folders agents may work in on this computer{local.roots.length ? "" : " — none, so agents cannot touch the disk"}. You are never limited.
+      <Text style={styles.sheetSection}>THIS MACHINE</Text>
+      <Text style={styles.sheetHint}>
+        Folders agents may work in on the computer Harman runs on{local.roots.length ? "" : " — none yet, so agents cannot touch its disk"}. You are never limited.
       </Text>
+      <View style={styles.spCard}>
       {local.roots.map((r, i) => (
-        <View key={r} style={[styles.profileInfoRow, { alignItems: "center" }]}>
+        <View key={r} style={[styles.profileInfoRow, { alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }]}>
           <Icon name="folder" size={16} color={t.textMuted} />
           <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{r}</Text>
           <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
@@ -454,10 +503,10 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           </TouchableOpacity>
         </View>
       ))}
-      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 18, paddingVertical: 6, alignItems: "center" }}>
+      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", borderTopWidth: local.roots.length ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
         <TextInput
           testID="local-add-input"
-          style={[styles.ssInput, { flex: 1 }]}
+          style={[styles.ssInput, { flex: 1, marginHorizontal: 0, marginTop: 0 }]}
           value={adding}
           onChangeText={setAdding}
           placeholder="~/Projects"
@@ -471,13 +520,16 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           {busy ? <ActivityIndicator size="small" /> : <Text style={styles.ssAddBtnText}>Add</Text>}
         </TouchableOpacity>
       </View>
-      <OpChips
-        testPrefix="local-op"
-        ops={local.ops.map((o) => ({ id: o.id, label: o.label, state: o.on ? "on" : "off" }))}
-        busy={busy ? "local" : null}
-        busyPrefix="local:"
-        onToggle={(op, on) => onSave(local.roots, on ? [...ops, op] : ops.filter((x) => x !== op))}
-      />
+      <View style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
+        <OpChips
+          testPrefix="local-op"
+          ops={local.ops.map((o) => ({ id: o.id, label: o.label, state: o.on ? "on" : "off" }))}
+          busy={busy ? "local" : null}
+          busyPrefix="local:"
+          onToggle={(op, on) => onSave(local.roots, on ? [...ops, op] : ops.filter((x) => x !== op))}
+        />
+      </View>
+      </View>
     </View>
   )
 }
@@ -499,7 +551,7 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
   const secret = useRef<TextInput>(null)
   const canSave = !!draft.client_id.trim() && !busy
   return (
-    <View style={{ paddingHorizontal: 18, gap: 10 }}>
+    <View style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: t.bg }}>
       <View testID={`setup-${p.id}`} style={{ gap: 8 }}>
         {p.setup.map((st, i) => (
           <View key={i} style={{ flexDirection: "row", gap: 6 }}>
