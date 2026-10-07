@@ -5,6 +5,7 @@ import { test } from "node:test"
 import { CommonActions, StackRouter } from "@react-navigation/routers"
 import ts from "typescript"
 import * as boardSwipe from "./boardSwipe.ts"
+import * as errors from "./errors.ts"
 
 // Run the actual Thread component, not a copy of its identity expression. The
 // hook runner preserves state/memo deps and commits layout before passive effects,
@@ -86,7 +87,11 @@ function screen(initial: Route) {
     "../lib/thinking": {}, "../lib/plan": {}, "../lib/quote": {}, "../lib/attach": {}, "../lib/voice": {},
     "../lib/search": { findMatches: () => [] },
     "../lib/notify": { ensurePermission: async () => {} },
-    "../state/config": { draftFor: () => "", composerPrefs: () => ({}), setDraft: async () => {} },
+    "../state/config": { draftFor: () => "", composerPrefs: () => ({}), setDraft: async () => {}, activeServerId: () => "fixture" },
+    "../api/offlineCache": { offlineCache: { saveThread: async () => {}, loadThread: async () => null } },
+    "../components/OfflineBanner": { default: "OfflineBanner" },
+    "../lib/useReachability": { useReachability: () => ({ online: true, since: 0 }) },
+    "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) }, "./styles": { useStyles: () => ({}) },
     "../lib/boardSwipe": boardSwipe,
     ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon"].map(n => [`../components/${n}`, { default: n }])),

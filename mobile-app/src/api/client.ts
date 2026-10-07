@@ -7,6 +7,8 @@
  */
 import { serverFetch, serverMedia, serverSocket, serverUpload, serverDownload } from "./transport"
 import { normModel } from "../lib/model"
+import { isTransportError } from "../lib/errors"
+import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
@@ -299,12 +301,20 @@ export type Session = {
 export type SessionPersona = { id: number; name: string; role: string; avatar: string }
 
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await serverFetch(
-    method,
-    path,
-    { "Content-Type": "application/json" },
-    body === undefined ? undefined : JSON.stringify(body)
-  )
+  let res: Awaited<ReturnType<typeof serverFetch>>
+  try {
+    res = await serverFetch(
+      method,
+      path,
+      { "Content-Type": "application/json" },
+      body === undefined ? undefined : JSON.stringify(body)
+    )
+  } catch (e) {
+    if (isTransportError(e)) reachability.report(false)
+    throw e
+  }
+  // Any HTTP reply, even an error status, proves the server is reachable.
+  reachability.report(true)
   const text = await res.text()
   let data: unknown = null
   try {

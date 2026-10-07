@@ -111,8 +111,8 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       </View>
       {confirming ? <View testID="ai-discard-confirm" style={{flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingBottom: 10}}>
         <Text style={{flex: 1, color: t.text}}>Discard changes? Your saved settings are unchanged.</Text>
-        <TouchableOpacity accessibilityLabel="Keep editing" onPress={() => setConfirming(false)} style={{padding: 8}}><Text style={{color: t.accent}}>Keep editing</Text></TouchableOpacity>
-        <TouchableOpacity accessibilityLabel="Discard changes" onPress={onClose} style={{padding: 8}}><Text style={{color: t.danger, fontWeight: "600"}}>Discard</Text></TouchableOpacity>
+        <TouchableOpacity testID="ai-keep-editing" accessibilityLabel="Keep editing" onPress={() => setConfirming(false)} style={{padding: 8}}><Text style={{color: t.accent}}>Keep editing</Text></TouchableOpacity>
+        <TouchableOpacity testID="ai-discard" accessibilityLabel="Discard changes" onPress={onClose} style={{padding: 8}}><Text style={{color: t.danger, fontWeight: "600"}}>Discard</Text></TouchableOpacity>
       </View> : null}
       <FlatList data={modelChoices(discovery, draft.model, search)} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>

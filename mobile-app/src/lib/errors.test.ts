@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { userError } from "./errors.ts"
+import { isTransportError, userError } from "./errors.ts"
 
 const err = (message: string, status?: number) => Object.assign(new Error(message), { status })
 
@@ -21,4 +21,13 @@ test("auth, transport and missing server get actionable text", () => {
 test("garbage input is safe", () => {
   assert.equal(userError(undefined, "files"), "Couldn't load files. Try again.")
   assert.equal(userError("boom", "files"), "Couldn't load files. Try again.")
+})
+test("the verb names the failed action", () => {
+  assert.equal(userError(err("HTTP 500", 500), "your message", "send"), "Couldn't send your message. Try again.")
+})
+test("isTransportError: no status + transport text only", () => {
+  assert.equal(isTransportError(err("Network request failed (relay closed 1006)")), true)
+  assert.equal(isTransportError(err("Network request failed", 502)), false)
+  assert.equal(isTransportError(err("No server configured")), false)
+  assert.equal(isTransportError(undefined), false)
 })

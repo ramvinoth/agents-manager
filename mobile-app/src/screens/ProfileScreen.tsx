@@ -269,7 +269,7 @@ export default function ProfileScreen({ navigation }: Props) {
       <View style={styles.spCard} testID="profile-identity">
         <View style={styles.spCardHead}>
           <View style={[styles.spCardIcon, { width: 44, height: 44, borderRadius: 22, backgroundColor: t.accent }]}>
-            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>{(me[0] || "?").toUpperCase()}</Text>
+            <Text style={{ color: t.onAccent, fontSize: 18, fontWeight: "700" }}>{(me[0] || "?").toUpperCase()}</Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.spCardTitle} numberOfLines={1}>{me || "Signed in"}</Text>

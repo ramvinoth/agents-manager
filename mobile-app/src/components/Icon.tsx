@@ -70,6 +70,7 @@ export type IconName =
   | "build"
   | "bug"
   | "cloud"
+  | "offline"
   | "brush"
   | "eye"
   | "edit"
@@ -142,6 +143,7 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   build: "build-outline",
   bug: "bug-outline",
   cloud: "cloud-outline",
+  offline: "cloud-offline-outline",
   brush: "brush-outline",
   eye: "eye-outline",
   edit: "pencil-outline",

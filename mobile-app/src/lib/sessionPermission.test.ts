@@ -44,7 +44,7 @@ test("permission client uses existing authority endpoints and canonical target",
   const serverFetch=async(method:string,path:string,_headers:any,body?:string)=>{
     calls.push({url:"https://fixture.invalid"+path,method,body});return {ok:true,status:200,text:async()=>"{}"}
   }
-  const modules:Record<string,any>={"./transport":{serverFetch},"../lib/model":{},"../lib/audit":{}}
+  const modules:Record<string,any>={"./transport":{serverFetch},"../lib/model":{},"../lib/audit":{},"../lib/errors":{isTransportError:()=>false},"../lib/reachability":{reachability:{report(){}}}}
   new Function("require","exports",js)((name:string)=>modules[name],exports)
   await exports.api.sessionDetail("remote", "p/session-1.jsonl")
   await exports.api.sessionModeSet("session-1","bypass")

@@ -1,17 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
-import { setToken } from "../state/config"
+import { activeServerId, setToken } from "../state/config"
+import { offlineCache } from "../api/offlineCache"
+import OfflineBanner from "../components/OfflineBanner"
+import { useReachability } from "../lib/useReachability"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useHost } from "../lib/useHost"
-import { userError } from "../lib/errors"
+import { isTransportError, userError } from "../lib/errors"
 import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "./styles"
@@ -56,6 +59,7 @@ export default function ChatsScreen({ navigation }: Props) {
   const [harmanBusy, setHarmanBusy] = useState(false)
   const t = useTheme()
   const styles = useStyles()
+  const { online } = useReachability()
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
@@ -99,7 +103,7 @@ export default function ChatsScreen({ navigation }: Props) {
     try {
       await api.renameSession({ session: s.path, title, host, agent: "claude" })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the new name", "save"))
       load()
     }
   }
@@ -109,7 +113,7 @@ export default function ChatsScreen({ navigation }: Props) {
     try {
       await api.deleteSession({ session: s.path, host, agent: "claude" })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "that chat", "delete"))
       load()
     }
   }
@@ -170,7 +174,7 @@ export default function ChatsScreen({ navigation }: Props) {
     try {
       await api.sessionMetaSave({ session: s.path, [key]: value, host })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "that change", "save"))
       load()
     }
   }
@@ -197,7 +201,7 @@ export default function ChatsScreen({ navigation }: Props) {
         setError("Harman started but its transcript wasn't found. Check back shortly.")
       }
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "Harman", "start"))
     } finally {
       setHarmanBusy(false)
     }
@@ -262,13 +266,21 @@ export default function ChatsScreen({ navigation }: Props) {
         },
     [t, selecting, selected, host, hostLabel])
 
+  // Whether the list on screen is the device's saved copy (the server hasn't
+  // answered yet / is unreachable) rather than a live read.
+  const [fromCache, setFromCache] = useState(false)
+  const fresh = useRef(false) // a live read landed; a late cache read must not overwrite it
+
   const load = useCallback(
     async (silent = false) => {
       if (!silent) setError("")
       try {
         const s = await api.sessions(host)
         s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
+        fresh.current = true
         setSessions(s)
+        setFromCache(false)
+        offlineCache.saveChats(activeServerId(), host, s)
       } catch (e) {
         const err = e as Error & { status?: number }
         if (err.status === 401) {
@@ -276,6 +288,9 @@ export default function ChatsScreen({ navigation }: Props) {
           navigation.replace("Login")
           return
         }
+        // Unreachable: the offline banner says so and the saved list stays on
+        // screen — a red error on top would only repeat it.
+        if (isTransportError(err)) return
         // Silent background polls must never surface a transient error banner or
         // wipe the list — only a user-initiated load reports failures.
         if (!silent) setError(userError(err, "your chats"))
@@ -310,12 +325,22 @@ export default function ChatsScreen({ navigation }: Props) {
     }, [load])
   )
   useEffect(() => {
+    // Paint the saved list at once (cold start, or offline), then read live.
+    fresh.current = false
     setLoading(true)
+    setFromCache(false)
+    offlineCache.loadChats<Session>(activeServerId(), host).then((saved) => {
+      if (!saved || fresh.current) return
+      setSessions(saved)
+      setFromCache(true)
+      setLoading(false)
+    })
     load()
   }, [host]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <OfflineBanner saved={fromCache && sessions.length > 0} onRetry={() => load(false)} />
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator />
@@ -402,7 +427,7 @@ export default function ChatsScreen({ navigation }: Props) {
           ListEmptyComponent={
             error ? null : (
               <Text style={[styles.hint, { padding: 16 }]}>
-                No chats yet on {hostLabel}.
+                {online ? `No chats yet on ${hostLabel}.` : "No chats saved on this phone yet. They appear once the server is reachable."}
               </Text>
             )
           }

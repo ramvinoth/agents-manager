@@ -23,7 +23,11 @@ import { api, type PendingPlan, type PendingQuestion, type PermApproval, type Sl
 import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { ensurePermission } from "../lib/notify"
-import { composerPrefs, draftFor, setDraft } from "../state/config"
+import { activeServerId, composerPrefs, draftFor, setDraft } from "../state/config"
+import { offlineCache } from "../api/offlineCache"
+import OfflineBanner from "../components/OfflineBanner"
+import { useReachability } from "../lib/useReachability"
+import { isTransportError, userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
 import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/boardSwipe"
@@ -62,6 +66,17 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [input, setInput] = useState(() => draftFor(path || ""))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  // The transcript on screen is the device's saved copy, not a live read.
+  const [fromCache, setFromCache] = useState(false)
+  const { online } = useReachability()
+  // Back online while showing the saved copy → swap in the live transcript.
+  // (An idle thread has no poll of its own; any request anywhere — the Chats
+  // list, the inbox badge — flips `online`.) Declared before reload, so read
+  // through a ref.
+  const reloadRef = useRef<() => unknown>(() => {})
+  useEffect(() => {
+    if (online && fromCache) reloadRef.current()
+  }, [online, fromCache])
   // Legacy request preferences remain untouched. Explicit server AI configuration
   // wins during launch resolution; never coerce a full model ID against a catalog.
   const sendPrefs = () => {
@@ -250,14 +265,30 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // history to lazy-load. Otherwise scrolling up can grow the window.
       hasMoreRef.current = page.start > 0
       loadedRef.current = { path, lines: page.lines, end: page.end }
+      setFromCache(false)
+      setError("")
+      offlineCache.saveThread(activeServerId(), host, path, page.lines)
       return render(page.lines)
     } catch (e) {
-      setError((e as Error).message)
+      // Unreachable: show the saved copy (if any) under the offline banner,
+      // instead of an error in place of the conversation.
+      if (isTransportError(e)) {
+        if (loadedRef.current.path !== path) {
+          const saved = await offlineCache.loadThread(activeServerId(), host, path)
+          if (saved) {
+            setFromCache(true)
+            return render(saved)
+          }
+        }
+      } else {
+        setError(userError(e, "this chat"))
+      }
       return [] as ReturnType<typeof groupThread>
     } finally {
       setLoading(false)
     }
   }, [host, path, windowLines])
+  reloadRef.current = reload
 
   // Incremental refresh for the live-run poll. Falls back to a full reload when
   // there's no baseline for this path or the file shrank (rewritten/trimmed).
@@ -271,6 +302,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (!page.lines.length) return // nothing new — skip the re-parse/re-render
       const lines = [...loaded.lines, ...page.lines]
       loadedRef.current = { path, lines, end: page.end }
+      offlineCache.saveThread(activeServerId(), host, path, lines)
       return render(lines)
     } catch {
       /* transient; the next tick retries */
@@ -605,7 +637,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         try {
           await api.chat({ message: text, path: path || undefined, host, agent: "claude", ...sendPrefs(), queue: true })
         } catch (e) {
-          setError((e as Error).message)
+          setError(userError(e, "your message", "send"))
           setQueueList((q) => q.filter((m) => m !== text))
           setQueued((n) => Math.max(0, n - 1))
           setInput(text)
@@ -618,21 +650,24 @@ export default function ThreadScreen({ route, navigation }: Props) {
       } catch (e) {
         // Don't silently swallow the message: drop the optimistic bubble and put
         // the text back in the composer so the user can retry.
-        setError((e as Error).message)
+        setError(userError(e, "your message", "send"))
         dropUserBubble(bubbleId)
         setInput(text)
       }
       return
     }
 
-    addUserBubble(text)
+    const bubbleId = addUserBubble(text)
     setBusy(true)
     try {
       const res = await api.chat({ message: text, path: path || undefined, host, agent: "claude", ...sendPrefs() })
       setSessionId(res.session)
       startPoll(res.session)
     } catch (e) {
-      setError((e as Error).message)
+      // Not sent: take back the bubble and give the text back to retry.
+      setError(userError(e, "your message", "send"))
+      dropUserBubble(bubbleId)
+      setInput(text)
       setBusy(false)
     }
   }
@@ -646,7 +681,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatInterrupt(path || sessionId)
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the run", "stop"))
     } finally {
       // Recover the UI immediately rather than waiting on the next poll tick —
       // if the server run is wedged, the poll might never report !running, which
@@ -676,7 +711,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         } catch (e) {
           // If re-running fails, surface the error and restore the drafts so
           // nothing the user queued is silently lost.
-          setError((e as Error).message)
+          setError(userError(e, "your queued messages", "send"))
           setBusy(false)
           setInput(carry.join("\n\n"))
         }
@@ -696,7 +731,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // Persist the pin list (optimistic) to server session meta.
   function savePins(next: string[]) {
     setPinned(next)
-    if (path) api.sessionMetaSave({ session: path, pinned: next, host }).catch((e) => setError((e as Error).message))
+    if (path) api.sessionMetaSave({ session: path, pinned: next, host }).catch((e) => setError(userError(e, "the pin", "save")))
   }
 
   function togglePin(uuid: string) {
@@ -731,7 +766,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     api
       .forkSession({ session: path || "", uuid, host, agent: "claude" })
       .then(() => navigation.goBack())
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "the fork", "create")))
   }
 
   function doRevert() {
@@ -747,7 +782,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           api
             .restoreSession({ session: path || "", uuid, mode: "conversation", host, agent: "claude" })
             .then(reload)
-            .catch((e) => setError((e as Error).message)),
+            .catch((e) => setError(userError(e, "this chat", "revert"))),
       },
     ])
   }
@@ -772,7 +807,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       const remote = await uploadImage(api, host, picked)
       setInput((cur) => attachMessage(remote, cur))
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the image", "upload"))
     } finally {
       setAttaching(false)
     }
@@ -784,7 +819,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatQueueRemove({ path: path || "", index })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the queued message", "remove"))
     }
   }
 
@@ -803,7 +838,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatPermissionDecide({ session: sessionId, id, decision })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "your decision", "send"))
     }
   }
 
@@ -820,7 +855,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         if (res.session) setSessionId(res.session)
         startPoll(sid)
       })
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "your answer", "send")))
   }
 
   /** Approve or deny a proposed plan (ExitPlanMode). The run is blocked waiting;
@@ -831,7 +866,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     api
       .chatPlanDecide({ session: path || sessionId, decision, feedback })
       .then(() => startPoll((path?.split("/").pop() || "").replace(/\.jsonl$/, "") || sessionId))
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "your decision", "send")))
   }
 
   if (loading) {
@@ -854,6 +889,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // slide up too. Only the editor's own KAV should react then.
       enabled={!capDrawerOpen}
     >
+      <OfflineBanner saved={fromCache} onRetry={() => { reload() }} />
       {/* WhatsApp-style in-thread search: chevrons step through matches. */}
       {searchOpen ? (
         <View style={[styles.threadSearchBar, { backgroundColor: t.surface }]}>
@@ -995,7 +1031,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.threadContent}
         ListEmptyComponent={
           <Text style={[styles.hint, { padding: 16, textAlign: "center" }]}>
-            {error || "No messages yet — say something below."}
+            {error || (fromCache || online ? "No messages yet — say something below." : "This chat isn't saved on this phone yet. It loads when you're back online.")}
           </Text>
         }
         renderItem={({ item }) =>

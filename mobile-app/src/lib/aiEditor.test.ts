@@ -11,7 +11,7 @@ function deferred() { let resolve!: (v: any) => void, reject!: (e: unknown) => v
 function harness(localOnly = false) {
   const slots: any[] = [], cleanups: Function[] = [], pending: Function[] = []
   let cursor = 0, closed = 0
-  const saves: any[] = [], discoveries: ReturnType<typeof deferred>[] = [], alerts: any[][] = [], results: selection.AIConfig[] = []
+  const saves: any[] = [], discoveries: ReturnType<typeof deferred>[] = [], results: selection.AIConfig[] = []
   const caps = {editable: true, customProviders: true, conversationModes: ["agent","chat"], efforts: [""], manualModelId: true}
   const config: selection.AIConfig = {revision: 2, configured: true, selection: {provider: "", model: {kind:"default"}, convMode:"agent", effort:""}, capabilities:caps}
   const react = {
@@ -22,7 +22,7 @@ function harness(localOnly = false) {
   }
   const modules: Record<string, any> = {
     react: {...react,default:react},
-    "react-native": {...Object.fromEntries(["ActivityIndicator","FlatList","Modal","SafeAreaView","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x])), Alert:{alert:(...args:any[])=>alerts.push(args)}},
+    "react-native": {...Object.fromEntries(["ActivityIndicator","FlatList","Modal","SafeAreaView","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x]))},
     "../api/client":{api:{aiConfig:async()=>config,providerModels:()=>{const d=deferred();discoveries.push(d);return d.promise},aiSave:(...args:any[])=>{const d=deferred();saves.push({args,...d});return d.promise}}},
     "../lib/aiSelection":selection,"../lib/useTheme":{useTheme:()=>({})},"../screens/styles":{useStyles:()=>({})},
   }
@@ -32,7 +32,7 @@ function harness(localOnly = false) {
   function find(tree:any,id:string):Node|undefined {if (!tree || typeof tree!=="object")return; if(Array.isArray(tree)){for(const x of tree){const n=find(x,id);if(n)return n}return} if(tree.props?.testID===id)return tree;return find(tree.children,id)||find(tree.props?.ListHeaderComponent,id)}
   const node=(id:string)=>{const n=find(render(),id);assert.ok(n,id);return n}
   async function effects(){render();while(pending.length)pending.shift()!();await settle()}
-  return {node,render,effects,saves,discoveries,alerts,results,closed:()=>closed}
+  return {node,render,effects,saves,discoveries,results,closed:()=>closed}
 }
 
 test("editor stages rows, cancel has no write, failed save retains full ID and draft",async()=>{
@@ -40,7 +40,7 @@ test("editor stages rows, cancel has no write, failed save retains full ID and d
   h.node("ai-model-manual").props.onChangeText("vendor/full-id")
   h.node("ai-cancel").props.onPress()
   assert.equal(h.saves.length,0);assert.equal(h.closed(),0)
-  assert.equal(h.alerts[0][2][0].text,"Keep editing")
+  h.node("ai-discard-confirm");h.node("ai-keep-editing").props.onPress();assert.equal(h.closed(),0)
   const saving=h.node("ai-save").props.onPress();assert.equal(h.saves.length,1)
   assert.equal(h.saves[0].args[1],2)
   assert.deepEqual(h.saves[0].args[2].model,{kind:"id",id:"vendor/full-id"})
@@ -61,5 +61,5 @@ test("NewChat use selection is local-only and cancel discard writes nothing",asy
   const h=harness(true);await h.effects();h.node("ai-model-manual").props.onChangeText("full/id")
   await h.node("ai-save").props.onPress();assert.equal(h.saves.length,0);assert.equal(h.results[0].selection.model?.kind,"id");assert.equal(h.closed(),1)
   const other=harness();await other.effects();other.node("ai-model-manual").props.onChangeText("discard")
-  other.node("ai-cancel").props.onPress();other.alerts[0][2][1].onPress();assert.equal(other.closed(),1);assert.equal(other.saves.length,0)
+  other.node("ai-cancel").props.onPress();other.node("ai-discard").props.onPress();assert.equal(other.closed(),1);assert.equal(other.saves.length,0)
 })
