@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -24,6 +24,12 @@ const noSleep = async () => {}
 async function main() {
   await test("setup hint lists only connectable services", () => {
     assert.strictEqual(setupHint(prov), "Set up once, then connect your drive and gmail.")
+  })
+  await test("unavailable services collapse into one note; none means empty", () => {
+    const keep = { ...svc("Keep", false), unavailable: "no API" }
+    assert.strictEqual(unavailableNote({ ...prov, services: [keep, svc("drive")] }), "Keep can't be connected: no API.")
+    assert.strictEqual(unavailableNote({ ...prov, services: [svc("drive")] }), "")
+    assert.strictEqual(unavailableNote({ ...prov, services: [{ ...keep, unavailable: "no API." }] }), "Keep can't be connected: no API.")
   })
   await test("try names the account so the agent need not ask", () => {
     assert.strictEqual(tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")

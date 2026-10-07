@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent } from "@/lib/integrations"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
 import { useStore } from "@/store"
 import { IntakeSection } from "@/components/IntakeSection"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
@@ -212,7 +212,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                     </div>
                   )}
                   <div className="divide-y border-t">
-                    {p.services.map((s) => {
+                    {p.services.filter((s) => s.available).map((s) => {
                       const key = `${c.id}:${s.id}`
                       const state = c.services[s.id] || "grant"
                       return (
@@ -329,12 +329,12 @@ function ProviderRow({ p, busy, onConnect, onEdit, children }: {
     <div className="flex flex-col gap-2 px-3 py-2.5" data-testid={`integration-${p.id}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{p.label}</div>
-          {!c.configured && (
-            <div className="text-[11px] text-muted-foreground">
-              {c.client_id ? "Client secret missing. " : ""}{setupHint(p)}
-            </div>
-          )}
+          <div className="text-sm font-medium">{p.connections.length ? `Another ${p.label} account` : p.label}</div>
+          <div className="text-[11px] text-muted-foreground">
+            {!c.configured
+              ? `${c.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
+              : "Pick what to start with. You can add the rest later."}
+          </div>
         </div>
         {c.configured ? (
           <>
@@ -354,6 +354,7 @@ function ProviderRow({ p, busy, onConnect, onEdit, children }: {
           </Button>
         )}
       </div>
+      {unavailableNote(p) && <p className="text-[11px] text-muted-foreground" data-testid={`integration-unavailable-${p.id}`}>{unavailableNote(p)}</p>}
       {children}
     </div>
   )

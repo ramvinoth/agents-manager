@@ -1,4 +1,4 @@
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -14,6 +14,9 @@ function eq(label: string, got: unknown, want: unknown) {
 
 eq("try names the account so the agent need not ask", tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")
 eq("try without an account name is the sample task", tryPrompt(svc("Drive"), conn({})), "List my files.")
+eq("unavailable services collapse into one note", unavailableNote({ ...prov, services: [{ ...svc("Keep", false), unavailable: "no API" }, svc("drive")] }), "Keep can't be connected: no API.")
+eq("no unavailable service means no note", unavailableNote({ ...prov, services: [svc("drive")] }), "")
+eq("a reason ending in a period gets no second one", unavailableNote({ ...prov, services: [{ ...svc("Keep", false), unavailable: "no API." }] }), "Keep can't be connected: no API.")
 eq("setup hint lists only connectable services", setupHint(prov), "Set up once, then connect your drive and gmail.")
 eq("on toggles", serviceAction("on"), "toggle")
 eq("off toggles", serviceAction("off"), "toggle")

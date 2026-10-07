@@ -62,9 +62,9 @@ describe("Native integrations — one catalog, every service state", () => {
     const sw = await $("~service-switch-google.drive")
     const x = (await sw.getLocation()).x + (await sw.getSize()).width
     assert(x <= width, `Drive switch must lie inside the screen (right edge ${x} > ${width})`)
-    await reveal("service-google.keep")
-    assert(!(await $("~service-switch-google.keep").isExisting()) && !(await $("~service-grant-google.keep").isExisting()),
-      "Keep is unavailable: neither a switch nor a grant")
+    assert(!(await $("~service-google.keep").isExisting()), "Keep can never be connected: no dead row on the account")
+    await reveal("integration-unavailable-google")
+    assert.match(await $("~integration-unavailable-google").getText(), /Keep can't be connected/)
   })
 
   it("a switch writes the owner's choice and reflects the server's view", async () => {

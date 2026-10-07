@@ -37,6 +37,12 @@ export function serviceSummary(s: IntegrationService, c: IntegrationConnection):
   return s.kind === "files" && c.root && c.root !== "/" ? `${what} · only ${c.root}` : what
 }
 
+/** One quiet line for the services a provider lists but nobody can connect
+ *  (Google Keep has no API) — said once, not as a dead row per account. */
+export function unavailableNote(p: IntegrationProvider): string {
+  return p.services.filter((s) => !s.available).map((s) => `${s.label} can't be connected: ${s.unavailable.replace(/\.$/, "")}.`).join(" ")
+}
+
 /** What an unconfigured provider unlocks once its one-time client setup is done. */
 export function setupHint(p: IntegrationProvider): string {
   const names = p.services.filter((s) => s.available).map((s) => s.label)

@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
 import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, waitForConsent } from "../lib/integrations"
+import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
 import { resolveSessionPath } from "../lib/session"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
@@ -14,6 +14,10 @@ import Icon from "../components/Icon"
 import { useStyles } from "./styles"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
+
+/** iOS 26 draws a Switch ~12pt wider than the frame RN lays out, so it spills
+ *  past the row's padding; this margin keeps it inside the card. */
+const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 ? 12 : 0
 
 /**
  * Integrations — the one place the owner connects outside accounts (Google,
@@ -24,14 +28,13 @@ type Draft = { provider: string; client_id: string; client_secret: string }
  * IntegrationsDialog; both share lib/integrations for the state→control map
  * and the consent wait.
  *
- * Per provider: its OAuth client (entered once, by following the server's
- * numbered setup checklist with deep links and this deployment's redirect
- * URI), then each signed-in account (a red Reconnect banner when the vendor
- * ended its sign-in), then each signed-in account with a row per service. A granted
- * service is a switch (the grant is kept); a missing one runs consent in the
- * system browser that ADDS the permission and keeps the rest; an unavailable
- * one (Google Keep) says why. Under a switched-on service, one chip per
- * operation (read, write, delete, create…) says what AGENTS may do there; a
+ * Accounts first: each signed-in account is a card (a red Reconnect banner
+ * when the vendor ended its sign-in) with one line per connectable service.
+ * A granted service is a switch (the grant is kept); a missing one runs
+ * consent in the system browser that ADDS the permission and keeps the rest.
+ * A service nobody can connect (Google Keep) gets no row — one line under
+ * "Add an account" says why. Tapping a line opens its details: one chip per
+ * operation (read, write, delete, create…) saying what AGENTS may do there; a
  * chip that needs a wider grant runs consent for just that op. A files account
  * can be narrowed to one folder. Last, "This machine": the folders agents may
  * touch on the local disk and what they may do in them. Reached from the side
@@ -188,13 +191,14 @@ export default function IntegrationsScreen() {
       {accounts.map(({ p, c }) => (
         <View key={c.id} testID={`integration-conn-${c.id}`} style={styles.spCard}>
           <View style={styles.spCardHead}>
-            <View style={styles.spCardIcon}><Icon name="user" size={16} color={t.textMuted} /></View>
+            <View style={styles.spCardIcon}><Icon name="cloud" size={16} color={t.textMuted} /></View>
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={styles.spCardTitle}>{c.account || `${p.label} account`}</Text>
               <Text style={styles.spCardSummary}>{p.label}</Text>
             </View>
-            <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={{ padding: 4 }}>
-              <Icon name="trash" size={16} color={t.danger} />
+            <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={{ padding: 4 }}
+              accessibilityLabel={`Disconnect ${c.account || p.label}`}>
+              <Icon name="trash" size={16} color={t.textMuted} />
             </TouchableOpacity>
           </View>
           {c.expired ? (
@@ -207,7 +211,7 @@ export default function IntegrationsScreen() {
               </TouchableOpacity>
             </View>
           ) : null}
-          {p.services.map((s) => {
+          {p.services.filter((s) => s.available).map((s) => {
             const key = `${c.id}:${s.id}`
             const state = c.services[s.id] || "grant"
             return (
@@ -260,12 +264,12 @@ export default function IntegrationsScreen() {
           <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.ssRowLabel}>{p.label}</Text>
-                {!p.client.configured ? (
-                  <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
-                    {p.client.client_id ? "Client secret missing. " : ""}{setupHint(p)}
-                  </Text>
-                ) : null}
+                <Text style={styles.ssRowLabel}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
+                <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
+                  {!p.client.configured
+                    ? `${p.client.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
+                    : "Pick what to start with. You can add the rest later."}
+                </Text>
               </View>
               <TouchableOpacity
                 testID={`integrations-edit-${p.id}`}
@@ -295,6 +299,7 @@ export default function IntegrationsScreen() {
                 ))}
               </View>
             ) : null}
+            {unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
             {editing?.provider === p.id ? (
               <ClientForm
                 p={p}
@@ -358,7 +363,8 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
         {busy ? (
           <ActivityIndicator />
         ) : action === "toggle" ? (
-          <Switch testID={`service-switch-${s.id}`} value={state === "on"} disabled={disabled} onValueChange={onToggle} trackColor={{ true: t.accent, false: t.border }} />
+          <Switch testID={`service-switch-${s.id}`} value={state === "on"} disabled={disabled} onValueChange={onToggle} trackColor={{ true: t.accent, false: t.border }}
+            style={{ marginRight: SWITCH_OVERHANG }} />
         ) : action === "grant" ? (
           <TouchableOpacity testID={`service-grant-${s.id}`} onPress={onGrant} disabled={disabled} hitSlop={8}>
             <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Grant access</Text>
@@ -490,7 +496,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
     <View testID="integration-local">
       <Text style={styles.sheetSection}>THIS MACHINE</Text>
       <Text style={styles.sheetHint}>
-        Folders agents may work in on the computer Harman runs on{local.roots.length ? "" : " — none yet, so agents cannot touch its disk"}. You are never limited.
+        Folders agents may use on the computer running Harman{local.roots.length ? "" : " — none yet, so agents can't touch its disk"}. Limits apply to agents only, never to you.
       </Text>
       <View style={styles.spCard}>
       {local.roots.map((r, i) => (
@@ -498,8 +504,8 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           <Icon name="folder" size={16} color={t.textMuted} />
           <Text testID={`local-root-${i}`} numberOfLines={1} style={[styles.profileInfoValue, { color: t.text, flex: 1, marginLeft: 8, textAlign: "left" }]}>{r}</Text>
           <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
-            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)}>
-            <Icon name="trash" size={16} color={t.danger} />
+            onPress={() => onSave(local.roots.filter((x) => x !== r), ops)} accessibilityLabel={`Remove ${r}`}>
+            <Icon name="trash" size={16} color={t.textMuted} />
           </TouchableOpacity>
         </View>
       ))}
@@ -509,7 +515,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           style={[styles.ssInput, { flex: 1, marginHorizontal: 0, marginTop: 0 }]}
           value={adding}
           onChangeText={setAdding}
-          placeholder="~/Projects"
+          placeholder="Add a folder, e.g. ~/Projects"
           placeholderTextColor={t.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
