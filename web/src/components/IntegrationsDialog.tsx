@@ -192,11 +192,6 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
             </TabsList>
 
             <TabsContent value="accounts" className="-mx-1 flex min-h-0 flex-col gap-4 overflow-y-auto px-1 pb-1">
-              {accounts.length === 0 && (
-                <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                  No accounts yet. Add one below — agents can use it the moment you sign in.
-                </p>
-              )}
               {accounts.map(({ p, c }) => (
                 <section key={c.id} className="rounded-lg border" data-testid={`account-${c.id}`}>
                   <div className="flex items-center gap-2 px-3 py-2">
@@ -271,7 +266,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
               ))}
 
               <div className="flex flex-col gap-2">
-                <h3 className="text-xs font-medium text-muted-foreground">Add an account</h3>
+                <h3 className="text-xs font-medium text-muted-foreground">{accounts.length ? "Add an account" : "Connect an account"}</h3>
                 <div className="divide-y rounded-lg border">
                   {view.providers.filter((p) => showFolded || !folded.includes(p)).map((p) => (
                     <ProviderRow

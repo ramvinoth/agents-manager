@@ -205,10 +205,8 @@ export default function IntegrationsScreen() {
       ) : null}
       {error ? <Text testID="integrations-error" style={[styles.error, { paddingHorizontal: 18, marginTop: 6 }]}>{error}</Text> : null}
 
-      <Text style={styles.sheetSection}>ACCOUNTS</Text>
-      {accounts.length === 0 ? (
-        <Text style={styles.sheetHint}>None yet. Add one below — agents can use it the moment you sign in.</Text>
-      ) : null}
+      {/* No accounts: no empty "Accounts" heading over a "none yet" line — the add section IS the page. */}
+      {accounts.length ? <Text style={styles.sheetSection}>ACCOUNTS</Text> : null}
       {accounts.map(({ p, c }) => (
         <View key={c.id} testID={`integration-conn-${c.id}`} style={styles.spCard}>
           <View style={styles.spCardHead}>
@@ -278,7 +276,7 @@ export default function IntegrationsScreen() {
         </View>
       ))}
 
-      <Text style={styles.sheetSection}>ADD AN ACCOUNT</Text>
+      <Text style={styles.sheetSection}>{accounts.length ? "ADD AN ACCOUNT" : "CONNECT AN ACCOUNT"}</Text>
       <View style={styles.spCard}>
         {shown.map((p, i) => {
           const isOpen = providerOpen(p, adding, accounts.length > 0)
