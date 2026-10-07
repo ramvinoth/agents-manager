@@ -80,6 +80,13 @@ export default function IntegrationsScreen() {
     }
   }
 
+  const expand = (key: string, on: boolean) => setOpen((o) => {
+    const n = new Set(o)
+    if (on) n.add(key)
+    else n.delete(key)
+    return n
+  })
+
   function connect(service: string, connection?: string, op?: string) {
     return run(`${connection || "new"}:${service}${op ? `:${op}` : ""}`, async () => {
       const r = await api.integrationConnect({ service, connection, op })
@@ -87,7 +94,9 @@ export default function IntegrationsScreen() {
       try {
         await Linking.openURL(r.url)
         await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => left.current)
-        if (!connection && !left.current) setAdding(null) // the new account is listed; the add row has done its job
+        if (left.current) return
+        if (!connection) setAdding(null) // the new account is listed; the add row has done its job
+        expand(`${r.connection}:${service}`, true) // land on what agents may do now, with Try it in a chat
       } finally {
         if (!left.current) setConsenting(false)
       }
@@ -118,13 +127,6 @@ export default function IntegrationsScreen() {
       if (!left.current) navigation.navigate("Thread", { host, label: title, path })
     })
   }
-
-  const expand = (key: string, on: boolean) => setOpen((o) => {
-    const n = new Set(o)
-    if (on) n.add(key)
-    else n.delete(key)
-    return n
-  })
 
   function toggle(conn: IntegrationConnection, service: string, on: boolean) {
     if (on) expand(`${conn.id}:${service}`, true)

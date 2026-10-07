@@ -97,7 +97,9 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
       try {
         window.open(r.url, "_blank", "noopener")
         await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => closed.current)
-        if (!connection && !closed.current) setAdding(null) // the new account is listed; the add row has done its job
+        if (closed.current) return
+        if (!connection) setAdding(null) // the new account is listed; the add row has done its job
+        expand(`${r.connection}:${service}`, true) // land on what agents may do now, with Try it in a chat
       } finally {
         if (!closed.current) setConsenting(false)
       }
