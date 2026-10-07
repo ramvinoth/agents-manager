@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
+import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
 import { useStore } from "@/store"
 import { IntakeSection } from "@/components/IntakeSection"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
@@ -45,6 +45,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   const [open, setOpen] = useState<Set<string>>(new Set()) // `${conn}:${service}` rows showing their details
   const [busy, setBusy] = useState<string | null>(null) // key of the control mid-request
   const [copied, setCopied] = useState(false)
+  const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
   const [error, setError] = useState<string | null>(null)
   const [consenting, setConsenting] = useState(false) // a vendor tab is open on a consent
   const closed = useRef(false)
@@ -92,6 +93,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
       try {
         window.open(r.url, "_blank", "noopener")
         await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => closed.current)
+        if (!connection && !closed.current) setAdding(null) // the new account is listed; the add row has done its job
       } finally {
         if (!closed.current) setConsenting(false)
       }
@@ -137,6 +139,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
     return run(`client:${editing.provider}`, async () => {
       ok(await api.integrationClientSave(body))
       setEditing(null)
+      setAdding(body.provider) // set up to connect: show its services right away
     })
   }
 
@@ -268,6 +271,8 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                     <ProviderRow
                       key={p.id}
                       p={p}
+                      open={providerOpen(p, adding, accounts.length > 0)}
+                      onOpen={() => setAdding(adding === p.id ? null : p.id)}
                       busy={busy}
                       onConnect={(sid) => connect(sid)}
                       onEdit={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
@@ -315,10 +320,13 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
 
 /** One provider under "Add an account": a button per service once its OAuth
  *  client is set up (each is its own consent, so the owner grants exactly
- *  what they pick), else the one-time setup. The gear reopens the client
+ *  what they pick), else the one-time setup. Once an account exists the row
+ *  folds to one line until tapped (providerOpen). The gear reopens the client
  *  form — needed once, so it stays out of the way. */
-function ProviderRow({ p, busy, onConnect, onEdit, children }: {
+function ProviderRow({ p, open, onOpen, busy, onConnect, onEdit, children }: {
   p: IntegrationProvider
+  open: boolean
+  onOpen: () => void
   busy: string | null
   onConnect: (sid: string) => void
   onEdit: () => void
@@ -328,15 +336,16 @@ function ProviderRow({ p, busy, onConnect, onEdit, children }: {
   return (
     <div className="flex flex-col gap-2 px-3 py-2.5" data-testid={`integration-${p.id}`}>
       <div className="flex flex-wrap items-center gap-1.5">
-        <div className="min-w-0 flex-1">
+        <button type="button" className="min-w-0 flex-1 text-left disabled:cursor-default" disabled={!c.configured} onClick={onOpen}
+          aria-expanded={open} data-testid={`integration-open-${p.id}`}>
           <div className="text-sm font-medium">{p.connections.length ? `Another ${p.label} account` : p.label}</div>
-          <div className="text-[11px] text-muted-foreground">
-            {!c.configured
-              ? `${c.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
-              : "Pick what to start with. You can add the rest later."}
-          </div>
-        </div>
-        {c.configured ? (
+          <div className="text-[11px] text-muted-foreground">{providerHint(p, open)}</div>
+        </button>
+        {c.configured && !open ? (
+          <Button variant="ghost" size="icon" className="size-7" onClick={onOpen} aria-label={`Add a ${p.label} account`}>
+            <Plus className="size-3.5" />
+          </Button>
+        ) : c.configured ? (
           <>
             {p.services.filter((s) => s.available).map((s) => (
               <Button key={s.id} variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => onConnect(s.id)} disabled={!!busy}>
@@ -354,7 +363,7 @@ function ProviderRow({ p, busy, onConnect, onEdit, children }: {
           </Button>
         )}
       </div>
-      {unavailableNote(p) && <p className="text-[11px] text-muted-foreground" data-testid={`integration-unavailable-${p.id}`}>{unavailableNote(p)}</p>}
+      {open && unavailableNote(p) && <p className="text-[11px] text-muted-foreground" data-testid={`integration-unavailable-${p.id}`}>{unavailableNote(p)}</p>}
       {children}
     </div>
   )

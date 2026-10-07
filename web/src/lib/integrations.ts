@@ -50,6 +50,22 @@ export function setupHint(p: IntegrationProvider): string {
   return `Set up once, then connect your ${list}.`
 }
 
+/** Whether a provider's row under "Add an account" shows its service chips.
+ *  Adding is the whole page until the first account exists, so every ready
+ *  provider starts open; after that it is a rare act, so a row opens only when
+ *  the owner taps it (`chosen`) and the page stays about the accounts. */
+export function providerOpen(p: IntegrationProvider, chosen: string | null, hasAccounts: boolean): boolean {
+  return p.client.configured && (chosen === p.id || !hasAccounts)
+}
+
+/** The one line under a provider's name: what setup unlocks, what to do once
+ *  open, or (closed) what it offers. */
+export function providerHint(p: IntegrationProvider, open: boolean): string {
+  if (!p.client.configured) return `${p.client.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
+  if (open) return "Pick what to start with. You can add the rest later."
+  return p.services.filter((s) => s.available).map((s) => s.label).join(", ")
+}
+
 /** The first message of a "Try it in a chat" session: the service's sample
  *  task, pinned to this account when it has a name — with several accounts
  *  connected the agent would otherwise have to ask which one. */

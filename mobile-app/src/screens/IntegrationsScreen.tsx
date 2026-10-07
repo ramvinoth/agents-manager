@@ -5,7 +5,7 @@ import { api, type IntegrationConnection, type IntegrationProvider, type Integra
 import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
+import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
 import { resolveSessionPath } from "../lib/session"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
@@ -33,11 +33,13 @@ const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 
  * A granted service is a switch (the grant is kept); a missing one runs
  * consent in the system browser that ADDS the permission and keeps the rest.
  * A service nobody can connect (Google Keep) gets no row — one line under
- * "Add an account" says why. Tapping a line opens its details: one chip per
+ * "Add an account" says why. Once an account exists, each "Add an account"
+ * row folds to one line until tapped, so the page reads as the accounts. Tapping a line opens its details: one chip per
  * operation (read, write, delete, create…) saying what AGENTS may do there; a
  * chip that needs a wider grant runs consent for just that op. A files account
  * can be narrowed to one folder. Last, "This machine": the folders agents may
- * touch on the local disk and what they may do in them. Reached from the side
+ * touch on the local disk and what they may do in them (the add field
+ * opens on tap). Reached from the side
  * menu and the Files location picker.
  */
 export default function IntegrationsScreen() {
@@ -48,6 +50,7 @@ export default function IntegrationsScreen() {
   const [open, setOpen] = useState<Set<string>>(new Set()) // `${conn}:${service}` rows showing their details
   const [busy, setBusy] = useState<string | null>(null) // key of the control mid-request
   const [copied, setCopied] = useState(false)
+  const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
   const [error, setError] = useState("")
   const [consenting, setConsenting] = useState(false) // the system browser is open on a consent
   const left = useRef(false)
@@ -78,6 +81,7 @@ export default function IntegrationsScreen() {
       try {
         await Linking.openURL(r.url)
         await waitForConsent(() => api.driveOAuthStatus(r.pending), undefined, () => left.current)
+        if (!connection && !left.current) setAdding(null) // the new account is listed; the add row has done its job
       } finally {
         if (!left.current) setConsenting(false)
       }
@@ -142,6 +146,7 @@ export default function IntegrationsScreen() {
     run(`client:${editing.provider}`, async () => {
       await api.integrationClientSave(body)
       setEditing(null)
+      setAdding(body.provider) // set up to connect: show its services right away
     })
   }
 
@@ -260,18 +265,22 @@ export default function IntegrationsScreen() {
 
       <Text style={styles.sheetSection}>ADD AN ACCOUNT</Text>
       <View style={styles.spCard}>
-        {view.providers.map((p, i) => (
+        {view.providers.map((p, i) => {
+          const isOpen = providerOpen(p, adding, accounts.length > 0)
+          return (
           <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <View style={{ flex: 1 }}>
+              <TouchableOpacity testID={`integration-open-${p.id}`} style={{ flex: 1 }} disabled={!p.client.configured}
+                onPress={() => setAdding(adding === p.id ? null : p.id)} accessibilityRole="button" accessibilityState={{ expanded: isOpen }}>
                 <Text style={styles.ssRowLabel}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
-                <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
-                  {!p.client.configured
-                    ? `${p.client.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
-                    : "Pick what to start with. You can add the rest later."}
-                </Text>
-              </View>
-              <TouchableOpacity
+                <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, isOpen)}</Text>
+              </TouchableOpacity>
+              {p.client.configured && !isOpen ? (
+                <TouchableOpacity onPress={() => setAdding(p.id)} hitSlop={8} accessibilityLabel={`Add a ${p.label} account`}>
+                  <Icon name="plus" size={18} color={t.accent} />
+                </TouchableOpacity>
+              ) : null}
+              {isOpen || !p.client.configured ? <TouchableOpacity
                 testID={`integrations-edit-${p.id}`}
                 onPress={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
                 disabled={!!busy}
@@ -281,9 +290,9 @@ export default function IntegrationsScreen() {
                 {p.client.configured
                   ? <Icon name="settings" size={18} color={t.textMuted} />
                   : <Text style={link}>Set up</Text>}
-              </TouchableOpacity>
+              </TouchableOpacity> : null}
             </View>
-            {p.client.configured ? (
+            {isOpen ? (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {p.services.filter((s) => s.available).map((s) => (
                   <TouchableOpacity
@@ -299,7 +308,7 @@ export default function IntegrationsScreen() {
                 ))}
               </View>
             ) : null}
-            {unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
+            {isOpen && unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
             {editing?.provider === p.id ? (
               <ClientForm
                 p={p}
@@ -315,7 +324,8 @@ export default function IntegrationsScreen() {
               />
             ) : null}
           </View>
-        ))}
+          )
+        })}
       </View>
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
@@ -484,13 +494,13 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
 }) {
   const styles = useStyles()
   const t = useTheme()
-  const [adding, setAdding] = useState("")
+  const [adding, setAdding] = useState<string | null>(null) // null: the add field is closed
   const ops = local.ops.filter((o) => o.on).map((o) => o.id)
   const add = () => {
-    const r = adding.trim()
-    if (!r) return
+    const r = adding?.trim()
+    if (!r) return setAdding(null)
     onSave([...local.roots, r], ops)
-    setAdding("")
+    setAdding(null)
   }
   return (
     <View testID="integration-local">
@@ -509,23 +519,33 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           </TouchableOpacity>
         </View>
       ))}
+      {adding === null ? (
+        <TouchableOpacity testID="local-add-open" disabled={disabled} onPress={() => setAdding("")}
+          style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: local.roots.length ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
+          {busy ? <ActivityIndicator size="small" /> : <Icon name="plus" size={16} color={t.accent} />}
+          <Text style={{ color: t.accent, fontSize: 15, fontWeight: "600" }}>Add a folder</Text>
+        </TouchableOpacity>
+      ) : (
       <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", borderTopWidth: local.roots.length ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
         <TextInput
           testID="local-add-input"
+          autoFocus
           style={[styles.ssInput, { flex: 1, marginHorizontal: 0, marginTop: 0 }]}
           value={adding}
           onChangeText={setAdding}
-          placeholder="Add a folder, e.g. ~/Projects"
+          placeholder="e.g. ~/Projects"
           placeholderTextColor={t.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="done"
           onSubmitEditing={add}
+          onBlur={() => { if (!adding.trim()) setAdding(null) }}
         />
         <TouchableOpacity testID="local-add" style={[styles.ssAddBtn, { opacity: adding.trim() && !disabled ? 1 : 0.5 }]} disabled={!adding.trim() || disabled} onPress={add}>
-          {busy ? <ActivityIndicator size="small" /> : <Text style={styles.ssAddBtnText}>Add</Text>}
+          <Text style={styles.ssAddBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
+      )}
       <View style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
         <OpChips
           testPrefix="local-op"

@@ -1,4 +1,4 @@
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -17,6 +17,12 @@ eq("try without an account name is the sample task", tryPrompt(svc("Drive"), con
 eq("unavailable services collapse into one note", unavailableNote({ ...prov, services: [{ ...svc("Keep", false), unavailable: "no API" }, svc("drive")] }), "Keep can't be connected: no API.")
 eq("no unavailable service means no note", unavailableNote({ ...prov, services: [svc("drive")] }), "")
 eq("a reason ending in a period gets no second one", unavailableNote({ ...prov, services: [{ ...svc("Keep", false), unavailable: "no API." }] }), "Keep can't be connected: no API.")
+const unset = { ...prov, client: { client_id: "x", has_secret: false, configured: false } }
+eq("add rows start open only until the first account", [providerOpen(prov, null, false), providerOpen(prov, null, true)], [true, false])
+eq("a tapped add row opens; an unconfigured one never shows chips", [providerOpen(prov, "google", true), providerOpen(unset, "google", false)], [true, false])
+eq("closed hint lists what the provider offers", providerHint(prov, false), "drive, gmail")
+eq("open hint says what to do", providerHint(prov, true), "Pick what to start with. You can add the rest later.")
+eq("unconfigured hint names the missing secret", providerHint(unset, false), "Client secret missing. Set up once, then connect your drive and gmail.")
 eq("setup hint lists only connectable services", setupHint(prov), "Set up once, then connect your drive and gmail.")
 eq("on toggles", serviceAction("on"), "toggle")
 eq("off toggles", serviceAction("off"), "toggle")

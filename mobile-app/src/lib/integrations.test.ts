@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { providerHint, providerOpen, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -30,6 +30,15 @@ async function main() {
     assert.strictEqual(unavailableNote({ ...prov, services: [keep, svc("drive")] }), "Keep can't be connected: no API.")
     assert.strictEqual(unavailableNote({ ...prov, services: [svc("drive")] }), "")
     assert.strictEqual(unavailableNote({ ...prov, services: [{ ...keep, unavailable: "no API." }] }), "Keep can't be connected: no API.")
+  })
+  await test("add rows start open only until the first account; a tap opens one", () => {
+    const off = { ...prov, client: { ...prov.client, configured: false } }
+    assert.deepStrictEqual([providerOpen(prov, null, false), providerOpen(prov, null, true), providerOpen(prov, "google", true), providerOpen(off, "google", false)], [true, false, true, false])
+  })
+  await test("a provider's hint says what setup unlocks, what to do, or what it offers", () => {
+    assert.strictEqual(providerHint(prov, false), "drive, gmail")
+    assert.strictEqual(providerHint(prov, true), "Pick what to start with. You can add the rest later.")
+    assert.strictEqual(providerHint({ ...prov, client: { client_id: "x", has_secret: false, configured: false } }, false), "Client secret missing. Set up once, then connect your drive and gmail.")
   })
   await test("try names the account so the agent need not ask", () => {
     assert.strictEqual(tryPrompt(svc("Drive"), { ...conn({}), account: "a@b.com" }), "List my files. Use my Drive account a@b.com.")

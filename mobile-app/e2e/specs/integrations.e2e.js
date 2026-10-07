@@ -63,7 +63,12 @@ describe("Native integrations — one catalog, every service state", () => {
     const x = (await sw.getLocation()).x + (await sw.getSize()).width
     assert(x <= width, `Drive switch must lie inside the screen (right edge ${x} > ${width})`)
     assert(!(await $("~service-google.keep").isExisting()), "Keep can never be connected: no dead row on the account")
+    // With an account listed, adding another is one quiet line until tapped.
+    await reveal("integration-open-google")
+    assert(!(await $("~integration-new-google.drive").isExisting()), "Add-account chips stay folded once an account exists")
+    await tap("integration-open-google")
     await reveal("integration-unavailable-google")
+    assert(await shown("integration-new-google.drive"), "Tapping the row offers its services")
     assert.match(await $("~integration-unavailable-google").getText(), /Keep can't be connected/)
   })
 
@@ -102,7 +107,8 @@ describe("Native integrations — one catalog, every service state", () => {
   })
 
   it("this machine: add a folder and allow deletes", async () => {
-    await reveal("local-add-input")
+    await reveal("local-add-open")
+    await tap("local-add-open")
     await $("~local-add-input").setValue("~/Projects")
     await tap("local-add")
     await reveal("local-root-1")
