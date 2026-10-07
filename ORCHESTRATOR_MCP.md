@@ -735,7 +735,7 @@ The exclusion is deliberate: wrapping `fs/*` and `git/*` duplicates Read/Write/G
 which is the duplicate-implementation trap CLAUDE.md forbids. The MCP exposes what Claude
 *cannot* do — act on the system running it.
 
-### 8A. Shipped manifest (as of 2026-10-06 — `viewer/viewer_mcp.py`, 64 tools)
+### 8A. Shipped manifest (as of 2026-10-06 — `viewer/viewer_mcp.py`, 66 tools)
 
 The table above is the plan. This is what an agent session actually holds today; every
 tool is dumb transport to one `/api/*` route, gated server-side by `orglogic._MIN_LEVEL`
@@ -752,6 +752,7 @@ same list, and `docs_read system-status` shows the live posture.
 | **Files** (the file browser's own `/api/fs`, scoped by `drive` or `host`) | `drive_list`, `fs_list`, `fs_read`, `fs_write`, `fs_mkdir` — every session sees the drives the owner connected in the app. No `fs_delete`/`fs_rename`: file deletion is Red and the fs routes do not run through the approval queue |
 | **Accounts** (Integrations page: one Google/Dropbox/Microsoft sign-in per account, services switched on per account) | `integrations_list`, `gmail_search`, `gmail_read`, `gmail_draft`, `calendar_events`, `calendar_create/update/delete` — a service the owner has not turned on (or an op not allowed for it) is refused server-side. Mail is draft-only: no `gmail_send`; the owner presses Send |
 | **Intake** (`viewer/intake.py`: a URL + hashed token bound to one board and optionally one session; each POST becomes a card through `card_create` and wakes that session; outside senders act at ic, the owner's in-app feedback keeps the owner as actor; 30 cards/h per channel) | `intake_list`, `intake_create` (Red). Rotate/rename/close are owner UI actions (Integrations → Intake channels) |
+| **Maintenance** (`viewer/maintenance.py`: agents never restart the server; each files a request, and at :50 each hour the window — only if something is queued — waits for quiet (≤10 min), preflights the code on a spare port, exits so launchd/systemd starts the new code, and the new process writes ONE `maintenance_restart` audit entry: versions/commits before → after, the requests, preflight, health; requesters are woken with the result. A failed preflight keeps the old server and tells them why) | `restart_request` (Green; reason required), `maintenance_status`. Restart now outside the window is `restart_now` (Red, owner) |
 | **Native, not ours** | `AskUserQuestion` (escalation), `ExitPlanMode` (plans), `git/*` |
 
 Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,

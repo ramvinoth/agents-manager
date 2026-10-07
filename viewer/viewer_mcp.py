@@ -63,6 +63,7 @@ _TOOLS = {
     "audit_tail":       ("GET", "/api/org/audit"),
     "usage_report":     ("GET", "/api/usage/report"),
     "intake_list":      ("GET", "/api/org/intake"),
+    "maintenance_status": ("GET", "/api/org/maintenance"),
     "board_list":       ("GET", "/api/org/board"),
     "card_list":        ("GET", "/api/org/cards"),
     "card":             ("GET", "/api/org/card"),
@@ -121,6 +122,7 @@ _TOOLS = {
     "loop_delete":   ("POST", "/api/org/loops/delete"),
     "loop_control_set": ("POST", "/api/org/loop-control"),
     "intake_create": ("POST", "/api/org/intake"),
+    "restart_request": ("POST", "/api/org/maintenance/request"),
 }
 
 # Tools whose URL is completed at call time from an argument rather than being a
@@ -226,6 +228,14 @@ _TOOL_LIST = [
          "project_id": {"type": "integer"},
          "for_session": {"type": "string", "description": "Session to wake for each new card; omit for board-only."},
          "app_feedback": {"type": "boolean"}}}},
+    {"name": "restart_request",
+     "description": "Ask for a Harman server restart so your server-code change goes live. Never restart the server yourself: every restart cuts off every running agent turn. Requests queue for the hourly maintenance window (:50 local time): it waits for running turns to finish (up to 10 min), preflights the code on a spare port, restarts ONCE for all queued requests and writes one audit entry. You are woken afterwards with the result (live, or why it was not applied). Commit your change first.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["reason"], "properties": {
+         "reason": {"type": "string", "description": "What changed and why it needs a restart (it goes in the audit record)."},
+         "commit": {"type": "string", "description": "The commit that must go live."}}}},
+    {"name": "maintenance_status",
+     "description": "The maintenance window: the minute it runs each hour, when the next one is, and the restart requests queued for it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},

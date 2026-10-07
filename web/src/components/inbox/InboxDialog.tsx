@@ -10,7 +10,7 @@ import { api } from "@/lib/api"
 import { fmtAgo, projectName } from "@/lib/format"
 import {
   INBOX_FILTERS, INBOX_KIND_LABEL, inboxStateBadge, messagePreview, messageTitle,
-  orderInbox, replyTo, searchInbox, SNOOZE_OPTIONS, type InboxMessage,
+  orderInbox, replyTo, rowActor, searchInbox, SNOOZE_OPTIONS, type InboxMessage,
 } from "@/lib/inbox"
 import { useStore } from "@/store"
 import type { OrgProject } from "@/lib/types"
@@ -251,7 +251,7 @@ export function InboxDialog({
                         <span className="shrink-0 text-xs text-muted-foreground">{fmtAgo(m.created_at)}</span>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <span>{m.sender_type === "user" ? "You" : labels[m.sender_id] || m.sender_id.slice(0, 8)}</span>
+                        <span>{rowActor(m, labels)}</span>
                         <span className="rounded bg-muted px-1 py-px text-[10px] font-medium">{INBOX_KIND_LABEL[m.kind]}</span>
                         {badge && (
                           <span className={cn("rounded px-1 py-px text-[10px] font-medium",
@@ -342,7 +342,7 @@ function RowDetail({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex items-center gap-2">
         <Badge variant="outline" className="uppercase">{INBOX_KIND_LABEL[msg.kind]}</Badge>
-        <span className="text-sm font-medium">{msg.sender_type === "user" ? "You" : label || msg.sender_id.slice(0, 8)}</span>
+        <span className="text-sm font-medium">{rowActor(msg, label ? { [msg.sender_id]: label } : {})}</span>
         <span className="text-xs text-muted-foreground">{fmtAgo(msg.created_at)}</span>
         <span className="ml-auto text-xs text-muted-foreground">{isDecision ? (msg.open ? "decision still open" : "decision resolved") : `status: ${effLabel}`}</span>
       </div>

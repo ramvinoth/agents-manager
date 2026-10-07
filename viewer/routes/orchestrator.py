@@ -22,6 +22,7 @@ MCP proxy or the approval path, because none of them carry a second copy of the 
 Handlers read req.principal. They never re-authenticate.
 """
 import io
+import time
 import zipfile
 
 from viewer import actions, db, discussion, notelinks, orglogic
@@ -408,6 +409,23 @@ class OrchestratorMixin:
                                         db.card_titles, db.board_column_names)
         self.send_json({"view": "display-v1", "audit": entries,
                         "next_before": page[-1]["id"] if len(rows) > limit else None})
+
+    # ── maintenance window (viewer.maintenance) ──────────────────────────────
+    def _g_org_maintenance(self, req):
+        from viewer import maintenance
+        self.send_json({"window_minute": maintenance.WINDOW_MINUTE,
+                        "next_window": maintenance.next_window(time.time()),
+                        "queued": db.restart_requests_by_status("queued")})
+
+    def _p_org_maintenance_request(self, req):
+        """Queue a restart for the next window. Requester stamped from the principal."""
+        body, p = self.read_body() or {}, req.principal
+        self._org_send(req, "restart_request",
+                       {"reason": body.get("reason") or "", "commit": body.get("commit") or "",
+                        "requested_by": p["actor"], "session_id": p["session"] or ""})
+
+    def _p_org_maintenance_now(self, req):
+        self._org_send(req, "restart_now", {"requested_by": req.principal["actor"]})
 
     # ── Harman autonomous-manager config (owner surface) ─────────────────────
     def _g_org_harman(self, req):

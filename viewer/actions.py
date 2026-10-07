@@ -467,6 +467,26 @@ def _loop_delete(a):
     return {"deleted": bool(db.loop_delete(lid))}
 
 
+def _restart_request(a):
+    """Queue a server restart for the next hourly maintenance window
+    (viewer.maintenance). Green: it only asks; the window preflights the code
+    and restarts once for everyone. Requester and session are stamped by the
+    route from the principal, never taken from the body."""
+    from viewer import maintenance
+    reason = (a.get("reason") or "").strip()
+    if not reason:
+        return {"error": "reason required: what changed and why it needs a restart"}
+    return maintenance.request(a.get("requested_by") or "", a.get("session_id") or "",
+                               a.get("commit") or "", reason)
+
+
+def _restart_now(a):
+    """Restart now, outside the window (Red: an agent's request queues for the
+    owner). Still preflighted and audited like a window restart."""
+    from viewer import maintenance
+    return maintenance.restart_now(a.get("requested_by") or "owner")
+
+
 def _intake_create(a):
     """Open an intake channel onto a board (Red: a new door from outside the
     org, so an agent's request queues for the owner). Returns the token ONCE —
@@ -610,6 +630,8 @@ ACTIONS = {
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,
     "loop_mode_set": _loop_mode_set,
+    "restart_request": _restart_request,
+    "restart_now": _restart_now,
     "intake_create": _intake_create,
     "intake_rotate": _intake_rotate,
     "intake_update": _intake_update,

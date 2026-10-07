@@ -321,6 +321,14 @@ def loop_scheduler(launch):
                 harman_tick()
         except Exception:
             pass
+        # The hourly maintenance window (viewer.maintenance): applies queued
+        # restart requests at :50. Not gated by the master switch — agents only
+        # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+        try:
+            from viewer import maintenance
+            maintenance.tick(now)
+        except Exception:
+            pass
         # The 30-minute board sweep — a safety net for event wakes the action
         # path missed. Its wakes are harman-origin, so it only runs when the
         # autonomous side may act (master switch ON and the loop mode licenses

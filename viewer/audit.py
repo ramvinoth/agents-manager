@@ -48,6 +48,15 @@ _OUTCOMES = {
               "of this record."),
     "queued": ("other", "Wake scheduled",
                "A board wake was scheduled for a session."),
+    # viewer.maintenance: one entry per maintenance run.
+    "restarted": ("returned", "Restarted",
+                  "The server restarted with the queued changes and answered its health check."),
+    "unhealthy": ("error", "Restarted, unhealthy",
+                  "The server restarted but its health check failed afterwards."),
+    "preflight_failed": ("error", "Preflight failed",
+                         "The new code failed to boot on a spare port, so the old server kept running."),
+    "unsupervised": ("error", "Not restarted",
+                     "No supervisor would start the server again, so it was not stopped."),
 }
 _OTHER = ("other", "Unknown result",
           "This record carries a result this version cannot interpret.")
@@ -112,6 +121,9 @@ _ACTIONS = {
     "escalate": ("Request owner approval", ("Approval", None, "approval")),
     "ask_owner": ("Ask owner a question", None),
     "board_wake": ("Schedule board wake", ("Card", None, "card")),
+    "restart_request": ("Request server restart", None),
+    "restart_now": ("Restart server now", None),
+    "maintenance_restart": ("Maintenance-window restart", None),
 }
 
 

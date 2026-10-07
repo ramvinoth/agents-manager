@@ -100,6 +100,11 @@ _RED_ACTIONS = {
     # Without this, a session running at manager level could restore its own
     # supervision; now that request queues for a human.
     "automation_resume",
+    # restarting the server outside the maintenance window cuts every running
+    # agent turn off at a moment nobody planned (viewer.maintenance). Queueing a
+    # restart for the window is green (restart_request); doing it NOW is the
+    # owner's call.
+    "restart_now",
     # rewriting the global system preamble injects instructions into EVERY future
     # session's system prompt (engine.append_system_prompt) — fleet-wide reach, the
     # same "overwrites what the whole team relies on" class as skill_promote. An
@@ -253,6 +258,11 @@ _MIN_LEVEL = {
     # queues for the owner and a model can never grant itself trust: the scope
     # gate decides who may initiate, the risk gate decides who must consent.
     "session_mode_set": "ic",
+    # Any session that changed server code may ask for the next maintenance
+    # window; restart_now is the same request without the wait, so the scope is
+    # the same and the Red gate (above) is what makes an agent's ask queue.
+    "restart_request": "ic",
+    "restart_now": "ic",
 }
 
 

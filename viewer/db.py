@@ -615,6 +615,20 @@ In-conversation todos are scratch for the current task only. Work that outlives 
               last_used    DOUBLE PRECISION NOT NULL DEFAULT 0,
               received     INTEGER NOT NULL DEFAULT 0
             );
+            -- Restart requests for the hourly maintenance window (viewer/
+            -- maintenance.py). Agents queue here instead of restarting the
+            -- server themselves; the :50 window applies them all with one
+            -- restart. status: queued → restarting → done | failed.
+            CREATE TABLE IF NOT EXISTS restart_requests (
+              id           SERIAL PRIMARY KEY,
+              requested_by TEXT NOT NULL DEFAULT '',
+              session_id   TEXT NOT NULL DEFAULT '',
+              commit_sha   TEXT NOT NULL DEFAULT '',
+              reason       TEXT NOT NULL DEFAULT '',
+              status       TEXT NOT NULL DEFAULT 'queued',
+              created_at   DOUBLE PRECISION NOT NULL,
+              handled_at   DOUBLE PRECISION NOT NULL DEFAULT 0
+            );
             """
         )
     _seed_agent_templates()
@@ -2667,6 +2681,31 @@ def provider_delete(pid):
     with _db() as cur:
         cur.execute("DELETE FROM providers WHERE id = %s RETURNING id", (pid,))
         return cur.fetchone() is not None
+
+
+# Restart requests (viewer.maintenance) ---------------------------------------
+
+def restart_request_add(requested_by, session_id, commit_sha, reason):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO restart_requests(requested_by, session_id, commit_sha, reason, created_at) "
+            "VALUES(%s,%s,%s,%s,%s) RETURNING *",
+            (requested_by, session_id or "", commit_sha or "", reason, _now()))
+        return dict(cur.fetchone())
+
+
+def restart_requests_by_status(status):
+    with _db() as cur:
+        cur.execute("SELECT * FROM restart_requests WHERE status = %s ORDER BY id", (status,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def restart_requests_set_status(ids, status):
+    if not ids:
+        return
+    with _db() as cur:
+        cur.execute("UPDATE restart_requests SET status = %s, handled_at = %s WHERE id = ANY(%s)",
+                    (status, _now(), list(ids)))
 
 
 # Intake channels (viewer.intake) --------------------------------------------

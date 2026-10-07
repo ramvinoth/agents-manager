@@ -321,6 +321,8 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
 def _who(sender_type, sender_id):
     if sender_type == "user":
         return "You"
+    if sender_type == "system":   # the server itself (viewer.maintenance)
+        return "Harman"
     return _label(str(sender_id))
 
 

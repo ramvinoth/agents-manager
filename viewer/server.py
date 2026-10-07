@@ -447,6 +447,7 @@ class SessionViewerHandler(
         "/api/org/notes/export": "_g_org_notes_export",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
+        "/api/org/maintenance": "_g_org_maintenance",
         "/api/org/harman": "_g_org_harman",
         "/api/org/loop-control": "_g_org_loop_control",
         "/api/org/system-preamble": "_g_org_system_preamble",
@@ -573,6 +574,8 @@ class SessionViewerHandler(
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
         "/api/org/intake": "_p_org_intake",
+        "/api/org/maintenance/request": "_p_org_maintenance_request",
+        "/api/org/maintenance/now": "_p_org_maintenance_now",
         "/api/org/intake/update": "_p_org_intake_update",
         "/api/org/intake/rotate": "_p_org_intake_rotate",
         "/api/org/intake/delete": "_p_org_intake_delete",
@@ -741,6 +744,10 @@ def main():
             if ids:
                 print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
         threading.Thread(target=_resume_cut_turns, daemon=True).start()
+        # Close the maintenance-window restart that ended the previous process
+        # (its audit entry + the requesters' wake), if there was one.
+        from viewer import maintenance
+        threading.Thread(target=maintenance.finish_after_boot, daemon=True).start()
         # Outbound to the Harman relay when it is on (the owner's switch, or
         # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
         # control socket per server, so a spare would steal the live server's phones.
