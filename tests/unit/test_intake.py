@@ -108,7 +108,7 @@ def test_rate_limit_refuses_before_any_card(fdb, monkeypatch):
 
 
 def test_opening_a_door_is_red_for_an_agent_and_token_only_on_owner_create(fdb):
-    it = actions.intent("intake_create", {"name": "Form", "project_id": 15}, "agent:x")
+    it = actions.intent("intake_create", {"name": "Form", "project_id": 15, "reason": "stale"}, "agent:x")
     resp, _ = actions.execute(it, "owner", "lead", "sess-x")
     assert resp.get("queued") and not fdb.intakes and "token" not in resp
     resp, status = actions.execute(actions.intent("intake_create", {"name": "Form", "project_id": 15},

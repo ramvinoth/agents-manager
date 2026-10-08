@@ -149,6 +149,11 @@ _HOST_ARG = {"type": "string",
 _DRIVE_ARG = {"type": "string",
               "description": "Cloud drive id from drive_list; omit for a machine. Never together with host."}
 
+# Every Red tool (it queues for the owner) carries this: the owner judges the
+# request cold, so the server refuses one that does not say why (actions.execute).
+_REASON_ARG = {"type": "string",
+               "description": "One plain line the owner reads on the decision card: why you need this now."}
+
 _CONN_ARG = {"type": "string",
              "description": "Account id from integrations_list; only needed when several accounts have the service on."}
 _CAL_ARG = {"type": "string", "description": "Calendar id (default primary)."}
@@ -227,7 +232,8 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "intake_create",
      "description": "Request a new intake channel onto a project board, optionally bound to a session (that session is woken per card) and optionally receiving the owner's in-app feedback (app_feedback; at most one channel does). Red: an outside door, so it queues for the owner's approval. The token is never shown to an agent: after approving, the owner takes it from Integrations → Intake channels (New token).",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "project_id"], "properties": {
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "project_id", "reason"], "properties": {
+         "reason": _REASON_ARG,
          "name": {"type": "string", "description": "What feeds it, e.g. 'Website contact form'."},
          "project_id": {"type": "integer"},
          "for_session": {"type": "string", "description": "Session to wake for each new card; omit for board-only."},
@@ -296,7 +302,8 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["comment_id", "value"], "properties": {
          "comment_id": {"type": "integer"}, "value": {"type": "integer", "enum": [1, -1, 0]}}}},
     {"name": "note_delete", "description": "Delete a note. Irreversible, so it queues for the owner's approval; prefer note_update archived=true.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id", "reason"], "properties": {
+         "reason": _REASON_ARG,
          "note_id": {"type": "integer"}}}},
     # ── Files (this machine, SSH hosts, connected cloud drives) ─────────────
     {"name": "drive_list",
@@ -397,6 +404,7 @@ _TOOL_LIST = [
          "card_id": {"type": "integer"}}}},
     {"name": "skill_propose", "description": "Propose a reusable skill learned from this work so the whole team inherits it. Novel skills are promoted immediately; ones that overlap an existing skill are queued for the owner to review.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "trigger", "body"], "properties": {
+         "reason": {"type": "string", "description": "Why it should replace the existing skill — required when it overlaps one (that queues for the owner)."},
          "name": {"type": "string", "description": "short kebab/underscore id"},
          "trigger": {"type": "string", "description": "when to use this skill (its description)"},
          "body": {"type": "string", "description": "the procedure/lesson"},
@@ -440,7 +448,8 @@ _TOOL_LIST = [
          "enabled": {"type": "boolean"}}}},
     {"name": "loop_delete",
      "description": "Delete a harman-scheduled loop. Irreversible (takes its run history with it), so it queues for the owner's approval. Only agent-scheduled loops, never the one driving your own session.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id", "reason"], "properties": {
+         "reason": _REASON_ARG,
          "id": {"type": "string", "description": "Loop id from loop_list."}}}},
     {"name": "loop_control_set",
      "description": "Set WHICH loop origins may fire: user (human-scheduled only), harman (agent-scheduled only), both, or none. Manager-scoped; setting it does not touch the automation master switch.",
@@ -449,7 +458,8 @@ _TOOL_LIST = [
     # ── Delegate trust to a session (Red: queues for the owner) ─────────────
     {"name": "session_mode_set",
      "description": "Set the permission mode a session's runs start in: default (every tool gated), acceptEdits (file edits auto-approve, commands still gated), plan, or bypass (no gating at all — runs start with --dangerously-skip-permissions). It applies to EVERY later run of that session (loop-fired AND chat) — the way a trusted agent runs its loops without a command-approval push per Bash. Red: the request queues for the owner's approval and runs once he approves; a model can never set its OWN session (the server refuses it — trust is granted by the person, not requested by the agent).",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "mode"], "properties": {
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "mode", "reason"], "properties": {
+         "reason": _REASON_ARG,
          "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan", "bypass"],
                  "description": "The permission mode for that session's runs."}}}},

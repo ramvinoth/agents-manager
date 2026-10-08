@@ -210,6 +210,8 @@ export type OpenDecision = {
   action?: string
   requested_by?: string
   risk?: string
+  /** kind "red": the asker's own one line on why it needs this ("" on old rows). */
+  reason?: string
   /** kind "card": the board card parked in Review/Needs-info for the owner. */
   card?: number
   column?: string

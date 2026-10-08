@@ -826,6 +826,15 @@ def execute(it, human_role, session_level, acting_session=""):
         return {"error": f"unknown action {action}"}, 500
     if (orglogic.is_red(action)
             and not orglogic.self_approves(human_role, session_level)):
+        # An agent's Red request is judged cold by the owner, so it must say
+        # WHY — without it two asks for the same action read word-for-word
+        # identical and sit undecidable. Bounced back to the asking model (fail
+        # closed: a route that drops `reason` errors loudly, never queues blank).
+        # A human asker (an operator at the UI) is not a model and is exempt.
+        if session_level and not str(args.get("reason") or "").strip():
+            db.audit_append(actor, action, it, "denied:no_reason")
+            return {"error": "reason required: say in one plain line why you need "
+                             "this — the owner sees it on the decision card"}, 400
         # The stored intent also names the asking session (execute reads only
         # action/args/actor, so a replay is unchanged): the decision queue shows
         # whose request it is, and the outcome is told back to that session.

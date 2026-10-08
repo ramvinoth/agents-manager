@@ -420,6 +420,8 @@ export interface OpenDecision {
   action?: string
   requested_by?: string
   risk?: string
+  /** kind "red": the asker's own one line on why it needs this ("" on old rows). */
+  reason?: string
   /** The item's inbox row (0 when none was delivered) — the handle a snooze
    *  takes. The queue already omits items whose snooze is live. */
   inbox_id: number

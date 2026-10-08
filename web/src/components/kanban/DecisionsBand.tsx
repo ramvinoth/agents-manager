@@ -119,18 +119,19 @@ export function DecisionsBand({
                     data-track="decision row"
                     disabled={!open}
                     onClick={open || undefined}
-                    title={d.kind === "red" ? `${d.summary}\nIf you approve: ${d.risk || ""}\nAsked by: ${d.label || d.requested_by || "an agent"}` : undefined}
+                    title={d.kind === "red" ? `${d.summary}\nWhy: ${d.reason || "no reason given"}\nIf you approve: ${d.risk || ""}\nAsked by: ${d.label || d.requested_by || "an agent"}` : undefined}
                     className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent disabled:cursor-default"
                   >
                     <Icon className={cn("size-4 shrink-0", d.kind === "red" ? "text-destructive" : "text-muted-foreground")} />
                     <span className="shrink-0 font-medium">
                       {isCard || d.kind === "red" ? d.summary : d.label || d.session.slice(0, 8)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {/* A red row's facts (why, cost) are read before Approve — wrap, never truncate. */}
+                    <span className={cn("min-w-0 flex-1 text-muted-foreground", d.kind !== "red" && "truncate")}>
                       {isCard
                         ? `${d.column} · ${d.label || "an agent"} is waiting on you`
                         : d.kind === "red"
-                          ? `${d.label || d.requested_by || "an agent"} · if you approve: ${d.risk || "it runs"}`
+                          ? `${d.label || d.requested_by || "an agent"} · why: ${d.reason || "no reason given"} · if you approve: ${d.risk || "it runs"}`
                           : d.summary || meta.label}
                     </span>
                     <Badge variant="outline" className="shrink-0 text-[10px]">{meta.label}</Badge>

@@ -503,7 +503,9 @@ class OrchestratorMixin:
                         "requested_by": p["actor"], "session_id": p["session"] or ""})
 
     def _p_org_maintenance_now(self, req):
-        self._org_send(req, "restart_now", {"requested_by": req.principal["actor"]})
+        body = self.read_body() or {}
+        self._org_send(req, "restart_now", {"requested_by": req.principal["actor"],
+                                            "reason": body.get("reason") or ""})
 
     # ── Harman autonomous-manager config (owner surface) ─────────────────────
     def _g_org_harman(self, req):
@@ -522,7 +524,7 @@ class OrchestratorMixin:
         body = self.read_body() or {}
         if "automation_enabled" in body:
             self._org_send(req, "automation_resume" if body["automation_enabled"]
-                           else "automation_pause", {})
+                           else "automation_pause", {"reason": body.get("reason") or ""})
             return
         patch = {}
         if "enabled" in body:
@@ -579,7 +581,7 @@ class OrchestratorMixin:
         resp, status = self._org_run(
             req, "skill_promote" if overlaps else "skill_propose",
             {"name": name, "content": content, "card": body.get("from_card"),
-             "session": body.get("session")})
+             "session": body.get("session"), "reason": body.get("reason") or ""})
         if resp.get("queued"):
             # Queued for review: record the intent in the skill ledger too, so the
             # library shows a pending entry instead of the proposal vanishing until
@@ -614,7 +616,8 @@ class OrchestratorMixin:
     def _p_org_system_preamble(self, req):
         body = self.read_body() or {}
         self._org_send(req, "system_preamble_set",
-                       {"preamble": body.get("preamble", "")})
+                       {"preamble": body.get("preamble", ""),
+                        "reason": body.get("reason") or ""})
 
     # ── System docs (read-only; open to any resolved caller) ──────────────────
     # The documentation surface an agent reads to understand the system it is a
@@ -698,4 +701,5 @@ class OrchestratorMixin:
             self.send_json({"error": "not found"}, status=404); return
         if self._self_mutation_denied(req, loop.get("session")):
             return
-        self._org_send(req, "loop_delete", {"id": body.get("id", "")})
+        self._org_send(req, "loop_delete", {"id": body.get("id", ""),
+                                            "reason": body.get("reason") or ""})

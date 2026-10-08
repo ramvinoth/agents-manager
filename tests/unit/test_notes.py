@@ -125,7 +125,7 @@ def test_agent_create_and_archive_run_green(fdb):
 
 def test_agent_delete_queues_but_owner_deletes(fdb):
     fdb.note_create("t")
-    it = actions.intent("note_delete", {"note_id": 1}, "s1")
+    it = actions.intent("note_delete", {"note_id": 1, "reason": "stale"}, "s1")
     payload, _ = actions.execute(it, "owner", "ic", acting_session="s1")
     assert payload.get("queued") and 1 in fdb.notes
     payload, _ = actions.execute(it, "owner", "")

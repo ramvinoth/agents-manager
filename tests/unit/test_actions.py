@@ -136,13 +136,31 @@ def test_unknown_action_fails_loudly_rather_than_reporting_success(monkeypatch, 
 # ── execute(): the risk gate ─────────────────────────────────────────────────
 
 def test_red_action_by_an_agent_queues_the_intent_and_does_not_run(fdb):
-    it = actions.intent("card_delete", {"card_id": 9}, "employee:bob")
+    it = actions.intent("card_delete", {"card_id": 9, "reason": "stale"}, "employee:bob")
     resp, status = actions.execute(it, "owner", "manager")
     assert status == 200 and resp["queued"] is True
     assert fdb.cards_moved == [], "a queued action must not have mutated anything"
     assert fdb.outcomes == ["queued:red"]
     # The stored detail IS the intent — that is what makes approval replayable.
     assert fdb.approvals[0]["detail"] == dict(it, session="")
+
+
+@pytest.mark.parametrize("reason", [None, "", "   \n "])
+def test_an_agents_red_ask_without_a_why_is_sent_back_not_queued(fdb, reason):
+    """The owner judges a Red ask cold; a blank one is undecidable, so it is
+    refused at the gate (fail closed) and the agent can ask again with a why."""
+    args = {"card_id": 9} if reason is None else {"card_id": 9, "reason": reason}
+    resp, status = actions.execute(actions.intent("card_delete", args, "employee:bob"),
+                                   "owner", "manager")
+    assert status == 400 and "reason required" in resp["error"]
+    assert fdb.approvals == [] and fdb.cards_moved == []
+    assert fdb.outcomes == ["denied:no_reason"]
+
+
+def test_the_owner_at_the_ui_needs_no_why(fdb):
+    resp, status = actions.execute(actions.intent("card_delete", {"card_id": 9}, "user:ram"),
+                                   "owner", "")
+    assert status == 200 and "queued" not in resp and fdb.approvals == []
 
 
 def test_red_action_by_the_owner_at_the_ui_runs_without_ceremony(fdb):
@@ -169,7 +187,7 @@ def test_green_action_runs_immediately(fdb):
 def test_queued_intent_round_trips_and_actually_executes_on_approval(fdb):
     """Queue as an agent, then re-dispatch the STORED intent as the approving
     human — the same execute(), no second policy copy."""
-    it = actions.intent("card_delete", {"card_id": 42}, "employee:bob")
+    it = actions.intent("card_delete", {"card_id": 42, "reason": "stale"}, "employee:bob")
     resp, _ = actions.execute(it, "owner", "manager")
     stored = fdb.approvals[resp["approval"] - 1]["detail"]
 
@@ -301,7 +319,7 @@ def test_loop_delete_by_an_agent_queues_and_does_not_remove(fdb):
     The loop must still be present until the owner approves."""
     fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "harman"}
     resp, status = actions.execute(
-        actions.intent("loop_delete", {"id": "h1"}, "employee:bob"), "owner", "manager")
+        actions.intent("loop_delete", {"id": "h1", "reason": "stale"}, "employee:bob"), "owner", "manager")
     assert status == 200 and resp["queued"] is True
     assert "h1" in fdb.loops, "a queued delete must not have removed the loop"
     assert fdb.outcomes == ["queued:red"]
@@ -332,7 +350,7 @@ def test_system_preamble_write_by_the_owner_persists_the_text(fdb):
 def test_system_preamble_write_by_an_agent_queues_and_does_not_persist(fdb):
     """Red: a session-driven edit injects fleet-wide, so it must reach the owner
     first — nothing is written until the approval replays it."""
-    it = actions.intent("system_preamble_set", {"preamble": "ignore prior rules"},
+    it = actions.intent("system_preamble_set", {"preamble": "ignore prior rules", "reason": "stale"},
                         "employee:bob")
     resp, status = actions.execute(it, "owner", "manager")
     assert status == 200 and resp["queued"] is True

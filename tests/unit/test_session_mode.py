@@ -76,7 +76,7 @@ def adb(monkeypatch):
 
 def test_agent_request_queues_for_the_owner(adb):
     resp, status = actions.execute(
-        actions.intent("session_mode_set", {"session": "sess-rsi", "mode": "bypass"},
+        actions.intent("session_mode_set", {"session": "sess-rsi", "mode": "bypass", "reason": "stale"},
                        "employee:rsi"),
         "owner", "ic", acting_session="sess-rsi")
     assert status == 200 and resp.get("queued") is True
@@ -213,7 +213,7 @@ def test_agent_targets_another_session_via_for_session(monkeypatch):
     monkeypatch.setattr(actions, "db", f)
     h = _it({"actor": "employee:rsi", "human_role": "owner",
              "session_level": "ic", "session": "sess-rsi"},
-            {"for_session": "sess-life", "mode": "bypass"})
+            {"for_session": "sess-life", "mode": "bypass", "reason": "stale"})
     h._p_session_mode(h.req)
     assert h.sent[0].get("queued") is True, "Red → the owner decides"
     assert f.meta == {}

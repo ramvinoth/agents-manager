@@ -144,7 +144,8 @@ class TestRoute:
         monkeypatch.setattr(vi, "red_subject", lambda intent: "Harman → bypass")
         ap = {"id": 3, "created_at": NOW - 20, "created_by": "session:Harman",
               "summary": "session:Harman: session_mode_set",
-              "detail": {"action": "session_mode_set", "args": {"mode": "bypass"}}}
+              "detail": {"action": "session_mode_set",
+                         "args": {"mode": "bypass", "reason": "  needs   to run tests  "}}}
         self._fakes(monkeypatch, [], [], [], red=[ap],
                     inbox_rows=[{"kind": "red", "ref_id": "9", "id": 1}])
         h = _Handler()
@@ -154,6 +155,7 @@ class TestRoute:
         assert d["kind"] == "red" and d["id"] == "3"
         assert d["summary"] == "Change session permission mode: Harman → bypass"
         assert "bypass" in d["risk"]
+        assert d["reason"] == "needs to run tests", "the asker's why, whitespace folded"
         assert sent == [3]
 
     def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=(),
@@ -252,7 +254,7 @@ def _red(id, created, action="session_mode_set", session="s-ask", subject="Harma
             "summary": f"session:Harman: {action}",
             "detail": {"action": action, "args": {}, "actor": "session:Harman", "session": session},
             "action_label": "Change session permission mode", "subject": subject,
-            "risk": "bypass lets it run any command"}
+            "risk": "bypass lets it run any command", "reason": "it keeps stalling on prompts"}
 
 
 def test_red_approval_reads_cold_and_names_the_asker():
@@ -263,6 +265,7 @@ def test_red_approval_reads_cold_and_names_the_asker():
     assert it["session"] == "s-ask" and it["label"] == "Harman"
     assert it["requested_by"] == "session:Harman" and it["risk"]
     assert it["action"] == "session_mode_set" and it["waiting_s"] == 50
+    assert it["reason"] == "it keeps stalling on prompts"
 
 
 def test_red_approval_without_session_or_subject_still_reads():
@@ -271,6 +274,7 @@ def test_red_approval_without_session_or_subject_still_reads():
            "detail": {"action": "restart_now"}}
     [it] = decisions.open_decisions([], [], [], {}, NOW, [], [row])["decisions"]
     assert it["session"] == "" and it["summary"] == "restart_now" and it["risk"] == ""
+    assert it["reason"] == "", "a pre-rule row has no why; the UI says so"
 
 
 def test_red_approval_with_malformed_detail_costs_only_words():

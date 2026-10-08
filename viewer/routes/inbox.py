@@ -26,13 +26,15 @@ from viewer import questions
 
 def red_row(approval):
     """An open org approval with the words the queue shows a cold reader:
-    the action's plain name, what it touches, and what approving costs."""
+    the action's plain name, what it touches, why the asker needs it, and
+    what approving costs."""
     intent = approval.get("detail") if isinstance(approval.get("detail"), dict) else {}
     action = intent.get("action") or ""
     return dict(approval,
                 action_label=audit.action_label(action) if action else "",
                 subject=inbox.red_subject(intent),
-                risk=orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT))
+                risk=orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT),
+                reason=inbox.red_reason(intent))
 
 
 def open_decisions_items():

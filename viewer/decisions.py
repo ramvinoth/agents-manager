@@ -122,6 +122,7 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
             "action": str(intent.get("action") or ""),
             "requested_by": r.get("created_by") or "",
             "risk": r.get("risk") or "",
+            "reason": r.get("reason") or "",
         })
     items.sort(key=lambda i: i["waiting_s"], reverse=True)
     return {"count": len(items), "decisions": items}

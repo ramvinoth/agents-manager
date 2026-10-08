@@ -27,6 +27,8 @@ _OUTCOMES = {
                             "The caller tried to resolve an approval they raised themselves."),
     "denied:self_mutation": ("denied", "Denied",
                              "The caller tried to change its own session or loop controls."),
+    "denied:no_reason": ("denied", "Denied",
+                         "An agent asked for an approval without saying why; it was sent back."),
     "error:unknown_action": ("error", "Failed",
                              "No handler is registered for this action."),
     # orchestrator.tick catches an exception for one planned action.

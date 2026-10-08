@@ -314,6 +314,8 @@ export default function DecisionCockpit({
 
           {d.kind === "red" ? (
             <View testID="cockpit-red" style={styles.permCard}>
+              <Text style={styles.permTitle}>Why it asks</Text>
+              <Text testID="cockpit-red-reason" style={styles.permInput}>{d.reason || "No reason given — deny it and the agent can ask again with one."}</Text>
               <Text style={styles.permTitle}>If you approve</Text>
               <Text style={styles.permInput}>{d.risk || "The action runs."}</Text>
               <Text style={styles.permInput}>Deny and nothing happens. The asking session is told either way.</Text>

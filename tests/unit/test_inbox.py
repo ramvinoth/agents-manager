@@ -271,6 +271,21 @@ def test_format_red_asks_first_and_names_cost_and_asker():
     assert "session:Harman" in body and "Deleted for good." in body
 
 
+def test_format_red_carries_the_askers_why_or_says_it_is_missing():
+    body = inbox.format_red("Delete card", "#12", "Deleted for good.", "s", "it is a duplicate")
+    lines = body.splitlines()
+    assert lines[0] == "Approve or deny: Delete card: #12", "the ask stays first"
+    assert "Why: it is a duplicate" in lines
+    assert any(l.startswith("Why: no reason given") for l in
+               inbox.format_red("Delete card", "#12", "", "s").splitlines())
+
+
+def test_red_reason_folds_whitespace_caps_length_and_tolerates_junk():
+    assert inbox.red_reason({"args": {"reason": " a\n  b "}}) == "a b"
+    assert len(inbox.red_reason({"args": {"reason": "x" * 999}})) == 300
+    assert inbox.red_reason({}) == inbox.red_reason(None) == ""
+
+
 def test_red_subject_names_nothing_for_unknown_or_argless_actions():
     assert inbox.red_subject({"action": "restart_now", "args": {}}) == ""
     assert inbox.red_subject({}) == ""

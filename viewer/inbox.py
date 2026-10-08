@@ -235,11 +235,19 @@ def red_subject(intent):
     return ""
 
 
-def format_red(action_label, subject, risk, requested_by):
-    """The inbox body for an org Red approval — the ask first, then what it
-    touches, who asked and what approving costs."""
+def red_reason(intent):
+    """The asker's own one line on WHY — required of every agent request
+    (actions.execute). "" for one queued before that rule, or by the scheduler."""
+    args = (intent or {}).get("args") or {}
+    return " ".join(str(args.get("reason") or "").split())[:300]
+
+
+def format_red(action_label, subject, risk, requested_by, reason=""):
+    """The inbox body for an org Red approval — the ask first, then why the
+    asker needs it, who asked and what approving costs."""
     what = f"{action_label}: {subject}" if subject else action_label
     return (f"Approve or deny: {what}\n\n"
+            f"Why: {reason or 'no reason given — deny it and the agent can ask again with one'}\n"
             f"Asked by: {requested_by or 'an agent'}\n"
             f"If you approve: {risk}\n"
             "Deny and nothing happens. The asking session is told either way.")
@@ -257,7 +265,8 @@ def deliver_red(approval):
         body = format_red(audit.action_label(action) if action else (approval.get("summary") or "Approval"),
                           red_subject(intent),
                           orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT),
-                          approval.get("created_by") or "")
+                          approval.get("created_by") or "",
+                          red_reason(intent))
         deliver_decision(str(intent.get("session") or ""), "red", str(approval["id"]), body,
                          push_title="Approval needed")
     except Exception:

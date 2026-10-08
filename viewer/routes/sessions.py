@@ -547,7 +547,8 @@ class SessionsMixin:
                 reason="a session may not change its own permission mode — ask the owner to set it"):
             return
         self._org_send(req, "session_mode_set",
-                       {"session": target, "mode": (body.get("mode") or "").strip()})
+                       {"session": target, "mode": (body.get("mode") or "").strip(),
+                        "reason": body.get("reason") or ""})
 
     def _p_session_restore(self, req):
         self.handle_restore()
