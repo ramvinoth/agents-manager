@@ -66,6 +66,9 @@ export default function NewChatScreen({ navigation, route }: Props) {
     template?.cron && template?.job_prompt ? [{ prompt: template.job_prompt, cron: template.cron }] : [])
   // -2 = no form, -1 = adding, ≥0 = editing that job.
   const [jobForm, setJobForm] = useState(-2)
+  // Jobs run on this machine's scheduler only (the server refuses them for a
+  // remote chat), so a template's job is not sent when starting elsewhere.
+  const sendJobs = local ? jobs : []
 
   const [providers, setProviders] = useState<Provider[]>([])
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
@@ -119,11 +122,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
         // The server reads the template's plugin (role skills) and lens from
         // its own row; a client can only name which template it started from.
         template: template?.id,
-        jobs: jobs.length ? jobs : undefined,
+        jobs: sendJobs.length ? sendJobs : undefined,
       })
       // A server older than the `jobs` field ignores it — say so rather than
       // let the owner believe the schedule exists.
-      if (jobs.length && (res.jobs?.length ?? 0) !== jobs.length) {
+      if (sendJobs.length && (res.jobs?.length ?? 0) !== sendJobs.length) {
         Alert.alert("Chat started without its jobs", "This server didn't save the scheduled jobs. Add them from the chat's profile (tap its name).")
       }
       // Open it now: the thread shows the message and the working bubble,
@@ -152,7 +155,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   const catColor = template ? (TEMPLATE_CATEGORIES[template.category]?.color ?? t.accent) : t.accent
   const iconName = (template?.icon || "sparkle") as IconName
-  const extras = [title.trim() && "name", jobs.length && `${jobs.length} job${jobs.length > 1 ? "s" : ""}`,
+  const extras = [title.trim() && "name", sendJobs.length && `${sendJobs.length} job${sendJobs.length > 1 ? "s" : ""}`,
     systemPrompt.trim() && "instructions", goal.trim() && "goal"].filter(Boolean).join(" · ")
 
   const card = { backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, marginTop: 12, overflow: "hidden" as const }
@@ -285,7 +288,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
                 ) : !jobs.length && jobForm === -2 ? (
                   <Text style={{ fontSize: 12, color: t.textMuted, marginTop: 6 }}>Have the agent come back on a schedule — e.g. a daily summary.</Text>
                 ) : null}
-                {jobs.map((job, i) => (
+                {sendJobs.map((job, i) => (
                   <View key={i}>
                     <TouchableOpacity testID={`newchat-job-${i}`} activeOpacity={0.65} onPress={() => setJobForm(jobForm === i ? -2 : i)}
                       style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 }}>
