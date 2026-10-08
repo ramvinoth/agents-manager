@@ -46,8 +46,8 @@ describe("Native AI settings — isolated transactional API", () => {
   async function closeClean() { await tap("ai-cancel"); await $("~ai-editor").waitForDisplayed({ reverse: true }) }
   async function discard() {
     await tap("ai-cancel")
-    await $("~Discard changes").waitForDisplayed()
-    await $("~Discard changes").click()
+    await $("~ai-discard").waitForDisplayed()
+    await $("~ai-discard").click()
     await $("~ai-editor").waitForDisplayed({ reverse: true })
   }
   async function chats() {
@@ -84,8 +84,8 @@ describe("Native AI settings — isolated transactional API", () => {
     const before = writes().length
     await tap(`ai-provider-${PROVIDER}`)
     await tap("ai-cancel")
-    await $("~Keep editing").waitForDisplayed()
-    await $("~Keep editing").click()
+    await $("~ai-keep-editing").waitForDisplayed()
+    await $("~ai-keep-editing").click()
     await selected(`ai-provider-${PROVIDER}`)
     await discard()
     assert.equal(writes().length, before)
