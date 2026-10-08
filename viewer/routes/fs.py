@@ -92,8 +92,7 @@ def _agent_refusal(req, kind, ref, path, op):
     if (getattr(req, "principal", None) or {}).get("kind") != "mcp":
         return None
     if kind == "local":
-        from viewer.routes.integrations import local_rules
-        if integrations.local_allows(local_rules(), _local_real(path), op, _local_real):
+        if integrations.local_allows(db.local_disk_rules(), _local_real(path), op, _local_real):
             return None
         return ("The owner has not allowed agents to %s %s on this machine — "
                 "ask them to add it under Integrations → Local disk"

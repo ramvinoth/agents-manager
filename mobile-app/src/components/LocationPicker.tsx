@@ -8,7 +8,7 @@ import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "../
 import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
 import SheetModal from "./SheetModal"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 /**
  * LocationPicker — the Files screen's "where am I looking" sheet. One list: the

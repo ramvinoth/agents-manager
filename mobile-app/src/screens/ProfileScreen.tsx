@@ -27,7 +27,7 @@ import HostPicker from "../components/HostPicker"
 import { useHost } from "../lib/useHost"
 import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 

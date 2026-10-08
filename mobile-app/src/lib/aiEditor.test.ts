@@ -24,7 +24,7 @@ function harness(localOnly = false) {
     react: {...react,default:react},
     "react-native": {...Object.fromEntries(["ActivityIndicator","FlatList","Modal","SafeAreaView","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x]))},
     "../api/client":{api:{aiConfig:async()=>config,providerModels:()=>{const d=deferred();discoveries.push(d);return d.promise},aiSave:(...args:any[])=>{const d=deferred();saves.push({args,...d});return d.promise}}},
-    "../lib/aiSelection":selection,"../lib/useTheme":{useTheme:()=>({})},"../screens/styles":{useStyles:()=>({})},
+    "../lib/aiSelection":selection,"../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},
   }
   const js=ts.transpileModule(readFileSync(resolve(dirname(process.argv[1]),"../components/ProviderPicker.tsx"),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React}}).outputText
   const exports:any={};new Function("require","exports",js)((name:string)=>{assert.ok(name in modules,name);return modules[name]},exports)

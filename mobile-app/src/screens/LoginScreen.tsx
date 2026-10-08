@@ -8,7 +8,7 @@ import { displayAddress } from "../lib/servers"
 import { completeSignIn } from "../state/signin"
 import ServerPicker from "../components/ServerPicker"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">
 

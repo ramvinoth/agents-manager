@@ -1,6 +1,6 @@
 import { Platform, StyleSheet } from "react-native"
-import { useTheme } from "../lib/useTheme"
-import type { Theme } from "../lib/theme"
+import { useTheme } from "./useTheme"
+import type { Theme } from "./theme"
 
 /**
  * The app's stylesheet, as a factory over the active theme. Backgrounds, text,

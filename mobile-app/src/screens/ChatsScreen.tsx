@@ -18,7 +18,7 @@ import { useHost } from "../lib/useHost"
 import { isTransportError, userError } from "../lib/errors"
 import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 // Chats lives inside the bottom-tab navigator, which itself is nested in the
 // root stack — so navigation can still push Thread/NewChat on the parent stack.

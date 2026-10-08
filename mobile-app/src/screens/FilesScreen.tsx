@@ -18,7 +18,7 @@ import { userError } from "../lib/errors"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
 import Icon from "../components/Icon"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }

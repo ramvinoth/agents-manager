@@ -445,6 +445,7 @@ class SessionViewerHandler(
         "/api/org/note": "_g_org_note",
         "/api/org/notes/graph": "_g_org_notes_graph",
         "/api/org/notes/export": "_g_org_notes_export",
+        "/api/org/map": "_g_org_map",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
         "/api/org/maintenance": "_g_org_maintenance",

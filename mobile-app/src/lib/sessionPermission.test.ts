@@ -24,7 +24,7 @@ function harness() {
     "../state/config":{composerPrefs:()=>({mode:"bypassPermissions"}),setComposerPrefs:(v:any)=>deviceWrites.push(v),notifyEveryReply:()=>false},
     "../lib/aiSelection":{aiSummary:()=>"AI",aiError:(e:any)=>e.message},
     "../lib/avatars":{AVATARS:[]},"../lib/interval":{},"../lib/stats":{},"../lib/thread":{},
-    "../lib/useTheme":{useTheme:()=>({})},"./styles":{useStyles:()=>({})},
+    "../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},
     ...Object.fromEntries(["Avatar","Icon","JobScheduler","ProviderPicker"].map(x=>[`../components/${x}`,{default:x}])),
   }
   const js=ts.transpileModule(readFileSync(resolve(dirname(process.argv[1]),"../screens/SessionProfileScreen.tsx"),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React}}).outputText

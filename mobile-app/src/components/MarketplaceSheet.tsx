@@ -11,7 +11,7 @@ import { api, type MarketItem } from "../api/client"
 import { filledValues, installNote, missingInput, scopes, SCOPE_LABEL, type InstallScope, type MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import Icon from "./Icon"
 
 const SOURCE: Record<MarketKind, string> = {

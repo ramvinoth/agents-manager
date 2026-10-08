@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, agent_plugin_dir, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -34,7 +34,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import db, inference_health, orglogic, resume
+from viewer import codemap, db, inference_health, orglogic, resume
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -1506,9 +1506,8 @@ def _integrations_summary():
     the same rules the routes enforce; a failure never blocks the turn."""
     try:
         from viewer import integrations
-        from viewer.routes.integrations import local_rules
         return integrations.agent_summary(
-            integrations.agent_view(list(db.drives_load().values()), local_rules()))
+            integrations.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
     except Exception as e:
         print(f"[engine] integrations summary failed: {e}", flush=True)
         return ""
@@ -1657,6 +1656,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         extra.append("Active goal (keep working toward this; check it before stopping): " + meta["goal"])
     if extra:
         cmd += ["--append-system-prompt", "\n\n".join(extra)]
+    # The agent's plugin (skills, MCP, hooks) — set from its template when the
+    # session started. Local runs only: the folder lives on this machine.
+    plugin_dir = None if remote else agent_plugin_dir(meta.get("agentPlugin", ""))
+    if plugin_dir:
+        cmd += ["--plugin-dir", str(plugin_dir)]
 
     def run():
         proc = None
@@ -1761,6 +1765,17 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 threading.Thread(target=_watch_endpoint, args=(job, proc, watch_url,
                                  provider_env.get("ANTHROPIC_MODEL", "")), daemon=True).start()
 
+            # Map lens: when this project has it on, a file the agent writes
+            # lights up on the map while the agent works (code_index.touched).
+            map_project = None
+            if kanban_project and not remote:
+                try:
+                    proj = db.project_get(int(kanban_project))
+                    if proj and "map" in (proj.get("lenses") or []):
+                        map_project = proj
+                except Exception:
+                    pass
+
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
@@ -1779,6 +1794,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     continue
                 if watch_url:
                     job["model_wait"].update(ev, time.time())
+                if map_project:
+                    try:
+                        for rel in codemap.edited_paths(ev, map_project["cwd"]):
+                            db.code_index_touch(map_project["id"], rel, session_id)
+                    except Exception as e:  # a highlight, never a reason to fail a run
+                        print(f"[map] touch failed: {e}", flush=True)
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1

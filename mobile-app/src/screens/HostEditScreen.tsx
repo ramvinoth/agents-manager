@@ -5,7 +5,7 @@ import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "HostEdit">
 

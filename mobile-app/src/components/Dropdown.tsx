@@ -2,7 +2,7 @@ import React, { useState } from "react"
 import { Modal, Pressable, Text, TouchableOpacity, View } from "react-native"
 import Icon from "./Icon"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 export type Option = { v: string; label: string }
 

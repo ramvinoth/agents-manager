@@ -152,14 +152,31 @@ export type Job = { id: string; session: string; prompt: string; interval: numbe
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
   system_prompt: string; goal: string; model?: string; cron?: string; job_prompt?: string
+  /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
+   *  lens it turns on ("map"); both are read server-side from the template row. */
+  plugin?: string; lens?: string
   is_builtin: boolean; created_by: string; created_at: number
 }
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
 export type Employee = { id: number; name: string; role: string; provider: string; model: string; conv_mode: string; avatar: string; status: string; created_at: number }
-export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number }
+export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[] }
 export type BoardColumn = { id: number; name: string; position: number }
+/** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
+ *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
+export type MapNode = {
+  id: string; kind: "folder" | "file" | "class" | "function" | "method"; label: string
+  files: number; symbols: number; touched: boolean; line?: number
+}
+export type MapLevel = "project" | "folder" | "file"
+/** One level of a project's code as a graph; `available: false` means the
+ *  server lacks the tree-sitter grammars (`install` says how to add them). */
+export type MapView =
+  | { available: false; level: MapLevel; path: string; install: string }
+  | { available: true; project: number; level: MapLevel; path: string; files: number; mermaid: string
+      nodes: MapNode[]; edges: { from: string; to: string; weight: number }[]
+      touched: Record<string, string>; truncated: boolean }
 /** One row of the cross-session decision queue (GET /api/decisions/open): a
  *  durable question, a durable plan, or a live tool approval. The queue is a
  *  READ of the existing sources — deciding an item uses the per-session
@@ -428,6 +445,7 @@ export const api = {
     goal?: string
     effort?: string
     ai?: AISelection
+    template?: number
   }) => req<{ started: boolean; session: string; path: string }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
   // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
   resolve: (id: string, host?: string) =>
@@ -789,6 +807,13 @@ export const api = {
     else if (filter.session !== undefined) p.set("session", filter.session)
     const q = p.toString()
     return req<{ columns: BoardColumn[] }>("GET", `/api/org/board${q ? "?" + q : ""}`)
+  },
+  // Scope is a project, or a session whose bound project the server resolves.
+  orgMap: (scope: { project?: number; session?: string }, level: MapLevel, path = "") => {
+    const p = new URLSearchParams({ level, path })
+    if (scope.project !== undefined) p.set("project", String(scope.project))
+    else if (scope.session) p.set("session", scope.session)
+    return req<MapView>("GET", `/api/org/map?${p}`)
   },
   orgCards: (filter: CardFilter = {}) => {
     const p = new URLSearchParams()

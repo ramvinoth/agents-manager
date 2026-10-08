@@ -23,7 +23,7 @@ import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
 import JobScheduler, { type JobSchedule } from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionProfile">
 

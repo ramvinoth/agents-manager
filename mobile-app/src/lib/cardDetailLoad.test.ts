@@ -81,7 +81,7 @@ function screen(response: unknown, status?: number) {
     "../components/Icon": { default: "Icon" },
     "../lib/board": { formatActor },
     "../lib/useTheme": { useTheme: () => ({}) },
-    "./styles": { useStyles: () => ({}) },
+    "../lib/styles": { useStyles: () => ({}) },
   }
   const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/CardDetailScreen.tsx"), "utf8")
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText

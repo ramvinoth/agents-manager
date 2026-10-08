@@ -21,7 +21,7 @@ import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react"
 import { Text, TextInput, TouchableOpacity, View } from "react-native"
 import SheetModal from "./SheetModal"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 /**

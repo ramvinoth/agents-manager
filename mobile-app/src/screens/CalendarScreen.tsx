@@ -11,7 +11,7 @@ import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 const DAYS = 14
 

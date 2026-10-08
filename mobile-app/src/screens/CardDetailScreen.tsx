@@ -9,7 +9,7 @@ import { setToken, username } from "../state/config"
 import { formatActor, type ActorKind } from "../lib/board"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
 

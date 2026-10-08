@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react"
 import { Text, TextInput, TouchableOpacity, View } from "react-native"
 import { planDecision, planStateLabel, planText } from "../lib/plan"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import Icon from "./Icon"
 import Markdown from "./Markdown"
 

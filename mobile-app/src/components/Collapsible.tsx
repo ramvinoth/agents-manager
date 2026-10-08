@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react"
 import { Pressable, Text, View } from "react-native"
 import { collapsePreview } from "../lib/collapse"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 /**
  * WhatsApp-style "Show more" for a long message.

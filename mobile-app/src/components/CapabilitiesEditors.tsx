@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { api, type McpServer, type Skill } from "../api/client"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 const NEW_SKILL =
   "---\ndescription: What this skill does and when to use it\n---\n\n# New Skill\n\nInstructions for Claude when this skill is invoked.\n"

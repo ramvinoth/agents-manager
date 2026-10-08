@@ -128,6 +128,12 @@ hm_pyenv() {
   fi
   hm_log "Installing Python deps into the venv…"
   "$py" -m pip install --quiet --disable-pip-version-check $HM_PY_DEPS
+  # Optional: tree-sitter grammars for the code Map lens. Wheels exist for the
+  # common platforms; where they do not, the Map says "install code map" and
+  # nothing else is affected — so a failure here never fails the install.
+  "$py" -m pip install --quiet --disable-pip-version-check \
+    -r "$HM_APP_DIR/deploy/codemap-requirements.txt" \
+    || hm_log "Code map grammars unavailable on this platform (the Map lens stays off)."
 }
 
 # 3. Bootstrap schema + seed data (idempotent) ─────────────────────────────────

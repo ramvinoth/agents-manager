@@ -377,6 +377,25 @@ def init_db():
             );
             -- Migration: add model column if table existed before this field.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
+            -- An agent = persona + an optional Claude Code plugin (a folder under
+            -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
+            -- Lenses are views over a PROJECT (two engineer chats share one Map).
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
+            -- Map lens cache: one row per parsed file; re-parsed only when its stamp
+            -- (mtime:size) changes. touched_* is the live "an agent just edited
+            -- this" mark, written by the engine on Write/Edit.
+            CREATE TABLE IF NOT EXISTS code_index (
+              project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              path        TEXT NOT NULL,
+              stamp       TEXT NOT NULL DEFAULT '',
+              symbols     JSONB NOT NULL DEFAULT '[]',
+              imports     JSONB NOT NULL DEFAULT '[]',
+              touched_by  TEXT NOT NULL DEFAULT '',
+              touched_at  DOUBLE PRECISION NOT NULL DEFAULT 0,
+              PRIMARY KEY (project_id, path)
+            );
             -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
             -- The JSON files used to be the second persistence layer; this closes
             -- that split so Postgres is the single source of truth (and the only
@@ -1220,6 +1239,78 @@ def project_ensure(host, cwd, name, created_by=""):
     return project_create(name or cwd, "", host, cwd, created_by)
 
 
+# Lenses: views over a project that an agent turns on (Software Engineer → the
+# code Map). A closed set — each needs its own server code and UI.
+LENSES = ("map",)
+
+
+def project_lens_enable(host, cwd, lens, name=""):
+    """Turn a lens on for the (host, cwd) project, creating the project if
+    needed. Idempotent; returns the project row."""
+    if lens not in LENSES:
+        raise ValueError(f"unknown lens: {lens}")
+    project = project_ensure(host, cwd, name)
+    with _db() as cur:
+        cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
+                    "WHERE id = %s AND NOT lenses ? %s RETURNING *",
+                    (lens, project["id"], lens))
+        row = cur.fetchone()
+    return dict(row) if row else project
+
+
+def project_lens_set(project_id, lens, on):
+    """The owner's switch for one lens on one project. Returns the new list."""
+    if lens not in LENSES:
+        raise ValueError(f"unknown lens: {lens}")
+    with _db() as cur:
+        if on:
+            cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
+                        "WHERE id = %s AND NOT lenses ? %s", (lens, project_id, lens))
+        else:
+            cur.execute("UPDATE projects SET lenses = lenses - %s WHERE id = %s",
+                        (lens, project_id))
+        cur.execute("SELECT lenses FROM projects WHERE id = %s", (project_id,))
+        row = cur.fetchone()
+    return row["lenses"] if row else None
+
+
+# Code index (the Map lens's parse cache) ----------------------------------------
+# One row per source file of a project with the map lens: its symbols and its
+# resolved in-repo imports, keyed by an mtime:size stamp so only changed files
+# re-parse. touched_by/at record the last agent session that wrote the file.
+
+def code_index_load(project_id):
+    """{path: row} for one project."""
+    with _db() as cur:
+        cur.execute("SELECT path, stamp, symbols, imports, touched_by, touched_at "
+                    "FROM code_index WHERE project_id = %s", (project_id,))
+        return {r["path"]: dict(r) for r in cur.fetchall()}
+
+
+def code_index_sync(project_id, upserts, live_paths):
+    """Write re-parsed files and drop rows for files that no longer exist.
+    upserts: [(path, stamp, symbols, imports)]. A touched mark survives."""
+    with _db() as cur:
+        for path, stamp, symbols, imports in upserts:
+            cur.execute(
+                "INSERT INTO code_index (project_id, path, stamp, symbols, imports) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
+                "SET stamp = EXCLUDED.stamp, symbols = EXCLUDED.symbols, imports = EXCLUDED.imports",
+                (project_id, path, stamp, Json(symbols), Json(imports)))
+        cur.execute("DELETE FROM code_index WHERE project_id = %s AND NOT (path = ANY(%s))",
+                    (project_id, list(live_paths)))
+
+
+def code_index_touch(project_id, path, session_id):
+    """An agent session just wrote `path`. Stamp '' forces a re-parse."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO code_index (project_id, path, touched_by, touched_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
+            "SET stamp = '', touched_by = EXCLUDED.touched_by, touched_at = EXCLUDED.touched_at",
+            (project_id, path, session_id or "", _now()))
+
+
 def _norm_cwd(host, cwd):
     """Canonical form of a directory used as a project key. On the local host we
     expand a leading ~ and strip a trailing slash so "~/x", "/home/u/x" and
@@ -1984,14 +2075,11 @@ _BUILTIN_TEMPLATES = [
      "system_prompt": "You are an experienced travel planner. When creating itineraries, consider: budget, travel style (adventure/relaxation/culture), season, visa requirements, local transportation, and must-see vs hidden gems. Organize by day with specific timings. Include practical tips: best neighborhoods to stay, local food to try, common scams to avoid, and packing essentials.",
      "goal": "Create a complete, day-by-day travel itinerary the user can follow immediately."},
     # Engineering
-    {"name": "Code Reviewer", "description": "Thorough, constructive code reviews focused on correctness and maintainability.",
-     "category": "engineering", "icon": "code", "model": "sonnet",
-     "system_prompt": "You are a senior engineer doing code review. Focus on: correctness, edge cases, error handling, security, performance, readability, and maintainability. Prioritize issues by severity. Suggest specific improvements with code examples. Be respectful — explain WHY something is problematic, not just that it is. Check for: missing error handling, race conditions, resource leaks, and API contract violations.",
-     "goal": "Catch bugs and improve code quality through constructive, specific feedback."},
-    {"name": "Architect", "description": "System design and architecture decisions with trade-off analysis.",
-     "category": "engineering", "icon": "build", "model": "opus",
-     "system_prompt": "You are a senior software architect. When designing systems, always consider: scalability, reliability, maintainability, cost, and team capability. Present multiple options with explicit trade-offs. Use diagrams (describe them in text/mermaid) when helpful. Challenge assumptions. Ask clarifying questions about constraints before proposing solutions. Reference real-world patterns and their failure modes.",
-     "goal": "Design robust, scalable systems with clear reasoning for every decision."},
+    {"name": "Software Engineer", "description": "Builds, reviews and designs code from the project's spec, and keeps the spec true.",
+     "category": "engineering", "icon": "code", "model": "opus",
+     "plugin": "software-engineer", "lens": "map",
+     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code through the project's code map; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
+     "goal": "Ship correct, maintainable code that matches the spec, with every design decision reasoned."},
     {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
      "category": "engineering", "icon": "bug", "model": "sonnet",
      "system_prompt": "You are an expert debugger. Follow a systematic approach: 1) Reproduce the issue, 2) Form hypotheses about the root cause, 3) Test each hypothesis with the smallest possible experiment, 4) Fix the root cause, not just symptoms. Ask for: error messages, logs, reproduction steps, and what changed recently. Consider: race conditions, state corruption, configuration drift, and dependency version mismatches.",
@@ -2016,9 +2104,10 @@ _BUILTIN_TEMPLATES = [
      "category": "business", "icon": "megaphone", "model": "sonnet",
      "system_prompt": "You are a marketing strategist. Help with: campaign planning, content strategy, copywriting, social media, email marketing, SEO, and marketing analytics. Tailor strategies to the business size, budget, and target audience. Provide specific, measurable goals. Write copy that is clear, compelling, and on-brand. Always consider the customer journey and conversion funnel.",
      "goal": "Create data-driven marketing strategies with measurable outcomes."},
-    {"name": "Product Manager", "description": "PRDs, prioritization frameworks, and user story writing.",
+    {"name": "Product Manager", "description": "PRDs, specs and the board cards that build them.",
      "category": "business", "icon": "clipboard", "model": "sonnet",
-     "system_prompt": "You are a senior product manager. Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
+     "plugin": "product-manager",
+     "system_prompt": "You are a senior product manager. Write PRDs and specs as project notes and break specs into board cards (your write-prd, write-spec and spec-to-cards skills). Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
      "goal": "Define products that solve real user problems and drive business outcomes."},
     {"name": "Legal Advisor", "description": "Contract review, compliance guidance, and risk assessment.",
      "category": "business", "icon": "shield", "model": "opus",
@@ -2034,32 +2123,34 @@ _BUILTIN_TEMPLATES = [
 
 
 def _seed_agent_templates():
-    """Insert or update builtin templates on startup.
-    On first run: inserts all. On subsequent runs: updates existing builtins
-    (matched by name) to pick up new fields like model, cron, job_prompt."""
+    """Upsert the builtin templates by name, and delete builtins this release no
+    longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
+    so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
+    cols = ("description", "category", "icon", "system_prompt", "goal",
+            "model", "cron", "job_prompt", "plugin", "lens")
+    defaults = {"model": "", "cron": None, "job_prompt": None, "plugin": "", "lens": ""}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
+            vals = [t.get(c, defaults.get(c)) for c in cols]
             cur.execute("SELECT id FROM agent_templates WHERE name = %s AND is_builtin = TRUE", (t["name"],))
             row = cur.fetchone()
             if row:
-                # Update existing builtin with any new field values
-                cur.execute(
-                    """UPDATE agent_templates SET description=%s, category=%s, icon=%s,
-                       system_prompt=%s, goal=%s, model=%s, cron=%s, job_prompt=%s
-                       WHERE id=%s""",
-                    (t["description"], t["category"], t["icon"],
-                     t["system_prompt"], t["goal"], t.get("model", ""),
-                     t.get("cron"), t.get("job_prompt"), row["id"])
-                )
+                cur.execute("UPDATE agent_templates SET " + ", ".join(c + "=%s" for c in cols)
+                            + " WHERE id=%s", (*vals, row["id"]))
             else:
-                cur.execute(
-                    """INSERT INTO agent_templates
-                       (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, is_builtin, created_by, created_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, 'system', extract(epoch from now()))""",
-                    (t["name"], t["description"], t["category"], t["icon"],
-                     t["system_prompt"], t["goal"], t.get("model", ""),
-                     t.get("cron"), t.get("job_prompt"))
-                )
+                cur.execute("INSERT INTO agent_templates (name, " + ", ".join(cols)
+                            + ", is_builtin, created_by, created_at) VALUES (%s, "
+                            + ", ".join(["%s"] * len(cols))
+                            + ", TRUE, 'system', extract(epoch from now()))", (t["name"], *vals))
+        cur.execute("DELETE FROM agent_templates WHERE is_builtin = TRUE AND NOT (name = ANY(%s))",
+                    ([t["name"] for t in _BUILTIN_TEMPLATES],))
+
+
+def agent_template_get(template_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM agent_templates WHERE id = %s", (template_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def agent_templates_list():
@@ -2069,15 +2160,18 @@ def agent_templates_list():
         return cur.fetchall()
 
 
-def agent_template_create(name, description, category, icon, system_prompt, goal, model="", cron=None, job_prompt=None, created_by="user"):
+def agent_template_create(name, description, category, icon, system_prompt, goal, model="",
+                          cron=None, job_prompt=None, plugin="", lens="", created_by="user"):
     """Create a user-defined template. Returns the new row."""
     with _db() as cur:
         cur.execute(
             """INSERT INTO agent_templates
-               (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, is_builtin, created_by, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
+               (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
+                plugin, lens, is_builtin, created_by, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
                RETURNING *""",
-            (name, description, category, icon, system_prompt, goal, model, cron, job_prompt, created_by)
+            (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
+             plugin, lens, created_by)
         )
         return cur.fetchone()
 
@@ -2810,6 +2904,21 @@ def setting_set(key, value):
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             (key, Json(value)),
         )
+
+
+# The owner's local-disk rules (Integrations → Local disk): which folders and
+# operations agents may use on this machine. One reader for the engine and the
+# routes, so core code never imports a route module to learn them.
+LOCAL_DISK_KEY = "local_disk"
+
+
+def local_disk_rules():
+    from viewer import integrations
+    return integrations.local_rules(setting_get(LOCAL_DISK_KEY))
+
+
+def local_disk_set(rules):
+    setting_set(LOCAL_DISK_KEY, rules)
 
 
 # Cloud-drive OAuth CLIENTS: the viewer's own identity to each vendor (a

@@ -2,15 +2,16 @@
  * AgentsScreen — curated agent templates with preconfigured system prompts,
  * goals, and scheduled jobs. Replaces the old Projects tab.
  *
- * Templates are fetched from the server (/api/agent-templates) and merged with
- * client-side builtins as a fallback so the page is never empty — even before
- * the viewer is restarted to pick up the new API route.
+ * Templates come from the server (/api/agent-templates), the one source of
+ * truth: a template carries its plugin (role skills) and lens, which a client
+ * copy could only drift from. A failed load says so, with Try again.
  *
  * Layout: compact category filter chips → SectionList grouped by category
  * with rich cards showing per-template icons, descriptions, and a start arrow.
  */
 import React, { useCallback, useMemo, useState } from "react"
 import {
+  ActivityIndicator,
   RefreshControl,
   ScrollView,
   SectionList,
@@ -22,7 +23,8 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type AgentTemplate } from "../api/client"
-import BUILTIN_TEMPLATES, { TEMPLATE_CATEGORIES } from "../lib/builtinTemplates"
+import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
+import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import Icon, { type IconName } from "../components/Icon"
@@ -36,7 +38,8 @@ const CATEGORIES = [
 
 export default function AgentsScreen({ navigation }: Props) {
   const t = useTheme()
-  const [templates, setTemplates] = useState<AgentTemplate[]>(BUILTIN_TEMPLATES)
+  const [templates, setTemplates] = useState<AgentTemplate[] | null>(null)
+  const [error, setError] = useState("")
   const [refreshing, setRefreshing] = useState(false)
   const [category, setCategory] = useState("all")
 
@@ -44,18 +47,16 @@ export default function AgentsScreen({ navigation }: Props) {
     if (isRefresh) setRefreshing(true)
     api
       .agentTemplates()
-      .then((r) => {
-        // Use server data if available, otherwise keep builtins
-        if (Array.isArray(r) && r.length > 0) setTemplates(r)
-      })
-      .catch(() => {}) // keep existing templates on error
+      .then((r) => { setTemplates(r); setError("") })
+      .catch((e) => setError(userError(e, "the agent list"))) // a list already shown stays
       .finally(() => setRefreshing(false))
   }, [])
 
   useScreenHeader(navigation, () => ({ title: "Agents", headerLeft: undefined, headerRight: () => null }), [])
   useFocusEffect(useCallback(() => { load() }, [load]))
 
-  const filtered = category === "all" ? templates : templates.filter((t) => t.category === category)
+  const all = templates ?? []
+  const filtered = category === "all" ? all : all.filter((x) => x.category === category)
 
   const sections = useMemo(() => {
     const groups: Record<string, AgentTemplate[]> = {}
@@ -87,8 +88,8 @@ export default function AgentsScreen({ navigation }: Props) {
           const active = category === c.value
           const catColor = c.value !== "all" ? TEMPLATE_CATEGORIES[c.value]?.color : t.accent
           const count = c.value === "all"
-            ? templates.length
-            : templates.filter((x) => x.category === c.value).length
+            ? all.length
+            : all.filter((x) => x.category === c.value).length
           return (
             <TouchableOpacity
               key={c.value}
@@ -137,6 +138,17 @@ export default function AgentsScreen({ navigation }: Props) {
         sections={sections}
         keyExtractor={(item) => String(item.id)}
         stickySectionHeadersEnabled={false}
+        ListHeaderComponent={error ? (
+          <View testID="agents-error" style={{ margin: 12, padding: 12, borderRadius: 10, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, gap: 8 }}>
+            <Text style={{ color: t.text, fontSize: 14 }}>{error}</Text>
+            <TouchableOpacity testID="agents-retry" onPress={() => load()} accessibilityRole="button">
+              <Text style={{ color: t.accent, fontSize: 14, fontWeight: "600" }}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        ListEmptyComponent={templates === null && !error ? (
+          <View style={{ padding: 32 }}><ActivityIndicator accessibilityLabel="Loading agents" /></View>
+        ) : null}
         contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={
           <RefreshControl

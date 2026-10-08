@@ -6,7 +6,7 @@ import { api, type Provider } from "../api/client"
 import { aiError, connectionPayload, type KeyAction } from "../lib/aiSelection"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Providers">
 

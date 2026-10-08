@@ -11,7 +11,7 @@ import { api, type Capabilities, type McpServer, type Skill } from "../api/clien
 import type { MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import { SkillEditor, McpEditor } from "./CapabilitiesEditors"
 import MarketplaceSheet from "./MarketplaceSheet"
 import Icon from "./Icon"

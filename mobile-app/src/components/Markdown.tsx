@@ -3,13 +3,13 @@ import { Linking, ScrollView, Text, View } from "react-native"
 import { blockGap, parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
 import { texToUnicode } from "../lib/texUnicode"
 import { useTheme, type Theme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import MermaidView from "./MermaidView"
 import MathView from "./MathView"
 
 /** Whether a #rrggbb background is dark (perceived luminance < 0.5). Used to pick
  *  the mermaid diagram theme since Theme carries no explicit dark flag. */
-function isDarkBg(hex: string): boolean {
+export function isDarkBg(hex: string): boolean {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex || "")
   if (!m) return false
   const n = parseInt(m[1], 16)

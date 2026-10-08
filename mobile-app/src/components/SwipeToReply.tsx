@@ -1,7 +1,7 @@
 import React, { useRef } from "react"
 import { Animated, PanResponder, View } from "react-native"
 import Icon from "./Icon"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 const TRIGGER = 56 // px of drag before the reply fires — comfortably past a scroll jitter

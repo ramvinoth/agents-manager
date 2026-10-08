@@ -16,7 +16,7 @@ import PlanCard from "./PlanCard"
 import Markdown from "./Markdown"
 import Collapsible from "./Collapsible"
 import Icon from "./Icon"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 // The live placeholder shown while a run is in flight. It names the step the
 // agent is on ("Running Bash…") and is replaced by the real response when the

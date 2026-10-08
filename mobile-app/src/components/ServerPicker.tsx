@@ -15,7 +15,7 @@ import { displayAddress } from "../lib/servers"
 import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
 import SheetModal from "./SheetModal"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 /**
  * Bottom-sheet server picker — the Profile "Server" row's affordance. Mirrors

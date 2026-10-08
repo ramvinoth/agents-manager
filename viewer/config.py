@@ -74,6 +74,20 @@ def transcript_path(session_id):
     return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
 
+# Agent plugins shipped with Harman: standard Claude Code plugin folders that an
+# agent template names (agent_templates.plugin) and the engine loads per run.
+AGENT_PLUGINS_DIR = STATIC_DIR / "viewer" / "agent_plugins"
+
+
+def agent_plugin_dir(name):
+    """The plugin folder for a template's `plugin` name, or None when it is
+    blank, not a plain folder name (no path tricks) or not shipped here."""
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+        return None
+    path = AGENT_PLUGINS_DIR / name
+    return path if path.is_dir() else None
+
+
 # Harman's own release version. Read from the top-level VERSION file relative to
 # STATIC_DIR (NOT an absolute path) so that when the server is launched from a
 # release symlink (e.g. /opt/harman/current -> releases/v1.2.0), this reports the

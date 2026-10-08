@@ -26,15 +26,8 @@ from viewer.drives import ADAPTERS, DriveError
 from viewer.routes import require_human
 
 
-LOCAL_DISK_KEY = "local_disk"
-
-
 def _q(req, name, default=""):
     return (req.query.get(name) or [default])[0]
-
-
-def local_rules():
-    return integrations.local_rules(db.setting_get(LOCAL_DISK_KEY))
 
 
 class IntegrationsMixin:
@@ -47,12 +40,12 @@ class IntegrationsMixin:
         """The owner's page view; an agent (MCP principal) gets agent_view —
         what it may use, not how the owner set it up."""
         if (getattr(req, "principal", None) or {}).get("kind") == "mcp":
-            self.send_json(integrations.agent_view(list(db.drives_load().values()), local_rules()))
+            self.send_json(integrations.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
             return
         self.send_json(dict(integrations.view(
             list(db.drives_load().values()), db.drive_clients_load(),
             drive_oauth.redirect_uri_for(self.request_origin())),
-            local=integrations.local_view(local_rules())))
+            local=integrations.local_view(db.local_disk_rules())))
 
     def _p_integrations_connect(self, req):
         """Body: {service, connection?, op?}. Without `connection` a new account row
@@ -214,7 +207,7 @@ class IntegrationsMixin:
         except integrations.IntegrationError as e:
             self._err(e)
             return
-        db.setting_set(LOCAL_DISK_KEY, rules)
+        db.local_disk_set(rules)
         self._g_integrations(req)
 
     # -- mail and calendar (agents, and the app's Calendar screen) ------------

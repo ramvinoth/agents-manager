@@ -316,6 +316,18 @@ export default function OrgScreen({ navigation }: Props) {
             <Row>
               <Text style={{ color: t.text, fontWeight: "600" }}>{p.name}</Text>
               {p.description ? <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{p.description}</Text> : null}
+              {p.host === "local" || !p.host ? (
+                <TouchableOpacity
+                  testID={`org-project-map-${p.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Code map of ${p.name}`}
+                  onPress={() => navigation.navigate("Map", { project: p.id, title: p.name })}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{ alignSelf: "flex-start", marginTop: 6 }}
+                >
+                  <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Code map</Text>
+                </TouchableOpacity>
+              ) : null}
             </Row>
           </TouchableOpacity>
         )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No projects yet.</Text>}

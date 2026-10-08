@@ -8,7 +8,7 @@ import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
 import { LOCAL_LABEL } from "../lib/useHost"
 import SheetModal from "./SheetModal"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 // The implicit "this machine" host. Shared so screens agree on the sentinel.
 const LOCAL: Host = { id: "local", label: LOCAL_LABEL, host: "localhost", user: "", port: 0, auth: "password", keyFile: "" }

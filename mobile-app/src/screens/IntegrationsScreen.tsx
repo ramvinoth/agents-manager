@@ -10,7 +10,7 @@ import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import Icon, { type IconName } from "../components/Icon"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 

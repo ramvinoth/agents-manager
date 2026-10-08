@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { Text, TextInput, TouchableOpacity, View } from "react-native"
 import { allAnswered, isInstant, parseQuestions, pickOption, type AuqQuestion } from "../lib/auq"
 import Icon from "./Icon"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 /**

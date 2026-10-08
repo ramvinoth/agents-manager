@@ -16,7 +16,7 @@ const ALLOWED = new Set([
   "lib/theme.ts",
   "lib/theme.test.ts",
   "lib/avatars.ts",
-  "lib/builtinTemplates.ts",
+  "lib/templateCategories.ts",
   "components/MermaidView.tsx",
   "components/MathView.tsx",
   "screens/TerminalScreen.tsx",

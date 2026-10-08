@@ -316,7 +316,37 @@ export interface OrgProject {
   cwd: string
   created_by: string
   created_at: number
+  /** Views an agent turned on for this project (viewer/db.LENSES), e.g. "map". */
+  lenses?: string[]
 }
+/** One box on the code Map (viewer/codemap.graph). Folder ids end in "/";
+ *  symbol ids are "<file>#<Class.>name". */
+export interface MapNode {
+  id: string
+  kind: "folder" | "file" | "class" | "function" | "method"
+  label: string
+  files: number
+  symbols: number
+  touched: boolean
+  line?: number
+}
+export type MapLevel = "project" | "folder" | "file"
+/** GET /api/org/map — one level of a project's code as a graph. */
+export type MapView =
+  | { available: false; level: MapLevel; path: string; install: string }
+  | {
+      available: true
+      project: number
+      level: MapLevel
+      path: string
+      files: number
+      mermaid: string
+      nodes: MapNode[]
+      edges: { from: string; to: string; weight: number; kind?: string }[]
+      /** file → the session id that wrote it in the last 15 minutes */
+      touched: Record<string, string>
+      truncated: boolean
+    }
 /** An intake channel (viewer/intake.py): a door from outside onto one board.
  *  POST to `path` with the channel token → a card there, waking `session_id`. */
 export interface IntakeChannel {

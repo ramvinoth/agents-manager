@@ -39,7 +39,7 @@ import QuestionCard from "../components/QuestionCard"
 import PlanCard from "../components/PlanCard"
 import { ItemView, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
@@ -148,6 +148,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const openNotes = useCallback(() => {
     if (sessionId) navigation.navigate("Notes", { session: sessionId, title: label })
     else navigation.navigate("Notes")
+  }, [navigation, sessionId, label])
+  const openMap = useCallback(() => {
+    if (sessionId) navigation.navigate("Map", { session: sessionId, title: label })
   }, [navigation, sessionId, label])
   const openInbox = useCallback(() => {
     if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
@@ -516,7 +519,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Board", onPress: openBoard },
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
-                { text: "Cancel", style: "cancel" },
+                // A map needs the session's project; an unsent chat has none yet.
+                ...(sessionId ? [{ text: "Map", onPress: openMap }] : []),
+                { text: "Cancel", style: "cancel" as const },
               ])
             }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -527,7 +532,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, isCurrentThread])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openMap, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while

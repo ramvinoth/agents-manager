@@ -9,7 +9,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from viewer import db
 from viewer.config import (
-    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, read_back, split_lines,
+    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, read_back,
+    split_lines,
 )
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
@@ -208,6 +209,14 @@ class SessionsMixin:
         if not name:
             self.send_json({"error": "Name required"}, status=400)
             return
+        plugin = (body.get("plugin") or "").strip()
+        lens = (body.get("lens") or "").strip()
+        if plugin and not agent_plugin_dir(plugin):
+            self.send_json({"error": f"Unknown plugin: {plugin}"}, status=400)
+            return
+        if lens and lens not in db.LENSES:
+            self.send_json({"error": f"Unknown lens: {lens}"}, status=400)
+            return
         row = db.agent_template_create(
             name=name,
             description=(body.get("description") or "").strip(),
@@ -215,8 +224,11 @@ class SessionsMixin:
             icon=(body.get("icon") or "sparkle").strip(),
             system_prompt=(body.get("system_prompt") or "").strip(),
             goal=(body.get("goal") or "").strip(),
+            model=(body.get("model") or "").strip(),
             cron=(body.get("cron") or "").strip() or None,
             job_prompt=(body.get("job_prompt") or "").strip() or None,
+            plugin=plugin,
+            lens=lens,
         )
         self.send_json({"id": row["id"]} if row else {"error": "Failed"})
 
@@ -980,6 +992,18 @@ class SessionsMixin:
             conv_mode = "chat"
         meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
                 "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+        # Started from an agent template: its plugin rides on every Claude run
+        # (engine --plugin-dir) and its lens turns on for this project. Read
+        # from the template row, never from the body, so a client cannot name
+        # an arbitrary plugin.
+        template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
+        if template:
+            meta.update(agentTemplate=template["id"], agentPlugin=template.get("plugin") or "")
+            if template.get("lens") and host == "local":
+                try:
+                    db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))
+                except Exception as e:  # a lens is a view; never block the chat on it
+                    print(f"[new-session] lens enable failed: {e}", flush=True)
         if selection is not None:
             meta.update(ai.meta_fields(selection), aiRevision=1)
         try:

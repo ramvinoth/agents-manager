@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react"
 import { Alert, Text, TextInput, TouchableOpacity, View } from "react-native"
 import SheetModal from "./SheetModal"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 /**
  * Long-press actions for a chat: rename or delete. Delete is confirmed and

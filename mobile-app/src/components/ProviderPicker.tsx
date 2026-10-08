@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Modal, SafeAreaView, Text, TextInput, Touc
 import { api, type Provider } from "../api/client"
 import { aiError, modelChoices, sameAI, switchAIProvider, type AIConfig, type AISelection, type ModelDiscovery } from "../lib/aiSelection"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 // Display labels for the two FIXED enum sets the server hands us (viewer/ai.py:
 // conversationModes, EFFORTS). The set of valid values is the server's truth —

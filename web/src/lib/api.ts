@@ -3,7 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
@@ -210,6 +210,12 @@ class ApiClient {
   /** Find-or-create the org project for a (host, cwd) directory → the board it maps to. */
   orgProjectForCwd(body: { host: string; cwd: string; name?: string }) {
     return this.postJSON<OrgProject>("/api/org/project-for-cwd", body)
+  }
+  /** One level of the project's code Map (the Map lens). Throws the server's
+   *  sentence (remote project, not a code folder) for the dialog to show. */
+  orgMap(projectId: number, level: MapLevel, path = "") {
+    const p = new URLSearchParams({ project: String(projectId), level, path })
+    return this.getStrict<MapView>(`/api/org/map?${p}`)
   }
   orgBoard(projectId: number) {
     return this.getJSON<{ columns: BoardColumn[] }>(`/api/org/board?project=${projectId}`)

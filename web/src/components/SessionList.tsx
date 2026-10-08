@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail } from "lucide-react"
+import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
 import { KanbanDialog } from "@/components/kanban/KanbanDialog"
 import { NotesDialog } from "@/components/notes/NotesDialog"
+import { MapDialog } from "@/components/map/MapDialog"
 import { InboxDialog } from "@/components/inbox/InboxDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
@@ -52,6 +53,7 @@ export function SessionList() {
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
+  const [mapFor, setMapFor] = useState<Group | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
 
@@ -182,6 +184,18 @@ export function SessionList() {
                   <span className="flex-1 font-medium">Inbox</span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                 </button>,
+                // Fixed "Map" row — the project's code as a drill-down graph
+                // (folders → files → classes/functions), live-highlighting the
+                // files agents are writing right now.
+                <button
+                  key="map"
+                  onClick={() => setMapFor(active)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Network className="size-4 shrink-0 text-primary" />
+                  <span className="flex-1 font-medium">Map</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </button>,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -219,6 +233,14 @@ export function SessionList() {
           cwd={inboxFor.project || inboxFor.dir}
           name={projectName(inboxFor.project || inboxFor.dir)}
           onClose={() => setInboxFor(null)}
+        />
+      )}
+      {mapFor && (
+        <MapDialog
+          host={currentHost}
+          cwd={mapFor.project || mapFor.dir}
+          name={projectName(mapFor.project || mapFor.dir)}
+          onClose={() => setMapFor(null)}
         />
       )}
       {inboxSession && (

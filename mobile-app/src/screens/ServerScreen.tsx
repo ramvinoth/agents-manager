@@ -6,7 +6,7 @@ import { addServer, switchServer, token } from "../state/config"
 import { api } from "../api/client"
 import { parsePairLink } from "../lib/pairLink"
 import { pairFromLink } from "../state/signin"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Server">

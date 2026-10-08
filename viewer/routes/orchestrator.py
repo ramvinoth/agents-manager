@@ -22,10 +22,17 @@ MCP proxy or the approval path, because none of them carry a second copy of the 
 Handlers read req.principal. They never re-authenticate.
 """
 import io
+import os
+import threading
 import time
 import zipfile
 
-from viewer import actions, db, discussion, notelinks, orglogic
+from viewer import actions, codemap, db, discussion, notelinks, orglogic
+
+# One re-index at a time per project: two viewers polling the same map must not
+# both parse every changed file.
+_map_locks = {}
+_map_locks_guard = threading.Lock()
 
 
 class OrchestratorMixin:
@@ -236,6 +243,76 @@ class OrchestratorMixin:
         project = (req.query.get("project") or [None])[0]
         label = names.get(int(project)) if project else None
         self._send_attachment(buf.getvalue(), f"{label or 'Harman'} notes.zip", "application/zip")
+
+    # ── the Map lens (a project's code as a drill-down graph) ─────────────────
+    def _g_org_map(self, req):
+        """GET /api/org/map?project=&level=project|folder|file&path=
+
+        Re-parses only files whose mtime:size stamp changed (code_index is the
+        cache), then folds them into the requested level. Opening the map turns
+        the lens on, which is what makes agents' edits light up live (engine
+        marks touched files only for projects with the lens). Local projects
+        only — the parse reads files on this machine."""
+        q = lambda k, d="": (req.query.get(k) or [d])[0]
+        project = self._board_project(q("project") or None, q("session") or None)
+        proj = db.project_get(int(project)) if project else None
+        if not proj:
+            self.send_json({"error": "a map is per project — open it from a project"}, status=400); return
+        level, path = q("level", "project"), q("path").strip("/")
+        if level not in ("project", "folder", "file"):
+            self.send_json({"error": "level is project, folder or file"}, status=400); return
+        if proj.get("host") not in (None, "", "local"):
+            self.send_json({"error": f"the map reads code on this machine; {proj['name']} lives on {proj['host']}"},
+                           status=400); return
+        root = proj.get("cwd") or ""
+        if not os.path.isdir(root) or root in ("/", os.path.expanduser("~")):
+            self.send_json({"error": f"{root or 'this project'} is not a code folder this machine can map"},
+                           status=400); return
+        if not codemap.available():
+            self.send_json({"available": False, "level": level, "path": path,
+                            "install": "python3 -m pip install -r deploy/codemap-requirements.txt (into the Python that runs Harman)"})
+            return
+        if "map" not in (proj.get("lenses") or []):
+            db.project_lens_set(proj["id"], "map", True)
+        index, touched = self._map_index(proj["id"], root)
+        if level == "file" and path not in index:
+            self.send_json({"error": f"{path} is not a mapped source file"}, status=404); return
+        g = codemap.graph(index, level, path, touched)
+        self.send_json({"available": True, "project": proj["id"], "level": level, "path": path,
+                        "files": len(index), "mermaid": codemap.to_mermaid(g),
+                        "touched": touched, **g})
+
+    @staticmethod
+    def _map_index(project_id, root):
+        """{rel: {symbols, deps}} with stale files re-parsed, plus
+        {rel: session} for files an agent wrote within TOUCH_WINDOW."""
+        with _map_locks_guard:
+            lock = _map_locks.setdefault(project_id, threading.Lock())
+        with lock:
+            live = codemap.source_files(root)
+            cached = db.code_index_load(project_id)
+            resolver = codemap.Resolver(live)
+            upserts = []
+            for rel, stamp in live.items():
+                row = cached.get(rel)
+                if row and row["stamp"] == stamp:
+                    continue
+                try:
+                    with open(os.path.join(root, rel), "rb") as f:
+                        parsed = codemap.parse_file(rel, f.read())
+                except OSError:
+                    continue
+                deps = sorted({d for d in (resolver.resolve(i, rel) for i in parsed["imports"]) if d})
+                upserts.append((rel, stamp, parsed["symbols"], deps))
+                cached[rel] = {**(row or {}), "symbols": parsed["symbols"], "imports": deps}
+            if upserts or set(cached) - set(live):
+                db.code_index_sync(project_id, upserts, live)
+        horizon = time.time() - codemap.TOUCH_WINDOW
+        index = {rel: {"symbols": cached[rel]["symbols"], "deps": cached[rel]["imports"]}
+                 for rel in live if rel in cached}
+        touched = {rel: r.get("touched_by", "") for rel, r in cached.items()
+                   if rel in live and (r.get("touched_at") or 0) > horizon}
+        return index, touched
 
     def _p_org_notes(self, req):
         body = self.read_body() or {}

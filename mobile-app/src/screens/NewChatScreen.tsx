@@ -17,11 +17,12 @@ import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
 import { aiError, aiSummary, newChatAI, type AIConfig } from "../lib/aiSelection"
-import { TEMPLATE_CATEGORIES } from "../lib/builtinTemplates"
+import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
+import { userError } from "../lib/errors"
 import { describeSchedule } from "../lib/interval"
 import { resolveSessionPath } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
 
@@ -117,6 +118,9 @@ export default function NewChatScreen({ navigation, route }: Props) {
         agent: "claude",
         systemPrompt: systemPrompt.trim() || undefined,
         goal: goal.trim() || undefined,
+        // The server reads the template's plugin (role skills) and lens from
+        // its own row; a client can only name which template it started from.
+        template: template?.id,
       })
 
       // The server may return `path` (for codex/copilot) or not (Claude).
@@ -158,7 +162,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
         path: sessionPath,
       })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the session", "start"))
       setBusy(false)
     }
   }

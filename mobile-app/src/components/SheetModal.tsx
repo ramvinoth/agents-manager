@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react"
 import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from "react-native"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 /**
  * A bottom sheet with the correct backdrop behaviour: the dark scrim FADES in

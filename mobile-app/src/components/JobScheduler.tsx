@@ -76,7 +76,7 @@ export default function JobScheduler({
   providers,
 }: {
   onSubmit: (prompt: string, schedule: JobSchedule) => void
-  styles: ReturnType<typeof import("../screens/styles").useStyles>
+  styles: ReturnType<typeof import("../lib/styles").useStyles>
   /** When set, pre-fills the form for editing. */
   initialValues?: JobInitialValues
   /** Called when the user cancels editing (only shown in edit mode). */
