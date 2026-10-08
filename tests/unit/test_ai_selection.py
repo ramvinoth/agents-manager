@@ -345,3 +345,42 @@ def test_capability_read_uses_draft_provider_and_preserves_saved_selection(monke
     result = handler.send_json.call_args.args[0]
     assert result["selection"]["provider"] == ""
     assert result["capabilities"]["efforts"] == [""]
+
+
+def _new_session(monkeypatch, tmp_path, **extra):
+    import io, json
+    from viewer import db
+    from viewer.routes import sessions
+    loops = {}
+    monkeypatch.setattr(db, "session_meta_set", lambda sid, data: None)
+    monkeypatch.setattr(db, "setting_get", lambda *a: None)
+    monkeypatch.setattr(db, "loop_upsert", lambda lid, entry: loops.update({lid: entry}))
+    launch = Mock(return_value=True)
+    monkeypatch.setattr(sessions, "start_claude_run", launch)
+    raw = json.dumps({"message": "hello", "cwd": str(tmp_path), **extra}).encode()
+    handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
+    handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
+    handler.handle_new_session()
+    return handler.send_json.call_args, launch, loops
+
+
+def test_new_session_saves_its_jobs_in_the_same_request(monkeypatch, tmp_path):
+    call, launch, loops = _new_session(monkeypatch, tmp_path, jobs=[
+        {"prompt": "daily digest", "cron": "0 9 * * *"}, {"prompt": " check ", "interval": "30m"}])
+    body = call.args[0]
+    assert body["started"] and len(body["jobs"]) == 2
+    saved = [loops[i] for i in body["jobs"]]
+    assert all(e["session"] == body["session"] and e["path"] == "" and e["origin"] == "user" for e in saved)
+    assert [e["prompt"] for e in saved] == ["daily digest", "check"]
+    assert saved[0]["cron"] == "0 9 * * *" and saved[1]["interval"] == 1800
+
+
+def test_new_session_refuses_a_bad_job_before_starting_anything(monkeypatch, tmp_path):
+    for jobs, msg in (([{"prompt": "x", "cron": "nope"}], "Job 1: Invalid cron"),
+                      ([{"prompt": "", "interval": "5m"}], "Job 1 has no prompt"),
+                      ("x", "jobs must be a list")):
+        call, launch, loops = _new_session(monkeypatch, tmp_path, jobs=jobs)
+        assert call.kwargs.get("status") == 400 and call.args[0]["error"].startswith(msg)
+        assert not launch.called and not loops
+    call, launch, _ = _new_session(monkeypatch, tmp_path, host="box", jobs=[{"prompt": "x", "interval": "5m"}])
+    assert call.kwargs.get("status") == 400 and not launch.called

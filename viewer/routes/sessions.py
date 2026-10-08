@@ -931,6 +931,10 @@ class SessionsMixin:
         if not message:
             self.send_json({"error": "Empty message"}, status=400)
             return
+        jobs, err = self._new_session_jobs(body.get("jobs"), host, body.get("agent", "claude"))
+        if err:
+            self.send_json({"error": err}, status=400)
+            return
         if host != "local":
             cwd = (body.get("cwd") or "~").strip()   # validated on the remote by claude
         else:
@@ -1027,19 +1031,59 @@ class SessionsMixin:
                                         mode, cwd, "", host, provider_env=penv, effort=effort):
                     self.send_json({"error": "Busy"}, status=409)
                     return
-                self.send_json({"started": True, "session": session_id})
+                self._started(session_id, jobs)
                 return
             # Chat mode: the viewer proxies and creates the transcript file itself.
             from viewer.customrun import start_custom_run
             if not start_custom_run(session_id, provider, message, cwd, host, mode, model=model, preset=resolved["preset"]):
                 self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)
                 return
-            self.send_json({"started": True, "session": session_id})
+            self._started(session_id, jobs)
             return
         if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host, effort=effort):
             self.send_json({"error": "Busy"}, status=409)
             return
-        self.send_json({"started": True, "session": session_id})
+        self._started(session_id, jobs)
+
+    @staticmethod
+    def _new_session_jobs(raw, host, agent):
+        """Validate the scheduled jobs a new chat starts with → ([job], error).
+
+        Checked BEFORE the session starts, so a bad schedule refuses the whole
+        launch instead of leaving a chat that is missing a job its owner asked
+        for. Jobs fire through the local scheduler on Claude sessions only."""
+        if not raw:
+            return [], None
+        if not isinstance(raw, list):
+            return None, "jobs must be a list"
+        if host != "local" or agent != "claude":
+            return None, "Scheduled jobs need a Claude chat on this machine"
+        jobs = []
+        for i, j in enumerate(raw, 1):
+            prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
+            if not prompt:
+                return None, f"Job {i} has no prompt"
+            sched, err = build_schedule(j.get("cron"), j.get("interval"), j.get("at"))
+            if err:
+                return None, f"Job {i}: {err}"
+            jobs.append((prompt, sched))
+        return jobs, None
+
+    def _started(self, session_id, jobs):
+        """Reply to a launched new chat, saving its jobs in the same request.
+
+        The transcript doesn't exist yet, so each job carries the session id and
+        no path; the scheduler resolves the path by id when it fires
+        (run_loop_iteration). Saved here, not by the client after the chat
+        appears, so a job is never lost to the owner leaving the screen."""
+        ids = []
+        for prompt, sched in jobs:
+            lid = uuid_mod.uuid4().hex[:12]
+            db.loop_upsert(lid, {"session": session_id, "path": "", "prompt": prompt,
+                                 "runs": 0, "created": time.time(), "enabled": True,
+                                 "origin": USER_ORIGIN, "model": "", "provider": "", **sched})
+            ids.append(lid)
+        self.send_json({"started": True, "session": session_id, "jobs": ids})
 
     def serve_session_list(self, host="local", reader=""):
         """List all session JSONL files with metadata, on the selected host."""

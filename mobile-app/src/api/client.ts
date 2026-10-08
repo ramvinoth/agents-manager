@@ -446,7 +446,9 @@ export const api = {
     effort?: string
     ai?: AISelection
     template?: number
-  }) => req<{ started: boolean; session: string; path: string }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
+    /** Scheduled jobs saved with the chat, server-side, in the same request. */
+    jobs?: { prompt: string; cron?: string; interval?: number; at?: string }[]
+  }) => req<{ started: boolean; session: string; path?: string; jobs?: string[] }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
   // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
   resolve: (id: string, host?: string) =>
     req<{ found: boolean; path?: string; running?: boolean; error?: string }>(
