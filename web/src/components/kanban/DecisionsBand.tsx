@@ -130,7 +130,7 @@ export function DecisionsBand({
                       {isCard
                         ? `${d.column} · ${d.label || "an agent"} is waiting on you`
                         : d.kind === "red"
-                          ? `If you approve: ${d.risk || "it runs"}`
+                          ? `${d.label || d.requested_by || "an agent"} · if you approve: ${d.risk || "it runs"}`
                           : d.summary || meta.label}
                     </span>
                     <Badge variant="outline" className="shrink-0 text-[10px]">{meta.label}</Badge>
