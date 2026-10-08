@@ -184,6 +184,12 @@ def name_references(entries, card_titles, column_names):
     return entries
 
 
+def action_label(action):
+    """The plain-language name of an org action ("Delete card"), or the raw
+    name when it has none."""
+    return _ACTIONS.get(action, (action, None))[0]
+
+
 def project_entry(row):
     """Project one stored row. Only actor text and validated numeric facts pass through."""
     action = row.get("action")

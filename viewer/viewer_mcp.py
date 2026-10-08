@@ -407,9 +407,9 @@ _TOOL_LIST = [
          "id": {"type": "string", "description": "Target session id from session_list."}}}},
     # ── Inbox: your message ledger (you ↔ owner, you ↔ peers) ───────────────
     {"name": "inbox_list",
-     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Filter with kind.",
+     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card | red — red is an approval you queued for a Red action) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Filter with kind.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "kind": {"type": "string", "enum": ["message", "question", "plan", "approval", "card"]}}}},
+         "kind": {"type": "string", "enum": ["message", "question", "plan", "approval", "card", "red"]}}}},
     {"name": "inbox_send",
      "description": "Send a message: to='user' reaches the owner (he gets a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "body"], "properties": {

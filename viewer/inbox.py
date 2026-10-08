@@ -34,7 +34,11 @@ SNOOZE_NEXT_TICK_S = 1800        # 30 minutes — the sweep's own cadence
 # question/plan rows key on (session, tool_use_id), the approval registry on
 # its per-event id, the board on the card id.
 REF_FIELD = {"question": "tool_use_id", "plan": "tool_use_id",
-             "approval": "id", "card": "card"}
+             "approval": "id", "card": "card", "red": "id"}
+# Every kind that carries a decision (all but "message"). "approval" is a live
+# tool permission inside a running turn; "red" is an org approval (db
+# `approvals`) an agent queued for an action only the owner may allow.
+DECISION_KINDS = tuple(REF_FIELD)
 
 
 # ---- pure shaping (no db, no clock, no network) ----------------------------
@@ -78,7 +82,7 @@ def attach_state(rows, open_items, now=None):
     for r in rows:
         kind = r.get("kind") or "message"
         item = dict(r)
-        if kind in ("question", "plan", "approval", "card"):
+        if kind in DECISION_KINDS:
             ref = r.get("ref_id") or ""
             item["open"] = bool(ref) and (f"{kind}:{ref}" in open_refs)
         else:
@@ -193,6 +197,94 @@ def format_card(card, comment_body=""):
     if comment_body:
         lines += ["", comment_body]
     return "\n".join(lines)
+
+
+def red_subject(intent):
+    """What a queued Red action touches, in words a cold reader recognises:
+    the card's number and title, the target session's name and the mode
+    asked for, the loop's prompt… "" when the intent names nothing (a server
+    restart) or the target is already gone. Reads the db; never raises."""
+    action = (intent or {}).get("action") or ""
+    args = (intent or {}).get("args") or {}
+    try:
+        if action == "card_delete":
+            c = db.card_get(int(args.get("card_id")))
+            return f"#{c['id']} {c.get('title') or ''}".strip() if c else f"card #{args.get('card_id')} (already gone)"
+        if action == "note_delete":
+            n = db.note_get(int(args.get("note_id")))
+            return f"note \"{n.get('title') or ''}\"" if n else f"note {args.get('note_id')} (already gone)"
+        if action == "loop_delete":
+            lp = db.loop_get(args.get("id"))
+            if not lp:
+                return f"loop {args.get('id')} (already gone)"
+            return f"\"{(lp.get('prompt') or '')[:80]}\" in {_label(lp.get('session') or '')}"
+        if action == "session_mode_set":
+            return f"{_label(str(args.get('session') or ''))} → {args.get('mode') or '?'}"
+        if action == "intake_create":
+            p = db.project_get(int(args.get("project_id"))) if args.get("project_id") else None
+            return f"\"{args.get('name') or ''}\" onto {p['name'] if p else 'a board'}"
+        if action == "intake_rotate":
+            ch = db.intake_get(args.get("id"))
+            return f"\"{ch['name']}\"" if ch else str(args.get("id") or "")
+        if action == "skill_promote":
+            return str(args.get("name") or "")
+        if action == "system_preamble_set":
+            return f"\"{str(args.get('preamble') or '')[:120]}\""
+    except Exception:
+        pass
+    return ""
+
+
+def format_red(action_label, subject, risk, requested_by):
+    """The inbox body for an org Red approval — the ask first, then what it
+    touches, who asked and what approving costs."""
+    what = f"{action_label}: {subject}" if subject else action_label
+    return (f"Approve or deny: {what}\n\n"
+            f"Asked by: {requested_by or 'an agent'}\n"
+            f"If you approve: {risk}\n"
+            "Deny and nothing happens. The asking session is told either way.")
+
+
+def deliver_red(approval):
+    """Put a freshly queued org Red approval in the owner's inbox (and push).
+    The mailbox is the asking session's when one asked (so it archives with
+    that chat), else the owner's own ("" — e.g. Harman's scheduler). Never
+    raises."""
+    try:
+        from viewer import audit, orglogic
+        intent = approval.get("detail") or {}
+        action = intent.get("action") or ""
+        body = format_red(audit.action_label(action) if action else (approval.get("summary") or "Approval"),
+                          red_subject(intent),
+                          orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT),
+                          approval.get("created_by") or "")
+        deliver_decision(str(intent.get("session") or ""), "red", str(approval["id"]), body,
+                         push_title="Approval needed")
+    except Exception:
+        pass
+
+
+def tell_requester(approval, resolution, result=None):
+    """Tell the session that queued a Red action what the owner decided —
+    without this an agent waits forever on a request that was refused. Wakes
+    the session (it may have parked work on the answer). Never raises."""
+    try:
+        sid = str((approval.get("detail") or {}).get("session") or "")
+        if not sid:
+            return
+        from viewer import audit
+        action = (approval.get("detail") or {}).get("action") or ""
+        what = audit.action_label(action) if action else (approval.get("summary") or "your request")
+        if resolution == "approved":
+            err = (result or {}).get("error") if isinstance(result, dict) else None
+            text = (f"The owner approved \"{what}\" (approval {approval['id']}), but running it failed: {err}"
+                    if err else f"The owner approved \"{what}\" (approval {approval['id']}); it has been done.")
+        else:
+            text = (f"The owner denied \"{what}\" (approval {approval['id']}). It was not done — "
+                    "do not retry it; pick another way or ask on your card.")
+        deliver_message("user", "", "session", sid, text)
+    except Exception:
+        pass
 
 
 def last_session_comment(card_id):

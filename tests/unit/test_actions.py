@@ -142,7 +142,7 @@ def test_red_action_by_an_agent_queues_the_intent_and_does_not_run(fdb):
     assert fdb.cards_moved == [], "a queued action must not have mutated anything"
     assert fdb.outcomes == ["queued:red"]
     # The stored detail IS the intent — that is what makes approval replayable.
-    assert fdb.approvals[0]["detail"] == it
+    assert fdb.approvals[0]["detail"] == dict(it, session="")
 
 
 def test_red_action_by_the_owner_at_the_ui_runs_without_ceremony(fdb):
@@ -337,4 +337,4 @@ def test_system_preamble_write_by_an_agent_queues_and_does_not_persist(fdb):
     resp, status = actions.execute(it, "owner", "manager")
     assert status == 200 and resp["queued"] is True
     assert "system_preamble" not in fdb.settings
-    assert fdb.approvals[0]["detail"] == it
+    assert fdb.approvals[0]["detail"] == dict(it, session="")

@@ -398,7 +398,9 @@ export interface Card {
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
 export interface OpenDecision {
-  kind: "question" | "plan" | "approval" | "card"
+  /** "red" is an org approval: an agent's Red action (delete, bypass mode,
+   *  restart…) queued for the owner; decided with orgResolveApproval. */
+  kind: "question" | "plan" | "approval" | "card" | "red"
   session: string
   host: string
   /** The session's human-readable name (its title/goal/project), "" if unknown. */
@@ -412,8 +414,12 @@ export interface OpenDecision {
   run_id?: string
   revision?: number
   tool_name?: string
-  /** The approval's id (only for kind "approval"). */
+  /** The approval's id (kind "approval": the tool approval; kind "red": the org approval). */
   id?: string
+  /** kind "red": the queued action, who asked, and what approving it does. */
+  action?: string
+  requested_by?: string
+  risk?: string
   /** The item's inbox row (0 when none was delivered) — the handle a snooze
    *  takes. The queue already omits items whose snooze is live. */
   inbox_id: number
@@ -431,10 +437,10 @@ export interface CardComment {
 }
 /** One row of the message ledger (viewer/db `inbox_messages`). The inbox is a
  *  DELIVERY SURFACE over the existing decision system, not a second one: a row
- *  can carry a decision (kind question | plan | approval | card) whose
+ *  can carry a decision (kind question | plan | approval | card | red) whose
  *  open/resolved state the server derives at read time from the live sources
  *  (`open`, below) — the deciding tap stays on the per-session routes. */
-export type InboxKind = "message" | "question" | "plan" | "approval" | "card"
+export type InboxKind = "message" | "question" | "plan" | "approval" | "card" | "red"
 export type InboxStatus = "sent" | "read" | "snoozed"
 export interface InboxMessage {
   id: number

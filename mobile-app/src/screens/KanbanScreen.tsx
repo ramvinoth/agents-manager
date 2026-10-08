@@ -363,11 +363,12 @@ export default function KanbanScreen({ route, navigation }: Props) {
  * delivery surfaces, never a second decision store. Rendered only when
  * non-empty, so the board stays clean for the common case.
  */
-const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard"> = {
+const DECISION_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard" | "warning"> = {
   question: "help",
   plan: "file",
   approval: "shield",
   card: "clipboard",
+  red: "warning",
 }
 
 function DecisionBand({

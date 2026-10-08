@@ -27,7 +27,7 @@ import threading
 import time
 import zipfile
 
-from viewer import actions, codemap, db, discussion, notelinks, orglogic
+from viewer import actions, codemap, db, discussion, inbox, notelinks, orglogic
 
 # One re-index at a time per project: two viewers polling the same map must not
 # both parse every changed file.
@@ -459,9 +459,10 @@ class OrchestratorMixin:
         if status != 200 or row.get("error"):
             self.send_json(row, status=status if status != 200 else 404); return
         result = None
-        if body.get("resolution", "approved") == "approved" and \
-                (row.get("detail") or {}).get("action"):
+        resolution = body.get("resolution", "approved")
+        if resolution == "approved" and (row.get("detail") or {}).get("action"):
             result, _ = actions.execute(row["detail"], p["human_role"], "")
+        inbox.tell_requester(row, resolution, result)
         self.send_json({**row, **({"result": result} if result is not None else {})})
 
     def _g_org_audit(self, req):

@@ -1650,9 +1650,10 @@ def note_comment_stats():
 
 # Inbox messages (the owner's and the agents' message ledger) ----------------
 
-INBOX_KINDS = ("message", "question", "plan", "approval", "card")
+# "red" is an org Red approval (the approvals table) — see inbox.REF_FIELD.
+INBOX_KINDS = ("message", "question", "plan", "approval", "card", "red")
 
-_DECISION_KINDS = ("question", "plan", "approval", "card")
+_DECISION_KINDS = ("question", "plan", "approval", "card", "red")
 
 
 def inbox_create(sender_type, sender_id, recipient_type, recipient_id, body,
@@ -1691,7 +1692,7 @@ def inbox_list(session_id=None, project_id=None, kind=None,
                unread_only=False, archived=False, limit=200):
     """The owner's inbox as a filtered VIEW. `session_id` narrows to one chat
     (its messages in both directions), `project_id` to a project, `kind` to one
-    of the five kinds, `unread_only` to messages that need the owner's eye
+    of INBOX_KINDS, `unread_only` to messages that need the owner's eye
     (status 'sent' and any snooze lapsed). Newest first."""
     clauses, params = ["archived = %s"], [bool(archived)]
     if session_id is not None:

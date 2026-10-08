@@ -132,6 +132,26 @@ _RED_ACTIONS = {
     "reboot_host", "stop_shared_service", "prod_down", "touch_foreign_host",
 }
 
+# What the owner risks by approving, in one plain line — shown with the approval
+# in the decision queue so a cold reader can judge it without knowing the policy
+# above. Only actions an agent can actually queue need an entry; anything else
+# falls back to RED_RISK_DEFAULT.
+RED_RISK = {
+    "card_delete": "The card and its whole comment thread are deleted for good.",
+    "note_delete": "The note and its discussion are deleted for good.",
+    "loop_delete": "The scheduled work and its run history are deleted for good.",
+    "skill_promote": "Overwrites a skill every session already relies on.",
+    "automation_resume": "Agents may start running unattended work again.",
+    "restart_now": "Restarts the server now: every running agent turn is cut off mid-work.",
+    "system_preamble_set": "Changes the instructions every future session starts with.",
+    "session_mode_set": "Changes how much that session may do without asking; "
+                        "'bypass' lets it run any command on this machine unattended.",
+    "intake_create": "Opens a new door from outside onto a board: anyone with its token can create cards.",
+    "intake_rotate": "Issues a new token for the channel; the old one stops working.",
+}
+RED_RISK_DEFAULT = "This action is hard to undo or reaches beyond one session."
+
+
 # Kinds an approval row can carry (mirrors db approvals.kind).
 _RED_KINDS = {"destructive", "secret", "money", "infra"}
 

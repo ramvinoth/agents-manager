@@ -10,17 +10,19 @@ import QuestionCard from "./QuestionCard"
 import PlanCard from "./PlanCard"
 import SheetModal from "./SheetModal"
 
-const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard"> = {
+const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard" | "warning"> = {
   question: "help",
   plan: "file",
   approval: "shield",
   card: "clipboard",
+  red: "warning",
 }
 const KIND_LABEL: Record<OpenDecision["kind"], string> = {
   question: "Question",
   plan: "Plan approval",
   approval: "Tool approval",
   card: "Card for you",
+  red: "Needs your OK",
 }
 
 /**
@@ -43,6 +45,9 @@ const KIND_LABEL: Record<OpenDecision["kind"], string> = {
  *    route returns RAW tool input, which the cross-session index withholds on
  *    purpose. To see raw input, open the owning chat (you're in-context there).
  *  - card → the card IS the decision surface; open it on the board.
+ *  - red → an org approval (an agent's Red action). The index already carries
+ *    the cold-reader text (summary, risk, who asked); decided here with
+ *    orgResolveApproval. A 403 (you raised it) shows its reason.
  *
  * Deciding uses the EXISTING per-session routes (race-safe via the decisions
  * gate) — the board never becomes a second approval store. A 409 ("already
@@ -205,6 +210,23 @@ export default function DecisionCockpit({
     [busy, d, goResolved]
   )
 
+  const decideRed = useCallback(
+    (resolution: "approved" | "denied") => {
+      if (busy || !d || !d.id) return
+      setBusy(true)
+      api
+        .orgResolveApproval({ id: Number(d.id), resolution })
+        .then((r) => (r.result?.error ? setLoadError(`Approved, but it failed: ${r.result.error}`) : goResolved()))
+        .catch((e) => {
+          // 404 = decided elsewhere or gone → it's resolved, advance.
+          if ((e as Error & { status?: number }).status === 404) goResolved()
+          else setLoadError((e as Error).message)
+        })
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
   const who = useMemo(() => (d ? d.label || d.session.slice(0, 8) : ""), [d])
   const openCount = len - resolved.size
 
@@ -290,6 +312,22 @@ export default function DecisionCockpit({
             </View>
           ) : null}
 
+          {d.kind === "red" ? (
+            <View testID="cockpit-red" style={styles.permCard}>
+              <Text style={styles.permTitle}>If you approve</Text>
+              <Text style={styles.permInput}>{d.risk || "The action runs."}</Text>
+              <Text style={styles.permInput}>Deny and nothing happens. The asking session is told either way.</Text>
+              <View style={styles.permBtnRow}>
+                <TouchableOpacity testID="cockpit-red-deny" style={styles.permDeny} onPress={() => decideRed("denied")} disabled={busy}>
+                  <Text style={styles.permDenyText}>Deny</Text>
+                </TouchableOpacity>
+                <TouchableOpacity testID="cockpit-red-approve" style={styles.permAllow} onPress={() => decideRed("approved")} disabled={busy}>
+                  <Text style={styles.permAllowText}>Approve</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
           {d.kind === "card" ? (
             <View testID="cockpit-card" style={styles.permCard}>
               <Text style={styles.permTitle}>{d.column ? `Parked in ${d.column}` : "Parked for you"}</Text>
@@ -305,7 +343,7 @@ export default function DecisionCockpit({
           {/* Review-needed / need-the-full-thread escape hatch. For every kind:
               go see the whole conversation before deciding. Leaves the item
               open (it resurfaces). */}
-          {d.kind !== "card" ? (
+          {d.kind !== "card" && d.session ? (
             <TouchableOpacity testID="cockpit-open-chat" onPress={() => onOpenThread(d)} style={{ padding: 12, alignItems: "center" }}>
               <Text style={{ color: t.accent, fontWeight: "600" }}>Open chat to see the full thread</Text>
             </TouchableOpacity>

@@ -10,7 +10,7 @@ import type { InboxFilter, InboxKind, InboxMessage } from "../api/client"
 export type { InboxFilter, InboxKind, InboxMessage }
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
-  message: "Message", question: "Question", plan: "Plan", approval: "Approval", card: "Card",
+  message: "Message", question: "Question", plan: "Plan", approval: "Approval", card: "Card", red: "Needs your OK",
 }
 
 /** A row's kind label. A missing or unknown kind reads as a plain message —
@@ -22,7 +22,7 @@ export function kindLabel(kind: string | null | undefined): string {
 /** The kind filters the API accepts ("all" = no filter) — what
  *  inboxScopeFilter validates against. Decision kinds first. */
 export const INBOX_FILTERS: ("all" | InboxKind)[] =
-  ["all", "question", "plan", "approval", "card", "message"]
+  ["all", "red", "question", "plan", "approval", "card", "message"]
 
 /** Snooze choices, in hours, matching the server's clamp (0–168). */
 export const SNOOZE_OPTIONS: { label: string; hours: number }[] = [

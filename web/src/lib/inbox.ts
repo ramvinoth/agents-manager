@@ -2,7 +2,7 @@
  * inbox.ts — pure logic for the Inbox surface (mirrors the server's
  * viewer/inbox + routes/inbox contract). The inbox is a DELIVERY SURFACE over
  * the existing decision system, not a second one: a row can carry a decision
- * (question | plan | approval | card) whose open state the server derives at
+ * (question | plan | approval | card | red) whose open state the server derives at
  * read time; the deciding tap stays on the per-session routes. No server
  * imports: unit-tested under node like notes.ts.
  *
@@ -13,14 +13,14 @@ import type { InboxFilter, InboxKind, InboxMessage } from "./types"
 export type { InboxFilter, InboxKind, InboxMessage }
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
-  message: "Message", question: "Question", plan: "Plan", approval: "Approval", card: "Card",
+  message: "Message", question: "Question", plan: "Plan", approval: "Approval", card: "Card", red: "Needs your OK",
 }
 
 /** The kind chips a list view offers, in display order. "all" means no kind
  *  filter; the decision kinds come first — the inbox exists to get decisions to
  *  a human, messages are the secondary channel. */
 export const INBOX_FILTERS: ("all" | InboxKind)[] =
-  ["all", "question", "plan", "approval", "card", "message"]
+  ["all", "red", "question", "plan", "approval", "card", "message"]
 
 /** The one chip the row wears. Priority: a live snooze (the owner said
  *  "later" — never show it as urgent while it holds) > an open decision

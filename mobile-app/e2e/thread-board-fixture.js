@@ -342,7 +342,6 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     if (route === "POST /api/usage") return send({ ok: true })
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
-    if (url.pathname === "/api/org/approvals") return send({ approvals: [] })
     if (url.pathname === "/api/org/skills") return send({ skills: [] })
     if (url.pathname === "/api/sessions") return send(boardSessions.map(id => ({ id, title: id === SESSION ? "Native board fixture" : "Native board fixture B", path: `/fixture/${id}.jsonl`, project: "/fixture", modified: Date.now() / 1000 })))
     if (url.pathname === "/api/session/ai") return send({ error: "AI fixture not enabled" }, 404)

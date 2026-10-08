@@ -826,9 +826,14 @@ def execute(it, human_role, session_level, acting_session=""):
         return {"error": f"unknown action {action}"}, 500
     if (orglogic.is_red(action)
             and not orglogic.self_approves(human_role, session_level)):
+        # The stored intent also names the asking session (execute reads only
+        # action/args/actor, so a replay is unchanged): the decision queue shows
+        # whose request it is, and the outcome is told back to that session.
         ap = db.approval_open(kind="infra", summary=f"{actor}: {action}",
-                              detail=it, created_by=actor)
+                              detail=dict(it, session=acting_session or ""), created_by=actor)
         db.audit_append(actor, action, it, "queued:red")
+        from viewer import inbox
+        inbox.deliver_red(ap)
         return {"queued": True, "approval": ap["id"]}, 200
     if action in ("card_move", "task_done"):
         # The two handlers that resolve their target column at RUN time — which

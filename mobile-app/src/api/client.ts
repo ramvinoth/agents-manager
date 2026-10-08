@@ -192,7 +192,9 @@ export type MapView =
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
 export type OpenDecision = {
-  kind: "question" | "plan" | "approval" | "card"
+  /** "red" is an org approval: an agent's Red action (delete, bypass mode,
+   *  restart…) queued for the owner; decided with orgResolveApproval. */
+  kind: "question" | "plan" | "approval" | "card" | "red"
   session: string
   host: string
   label: string
@@ -204,6 +206,10 @@ export type OpenDecision = {
   revision?: number
   tool_name?: string
   id?: string
+  /** kind "red": the queued action, who asked, and what approving it does. */
+  action?: string
+  requested_by?: string
+  risk?: string
   /** kind "card": the board card parked in Review/Needs-info for the owner. */
   card?: number
   column?: string
@@ -227,11 +233,11 @@ export type NoteCommentSort = "best" | "new" | "old"
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 // ---- inbox (the channel: you ↔ owner ↔ peer sessions) ----
 // A row of the message ledger. `kind` is "message" for a free message, or a
-// decision kind (question | plan | approval | card) that was auto-delivered
+// decision kind (question | plan | approval | card | red) that was auto-delivered
 // from its durable source — the inbox is a delivery SURFACE, never a second
 // decision system. `open` is derived at read time from the live sources; a
 // lapsed snooze re-reads as unread, so a skipped decision resurfaces.
-export type InboxKind = "message" | "question" | "plan" | "approval" | "card"
+export type InboxKind = "message" | "question" | "plan" | "approval" | "card" | "red"
 export type InboxStatus = "sent" | "read" | "snoozed"
 export type InboxMessage = {
   id: number
@@ -890,7 +896,6 @@ export const api = {
   // `note_delete` is Red: an agent's delete queues; the owner's runs.
   orgDeleteNote: (body: { note_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/notes/delete", body),
-  orgApprovals: () => req<{ approvals: Approval[] }>("GET", "/api/org/approvals"),
   // The cross-session decision queue (card #60): every open durable question/
   // plan + live tool approval, oldest first, with a total count. Read-only —
   // deciding an item goes through the per-session routes, which are race-safe.
@@ -921,8 +926,10 @@ export const api = {
     req<{ ok?: boolean }>("POST", "/api/usage", { client: "ios", events }),
   inboxSnooze: (id: number, hours: number) =>
     req<{ ok?: boolean; snoozed_until?: number }>("POST", "/api/inbox/snooze", { id, hours }),
-  orgResolveApproval: (body: { id: number; resolution: string }) =>
-    req<Approval>("POST", "/api/org/approvals/resolve", body),
+  /** Decide an org (Red) approval; approving runs the queued action. Throws
+   *  with `status`: 403 when you raised it, 404 when it is gone or decided. */
+  orgResolveApproval: (body: { id: number; resolution: "approved" | "denied" }) =>
+    req<Approval & { result?: { error?: string } }>("POST", "/api/org/approvals/resolve", body),
   orgAudit: async (result: AuditFilter = "all", before?: number) =>
     parseAuditPage(await req("GET", auditPath(result, before)), before),
   orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),

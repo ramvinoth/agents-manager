@@ -134,12 +134,35 @@ class TestRoute:
     """The route gathers the three sources and passes labels through; the
     pure function does the shaping (covered above)."""
 
+    def test_an_org_approval_lists_cold_and_is_delivered_once(self, monkeypatch):
+        """An open Red approval with no inbox row (queued before delivery
+        existed) is delivered on read so it can be postponed; one with a row
+        is not re-delivered."""
+        import viewer.inbox as vi
+        sent = []
+        monkeypatch.setattr(vi, "deliver_red", lambda r: sent.append(r["id"]))
+        monkeypatch.setattr(vi, "red_subject", lambda intent: "Harman → bypass")
+        ap = {"id": 3, "created_at": NOW - 20, "created_by": "session:Harman",
+              "summary": "session:Harman: session_mode_set",
+              "detail": {"action": "session_mode_set", "args": {"mode": "bypass"}}}
+        self._fakes(monkeypatch, [], [], [], red=[ap],
+                    inbox_rows=[{"kind": "red", "ref_id": "9", "id": 1}])
+        h = _Handler()
+        h._g_decisions_open(None)
+        payload, _ = h.sent
+        [d] = payload["decisions"]
+        assert d["kind"] == "red" and d["id"] == "3"
+        assert d["summary"] == "Change session permission mode: Harman → bypass"
+        assert "bypass" in d["risk"]
+        assert sent == [3]
+
     def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=(),
-               inbox_rows=()):
+               inbox_rows=(), red=()):
         import viewer.db as vdb
         import viewer.questions as q
         import viewer.routes.inbox as vinbox
         monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
+        monkeypatch.setattr(vdb, "approval_list_open", lambda: list(red))
         monkeypatch.setattr(vdb, "inbox_decision_refs", lambda: list(inbox_rows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
@@ -220,3 +243,42 @@ class TestRoute:
         assert h.sent[1] == 200
         assert h.sent[0]["count"] == 1
         assert h.sent[0]["decisions"][0]["label"] == ""
+
+
+# ---- org Red approvals (kind "red") ------------------------------------------
+
+def _red(id, created, action="session_mode_set", session="s-ask", subject="Harman → bypass"):
+    return {"id": id, "created_at": created, "created_by": "session:Harman",
+            "summary": f"session:Harman: {action}",
+            "detail": {"action": action, "args": {}, "actor": "session:Harman", "session": session},
+            "action_label": "Change session permission mode", "subject": subject,
+            "risk": "bypass lets it run any command"}
+
+
+def test_red_approval_reads_cold_and_names_the_asker():
+    q = decisions.open_decisions([], [], [], {"s-ask": "Harman"}, NOW, [], [_red(3, NOW - 50)])
+    [it] = q["decisions"]
+    assert it["kind"] == "red" and it["id"] == "3"
+    assert it["summary"] == "Change session permission mode: Harman → bypass"
+    assert it["session"] == "s-ask" and it["label"] == "Harman"
+    assert it["requested_by"] == "session:Harman" and it["risk"]
+    assert it["action"] == "session_mode_set" and it["waiting_s"] == 50
+
+
+def test_red_approval_without_session_or_subject_still_reads():
+    # A pre-delivery row: no session in the intent, nothing resolvable.
+    row = {"id": 9, "created_at": NOW, "created_by": "harman", "summary": "harman: restart_now",
+           "detail": {"action": "restart_now"}}
+    [it] = decisions.open_decisions([], [], [], {}, NOW, [], [row])["decisions"]
+    assert it["session"] == "" and it["summary"] == "restart_now" and it["risk"] == ""
+
+
+def test_red_approval_with_malformed_detail_costs_only_words():
+    row = {"id": 4, "created_at": NOW - 5, "summary": "x: y", "detail": "not a dict"}
+    [it] = decisions.open_decisions([], [], [], {}, NOW, [], [row])["decisions"]
+    assert it["kind"] == "red" and it["summary"] == "x: y"
+
+
+def test_red_approvals_sort_with_the_rest_by_wait():
+    q = decisions.open_decisions([_q("a", NOW - 10)], [], [], {}, NOW, [], [_red(1, NOW - 100)])
+    assert [d["kind"] for d in q["decisions"]] == ["red", "question"]

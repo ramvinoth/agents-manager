@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type Approval, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
+import { api, isQueued, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -12,16 +12,15 @@ type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
 /**
  * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects
- * (each opens its board), the open Approvals queue Harman feeds (Approve/Deny),
- * and an entry into the read-only audit log. Read-heavy; mutations are limited to
- * approving/denying and creating employees/projects (manager authority,
- * enforced server-side).
+ * (each opens its board), and an entry into the read-only audit log. Org
+ * approvals are decided in the decision queue (board band → cockpit, Inbox),
+ * not here. Read-heavy; mutations are limited to creating employees/projects
+ * (manager authority, enforced server-side).
  */
 export default function OrgScreen({ navigation }: Props) {
   const t = useTheme()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [projects, setProjects] = useState<OrgProject[]>([])
-  const [approvals, setApprovals] = useState<Approval[]>([])
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
   // The library route returns every skill on disk; this section is about what the
@@ -35,17 +34,15 @@ export default function OrgScreen({ navigation }: Props) {
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, a, h, sk, pr] = await Promise.all([
+      const [e, p, h, sk, pr] = await Promise.all([
         api.orgEmployees(),
         api.orgProjects(),
-        api.orgApprovals(),
         api.orgHarman().catch(() => null),
         api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
         api.providers().catch(() => ({ providers: [] as Provider[] })),
       ])
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
-      setApprovals(a.approvals || [])
       setHarman(h)
       setSkills(sk.skills || [])
       setProviders(pr.providers || [])
@@ -87,14 +84,6 @@ export default function OrgScreen({ navigation }: Props) {
       }
       load()
     } catch (e) { setError((e as Error).message) }
-  }
-
-  async function resolve(a: Approval, resolution: "approved" | "denied") {
-    setApprovals((cur) => cur.filter((x) => x.id !== a.id))
-    try {
-      await api.orgResolveApproval({ id: a.id, resolution })
-      load()
-    } catch { load() }
   }
 
   async function patchHarman(patch: Partial<HarmanConfig>) {
@@ -229,23 +218,6 @@ export default function OrgScreen({ navigation }: Props) {
           </Row>
         </Section>
       ) : null}
-
-      <Section title="Approvals" >
-        {approvals.length ? approvals.map((a) => (
-          <Row key={a.id}>
-            <Text style={{ color: t.text, fontWeight: "600" }}>{a.summary || a.kind}</Text>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>{a.kind} · {a.created_by}</Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-              <TouchableOpacity testID={`org-approve-${a.id}`} onPress={() => resolve(a, "approved")} style={{ flex: 1, backgroundColor: t.accent, borderRadius: 8, padding: 8, alignItems: "center" }}>
-                <Text style={{ color: t.onAccent, fontWeight: "600" }}>Approve</Text>
-              </TouchableOpacity>
-              <TouchableOpacity testID={`org-deny-${a.id}`} onPress={() => resolve(a, "denied")} style={{ flex: 1, backgroundColor: t.dangerBg, borderRadius: 8, padding: 8, alignItems: "center" }}>
-                <Text style={{ color: t.danger, fontWeight: "600" }}>Deny</Text>
-              </TouchableOpacity>
-            </View>
-          </Row>
-        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing needs your approval.</Text>}
-      </Section>
 
       <Section title="Employees" onAdd={() => openCreate("employee")}>
         {employees.length ? employees.map((e) => {

@@ -73,7 +73,7 @@ class ApiClient {
   private async strict<T>(res: Response): Promise<T> {
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
-      throw Object.assign(new Error(data?.error || `HTTP ${res.status}`), { status: res.status })
+      throw Object.assign(new Error(data?.error || data?.reason || `HTTP ${res.status}`), { status: res.status })
     }
     return data as T
   }
@@ -311,6 +311,14 @@ class ApiClient {
    *  destination. Green at ic — an agent's message runs immediately. */
   inboxSend(body: { to: string; body: string; in_reply_to?: number }) {
     return this.postJSON<InboxMessage>("/api/inbox/send", body)
+  }
+
+  /** Decide an org (Red) approval; approving runs the queued action. Throws
+   *  with `status`: 403 when the caller raised it (separation of duties),
+   *  404 when it is gone or already decided. */
+  orgResolveApproval(id: number, resolution: "approved" | "denied") {
+    return this.postStrict<{ id: number; status: string; result?: { error?: string } }>(
+      "/api/org/approvals/resolve", { id, resolution })
   }
 
   // A card with its full comment thread and dependency edges — the discussion

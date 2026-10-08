@@ -262,6 +262,8 @@ def harman_tick(*, dry_run=False):
                         ap = db.approval_open(a.get("approval_kind", "infra"), a.get("summary", ""),
                                               a.get("detail", {}), created_by="harman")
                         db.audit_append("harman", "escalate", {"approval": ap["id"]}, "pending")
+                        from viewer import inbox
+                        inbox.deliver_red(ap)
                 except Exception as e:  # one bad action shouldn't abort the rest
                     db.audit_append("harman", a.get("kind", "action"), {"error": str(e)[:200]}, "error")
     except Exception:

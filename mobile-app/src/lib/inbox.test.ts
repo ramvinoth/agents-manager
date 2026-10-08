@@ -25,7 +25,7 @@ eq("confirm after a poll already brought it: once", confirmSent([M({ id: 1 }), s
 eq("confirmed row is not pending", confirmSent([p1], p1.id, server)[0].pending, undefined)
 
 // labels: the chip contract
-eq("kind labels", INBOX_FILTERS, ["all", "question", "plan", "approval", "card", "message"])
+eq("kind labels", INBOX_FILTERS, ["all", "red", "question", "plan", "approval", "card", "message"])
 eq("label set", INBOX_KIND_LABEL.question, "Question")
 eq("kind label known", kindLabel("plan"), "Plan")
 eq("kind label missing reads as message", kindLabel(undefined), "Message")

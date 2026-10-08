@@ -245,3 +245,32 @@ def test_deliver_returns_before_a_slow_wake(monkeypatch):
     assert not woke.is_set()          # returned while the wake is still running
     gate.set()
     assert woke.wait(5)               # and the wake still happens
+
+
+# ---- org Red approvals -------------------------------------------------------
+
+def test_red_is_a_decision_kind_keyed_by_approval_id():
+    assert "red" in inbox.DECISION_KINDS and "message" not in inbox.DECISION_KINDS
+    assert inbox.decision_ref({"kind": "red", "id": "7"}) == "red:7"
+    rows = inbox.attach_state([_row(kind="red", ref_id="7")], [{"kind": "red", "id": "7"}], NOW)
+    assert rows[0]["open"] is True
+    rows = inbox.attach_state([_row(kind="red", ref_id="7")], [], NOW)
+    assert rows[0]["open"] is False
+
+
+def test_red_and_tool_approval_refs_never_collide():
+    items = [{"kind": "approval", "id": "3"}]
+    rows = inbox.attach_state([_row(kind="red", ref_id="3")], items, NOW)
+    assert rows[0]["open"] is False
+
+
+def test_format_red_asks_first_and_names_cost_and_asker():
+    body = inbox.format_red("Delete card", "#12 Fix login", "Deleted for good.", "session:Harman")
+    first = body.splitlines()[0]
+    assert first == "Approve or deny: Delete card: #12 Fix login"
+    assert "session:Harman" in body and "Deleted for good." in body
+
+
+def test_red_subject_names_nothing_for_unknown_or_argless_actions():
+    assert inbox.red_subject({"action": "restart_now", "args": {}}) == ""
+    assert inbox.red_subject({}) == ""

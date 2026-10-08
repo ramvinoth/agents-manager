@@ -14,7 +14,7 @@ const M = (o: Partial<InboxMessage> & { id: number }): InboxMessage => ({
 })
 
 // labels: the chip contract
-eq("kind labels", INBOX_FILTERS, ["all", "question", "plan", "approval", "card", "message"])
+eq("kind labels", INBOX_FILTERS, ["all", "red", "question", "plan", "approval", "card", "message"])
 eq("label set", INBOX_KIND_LABEL.question, "Question")
 
 // title/preview: first line is the ask; preview is the second

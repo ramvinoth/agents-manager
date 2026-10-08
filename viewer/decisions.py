@@ -19,7 +19,8 @@ this same gate answers it later via the resume path.
 from viewer import db
 
 
-def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None):
+def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None,
+                   red_rows=None):
     """Shape the decision sources into ONE queue — the kanban decision
     list (card #60).
 
@@ -32,7 +33,8 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
     a durable row are Ram's call, not this module's). Each item is a pointer +
     summary, not a decision surface: deciding an item uses the EXISTING
     per-session routes (/api/chat/question/answer, /api/chat/plan/decide,
-    /api/chat/permission/decide), so the board never becomes a second approval
+    /api/chat/permission/decide) and, for an org Red approval (kind "red"),
+    /api/org/approvals/resolve — so the board never becomes a second approval
     system.
     """
     labels = labels or {}
@@ -98,6 +100,28 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
             "summary": f"#{cid} {r.get('title') or ''}"[:120],
             "card": cid,
             "column": r.get("column_name") or "",
+        })
+    for r in red_rows or []:
+        # An org Red approval (db `approvals`): an agent asked for something
+        # only the owner may allow — a delete, a permission change, a restart.
+        # The row arrives with `subject` (what it touches, resolved by the
+        # route) and `risk` (what approving costs), so the headline reads
+        # cold: "Delete card: #12 Fix login — asked by session:Harman".
+        intent = r.get("detail") if isinstance(r.get("detail"), dict) else {}
+        sid = str(intent.get("session") or "")
+        what = r.get("action_label") or str(intent.get("action") or r.get("summary") or "")
+        subject = r.get("subject") or ""
+        items.append({
+            "kind": "red",
+            "session": sid,
+            "host": "local",
+            "label": label(sid),
+            "waiting_s": int(max(0, now - float(r.get("created_at") or now))),
+            "summary": (f"{what}: {subject}" if subject else what)[:160],
+            "id": str(r.get("id") or ""),
+            "action": str(intent.get("action") or ""),
+            "requested_by": r.get("created_by") or "",
+            "risk": r.get("risk") or "",
         })
     items.sort(key=lambda i: i["waiting_s"], reverse=True)
     return {"count": len(items), "decisions": items}
