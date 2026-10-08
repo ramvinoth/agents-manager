@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react"
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -120,6 +121,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
         template: template?.id,
         jobs: jobs.length ? jobs : undefined,
       })
+      // A server older than the `jobs` field ignores it — say so rather than
+      // let the owner believe the schedule exists.
+      if (jobs.length && (res.jobs?.length ?? 0) !== jobs.length) {
+        Alert.alert("Chat started without its jobs", "This server didn't save the scheduled jobs. Add them from the chat's profile (tap its name).")
+      }
       // Open it now: the thread shows the message and the working bubble,
       // resolves the transcript once the CLI writes it, then saves the name.
       const name = title.trim()
