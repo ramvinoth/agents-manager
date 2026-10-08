@@ -3,7 +3,7 @@
 // (GET /api/integrations) and this module only turns a service's state into
 // the control the owner sees, and runs the consent wait both the
 // Integrations page and the file browser's location picker use.
-import type { IntegrationConnection, IntegrationProvider, IntegrationService, ServiceState } from "./types"
+import type { IntegrationCategory, IntegrationConnection, IntegrationProvider, IntegrationService, ServiceState } from "./types"
 
 /** What tapping a service row does. `toggle` flips the owner's switch (the
  *  grant is untouched); `grant` runs consent for the missing permission;
@@ -43,6 +43,33 @@ export function unavailableNote(p: IntegrationProvider): string {
   return p.services.filter((s) => !s.available).map((s) => `${s.label} can't be connected: ${s.unavailable.replace(/\.$/, "")}.`).join(" ")
 }
 
+/** Whether an account is connected by pasting an API token rather than a sign-in. */
+export const isToken = (p: IntegrationProvider): boolean => p.auth === "token"
+
+/** A provider nobody can connect yet (AWS needs request signing): listed so the
+ *  owner knows it is coming, with the reason in place of a button. */
+export const comingLater = (p: IntegrationProvider): boolean => !p.services.some((s) => s.available)
+
+/** "Add an account" grouped the way the server orders it. Providers whose
+ *  category the server did not list (or an older server sending none) land in
+ *  the first group, so nothing is ever hidden. Empty groups are dropped. */
+export function byCategory(providers: IntegrationProvider[], categories: IntegrationCategory[] = []):
+  (IntegrationCategory & { providers: IntegrationProvider[] })[] {
+  const cats = categories.length ? categories : [{ id: "workspace", label: "Files, mail & calendar" }]
+  const known = new Set(cats.map((c) => c.id))
+  return cats
+    .map((c) => ({ ...c, providers: providers.filter((p) => (known.has(p.category || "") ? p.category : cats[0].id) === c.id) }))
+    .filter((g) => g.providers.length)
+}
+
+/** The one line a closed category shows: what can be connected now, and how
+ *  many more are only listed. */
+export function categorySummary(providers: IntegrationProvider[]): string {
+  const ready = providers.filter((p) => !comingLater(p)).map((p) => p.label)
+  const later = providers.length - ready.length
+  return [ready.join(", "), later ? `${later} coming later` : ""].filter(Boolean).join(" · ")
+}
+
 /** What an unconfigured provider unlocks once its one-time client setup is done. */
 export function setupHint(p: IntegrationProvider): string {
   const names = p.services.filter((s) => s.available).map((s) => s.label)
@@ -55,12 +82,14 @@ export function setupHint(p: IntegrationProvider): string {
  *  provider starts open; after that it is a rare act, so a row opens only when
  *  the owner taps it (`chosen`) and the page stays about the accounts. */
 export function providerOpen(p: IntegrationProvider, chosen: string | null, hasAccounts: boolean): boolean {
-  return p.client.configured && (chosen === p.id || !hasAccounts)
+  return !isToken(p) && p.client.configured && (chosen === p.id || !hasAccounts)
 }
 
 /** The one line under a provider's name: what setup unlocks, what to do once
  *  open, or (closed) what it offers. */
 export function providerHint(p: IntegrationProvider, open: boolean): string {
+  if (comingLater(p)) return p.services[0]?.unavailable || "Not connectable yet."
+  if (isToken(p)) return p.services.find((s) => s.available)?.agent || ""
   if (!p.client.configured) return `${p.client.client_id ? "Client secret missing. " : ""}${setupHint(p)}`
   if (open) return "Pick what to start with. You can add the rest later."
   return p.services.filter((s) => s.available).map((s) => s.label).join(", ")
@@ -72,7 +101,8 @@ export function providerHint(p: IntegrationProvider, open: boolean): string {
  *  not crowd the providers they can use now; with none ready, setup IS the
  *  way in, so nothing folds. */
 export function setupFold(providers: IntegrationProvider[]): IntegrationProvider[] {
-  return providers.some((p) => p.client.configured) ? providers.filter((p) => !p.client.configured) : []
+  const oauth = providers.filter((p) => !isToken(p))
+  return oauth.some((p) => p.client.configured) ? oauth.filter((p) => !p.client.configured) : []
 }
 
 /** A folder as the owner reads it: "~" is their home folder, not a symbol. */

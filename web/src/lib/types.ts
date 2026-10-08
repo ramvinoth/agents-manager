@@ -569,9 +569,17 @@ export interface IntegrationConnection {
 }
 /** One step of a provider's client setup; `redirect` shows the copyable redirect URI under it. */
 export interface SetupStep { text: string; redirect: boolean; links: { label: string; url: string }[] }
+/** One extra box a token provider's connect form asks for (Odoo's address, Mixpanel's username). */
+export interface IntegrationField { id: string; label: string; placeholder: string; required: boolean }
 export interface IntegrationProvider {
   id: string
   label: string
+  /** How an account is connected: a vendor sign-in (OAuth) or a pasted API token.
+   *  Absent on servers predating token providers — read as "oauth". */
+  auth?: "oauth" | "token"
+  /** A CATEGORIES id ("workspace", "compute"…); absent on older servers. */
+  category?: string
+  fields?: IntegrationField[]
   /** A PKCE public client — no secret is issued or needed. */
   public: boolean
   /** The vendor-console checklist for creating the OAuth client, in order. */
@@ -582,8 +590,11 @@ export interface IntegrationProvider {
 }
 /** The folders agents may touch on the server's own disk, and what they may do there. */
 export interface LocalDisk { roots: string[]; ops: (IntegrationOp & { on: boolean })[] }
+export interface IntegrationCategory { id: string; label: string }
 export interface IntegrationsView {
   providers: IntegrationProvider[]
+  /** The order and names of the "Add an account" groups; absent on older servers. */
+  categories?: IntegrationCategory[]
   redirect_uri: string
   local: LocalDisk
 }

@@ -16,14 +16,24 @@ here, at the one place every caller passes. An AGENT's call also names the
 operation (read, draft, create…), which the owner allows per account; the
 owner acting in the app is bounded by the vendor grant alone.
 
+API-token providers (Cloudflare, Hetzner, DigitalOcean…): the owner pastes a
+token, which is probed against the vendor before it is saved; agents then call
+the vendor through ONE proxy route (api_call), which adds the credential, pins
+the host and checks the owner's read/change switch.
+
 Local disk: the owner's rules for what agents may touch on this machine
 (integrations.local_*), stored in one setting and enforced by routes.fs.
 """
+import json
 import secrets
 
 from viewer import db, drive_oauth, integrations, workspace
+from viewer import drives as drives_mod
 from viewer.drives import ADAPTERS, DriveError
 from viewer.routes import require_human
+
+
+_API_TEXT_CAP = 200_000   # a non-JSON vendor reply, trimmed before it reaches an agent's context
 
 
 def _q(req, name, default=""):
@@ -85,6 +95,74 @@ class IntegrationsMixin:
             return
         self.send_json(dict(r, connection=cid))
 
+    def _p_integrations_token(self, req):
+        """Body: {provider, token, fields?, connection?}. Connect an API-token
+        provider (Cloudflare, Hetzner…): the token is probed against the vendor
+        first — a token the vendor refuses is never saved — then stored as a
+        new account row, or, with `connection`, replaces that account's token
+        (an expired Tailscale key) keeping the owner's switches. Human-only;
+        the token never comes back in any view."""
+        if not require_human(self, req):
+            return
+        body = self.read_body() or {}
+        pid = (body.get("provider") or "").strip().lower()
+        cid = (body.get("connection") or "").strip()
+        try:
+            old = db.drive_get(cid) if cid else None
+            if cid and (old is None or old["kind"] != pid):
+                raise integrations.IntegrationError("Unknown %s account %r" % (pid, cid), 404)
+            method, url, headers, data, fields = integrations.verify_request(pid, body.get("token"), body.get("fields"))
+            status, _, raw = drives_mod._http(method, url, headers, data, timeout=20)
+            if status != 200:
+                raise integrations.IntegrationError(
+                    "%s refused this token (HTTP %d) — check it was copied whole and has not expired"
+                    % (integrations.provider(pid)["label"], status), 400)
+            try:
+                reply = json.loads(raw or b"{}")
+            except ValueError:
+                reply = {}
+        except (DriveError, integrations.IntegrationError) as e:
+            self._err(e)
+            return
+        cfg = integrations.token_config(pid, body["token"], integrations.account_from(pid, reply, fields), fields)
+        if old is not None:
+            keep = old.get("config") or {}
+            cfg.update({k: keep[k] for k in ("off", "ops") if k in keep})
+        db.drive_upsert(cid or "dr-" + secrets.token_hex(4), {
+            "label": integrations.provider(pid)["label"], "kind": pid, "status": "active", "hidden": False,
+            "config": cfg})
+        self._g_integrations(req)
+
+    def _p_integrations_api(self, req):
+        """Body: {connection, method, path, body?}. An AGENT's call to a
+        token provider's API (MCP api_call): the server adds the credential
+        and pins the request to that provider's host. GET (and a provider's
+        listed read POSTs) need the owner's `read`; anything else `change`,
+        off by default because it can spend money or move DNS."""
+        b = self.read_body() or {}
+        agent = (getattr(req, "principal", None) or {}).get("kind") == "mcp"
+        try:
+            conn = db.drive_get(b.get("connection") or "")
+            if conn is None:
+                raise integrations.IntegrationError("Unknown connection %r — see integrations_list" % b.get("connection"), 404)
+            sid = conn["kind"] + ".api"
+            op, method, url, headers, data = integrations.api_request(conn, b.get("method"), b.get("path"), b.get("body"))
+            integrations.pick_connection([conn], sid, conn["id"], op if agent else None)
+            status, _, raw = drives_mod._http(method, url, headers, data, timeout=60)
+        except (DriveError, integrations.IntegrationError) as e:
+            self._err(e)
+            return
+        if status == 401 and not integrations.expired(conn):
+            # The vendor no longer takes this token (revoked, or a Tailscale key
+            # past its 90 days): the owner sees it on the account and replaces it.
+            db.drive_upsert(conn["id"], dict(conn, config=dict(conn.get("config") or {}, expired=True)))
+        text = raw.decode("utf-8", "replace")
+        try:
+            out = json.loads(text)
+        except ValueError:
+            out = text[:_API_TEXT_CAP]
+        self.send_json({"status": status, "body": out})
+
     def _p_integrations_client(self, req):
         """Save a provider's OAuth client (Harman's own identity to that
         vendor, shared by every account of the provider). Body: {provider,
@@ -97,8 +175,8 @@ class IntegrationsMixin:
         pid = (body.get("provider") or "").strip().lower()
         client_id = (body.get("client_id") or "").strip()
         secret = body.get("client_secret")
-        if pid not in integrations.PROVIDERS:
-            self.send_json({"error": "Unknown provider %r" % pid}, status=404)
+        if pid not in drive_oauth.available_vendors():
+            self.send_json({"error": "Unknown sign-in provider %r" % pid}, status=404)
         elif not client_id:
             self.send_json({"error": "client_id is required"}, status=400)
         elif secret is not None and not isinstance(secret, str):

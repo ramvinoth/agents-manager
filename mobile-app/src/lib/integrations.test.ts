@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { byCategory, categorySummary, comingLater, folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "../api/client.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -90,6 +90,22 @@ async function main() {
       ["Off", "Not connected yet", "Not available"],
     )
     assert.strictEqual(serviceSummary(svc("drive"), conn({ drive: "on" })), "On")
+  })
+  await test("token providers and categories", () => {
+    const tok = { ...prov, id: "cloudflare", label: "Cloudflare", auth: "token" as const, category: "network",
+      services: [{ ...svc("cloudflare.api"), agent: "DNS and Workers." }] }
+    const later = { ...tok, id: "aws", label: "AWS", category: "compute", services: [{ ...svc("aws.api", false), unavailable: "Needs signing." }] }
+    const cats = [{ id: "workspace", label: "W" }, { id: "compute", label: "C" }, { id: "network", label: "N" }]
+    assert.deepStrictEqual(byCategory([tok, later, prov], cats).map((g) => [g.id, g.providers.map((p) => p.id)]),
+      [["workspace", ["google"]], ["compute", ["aws"]], ["network", ["cloudflare"]]])
+    assert.deepStrictEqual(byCategory([{ ...tok, category: "new" }, prov], cats).map((g) => g.providers.length), [2])
+    assert.deepStrictEqual(byCategory([prov, tok]).map((g) => g.providers.length), [2])
+    assert.deepStrictEqual([comingLater(later), comingLater(tok)], [true, false])
+    assert.strictEqual(categorySummary([tok, later]), "Cloudflare · 1 coming later")
+    assert.strictEqual(providerOpen(tok, "cloudflare", false), false)
+    assert.strictEqual(providerHint(tok, false), "DNS and Workers.")
+    assert.strictEqual(providerHint(later, false), "Needs signing.")
+    assert.deepStrictEqual(setupFold([tok, { ...prov, client: { ...prov.client, configured: false } }]), [])
   })
   console.log(`integrations: ${passed} passed`)
 }

@@ -668,6 +668,12 @@ class ApiClient {
       "/api/integrations/connect", body
     )
   }
+  /** Connect an API-token provider (Cloudflare, Hetzner…), or with
+   *  `connection` replace that account's token. The server checks the token
+   *  with the vendor before saving. Returns the fresh view. Human-only. */
+  integrationToken(body: { provider: string; token: string; fields?: Record<string, string>; connection?: string }) {
+    return this.postJSON<IntegrationsView | { error?: string }>("/api/integrations/token", body)
+  }
   /** Save a provider's OAuth client. Omit client_secret to keep the stored
    *  one; send "" to clear it. Returns the fresh view. Human-only. */
   integrationClientSave(body: { provider: string; client_id: string; client_secret?: string }) {

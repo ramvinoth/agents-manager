@@ -490,6 +490,8 @@ class SessionViewerHandler(
         "/api/drives/delete": "_p_drives_delete",
         "/api/drive/oauth/start": "_p_drive_oauth_start",
         "/api/integrations/connect": "_p_integrations_connect",
+        "/api/integrations/token": "_p_integrations_token",
+        "/api/integrations/api": "_p_integrations_api",
         "/api/integrations/client": "_p_integrations_client",
         "/api/integrations/client/delete": "_p_integrations_client_delete",
         "/api/integrations/service": "_p_integrations_service",

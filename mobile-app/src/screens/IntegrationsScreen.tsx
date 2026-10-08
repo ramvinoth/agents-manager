@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
-import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState } from "../api/client"
+import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState, type SetupStep } from "../api/client"
 import { useNavigation } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { folderLabel, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
+import { byCategory, categorySummary, comingLater, folderLabel, isToken, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "../lib/integrations"
 import { useHost } from "../lib/useHost"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -13,17 +13,18 @@ import Icon, { type IconName } from "../components/Icon"
 import { useStyles } from "../lib/styles"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
+type TokenDraft = { provider: string; connection?: string; token: string; fields: Record<string, string> }
 
 /** iOS 26 draws a Switch ~12pt wider than the frame RN lays out, so it spills
  *  past the row's padding; this margin keeps it inside the card. */
 const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 ? 12 : 0
 
 /** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
-const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "calendar" }
+const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "calendar", api: "server" }
 
 /**
  * Integrations — the one place the owner connects outside accounts (Google,
- * Dropbox, Microsoft) and decides which services agents may use on each:
+ * Dropbox, Microsoft by sign-in; Cloudflare, Hetzner… by pasted API token) and decides which services agents may use on each:
  * Drive/Dropbox/OneDrive files, Gmail (read + drafts, never send), Calendar
  * (read). Renders GET /api/integrations verbatim — the server owns the catalog
  * and every rule, so a new service needs no app change. Twin of the web
@@ -38,7 +39,10 @@ const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", cal
  * "Add an account" says why. Once an account exists, each "Add an account"
  * row folds to one line until tapped, so the page reads as the accounts;
  * providers still needing developer setup fold behind one "More services"
- * row (setupFold). Tapping a service line opens its details: one chip per
+ * row (setupFold). "Add an account" is grouped by the server's categories
+ * (files & mail, compute, networking…), only the first open; a token provider
+ * opens a paste-and-check form, and one nobody can connect yet says why.
+ * Tapping a service line opens its details: one chip per
  * operation (read, write, delete, create…) saying what AGENTS may do there; a
  * chip that needs a wider grant runs consent for just that op. A files account
  * can be narrowed to one folder. Last, "This machine": the folders agents may
@@ -56,6 +60,8 @@ export default function IntegrationsScreen() {
   const [copied, setCopied] = useState(false)
   const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
   const [more, setMore] = useState(false) // the providers that need setup are shown
+  const [cats, setCats] = useState<Set<string> | null>(null) // open "Add an account" groups; null = just the first
+  const [token, setToken] = useState<TokenDraft | null>(null) // the token form being filled (new account, or `connection`'s new token)
   const [error, setError] = useState("")
   const [consenting, setConsenting] = useState(false) // the system browser is open on a consent
   const left = useRef(false)
@@ -134,7 +140,7 @@ export default function IntegrationsScreen() {
 
   function disconnect(p: IntegrationProvider, conn: IntegrationConnection) {
     Alert.alert(`Disconnect ${conn.account || `this ${p.label} account`}?`,
-      `Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.`, [
+      `Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`, [
         { text: "Cancel", style: "cancel" },
         {
           text: "Disconnect", style: "destructive",
@@ -155,6 +161,19 @@ export default function IntegrationsScreen() {
       setEditing(null)
       setAdding(body.provider) // set up to connect: show its services right away
     })
+  }
+
+  function saveToken() {
+    if (!token) return
+    const d = token
+    run(`token:${d.provider}`, async () => {
+      await api.integrationToken({ provider: d.provider, token: d.token.trim(), fields: d.fields, connection: d.connection })
+      setToken(null)
+    })
+  }
+
+  function openToken(p: IntegrationProvider, connection?: string) {
+    setToken(token?.provider === p.id && token.connection === connection ? null : { provider: p.id, connection, token: "", fields: {} })
   }
 
   function forgetClient(p: IntegrationProvider) {
@@ -191,7 +210,7 @@ export default function IntegrationsScreen() {
   const accounts = view.providers.flatMap((p) => p.connections.map((c) => ({ p, c })))
   const folded = setupFold(view.providers)
   const showFolded = more || folded.some((p) => p.id === editing?.provider)
-  const shown = view.providers.filter((p) => showFolded || !folded.includes(p))
+  const groups = byCategory(view.providers, view.categories)
 
   return (
     <ScrollView testID="integrations-screen" style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
@@ -220,7 +239,21 @@ export default function IntegrationsScreen() {
               <Icon name="trash" size={16} color={t.textMuted} />
             </TouchableOpacity>
           </View>
-          {c.expired ? (
+          {c.expired && isToken(p) ? (
+            <View testID={`expired-${c.id}`} style={{ gap: 10, marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
+                  {p.label} no longer accepts this token (revoked or expired), so agents can't use it. Paste a new one.
+                </Text>
+                <TouchableOpacity testID={`integration-newtoken-${c.id}`} disabled={!!busy} onPress={() => openToken(p, c.id)} hitSlop={8}>
+                  <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>New token</Text>
+                </TouchableOpacity>
+              </View>
+              {token?.provider === p.id && token.connection === c.id ? (
+                <TokenForm p={p} draft={token} busy={busy === `token:${p.id}`} onChange={setToken} onCancel={() => setToken(null)} onSave={saveToken} />
+              ) : null}
+            </View>
+          ) : c.expired ? (
             <View testID={`expired-${c.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
               <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
                 {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
@@ -278,79 +311,104 @@ export default function IntegrationsScreen() {
       ))}
 
       <Text style={styles.sheetSection}>{accounts.length ? "ADD AN ACCOUNT" : "CONNECT AN ACCOUNT"}</Text>
-      <View style={styles.spCard}>
-        {shown.map((p, i) => {
-          const isOpen = providerOpen(p, adding, accounts.length > 0)
-          return (
-          <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <TouchableOpacity testID={`integration-open-${p.id}`} style={{ flex: 1 }} disabled={!p.client.configured}
-                onPress={() => setAdding(adding === p.id ? null : p.id)} accessibilityRole="button" accessibilityState={{ expanded: isOpen }}>
-                <Text style={styles.ssRowLabel}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
-                <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, isOpen)}</Text>
-              </TouchableOpacity>
-              {p.client.configured && !isOpen ? (
-                <TouchableOpacity onPress={() => setAdding(p.id)} hitSlop={8} accessibilityLabel={`Add a ${p.label} account`}>
-                  <Icon name="plus" size={18} color={t.accent} />
+      {groups.map((g, gi) => {
+        const shown = cats === null ? gi === 0 : cats.has(g.id)
+        return (
+          <View key={g.id} testID={`integration-category-${g.id}`} style={styles.spCard}>
+            <TouchableOpacity testID={`integration-category-open-${g.id}`} accessibilityRole="button" accessibilityState={{ expanded: shown }}
+              onPress={() => setCats((c) => toggled(c ?? new Set(groups.slice(0, 1).map((x) => x.id)), g.id))}
+              style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ssRowLabel}>{g.label}</Text>
+                {!shown ? <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }]}>{categorySummary(g.providers)}</Text> : null}
+              </View>
+              <Icon name={shown ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
+            </TouchableOpacity>
+            {shown ? (
+              <View style={divider}>
+                {g.providers.filter((p) => showFolded || !folded.includes(p)).map((p, i) => {
+                  if (isToken(p) || comingLater(p)) return (
+                    <TokenRow key={p.id} p={p} first={i === 0} open={token?.provider === p.id && !token.connection} busy={busy} onOpen={() => openToken(p)}>
+                      {token?.provider === p.id && !token.connection ? (
+                        <TokenForm p={p} draft={token} busy={busy === `token:${p.id}`} onChange={setToken} onCancel={() => setToken(null)} onSave={saveToken} />
+                      ) : null}
+                    </TokenRow>
+                  )
+                  const isOpen = providerOpen(p, adding, accounts.length > 0)
+                  return (
+                <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <TouchableOpacity testID={`integration-open-${p.id}`} style={{ flex: 1 }} disabled={!p.client.configured}
+                      onPress={() => setAdding(adding === p.id ? null : p.id)} accessibilityRole="button" accessibilityState={{ expanded: isOpen }}>
+                      <Text style={styles.ssRowLabel}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
+                      <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, isOpen)}</Text>
+                    </TouchableOpacity>
+                    {p.client.configured && !isOpen ? (
+                      <TouchableOpacity onPress={() => setAdding(p.id)} hitSlop={8} accessibilityLabel={`Add a ${p.label} account`}>
+                        <Icon name="plus" size={18} color={t.accent} />
+                      </TouchableOpacity>
+                    ) : null}
+                    {isOpen || !p.client.configured ? <TouchableOpacity
+                      testID={`integrations-edit-${p.id}`}
+                      onPress={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
+                      disabled={!!busy}
+                      hitSlop={8}
+                      accessibilityLabel={`${p.label} app credentials`}
+                    >
+                      {p.client.configured
+                        ? <Icon name="settings" size={18} color={t.textMuted} />
+                        : <Text style={link}>Set up</Text>}
+                    </TouchableOpacity> : null}
+                  </View>
+                  {isOpen ? (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {p.services.filter((s) => s.available).map((s) => (
+                        <TouchableOpacity
+                          key={s.id}
+                          testID={`integration-new-${s.id}`}
+                          style={[styles.filterChip, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }]}
+                          disabled={!!busy}
+                          onPress={() => connect(s.id)}
+                        >
+                          {busy === `new:${s.id}` ? <ActivityIndicator size="small" /> : <Icon name="plus" size={12} color={t.textMuted} />}
+                          <Text style={styles.filterChipText}>{s.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : null}
+                  {isOpen && unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
+                  {editing?.provider === p.id ? (
+                    <ClientForm
+                      p={p}
+                      draft={editing}
+                      redirectUri={view.redirect_uri}
+                      copied={copied}
+                      busy={busy === `client:${p.id}`}
+                      onCopy={copyUri}
+                      onChange={setEditing}
+                      onCancel={() => setEditing(null)}
+                      onSave={saveClient}
+                      onForget={() => forgetClient(p)}
+                    />
+                  ) : null}
+                </View>
+                )
+                  })}
+              {folded.length && !showFolded && folded.some((p) => g.providers.includes(p)) ? (
+                <TouchableOpacity testID="integrations-more" onPress={() => setMore(true)} accessibilityRole="button"
+                  style={[{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }, g.providers.length > folded.length && divider]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.ssRowLabel}>More services</Text>
+                    <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{folded.map((p) => p.label).join(", ")} · one-time setup</Text>
+                  </View>
+                  <Icon name="chevronRight" size={14} color={t.textMuted} />
                 </TouchableOpacity>
               ) : null}
-              {isOpen || !p.client.configured ? <TouchableOpacity
-                testID={`integrations-edit-${p.id}`}
-                onPress={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
-                disabled={!!busy}
-                hitSlop={8}
-                accessibilityLabel={`${p.label} app credentials`}
-              >
-                {p.client.configured
-                  ? <Icon name="settings" size={18} color={t.textMuted} />
-                  : <Text style={link}>Set up</Text>}
-              </TouchableOpacity> : null}
-            </View>
-            {isOpen ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {p.services.filter((s) => s.available).map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    testID={`integration-new-${s.id}`}
-                    style={[styles.filterChip, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }]}
-                    disabled={!!busy}
-                    onPress={() => connect(s.id)}
-                  >
-                    {busy === `new:${s.id}` ? <ActivityIndicator size="small" /> : <Icon name="plus" size={12} color={t.textMuted} />}
-                    <Text style={styles.filterChipText}>{s.label}</Text>
-                  </TouchableOpacity>
-                ))}
               </View>
             ) : null}
-            {isOpen && unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
-            {editing?.provider === p.id ? (
-              <ClientForm
-                p={p}
-                draft={editing}
-                redirectUri={view.redirect_uri}
-                copied={copied}
-                busy={busy === `client:${p.id}`}
-                onCopy={copyUri}
-                onChange={setEditing}
-                onCancel={() => setEditing(null)}
-                onSave={saveClient}
-                onForget={() => forgetClient(p)}
-              />
-            ) : null}
           </View>
-          )
-        })}
-        {folded.length && !showFolded ? (
-          <TouchableOpacity testID="integrations-more" onPress={() => setMore(true)} accessibilityRole="button"
-            style={[{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }, shown.length > 0 && divider]}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.ssRowLabel}>More services</Text>
-              <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{folded.map((p) => p.label).join(", ")} · one-time setup</Text>
-            </View>
-            <Icon name="chevronRight" size={14} color={t.textMuted} />
-          </TouchableOpacity>
-        ) : null}
-      </View>
+        )
+      })}
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
 
@@ -602,35 +660,16 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
   const canSave = !!draft.client_id.trim() && !busy
   return (
     <View style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: t.bg }}>
-      <View testID={`setup-${p.id}`} style={{ gap: 8 }}>
-        {p.setup.map((st, i) => (
-          <View key={i} style={{ flexDirection: "row", gap: 6 }}>
-            <Text style={[styles.ssRowHint, { width: 16 }]}>{i + 1}.</Text>
-            <View style={{ flex: 1, gap: 4 }}>
-              <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{st.text}</Text>
-              {st.links.length ? (
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
-                  {st.links.map((l) => (
-                    <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
-                      <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>{l.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : null}
-              {st.redirect ? (
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Text testID="integrations-redirect-uri" selectable style={{ color: t.text, flex: 1, fontFamily: "Menlo", fontSize: 12 }}>
-                    {redirectUri || "…"}
-                  </Text>
-                  <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={{ padding: 6 }}>
-                    <Icon name={copied ? "check" : "copy"} size={18} color={t.accent} />
-                  </TouchableOpacity>
-                </View>
-              ) : null}
-            </View>
-          </View>
-        ))}
-      </View>
+      <SetupSteps p={p} redirect={
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Text testID="integrations-redirect-uri" selectable style={{ color: t.text, flex: 1, fontFamily: "Menlo", fontSize: 12 }}>
+            {redirectUri || "…"}
+          </Text>
+          <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={{ padding: 6 }}>
+            <Icon name={copied ? "check" : "copy"} size={18} color={t.accent} />
+          </TouchableOpacity>
+        </View>
+      } />
       <TextInput
         testID="integrations-client-id"
         style={styles.ssInput}
@@ -682,4 +721,112 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
       </View>
     </View>
   )
+}
+
+/** A token provider under "Add an account" (Cloudflare, Hetzner…): its name,
+ *  what agents get, and Connect — which opens `children` (the TokenForm). One
+ *  nobody can connect yet (AWS) shows the reason and its links instead. */
+function TokenRow({ p, first, open, busy, onOpen, children }: {
+  p: IntegrationProvider; first: boolean; open: boolean; busy: string | null; onOpen: () => void; children?: React.ReactNode
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const later = comingLater(p)
+  return (
+    <View testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={[styles.ssRowLabel, later && { color: t.textMuted }]}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
+          <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, false)}</Text>
+          {later && p.setup[0]?.links.length ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+              {p.setup[0].links.map((l) => (
+                <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
+                  <Text style={{ color: t.accent, fontSize: 12, fontWeight: "600" }}>{l.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
+        {later ? <Text style={[styles.ssRowHint, { marginTop: 0 }]}>Coming later</Text> : !open ? (
+          <TouchableOpacity testID={`integration-token-${p.id}`} onPress={onOpen} disabled={!!busy} hitSlop={8}
+            style={{ flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }} accessibilityLabel={`Connect ${p.label}`}>
+            <Icon name="plus" size={16} color={t.accent} />
+            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Connect</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {children}
+    </View>
+  )
+}
+
+/** Paste an API token (plus any boxes the vendor needs, e.g. Odoo's address);
+ *  the server checks it with the vendor before saving. Replacing a refused
+ *  token (`draft.connection`) skips the account-name box. */
+function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
+  p: IntegrationProvider; draft: TokenDraft; busy: boolean
+  onChange: (d: TokenDraft) => void; onCancel: () => void; onSave: () => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const fields = (p.fields || []).filter((f) => !draft.connection || f.id !== "name")
+  const ready = !!draft.token.trim() && fields.every((f) => !f.required || draft.fields[f.id]?.trim()) && !busy
+  return (
+    <View testID={`token-form-${p.id}`} style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: t.bg }}>
+      <SetupSteps p={p} />
+      {fields.map((f) => (
+        <TextInput key={f.id} testID={`token-field-${f.id}`} style={styles.ssInput} value={draft.fields[f.id] || ""}
+          onChangeText={(v) => onChange({ ...draft, fields: { ...draft.fields, [f.id]: v } })}
+          placeholder={`${f.label}: ${f.placeholder}`} placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} />
+      ))}
+      <TextInput testID={`token-input-${p.id}`} style={styles.ssInput} value={draft.token}
+        onChangeText={(token) => onChange({ ...draft, token })} placeholder="API token" placeholderTextColor={t.textMuted}
+        autoCapitalize="none" autoCorrect={false} secureTextEntry returnKeyType="done" onSubmitEditing={() => ready && onSave()} />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
+        <TouchableOpacity testID={`token-save-${p.id}`} style={[styles.ssAddBtn, { opacity: ready ? 1 : 0.5 }]} disabled={!ready} onPress={onSave}>
+          <Text style={styles.ssAddBtnText}>{busy ? "Checking…" : "Check and save"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onCancel} disabled={busy}>
+          <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+}
+
+/** A provider's numbered setup checklist with its links; `redirect` (OAuth
+ *  client setup) renders under the step that needs the redirect address. */
+function SetupSteps({ p, steps = p.setup, redirect }: { p: IntegrationProvider; steps?: SetupStep[]; redirect?: React.ReactNode }) {
+  const styles = useStyles()
+  const t = useTheme()
+  return (
+    <View testID={`setup-${p.id}`} style={{ gap: 8 }}>
+      {steps.map((st, i) => (
+        <View key={i} style={{ flexDirection: "row", gap: 6 }}>
+          <Text style={[styles.ssRowHint, { width: 16 }]}>{i + 1}.</Text>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{st.text}</Text>
+            {st.links.length ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+                {st.links.map((l) => (
+                  <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
+                    <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>{l.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+            {st.redirect ? redirect : null}
+          </View>
+        </View>
+      ))}
+    </View>
+  )
+}
+
+function toggled(set: Set<string>, id: string): Set<string> {
+  const n = new Set(set)
+  if (n.has(id)) n.delete(id)
+  else n.add(id)
+  return n
 }

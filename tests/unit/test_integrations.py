@@ -27,8 +27,8 @@ def test_every_service_belongs_to_a_provider_and_ids_are_unique():
         assert s["available"] or s.get("unavailable")
 
 
-def test_every_provider_has_exactly_one_files_service():
-    for pid in I.PROVIDERS:
+def test_every_oauth_provider_has_exactly_one_files_service():
+    for pid in (p for p, v in I.PROVIDERS.items() if v["via"] == "oauth"):
         files = [s for s in I.services_of(pid) if s["kind"] == "files"]
         assert len(files) == 1 and I.FILES_SERVICE[pid] == files[0]["id"]
 
@@ -106,7 +106,7 @@ def test_view_has_state_and_no_secrets():
 
 def test_view_has_a_setup_checklist_with_the_redirect_step():
     for p in I.view([], {}, "https://h/cb")["providers"]:
-        assert p["setup"] and sum(st["redirect"] for st in p["setup"]) == 1, p["id"]
+        assert p["setup"] and sum(st["redirect"] for st in p["setup"]) == (p["auth"] == "oauth"), p["id"]
         assert all(l["url"].startswith("https://") for st in p["setup"] for l in st["links"])
 
 
@@ -520,3 +520,149 @@ def test_phase3_routes_and_mcp_tools():
     for op in ("create", "update", "delete"):
         assert viewer_mcp._TOOLS["calendar_" + op] == ("POST", "/api/calendar/" + op)
         assert "calendar_" + op in names
+
+
+# --- API-token providers (Cloudflare, Hetzner…) -----------------------------
+
+def test_token_catalog_shape():
+    cats = {c for c, _ in I.CATEGORIES}
+    for pid, p in I.PROVIDERS.items():
+        assert p["via"] in ("oauth", "token") and p["category"] in cats
+        if p["via"] == "token" and any(s["available"] for s in I.services_of(pid)):
+            assert p["base"].startswith("https://") and p["verify"].startswith("/") and p["docs"]
+            assert I.services_of(pid)[0]["ops"]["change"]["default"] is False   # changes can spend money
+    assert "cloudflare" in I.PROVIDERS and "hetzner" in I.PROVIDERS and "tailscale" in I.PROVIDERS
+    assert not I.services_of("aws")[0]["available"]
+    assert "cloudflare" not in drive_oauth.available_vendors() and "google" in drive_oauth.available_vendors()
+
+
+def test_verify_request_builds_each_auth_style():
+    m, url, h, data, _ = I.verify_request("cloudflare", " T ", {})
+    assert (m, url, h["Authorization"], data) == ("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", "Bearer T", None)
+    assert I.verify_request("discord", "B", {})[2]["Authorization"] == "Bot B"
+    assert I.verify_request("discord", "B", {})[2]["User-Agent"].startswith("DiscordBot (")
+    assert I.verify_request("mixpanel", "s", {"username": "u"})[2]["Authorization"] == "Basic dTpz"
+    m, url, h, data, f = I.verify_request("odoo", "k", {"host": "https://Acme.odoo.com/", "db": "prod"})
+    assert (m, url, data, h["X-Odoo-Database"]) == ("POST", "https://acme.odoo.com/json/2/res.users/context_get", b"{}", "prod")
+    for pid, tok, fields, status in (("mixpanel", "s", {}, 400), ("odoo", "k", {"host": "a/b"}, 400),
+                                     ("cloudflare", "", {}, 400), ("aws", "x", {}, 409), ("google", "x", {}, 400)):
+        with pytest.raises(I.IntegrationError) as e:
+            I.verify_request(pid, tok, fields)
+        assert e.value.status == status
+
+
+def test_api_request_is_pinned_to_the_vendor_and_split_into_read_and_change():
+    c = _conn(kind="hetzner", api_token="T", scopes=["hetzner.api"])
+    op, m, url, h, data = I.api_request(c, "get", "/servers?per_page=5")
+    assert (op, m, url, h["Authorization"]) == ("read", "GET", "https://api.hetzner.cloud/v1/servers?per_page=5", "Bearer T")
+    assert I.api_request(c, "POST", "/servers", {"name": "x"})[0] == "change"
+    assert I.api_request(c, "POST", "/servers", {"name": "x"})[4] == b'{"name": "x"}'
+    assert I.api_request(c, "GET", "//evil.example/x")[2].startswith("https://api.hetzner.cloud/v1/")
+    for bad in ("servers", "/a/../b", "https://evil.example/", "/a b", "/a#x"):
+        with pytest.raises(I.IntegrationError):
+            I.api_request(c, "GET", bad)
+    with pytest.raises(I.IntegrationError):
+        I.api_request(c, "TRACE", "/servers")
+    assert I.api_op("odoo", "POST", "/res.partner/search_read") == "read"
+    assert I.api_op("odoo", "POST", "/res.partner/create") == "change"
+
+
+def test_token_row_state_and_agent_ops():
+    c = _conn(kind="cloudflare", **I.token_config("cloudflare", "T", "me@x", {}))
+    assert I.state(c, "cloudflare.api") == "on"
+    assert I.op_state(c, "cloudflare.api", "read") == "on" and I.op_state(c, "cloudflare.api", "change") == "off"
+    assert "access_token" not in c["config"] and "refresh_token" not in c["config"]
+    av = I.agent_view([c], I.local_rules(None))
+    e = av["services"][0]
+    assert e["tools"].startswith("api_call") and e["may"] == ["read"] and e["docs"]
+    assert "connection=" + c["id"] in I.agent_summary(av)
+
+
+class _FakeHTTP:
+    def __init__(self, status=200, body=b"{}"):
+        self.status, self.body, self.calls = status, body, []
+
+    def __call__(self, method, url, headers=None, data=None, timeout=60):
+        self.calls.append((method, url, headers, data))
+        return self.status, {}, self.body
+
+
+def test_token_connect_probes_before_saving_and_never_echoes_the_token(rows, monkeypatch):
+    from viewer import drives
+    fake = _FakeHTTP(body=b'{"account": {"email": "ops@x.test"}}')
+    monkeypatch.setattr(drives, "_http", fake)
+    h = _H({"provider": "digitalocean", "token": "dop_v1_SECRET", "fields": {"name": "Prod"}})
+    h._p_integrations_token(_Req())
+    data, status = h.sent
+    assert status == 200 and len(rows) == 1
+    row = next(iter(rows.values()))
+    assert row["kind"] == "digitalocean" and row["config"]["api_token"] == "dop_v1_SECRET"
+    assert row["config"]["account"] == "Prod (ops@x.test)"
+    assert "SECRET" not in repr(data)
+    do = next(p for p in data["providers"] if p["id"] == "digitalocean")
+    assert do["auth"] == "token" and do["client"]["configured"] and do["connections"][0]["services"] == {"digitalocean.api": "on"}
+    assert fake.calls[0][2]["Authorization"] == "Bearer dop_v1_SECRET"
+    from viewer.routes.drives import _public_view
+    assert _public_view(row)["authorized"] and "SECRET" not in repr(_public_view(row))
+
+
+def test_token_connect_refused_saves_nothing(rows, monkeypatch):
+    from viewer import drives
+    monkeypatch.setattr(drives, "_http", _FakeHTTP(status=401))
+    h = _H({"provider": "cloudflare", "token": "bad"})
+    h._p_integrations_token(_Req())
+    assert h.sent[1] == 400 and "refused" in h.sent[0]["error"] and rows == {}
+    h = _H({"provider": "cloudflare", "token": "x"})
+    h._p_integrations_token(_Req(human=False))
+    assert h.sent[1] == 403 and rows == {}
+    h = _H({"service": "cloudflare.api"})
+    h._p_integrations_connect(_Req())          # no OAuth consent for a token provider
+    assert h.sent[1] == 400 and rows == {}
+
+
+def test_api_proxy_checks_the_owners_switch(rows, monkeypatch):
+    from viewer import drives
+    fake = _FakeHTTP(body=b'{"servers": []}')
+    monkeypatch.setattr(drives, "_http", fake)
+    rows["c1"] = _conn(kind="hetzner", **I.token_config("hetzner", "T", "", {}))
+    h = _H({"connection": "c1", "path": "/servers"})
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent == ({"status": 200, "body": {"servers": []}}, 200)
+    h = _H({"connection": "c1", "method": "POST", "path": "/servers", "body": {"name": "x"}})
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent[1] == 403 and len(fake.calls) == 1          # change is off by default for agents
+    rows["c1"] = dict(rows["c1"], config=I.with_op(rows["c1"]["config"], "hetzner.api", "change", True))
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent[1] == 200 and fake.calls[-1][0] == "POST"
+    rows["c1"] = dict(rows["c1"], config=I.with_service(rows["c1"]["config"], "hetzner.api", False))
+    h = _H({"connection": "c1", "path": "/servers"})
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent[1] == 403
+
+
+def test_token_routes_registered():
+    from viewer import viewer_mcp
+    H = server.SessionViewerHandler
+    for path, m in {"/api/integrations/token": "_p_integrations_token", "/api/integrations/api": "_p_integrations_api"}.items():
+        assert H.POST_ROUTES[path] == m and path not in H.PUBLIC_API
+    assert viewer_mcp._TOOLS["api_call"] == ("POST", "/api/integrations/api")
+    assert "api_call" in {t["name"] for t in viewer_mcp._TOOL_LIST}
+
+
+def test_a_refused_token_marks_the_account_and_a_new_token_keeps_the_switches(rows, monkeypatch):
+    from viewer import drives
+    rows["c1"] = _conn(kind="tailscale", **I.token_config("tailscale", "OLD", "me", {}))
+    rows["c1"]["config"] = I.with_op(rows["c1"]["config"], "tailscale.api", "change", True)
+    monkeypatch.setattr(drives, "_http", _FakeHTTP(status=401))
+    h = _H({"connection": "c1", "path": "/tailnet/-/devices"})
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent[0]["status"] == 401 and I.expired(rows["c1"])
+    monkeypatch.setattr(drives, "_http", _FakeHTTP())
+    h = _H({"provider": "tailscale", "token": "NEW", "connection": "c1"})
+    h._p_integrations_token(_Req())
+    assert h.sent[1] == 200 and list(rows) == ["c1"]
+    cfg = rows["c1"]["config"]
+    assert cfg["api_token"] == "NEW" and not I.expired(rows["c1"]) and cfg["ops"]["tailscale.api"]["change"] is True
+    h = _H({"provider": "cloudflare", "token": "X", "connection": "c1"})   # another provider's account
+    h._p_integrations_token(_Req())
+    assert h.sent[1] == 404 and rows["c1"]["config"]["api_token"] == "NEW"

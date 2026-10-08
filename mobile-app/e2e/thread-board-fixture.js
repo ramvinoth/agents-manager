@@ -88,7 +88,26 @@ const INTEGRATIONS = {
       services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS }],
       connections: [],
     },
+    // API-token providers (viewer/integrations._token / _planned): one connectable, one "coming later".
+    {
+      id: "hetzner", label: "Hetzner Cloud", auth: "token", category: "compute", public: false,
+      fields: [{ id: "name", label: "Name", placeholder: "Optional — e.g. Production", required: false }],
+      setup: [{ text: "Generate an API token.", redirect: false, links: [{ label: "Projects", url: "https://console.hetzner.cloud/projects" }] }],
+      client: { client_id: "", has_secret: false, configured: true },
+      services: [{ id: "hetzner.api", label: "Hetzner Cloud", kind: "api", agent: "See servers", try: "List my servers", available: true, unavailable: "",
+        ops: [{ id: "read", label: "Read" }, { id: "change", label: "Make changes" }] }],
+      connections: [],
+    },
+    {
+      id: "aws", label: "Amazon Web Services", auth: "token", category: "compute", public: false, fields: [],
+      setup: [{ text: "Needs AWS request signing, which Harman doesn't do yet.", redirect: false, links: [] }],
+      client: { client_id: "", has_secret: false, configured: true },
+      services: [{ id: "aws.api", label: "Amazon Web Services", kind: "api", agent: "", try: "", available: false,
+        unavailable: "Needs AWS request signing, which Harman doesn't do yet.", ops: [] }],
+      connections: [],
+    },
   ],
+  categories: [{ id: "workspace", label: "Files, mail & calendar" }, { id: "compute", label: "Compute" }],
   local: { roots: ["~"], ops: [{ id: "read", label: "Read", on: true }, { id: "write", label: "Write", on: true }, { id: "delete", label: "Delete", on: false }] },
 }
 const NO_INTEGRATIONS = { providers: [], redirect_uri: "", local: { roots: [], ops: [] } }
@@ -266,6 +285,15 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
       if (!e) return send({ error: "No such event" }, 404)
       if (op === "delete") { calendarEvents.splice(calendarEvents.indexOf(e), 1); return send({ deleted: e.id }) }
       if (op === "update") { const { id, connection, ...f } = body; Object.assign(e, f); return send(e) }
+    }
+    if (integrations && route === "POST /api/integrations/token") {
+      // The real server probes the vendor first; "bad" stands in for a token the vendor refuses.
+      const p = integrationsState.providers.find(x => x.id === body.provider && x.auth === "token" && x.services[0].available)
+      if (!p) return send({ error: "Unknown token provider" }, 404)
+      if (body.token === "bad") return send({ error: `${p.label} refused this token (HTTP 401)` }, 400)
+      p.connections.push({ id: "dr-token", account: body.fields?.name || p.label, authorized: true, expired: false,
+        services: { [p.id + ".api"]: "on" }, ops: { [p.id + ".api"]: { read: "on", change: "off" } }, root: "/" })
+      return send(integrationsState)
     }
     if (integrations && route === "POST /api/integrations/client") {
       const p = integrationsState.providers.find(x => x.id === body.provider)

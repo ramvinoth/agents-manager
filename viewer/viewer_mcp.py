@@ -99,6 +99,9 @@ _TOOLS = {
     "calendar_create":  ("POST", "/api/calendar/create"),
     "calendar_update":  ("POST", "/api/calendar/update"),
     "calendar_delete":  ("POST", "/api/calendar/delete"),
+    # API-token providers (Cloudflare, Hetzner, DigitalOcean…): one proxy; the
+    # server adds the credential, pins the vendor host and checks read/change.
+    "api_call":         ("POST", "/api/integrations/api"),
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
@@ -300,8 +303,15 @@ _TOOL_LIST = [
      "description": "The owner's connected cloud drives (Google Drive, Dropbox, OneDrive) — id, label, kind, whether it is authorized. Pass a drive id as `drive` to the fs_* tools to work in that drive; every session on this server sees the same drives.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "integrations_list",
-     "description": "What you may use right now: each connected service (Drive, Gmail, Calendar, Dropbox, OneDrive) per account with the operations you may do (`may`), the ones only the owner can turn on (`ask_owner`), the tools that reach it, and whether its sign-in expired; plus this machine's folders. Your system prompt already carries this as of the start of the run — call it to re-check. If what you need is not there, ask the owner to connect or turn it on in Integrations rather than working around it.",
+     "description": "What you may use right now: each connected service (files, mail, calendar, and API accounts such as Cloudflare, Hetzner, DigitalOcean, Tailscale, Discord, Mixpanel, Odoo) per account with the operations you may do (`may`), the ones only the owner can turn on (`ask_owner`), the tools that reach it, and whether its sign-in expired; plus this machine's folders. Your system prompt already carries this as of the start of the run — call it to re-check. If what you need is not there, ask the owner to connect or turn it on in Integrations rather than working around it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    {"name": "api_call",
+     "description": "Call a connected API-token account's REST API (Cloudflare, Hetzner Cloud, DigitalOcean, Vultr, Linode, Tailscale, Discord, Mixpanel, Odoo). Pass the connection id from integrations_list and a path relative to that vendor's API base (its docs link is in integrations_list), e.g. GET /zones on Cloudflare or GET /servers on Hetzner. The server adds the credential. GET is a read; POST/PUT/PATCH/DELETE are changes, which the owner allows per account and which can spend money or move DNS — propose them on your card first. Returns {status, body}.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["connection", "path"], "properties": {
+         "connection": {"type": "string", "description": "Account id from integrations_list."},
+         "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "Default GET."},
+         "path": {"type": "string", "description": "API path starting with /, query string allowed."},
+         "body": {"type": "object", "description": "JSON body for POST/PUT/PATCH."}}}},
     {"name": "gmail_search",
      "description": "Search the owner's Gmail with Gmail search syntax (from:, subject:, newer_than:7d, is:unread, …; default in:inbox). Returns id, thread, from, subject, date, snippet, unread for up to `limit` (≤50) messages. Read one in full with gmail_read.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {

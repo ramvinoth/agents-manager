@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { CalendarDays, Check, ChevronRight, Cloud, Copy, ExternalLink, Folder, Loader2, Mail, MessageSquarePlus, Plus, Settings2, Trash2 } from "lucide-react"
+import { CalendarDays, Check, ChevronRight, Cloud, Copy, ExternalLink, Folder, KeyRound, Loader2, Mail, MessageSquarePlus, Plus, Server, Settings2, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -13,15 +13,17 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { folderLabel, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
+import { byCategory, categorySummary, comingLater, folderLabel, isToken, providerHint, providerOpen, reconnectService, setupFold, serviceAction, serviceSummary, tryPrompt, unavailableNote, waitForConsent } from "@/lib/integrations"
 import { useStore } from "@/store"
 import { IntakeSection } from "@/components/IntakeSection"
-import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState } from "@/lib/types"
+import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState, SetupStep } from "@/lib/types"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
+/** A token being pasted: for a new account, or (connection) replacing an expired one. */
+type TokenDraft = { provider: string; connection?: string; token: string; fields: Record<string, string> }
 
 /** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
-const KIND_ICON: Record<string, typeof Folder> = { files: Folder, mail: Mail, calendar: CalendarDays }
+const KIND_ICON: Record<string, typeof Folder> = { files: Folder, mail: Mail, calendar: CalendarDays, api: Server }
 
 /**
  * IntegrationsDialog — the one place the owner connects outside accounts
@@ -38,6 +40,11 @@ const KIND_ICON: Record<string, typeof Folder> = { files: Folder, mail: Mail, ca
  *    button per service. Providers still needing their one-time OAuth
  *    client fold behind one "More services" row (setupFold). Client credentials sit behind that row's gear — set once, so
  *    they get no permanent place on the page.
+ *    Providers are grouped by category (files & mail, compute, networking,
+ *    social…) and only the first group starts open, so twenty-odd vendors
+ *    read as a short menu. API-token providers (Cloudflare, Hetzner…) connect
+ *    by pasting a token the server checks with the vendor; providers nobody
+ *    can connect yet show why instead of a button.
  * This machine's folders and Intake channels are separate concerns, so they
  * are separate tabs. Opened from the header, Profile → Integrations and the
  * file browser's location picker.
@@ -50,6 +57,8 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   const [copied, setCopied] = useState(false)
   const [adding, setAdding] = useState<string | null>(null) // provider whose "Add an account" row is open
   const [more, setMore] = useState(false) // the providers that need setup are shown
+  const [cats, setCats] = useState<Set<string> | null>(null) // open "Add an account" groups; null = just the first
+  const [token, setToken] = useState<TokenDraft | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [consenting, setConsenting] = useState(false) // a vendor tab is open on a consent
   const closed = useRef(false)
@@ -132,7 +141,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
 
   function disconnect(p: IntegrationProvider, conn: IntegrationConnection) {
     const who = conn.account || `this ${p.label} account`
-    if (!window.confirm(`Disconnect ${who}? Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.`)) return
+    if (!window.confirm(`Disconnect ${who}? Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`)) return
     return run(`${conn.id}:delete`, async () => ok(await api.driveDelete(conn.id)))
   }
 
@@ -147,6 +156,22 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
       setEditing(null)
       setAdding(body.provider) // set up to connect: show its services right away
     })
+  }
+
+  /** Paste-a-token connect: the server checks it with the vendor, so a typo
+   *  or an expired token is refused here, not on an agent's first call. */
+  function saveToken() {
+    if (!token) return
+    const t = token
+    return run(`token:${t.provider}`, async () => {
+      ok(await api.integrationToken({ provider: t.provider, token: t.token.trim(), fields: t.fields, connection: t.connection }))
+      setToken(null)
+    })
+  }
+
+  function openToken(p: IntegrationProvider, connection?: string) {
+    setToken(token?.provider === p.id && token.connection === connection ? null
+      : { provider: p.id, connection, token: "", fields: {} })
   }
 
   function forgetClient(p: IntegrationProvider) {
@@ -170,6 +195,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   const accounts = view ? view.providers.flatMap((p) => p.connections.map((c) => ({ p, c }))) : []
   const folded = view ? setupFold(view.providers) : []
   const showFolded = more || folded.some((p) => p.id === editing?.provider)
+  const groups = view ? byCategory(view.providers, view.categories) : []
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -206,7 +232,21 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
                       <Trash2 className="size-3.5" />
                     </Button>
                   </div>
-                  {c.expired && (
+                  {c.expired && isToken(p) ? (
+                    <div className="mx-3 mb-2 flex flex-col gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" data-testid={`expired-${c.id}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1">
+                          {p.label} no longer accepts this token (revoked or expired), so agents can't use it. Paste a new one.
+                        </span>
+                        <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={!!busy} onClick={() => openToken(p, c.id)}>
+                          New token
+                        </Button>
+                      </div>
+                      {token?.provider === p.id && token.connection === c.id && (
+                        <TokenForm p={p} draft={token} busy={busy === `token:${p.id}`} onChange={setToken} onCancel={() => setToken(null)} onSave={saveToken} />
+                      )}
+                    </div>
+                  ) : c.expired && (
                     <div className="mx-3 mb-2 flex items-center gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" data-testid={`expired-${c.id}`}>
                       <span className="min-w-0 flex-1">
                         {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
@@ -269,44 +309,67 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
 
               <div className="flex flex-col gap-2">
                 <h3 className="text-xs font-medium text-muted-foreground">{accounts.length ? "Add an account" : "Connect an account"}</h3>
-                <div className="divide-y rounded-lg border">
-                  {view.providers.filter((p) => showFolded || !folded.includes(p)).map((p) => (
-                    <ProviderRow
-                      key={p.id}
-                      p={p}
-                      open={providerOpen(p, adding, accounts.length > 0)}
-                      onOpen={() => setAdding(adding === p.id ? null : p.id)}
-                      busy={busy}
-                      onConnect={(sid) => connect(sid)}
-                      onEdit={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
-                    >
-                      {editing?.provider === p.id && (
-                        <ClientForm
-                          p={p}
-                          draft={editing}
-                          redirectUri={view.redirect_uri}
-                          copied={copied}
-                          busy={busy === `client:${p.id}`}
-                          onCopy={copyUri}
-                          onChange={setEditing}
-                          onCancel={() => setEditing(null)}
-                          onSave={saveClient}
-                          onForget={() => forgetClient(p)}
-                        />
+                {groups.map((g, i) => {
+                  const shown = cats === null ? i === 0 : cats.has(g.id)
+                  return (
+                    <div key={g.id} className="rounded-lg border" data-testid={`integration-category-${g.id}`}>
+                      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40"
+                        aria-expanded={shown} onClick={() => setCats((c) => toggled(c ?? new Set(groups.slice(0, 1).map((x) => x.id)), g.id))}>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium">{g.label}</span>
+                          {!shown && <span className="block truncate text-[11px] text-muted-foreground">{categorySummary(g.providers)}</span>}
+                        </span>
+                        <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", shown && "rotate-90")} />
+                      </button>
+                      {shown && (
+                        <div className="divide-y border-t">
+                          {g.providers.filter((p) => showFolded || !folded.includes(p)).map((p) => isToken(p) ? (
+                            <TokenRow key={p.id} p={p} open={token?.provider === p.id && !token.connection} busy={busy} onOpen={() => openToken(p)}>
+                              {token?.provider === p.id && !token.connection && (
+                                <TokenForm p={p} draft={token} busy={busy === `token:${p.id}`} onChange={setToken} onCancel={() => setToken(null)} onSave={saveToken} />
+                              )}
+                            </TokenRow>
+                          ) : (
+                            <ProviderRow
+                              key={p.id}
+                              p={p}
+                              open={providerOpen(p, adding, accounts.length > 0)}
+                              onOpen={() => setAdding(adding === p.id ? null : p.id)}
+                              busy={busy}
+                              onConnect={(sid) => connect(sid)}
+                              onEdit={() => setEditing(editing?.provider === p.id ? null : { provider: p.id, client_id: p.client.client_id, client_secret: "" })}
+                            >
+                              {editing?.provider === p.id && (
+                                <ClientForm
+                                  p={p}
+                                  draft={editing}
+                                  redirectUri={view.redirect_uri}
+                                  copied={copied}
+                                  busy={busy === `client:${p.id}`}
+                                  onCopy={copyUri}
+                                  onChange={setEditing}
+                                  onCancel={() => setEditing(null)}
+                                  onSave={saveClient}
+                                  onForget={() => forgetClient(p)}
+                                />
+                              )}
+                            </ProviderRow>
+                          ))}
+                          {g.providers.some((p) => folded.includes(p)) && !showFolded && (
+                            <button type="button" className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40"
+                              onClick={() => setMore(true)} data-testid="integrations-more">
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-medium">More services</span>
+                                <span className="block text-[11px] text-muted-foreground">{folded.map((p) => p.label).join(", ")} · one-time setup</span>
+                              </span>
+                              <ChevronRight className="size-3.5 text-muted-foreground" />
+                            </button>
+                          )}
+                        </div>
                       )}
-                    </ProviderRow>
-                  ))}
-                  {folded.length > 0 && !showFolded && (
-                    <button type="button" className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40"
-                      onClick={() => setMore(true)} data-testid="integrations-more">
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">More services</span>
-                        <span className="block text-[11px] text-muted-foreground">{folded.map((p) => p.label).join(", ")} · one-time setup</span>
-                      </span>
-                      <ChevronRight className="size-3.5 text-muted-foreground" />
-                    </button>
-                  )}
-                </div>
+                    </div>
+                  )
+                })}
               </div>
             </TabsContent>
 
@@ -382,6 +445,86 @@ function ProviderRow({ p, open, onOpen, busy, onConnect, onEdit, children }: {
   )
 }
 
+/** A token provider under "Add an account": what agents get, and Connect —
+ *  or, for one nobody can connect yet, the reason and where to read more. */
+function TokenRow({ p, open, busy, onOpen, children }: {
+  p: IntegrationProvider; open: boolean; busy: string | null; onOpen: () => void; children?: React.ReactNode
+}) {
+  const later = comingLater(p)
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2.5" data-testid={`integration-${p.id}`}>
+      <div className="flex items-center gap-1.5">
+        <div className="min-w-0 flex-1">
+          <div className={cn("text-sm font-medium", later && "text-muted-foreground")}>{p.connections.length ? `Another ${p.label} account` : p.label}</div>
+          <div className="text-[11px] text-muted-foreground">
+            {providerHint(p, false)}
+            {later && p.setup[0]?.links.map((l) => (
+              <a key={l.url} className="ml-1.5 inline-flex items-center gap-0.5 underline" href={l.url} target="_blank" rel="noreferrer">
+                {l.label} <ExternalLink className="size-3" />
+              </a>
+            ))}
+          </div>
+        </div>
+        {later ? <span className="shrink-0 text-[11px] text-muted-foreground">Coming later</span> : !open && (
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={onOpen} disabled={!!busy}
+            data-testid={`integration-token-${p.id}`}>
+            <KeyRound className="size-3" /> Connect
+          </Button>
+        )}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** Paste an API token (plus any boxes the vendor needs, e.g. Odoo's address). */
+function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
+  p: IntegrationProvider; draft: TokenDraft; busy: boolean
+  onChange: (d: TokenDraft) => void; onCancel: () => void; onSave: () => void
+}) {
+  const fields = (p.fields || []).filter((f) => !draft.connection || f.id !== "name")
+  const ready = !!draft.token.trim() && fields.every((f) => !f.required || draft.fields[f.id]?.trim())
+  return (
+    <form className="flex flex-col gap-2 rounded-md bg-muted/40 p-3 text-foreground" data-testid={`token-form-${p.id}`}
+      onSubmit={(e) => { e.preventDefault(); if (ready && !busy) onSave() }}>
+      <SetupSteps p={p} steps={p.setup} />
+      {fields.map((f) => (
+        <Input key={f.id} className="h-8 text-xs" placeholder={`${f.label}: ${f.placeholder}`}
+          aria-label={f.label} value={draft.fields[f.id] || ""} spellCheck={false} autoCapitalize="none"
+          onChange={(e) => onChange({ ...draft, fields: { ...draft.fields, [f.id]: e.target.value } })} />
+      ))}
+      <Input className="h-8 font-mono text-xs" type="password" placeholder="API token" aria-label={`${p.label} API token`}
+        value={draft.token} onChange={(e) => onChange({ ...draft, token: e.target.value })}
+        spellCheck={false} autoCapitalize="none" autoComplete="off" autoFocus />
+      <div className="flex items-center justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button type="submit" size="sm" disabled={busy || !ready}>
+          {busy && <Loader2 className="mr-1 size-3.5 animate-spin" />} Check and save
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/** A provider's numbered setup checklist, with its links and (OAuth) the copyable redirect address. */
+function SetupSteps({ p, steps, redirect }: { p: IntegrationProvider; steps: SetupStep[]; redirect?: React.ReactNode }) {
+  return (
+    <ol className="flex list-decimal flex-col gap-1.5 pl-4 text-xs text-muted-foreground" data-testid={`setup-${p.id}`}>
+      {steps.map((st, i) => (
+        <li key={i}>
+          {st.text}
+          {st.links.map((l) => (
+            <a key={l.url} className="ml-1.5 inline-flex items-center gap-0.5 text-foreground underline" href={l.url} target="_blank" rel="noreferrer">
+              {l.label} <ExternalLink className="size-3" />
+            </a>
+          ))}
+          {st.redirect && redirect}
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onCancel, onSave, onForget }: {
   p: IntegrationProvider
   draft: Draft
@@ -396,26 +539,14 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-3">
-      <ol className="flex list-decimal flex-col gap-1.5 pl-4 text-xs text-muted-foreground" data-testid={`setup-${p.id}`}>
-        {p.setup.map((st, i) => (
-          <li key={i}>
-            {st.text}
-            {st.links.map((l) => (
-              <a key={l.url} className="ml-1.5 inline-flex items-center gap-0.5 text-foreground underline" href={l.url} target="_blank" rel="noreferrer">
-                {l.label} <ExternalLink className="size-3" />
-              </a>
-            ))}
-            {st.redirect && (
-              <div className="mt-1 flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1">
-                <code className="min-w-0 flex-1 select-all break-all font-mono text-foreground">{redirectUri || "…"}</code>
-                <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={onCopy} disabled={!redirectUri} title="Copy">
-                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                </Button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ol>
+      <SetupSteps p={p} steps={p.setup} redirect={
+        <div className="mt-1 flex items-center gap-2 rounded-md bg-muted/40 px-2 py-1">
+          <code className="min-w-0 flex-1 select-all break-all font-mono text-foreground">{redirectUri || "…"}</code>
+          <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={onCopy} disabled={!redirectUri} title="Copy">
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          </Button>
+        </div>
+      } />
       <Input
         className="h-8 font-mono text-xs"
         placeholder={p.public ? "App key / Application (client) ID" : "Client ID"}
@@ -626,4 +757,12 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
       </div>
     </section>
   )
+}
+
+/** A copy of `set` with `id` flipped in or out. */
+function toggled(set: Set<string>, id: string): Set<string> {
+  const n = new Set(set)
+  if (n.has(id)) n.delete(id)
+  else n.add(id)
+  return n
 }

@@ -30,7 +30,7 @@ def _public_view(d):
         "kind": d.get("kind") or "",
         "status": d.get("status") or "active",
         "hidden": bool(d.get("hidden")),
-        "authorized": bool(cfg.get("refresh_token") or cfg.get("access_token")),
+        "authorized": bool(cfg.get("refresh_token") or cfg.get("access_token") or cfg.get("api_token")),
     }
 
 

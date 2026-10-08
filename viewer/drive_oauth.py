@@ -52,8 +52,10 @@ _BROWSER_HTML = ("<html><head><title>Harman</title>"
 def available_vendors():
     """The providers with a built consent flow — the set the UI may offer for
     connecting a new account. A provider ships by adding an
-    integrations.PROVIDERS entry; nothing else changes."""
-    return frozenset(integrations.PROVIDERS)
+    integrations.PROVIDERS entry; nothing else changes. API-token providers
+    (Cloudflare, Hetzner…) have no consent — they connect through
+    /api/integrations/token."""
+    return frozenset(pid for pid, p in integrations.PROVIDERS.items() if p["via"] == "oauth")
 
 
 def _pkce():
@@ -116,8 +118,8 @@ def start(drive_id, origin, service=None, op=None):
     if drive is None:
         raise DriveError("Unknown connection %r" % drive_id, 404)
     kind = drive["kind"]
-    if kind not in integrations.PROVIDERS:
-        raise DriveError("No OAuth flow built for %r yet" % kind, 501)
+    if kind not in available_vendors():
+        raise DriveError("No OAuth flow built for %r" % kind, 501)
     service = service or integrations.FILES_SERVICE[kind]
     try:
         if integrations.service(service)["provider"] != kind:

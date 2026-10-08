@@ -1,4 +1,4 @@
-import { folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
+import { byCategory, categorySummary, comingLater, folderLabel, providerHint, providerOpen, setupFold, reconnectService, serviceAction, serviceSummary, setupHint, tryPrompt, unavailableNote, waitForConsent, type ConsentStatus } from "./integrations.ts"
 import type { ServiceState } from "./types.ts"
 const svc = (id: string, available = true) => ({ id, label: id, kind: "x", agent: "", try: "List my files.", available, unavailable: "", ops: [] })
 const prov = { id: "google", label: "Google", public: false, setup: [], client: { client_id: "", has_secret: false, configured: true },
@@ -61,6 +61,21 @@ catch (e: any) { eq("expired without a reason still says why", e.message, "Conse
 let polls = 0
 try { await waitForConsent(async () => { polls++; return { status: "waiting" } }, noSleep, () => polls >= 1) }
 catch (e: any) { eq("a closed dialog stops polling", [e.message, polls], ["Cancelled", 1]) }
+
+const tok = { ...prov, id: "cloudflare", label: "Cloudflare", auth: "token" as const, category: "network",
+  services: [{ ...svc("cloudflare.api"), agent: "DNS and Workers." }] }
+const later = { ...tok, id: "aws", label: "AWS", category: "compute", services: [{ ...svc("aws.api", false), unavailable: "Needs signing." }] }
+const cats = [{ id: "workspace", label: "W" }, { id: "compute", label: "C" }, { id: "network", label: "N" }]
+eq("groups follow the server's order, empty ones dropped", byCategory([tok, later, prov], cats).map((g) => [g.id, g.providers.map((p) => p.id)]),
+  [["workspace", ["google"]], ["compute", ["aws"]], ["network", ["cloudflare"]]])
+eq("an unknown or missing category lands in the first group", byCategory([{ ...tok, category: "new" }, prov], cats).map((g) => g.providers.length), [2])
+eq("an older server with no categories still lists everything", byCategory([prov, tok]).map((g) => g.providers.length), [2])
+eq("a provider with nothing connectable is coming later", [comingLater(later), comingLater(tok)], [true, false])
+eq("category line names the ready ones and counts the rest", categorySummary([tok, later]), "Cloudflare · 1 coming later")
+eq("token rows never open into OAuth chips", providerOpen(tok, "cloudflare", false), false)
+eq("token hint says what agents get", providerHint(tok, false), "DNS and Workers.")
+eq("coming-later hint gives the reason", providerHint(later, false), "Needs signing.")
+eq("token providers never fold behind setup", setupFold([tok, { ...prov, client: { ...prov.client, configured: false } }]), [])
 
 console.log(`integrations: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

@@ -80,9 +80,17 @@ export type IntegrationConnection = {
 }
 /** One step of a provider's client setup; `redirect` shows the copyable redirect URI under it. */
 export type SetupStep = { text: string; redirect: boolean; links: { label: string; url: string }[] }
+/** One extra box a token provider's connect form asks for (Odoo's address, Mixpanel's username). */
+export type IntegrationField = { id: string; label: string; placeholder: string; required: boolean }
 export type IntegrationProvider = {
   id: string
   label: string
+  /** How an account is connected: a vendor sign-in (OAuth) or a pasted API token.
+   *  Absent on servers predating token providers — read as "oauth". */
+  auth?: "oauth" | "token"
+  /** A categories id ("workspace", "compute"…); absent on older servers. */
+  category?: string
+  fields?: IntegrationField[]
   /** A PKCE public client — no secret is issued or needed. */
   public: boolean
   /** The vendor-console checklist for creating the OAuth client, in order. */
@@ -93,7 +101,9 @@ export type IntegrationProvider = {
 }
 /** What agents may do on this machine's disk (viewer/integrations.local_view). */
 export type LocalDisk = { roots: string[]; ops: (IntegrationOp & { on: boolean })[] }
-export type IntegrationsView = { providers: IntegrationProvider[]; redirect_uri: string; local: LocalDisk }
+export type IntegrationCategory = { id: string; label: string }
+/** `categories`: the order and names of the "Add an account" groups; absent on older servers. */
+export type IntegrationsView = { providers: IntegrationProvider[]; categories?: IntegrationCategory[]; redirect_uri: string; local: LocalDisk }
 /** One Google Calendar event as viewer/workspace._event returns it. `start`/`end`
  *  are RFC 3339 datetimes, or YYYY-MM-DD dates when `all_day`. */
 export type CalendarEvent = {
@@ -701,6 +711,10 @@ export const api = {
   integrationConnect: (body: { service: string; connection?: string; op?: string }) =>
     req<{ url: string; pending: string; connection: string }>("POST", "/api/integrations/connect", body),
   // The owner's on/off switch for a granted service; returns the fresh view.
+  /** Connect a token provider (or, with `connection`, replace that account's
+   *  token). The server checks it with the vendor before saving. */
+  integrationToken: (body: { provider: string; token: string; fields?: Record<string, string>; connection?: string }) =>
+    req<IntegrationsView>("POST", "/api/integrations/token", body),
   integrationService: (body: { connection: string; service: string; on: boolean }) =>
     req<IntegrationsView>("POST", "/api/integrations/service", body),
   // Harman's own OAuth client per provider. The secret is write-only: a save
