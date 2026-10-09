@@ -4,6 +4,7 @@
 
 import type { NoteGraph } from "./noteLinks"
 import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
@@ -443,6 +444,15 @@ class ApiClient {
     return this.getJSON<SessionDetail>(
       `/api/session-detail?session=${encodeURIComponent(path)}` + this.qs() + this.ag()
     )
+  }
+  /** A chat's Trust (lib/trust.ts). Red: the owner's own tap applies; anyone
+   *  else's ask queues. `session` is the id sessionDetail returned. */
+  sessionModeSet(session: string, mode: PermissionPolicy) {
+    return this.postJSON<TrustWrite>("/api/session/mode", { for_session: session, mode })
+  }
+  /** "" clears the chat's override back to its agent role's level. */
+  sessionLevelSet(session: string, level: HarmanLevel | "") {
+    return this.postJSON<TrustWrite>("/api/session/level", { for_session: session, level })
   }
   sessionAnalysis(path: string, refresh?: boolean) {
     return this.getJSON(

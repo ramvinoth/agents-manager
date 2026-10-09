@@ -172,9 +172,13 @@ export interface SessionDetail {
     provider?: string
     convMode?: string
     effort?: string
+    permission_mode?: string
+    level?: string
     archived?: boolean
     favorite?: boolean
   }
+  /** The Harman level this chat acts at now (override → agent role → Worker). */
+  effective_level?: string
   capabilities: Capabilities
   summary: SessionSummary & { error?: string }
 }

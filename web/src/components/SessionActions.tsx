@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { MoreVertical, Pencil, Trash2 } from "lucide-react"
+import { MoreVertical, Pencil, ShieldCheck, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useStore } from "@/store"
+import { TrustDialog } from "@/components/TrustDialog"
 
 export function SessionActions() {
   const currentSessionPath = useStore((s) => s.currentSessionPath)
@@ -24,6 +25,9 @@ export function SessionActions() {
   const deleteByPath = useStore((s) => s.deleteByPath)
   const [renameOpen, setRenameOpen] = useState(false)
   const [delOpen, setDelOpen] = useState(false)
+  const [trustOpen, setTrustOpen] = useState(false)
+  // Trust is the server policy of a Claude Code chat (mobile shows it for claude only too).
+  const isClaude = useStore((s) => s.currentAgent === "claude")
   const current = sessions.find((x) => x.path === currentSessionPath)
   const [title, setTitle] = useState("")
 
@@ -46,11 +50,18 @@ export function SessionActions() {
           >
             <Pencil className="size-3.5" /> Rename
           </DropdownMenuItem>
+          {isClaude ? (
+            <DropdownMenuItem onClick={() => setTrustOpen(true)}>
+              <ShieldCheck className="size-3.5" /> Trust…
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem variant="destructive" onClick={() => setDelOpen(true)}>
             <Trash2 className="size-3.5" /> Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {isClaude ? <TrustDialog path={currentSessionPath} open={trustOpen} onOpenChange={setTrustOpen} /> : null}
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="max-w-sm">
