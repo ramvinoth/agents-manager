@@ -21,9 +21,10 @@ test("NewChat includes provider in the first launch rather than a later metadata
   const body = text.match(/await api.newSession\((\{[\s\S]*?\n      \})\)/)?.[1]
   assert.ok(body)
   const js = ts.transpile(`const payload = ${body}; return payload`, { target: ts.ScriptTarget.ES2022 })
-  const fields = { msg: "hello", cwd: "/tmp", mode: "default", model: "opus", host: "local", systemPrompt: "", goal: "", template: { id: 7 }, jobs: [], sendJobs: [], effort: "high", provider: "selected", ai: { provider: "selected", model: { kind: "id", id: "opus" }, convMode: "agent", effort: null }, aiSelection: { provider: "selected", model: { kind: "id", id: "opus" }, convMode: "agent", effort: null } }
+  const fields = { msg: "hello", name: "Fixture chat", cwd: "/tmp", mode: "default", model: "opus", host: "local", systemPrompt: "", goal: "", template: { id: 7 }, jobs: [], sendJobs: [], effort: "high", provider: "selected", ai: { provider: "selected", model: { kind: "id", id: "opus" }, convMode: "agent", effort: null }, aiSelection: { provider: "selected", model: { kind: "id", id: "opus" }, convMode: "agent", effort: null } }
   const payload = new Function(...Object.keys(fields), js)(...Object.values(fields))
   assert.equal(payload.ai?.provider ?? payload.provider, "selected")
+  assert.equal(payload.title, "Fixture chat", "the name rides on the create; the server stores it")
   assert.equal(payload.template, 7, "the template id rides on the launch so the server attaches its plugin")
   assert.doesNotMatch(text, /sessionMetaSave\(\{ session: sessionPath, provider/)
 })

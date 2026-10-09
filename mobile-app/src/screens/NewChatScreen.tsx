@@ -115,8 +115,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
     try {
       const res = await api.newSession({
         message: msg,
-        // Sent with the create so the name rides on the run (claude --name)
-        // instead of depending on the rename after the chat appears.
+        // Sent with the create: the server stores it as the chat's name and
+        // passes it to the run (claude --name) — there is no later rename.
         title: name,
         cwd: cwd.trim() || "~",
         mode,
