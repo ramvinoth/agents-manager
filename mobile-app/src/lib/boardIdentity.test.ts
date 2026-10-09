@@ -49,7 +49,7 @@ function screen(initial: Route) {
   let timerId = 0
   const reads: Array<{ path: string } & ReturnType<typeof deferred<any>>> = []
   const chats: Array<{ request: any } & ReturnType<typeof deferred<any>>> = []
-  const navigations: any[][] = [], alerts: any[][] = []
+  const navigations: any[][] = [], alerts: any[][] = [], sheets: any[][] = []
   const equal = (a: any[] | undefined, b: any[] | undefined) => !!a && !!b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]))
   const effect = (queue: Map<number, Function>, fn: Function, deps?: any[]) => {
     const i = cursor++, previous = slots[i]
@@ -87,6 +87,7 @@ function screen(initial: Route) {
     "../lib/thinking": {}, "../lib/plan": {}, "../lib/quote": {}, "../lib/attach": {}, "../lib/voice": {},
     "../lib/search": { findMatches: () => [] },
     "../lib/session": { resolveSessionPath: async () => undefined },
+    "../lib/actionSheet": { showActions: (title: string, actions: any[]) => sheets.push([title, actions]) },
     "../lib/notify": { ensurePermission: async () => {} },
     "../state/config": { draftFor: () => "", composerPrefs: () => ({}), setDraft: async () => {}, activeServerId: () => "fixture" },
     "../api/offlineCache": { offlineCache: { saveThread: async () => {}, loadThread: async () => null } },
@@ -109,7 +110,7 @@ function screen(initial: Route) {
   const navigation = { isFocused: () => focused, setOptions: (value: any) => { options = value }, navigate: (...args: any[]) => navigations.push(args) }
   const render = (next = route) => { route = next; cursor = 0; tree = exports.default!({ route, navigation }); flush(layout); return tree }
   const commit = () => { flush(passive) }
-  const menu = () => { find(options.headerRight(), "thread-more")!.props.onPress(); return alerts.at(-1)![2].find((b: any) => b.text === "Board").onPress as Function }
+  const menu = () => { find(options.headerRight(), "thread-more")!.props.onPress(); return sheets.at(-1)![1].find((b: any) => b.text === "Board").onPress as Function }
   const profileAction = () => find(options.headerTitle(), "header-title")!.props.onPress as Function
   const profile = () => profileAction()()
   const gesture = (opts: { measured?: number[] } = {}) => {

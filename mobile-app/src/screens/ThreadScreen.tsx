@@ -41,6 +41,7 @@ import { ItemView, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
+import { showActions } from "../lib/actionSheet"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -514,14 +515,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
             testID="thread-more"
             accessibilityLabel="more-options"
             onPress={() => {
-              Alert.alert("", "", [
+              showActions(label || "This chat", [
                 { text: "Search", onPress: () => setSearchOpen(true) },
                 { text: "Board", onPress: openBoard },
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
                 // A map needs the session's project; an unsent chat has none yet.
                 ...(sessionId ? [{ text: "Map", onPress: openMap }] : []),
-                { text: "Cancel", style: "cancel" as const },
               ])
             }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}

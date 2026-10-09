@@ -15,6 +15,7 @@ import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
 import { offerUndo } from "../lib/undo"
+import { showActions } from "../lib/actionSheet"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">
 
@@ -204,10 +205,9 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             style={styles.neHeaderBtn}>
             <Icon name="pin" size={20} color={note?.pinned ? t.accent : t.textMuted} />
           </TouchableOpacity>
-          <TouchableOpacity testID="note-more" onPress={() => Alert.alert("", "", [
+          <TouchableOpacity testID="note-more" onPress={() => showActions(note?.title || "This note", [
             { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
-            { text: "Delete", style: "destructive", onPress: remove },
-            { text: "Cancel", style: "cancel" },
+            { text: "Delete", destructive: true, onPress: remove },
           ])} hitSlop={8} style={styles.neHeaderBtn}>
             <Icon name="more" size={20} color={t.accent} />
           </TouchableOpacity>
