@@ -159,18 +159,23 @@ export type MarketPage = { items: MarketItem[]; cursor?: string }
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
+/** Harman (org) authority, server-enforced on every board/org action whatever the
+ *  harness: ic < lead < manager (viewer/orglogic.LEVELS). Separate from the
+ *  harness PermissionMode, which gates the CLI's own tools inside a run. */
+export type HarmanLevel = "ic" | "lead" | "manager"
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
   system_prompt: string; goal: string; model?: string; cron?: string; job_prompt?: string
   /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
    *  lens it turns on ("map"); both are read server-side from the template row. */
   plugin?: string; lens?: string
+  /** Harman authority a chat started from this role acts at on the board. */
+  level?: HarmanLevel
   is_builtin: boolean; created_by: string; created_at: number
 }
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
-export type Employee = { id: number; name: string; role: string; provider: string; model: string; conv_mode: string; avatar: string; status: string; created_at: number }
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[] }
 export type BoardColumn = { id: number; name: string; position: number }
 /** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
@@ -220,10 +225,10 @@ export type OpenDecision = {
   inbox_id: number
   snoozed_until: number
 }
-export type Card = { id: number; title: string; body: string; column_id: number | null; assignee: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
+export type Card = { id: number; title: string; body: string; column_id: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
-export type CardFilter = { session?: string; project?: number; assignee?: number }
+export type CardFilter = { session?: string; project?: number }
 // A note: the org's knowledge ledger next to the board (server: viewer/db notes).
 // `kind` is its template; `archived` follows the owning chat's archive flag.
 export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"
@@ -282,7 +287,7 @@ export const isQueued = (r: unknown): r is Queued =>
  *  `undefined` must not collapse to `false` there — that server has no gate at all,
  *  so showing "off" would promise a pause that isn't happening. Callers must treat a
  *  missing value as *unknown*, never as off. */
-export type HarmanConfig = { automation_enabled?: boolean; enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
+export type HarmanConfig = { automation_enabled?: boolean }
 /** WHICH loop origins may fire, orthogonal to the automation master switch:
  *  user = the owner's own scheduled loops only (the default), harman = agent-created
  *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
@@ -292,7 +297,7 @@ export type LoopControl = { mode: LoopMode }
 /** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
  *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
  *  status "missing" means a ledger row whose file is gone. */
-export type LearnedSkill = { id?: number; name: string; path: string; description?: string; origin_employee?: number | null; origin_card?: number | null; origin_session?: string | null; status: string; created_at?: number }
+export type LearnedSkill = { id?: number; name: string; path: string; description?: string; origin_card?: number | null; origin_session?: string | null; status: string; created_at?: number }
 export type ChatStatus = {
   running?: boolean
   idle?: boolean
@@ -326,14 +331,7 @@ export type Session = {
   /** Live run flag: a run is in flight for this session. Per-viewer-process truth
    *  (the jobs THIS viewer started), not a cross-host guarantee. */
   running?: boolean
-  /** The employee driving this session (org↔fleet join, attached server-side when
-   *  the session's token carries an employee_id); absent when unlinked. */
-  persona?: SessionPersona
 }
-
-/** The employee driving a session — org↔fleet join from _overlay_meta.
- *  DUPLICATED in web/src/lib/types.ts; the two apps share no build. */
-export type SessionPersona = { id: number; name: string; role: string; avatar: string }
 
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Awaited<ReturnType<typeof serverFetch>>
@@ -558,12 +556,18 @@ export const api = {
     ),
 
   sessionDetail: (host: string, id: string) =>
-    req<{ session: string; meta: { permission_mode: string }; running: boolean }>(
+    req<{ session: string; meta: { permission_mode: string; level?: string }; effective_level?: HarmanLevel; running: boolean }>(
       "GET", `/api/session-detail?${new URLSearchParams({ host, id, agent: "claude" })}`
     ),
   sessionModeSet: (session: string, mode: PermissionMode) =>
     req<{ session?: string; permission_mode?: PermissionMode; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
       "POST", "/api/session/mode", { for_session: session, mode }
+    ),
+  /** Set the session's Harman level ("" clears it back to its agent role's level).
+   *  Red: from the app the owner's tap applies; anyone else's queues. */
+  sessionLevelSet: (session: string, level: HarmanLevel | "") =>
+    req<{ session?: string; level?: string; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
+      "POST", "/api/session/level", { for_session: session, level }
     ),
 
   // ---- per-session metadata (system prompt + goal), mirrors web api.sessionMeta ----
@@ -815,11 +819,6 @@ export const api = {
   },
 
   // ---- org / Kanban (the "empire") ----
-  orgEmployees: () => req<{ employees: Employee[] }>("GET", "/api/org/employees"),
-  orgCreateEmployee: (body: { name: string; role?: string; provider?: string; model?: string }) =>
-    req<Employee>("POST", "/api/org/employees", body),
-  orgUpdateEmployee: (body: { id: number; name?: string; role?: string; provider?: string; model?: string; conv_mode?: string; avatar?: string; status?: string }) =>
-    req<Employee>("POST", "/api/org/employees/update", body),
   orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
   orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
     req<OrgProject>("POST", "/api/org/projects", body),
@@ -843,7 +842,6 @@ export const api = {
     const p = new URLSearchParams()
     if (filter.session !== undefined) p.set("session", filter.session)
     if (filter.project !== undefined) p.set("project", String(filter.project))
-    if (filter.assignee !== undefined) p.set("assignee", String(filter.assignee))
     const q = p.toString()
     return req<{ cards: Card[] }>("GET", `/api/org/cards${q ? "?" + q : ""}`)
   },
@@ -851,9 +849,7 @@ export const api = {
     req<Card>("POST", "/api/org/cards", body),
   orgMoveCard: (body: { card_id: number; column_id: number; position: number }) =>
     req<Card>("POST", "/api/org/cards/move", body),
-  orgAssignCard: (body: { card_id: number; assignee: number }) =>
-    req<Card>("POST", "/api/org/cards/assign", body),
-  orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; project_id?: number; position?: number }) =>
+  orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; project_id?: number; position?: number }) =>
     req<Card>("POST", "/api/org/cards/update", body),
   // `card_delete` and the automation resume are Red (viewer/orglogic), so these
   // two can come back queued instead of done — the union makes the caller say so.

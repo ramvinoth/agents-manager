@@ -4,7 +4,7 @@ import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type BoardColumn, type Card, type CardComment, type Employee, type OrgProject } from "../api/client"
+import { api, isQueued, type BoardColumn, type Card, type CardComment, type OrgProject } from "../api/client"
 import { setToken, username } from "../state/config"
 import { formatActor, type ActorKind } from "../lib/board"
 import Icon from "../components/Icon"
@@ -15,7 +15,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
 
 /**
  * CardDetailScreen — one card, in the open: its body, its column (tappable
- * chips to move it — the decision states included), its assignee, and its
+ * chips to move it — the decision states included), and its
  * comment thread — the conversation between the owner and the card's session.
  *
  * This is the pickup surface of the board's decision pipeline: the owner moves
@@ -40,7 +40,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [card, setCard] = useState<Card | null>(null)
   const [comments, setComments] = useState<CardComment[]>([])
   const [columns, setColumns] = useState<BoardColumn[]>([])
-  const [employees, setEmployees] = useState<Employee[]>([])
   // Fetched only when the card resolves to no board: the projects it can be
   // attached to (the attach action turns the dead card into a movable one).
   const [projects, setProjects] = useState<OrgProject[]>([])
@@ -53,8 +52,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const movePending = useRef(false)
   const [attaching, setAttaching] = useState(false)
   const attachPending = useRef(false)
-  const [assigning, setAssigning] = useState(false)
-  const assignPending = useRef(false)
   const draftRevision = useRef(0)
   const sheet = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const lastCommentCount = useRef(0)
@@ -106,7 +103,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     load()
-    api.orgEmployees().then((e) => setEmployees(e.employees || [])).catch(() => {})
   }, [load])
 
   useEffect(() => {
@@ -188,38 +184,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     [card, load, navigation]
   )
 
-  const assign = useCallback(() => {
-    if (!card || !employees.length || assignPending.current) return
-    Alert.alert(card.title, "Assign to", [
-      ...employees.map((e) => ({
-        text: e.name,
-        onPress: async () => {
-          if (assignPending.current) return
-          assignPending.current = true
-          setAssigning(true)
-          try {
-            try {
-              await api.orgAssignCard({ card_id: card.id, assignee: e.id })
-            } catch (err) {
-              if ((err as { status?: number })?.status === 401) {
-                setToken(null)
-                navigation.replace("Login")
-                return
-              }
-              Alert.alert("Could not assign card", "The assignment could not be confirmed. Refresh the card to check its assignee before trying again.")
-              return
-            }
-            await load()
-          } finally {
-            assignPending.current = false
-            setAssigning(false)
-          }
-        },
-      })),
-      { text: "Cancel", style: "cancel" as const },
-    ])
-  }, [card, employees, load, navigation])
-
   const deleteCard = useCallback(() => {
     if (!card) return
     Alert.alert(card.title, "Delete this card?", [
@@ -298,9 +262,8 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     </View>
   )
 
-  const assignee = employees.find((e) => e.id === card.assignee)?.name
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
-  // Principal strings ("user:ram", "session:Harman", "employee:?") rendered for a
+  // Principal strings ("user:ram", "session:Harman") rendered for a
   // person — the same rule the web card detail uses (lib/board.ts).
   const self = username()
   const creator = formatActor(card.created_by, self)
@@ -411,22 +374,6 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             </>
           )}
         </View>
-
-        {assignee ? (
-          <Pressable
-            testID="card-detail-assign"
-            onPress={assign}
-            disabled={assigning}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: assigning, busy: assigning }}
-            style={{ flexDirection: "row", alignItems: "center", gap: 6, opacity: assigning ? 0.6 : 1 }}
-          >
-            <Icon name="user" size={14} color={t.textMuted} />
-            <Text style={{ color: t.textMuted, fontSize: 12 }}>
-              {assignee} — tap to reassign
-            </Text>
-          </Pressable>
-        ) : null}
 
         <View style={{ height: 1, backgroundColor: t.border, marginVertical: 4 }} />
 

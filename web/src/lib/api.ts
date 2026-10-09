@@ -3,7 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
@@ -176,9 +176,9 @@ class ApiClient {
   orgHarman() {
     return this.getJSON<HarmanConfig>("/api/org/harman")
   }
-  /** Patch the Harman config. Turning automation ON is a Red action (manager
-   *  scope) — a caller who can't self-approve gets an approval back, not the
-   *  config — hence the `| Queued` union. Other keys apply green. */
+  /** Flip the master automation switch. Turning it ON is a Red action — a
+   *  caller who can't self-approve gets an approval back, not the config —
+   *  hence the `| Queued` union. */
   orgSetHarman(patch: Partial<HarmanConfig>) {
     return this.postJSON<HarmanConfig | Queued>("/api/org/harman", patch)
   }
@@ -198,9 +198,6 @@ class ApiClient {
   }
   orgSetSystemPreamble(preamble: string) {
     return this.postJSON<{ preamble: string } | Queued>("/api/org/system-preamble", { preamble })
-  }
-  orgEmployees() {
-    return this.getJSON<{ employees: Employee[] }>("/api/org/employees")
   }
   /** The activity feed, validated against the display-v1 contract before any of
    *  it is rendered — a raw or older-shaped response throws, never displays. */
@@ -224,20 +221,16 @@ class ApiClient {
     const p = new URLSearchParams()
     if (filter.session) p.set("session", filter.session)
     if (filter.project != null) p.set("project", String(filter.project))
-    if (filter.assignee != null) p.set("assignee", String(filter.assignee))
     const q = p.toString()
     return this.getJSON<{ cards: Card[] }>(`/api/org/cards${q ? "?" + q : ""}`)
   }
-  orgCreateCard(body: { title: string; body?: string; column_id?: number; project_id?: number; assignee?: number; session?: string; position?: number }) {
+  orgCreateCard(body: { title: string; body?: string; column_id?: number; project_id?: number; session?: string; position?: number }) {
     return this.postJSON<Card>("/api/org/cards", body)
   }
   orgMoveCard(body: { card_id: number; column_id: number; position: number }) {
     return this.postJSON<Card>("/api/org/cards/move", body)
   }
-  orgAssignCard(body: { card_id: number; assignee: number }) {
-    return this.postJSON<Card>("/api/org/cards/assign", body)
-  }
-  orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; assignee?: number; position?: number }) {
+  orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; position?: number }) {
     return this.postJSON<Card>("/api/org/cards/update", body)
   }
   // `card_delete` is Red (viewer/orglogic): a caller who can't self-approve gets

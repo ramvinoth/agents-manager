@@ -11,7 +11,7 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Capabilities, type GitStatus, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
+import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
@@ -33,6 +33,14 @@ const MODES: { v: PermissionMode; label: string }[] = [
   { v: "plan", label: "Plan" },
   { v: "bypass", label: "Bypass" },
 ]
+// "" = no per-chat override: the level of the agent role the chat started from.
+const LEVELS: { v: HarmanLevel | ""; label: string }[] = [
+  { v: "", label: "Role default" },
+  { v: "ic", label: "IC" },
+  { v: "lead", label: "Lead" },
+  { v: "manager", label: "Manager" },
+]
+const LEVEL_NAME: Record<HarmanLevel, string> = { ic: "IC", lead: "Lead", manager: "Manager" }
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
@@ -51,11 +59,18 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [modeSaving, setModeSaving] = useState(false)
   const [modeError, setModeError] = useState("")
   const [modeReload, setModeReload] = useState(0)
+  // Harman level: the override stored on the session ("" = none) and the level
+  // that actually applies (override → agent role → ic), both from sessionDetail.
+  const [level, setLevel] = useState<HarmanLevel | "">("")
+  const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
+  const [levelSaving, setLevelSaving] = useState(false)
+  const [levelNote, setLevelNote] = useState("")
   const modeRequest = useRef({ active: false, saving: false })
   useEffect(() => {
     const request = { active: true, saving: false }
     modeRequest.current = request
     setModeState(""); setModeTarget(""); setModeError(""); setModeSaving(false)
+    setLevel(""); setEffectiveLevel(""); setLevelNote("")
     const id = sessionId || path
     setModeLoading(agent === "claude" && !!id)
     if (agent === "claude" && id) {
@@ -70,6 +85,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         }
         setModeTarget(detail.session)
         setModeState(stored)
+        const lv = detail.meta.level
+        setLevel(lv === "ic" || lv === "lead" || lv === "manager" ? lv : "")
+        setEffectiveLevel(detail.effective_level || "")
       }).catch(e => {
         if (request.active) setModeError(e?.message || "Could not load permission policy. Please retry.")
       }).finally(() => { if (request.active) setModeLoading(false) })
@@ -214,6 +232,24 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       if (request.active) setModeSaving(false)
     }
   }
+  const pickLevel = async (v: HarmanLevel | "") => {
+    const request = modeRequest.current
+    if (!request.active || levelSaving || !modeTarget || modeLoading || v === level) return
+    setLevelSaving(true); setLevelNote("")
+    try {
+      const result = await api.sessionLevelSet(modeTarget, v)
+      if (!request.active) return
+      if (result.queued) { setLevelNote("Sent to the owner for approval; the level has not changed yet."); return }
+      if (result.error || result.denied || result.session !== modeTarget) {
+        throw new Error(result.error || result.reason || "Server did not confirm the level. Reload before retrying.")
+      }
+      setModeReload(n => n + 1) // re-read the effective level the server now resolves
+    } catch (e) {
+      if (request.active) setLevelNote(e instanceof Error ? e.message : "Could not save the level. Please retry.")
+    } finally {
+      if (request.active) setLevelSaving(false)
+    }
+  }
   function addJob(prompt: string, schedule: JobSchedule) {
     if (!sessionId) return
     api
@@ -329,18 +365,18 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // using it as JSX gives it a new identity every keystroke, so React unmounts +
   // remounts its whole subtree — which drops focus from any TextInput inside
   // (the "keyboard dismisses on every letter" bug). Plain calls inline instead.
-  const renderPill = (opts: { v: PermissionMode; label: string }[], value: string, onPick: (v: PermissionMode) => void, testPrefix: string) => (
+  const renderPill = <V extends string>(opts: { v: V; label: string }[], value: string, onPick: (v: V) => void, testPrefix: string, what: string, busy: boolean) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
         return (
           <TouchableOpacity
-            key={m.v}
-            testID={`${testPrefix}-${m.v}`}
-            disabled={modeLoading || modeSaving || !modeTarget}
+            key={m.v || "default"}
+            testID={`${testPrefix}-${m.v || "default"}`}
+            disabled={modeLoading || busy || !modeTarget}
             accessibilityRole="button"
-            accessibilityLabel={`${m.label} permission policy for future runs`}
-            accessibilityState={{ selected: active, disabled: modeLoading || modeSaving || !modeTarget }}
+            accessibilityLabel={`${m.label} ${what} for future runs`}
+            accessibilityState={{ selected: active, disabled: modeLoading || busy || !modeTarget }}
             style={[styles.sheetPill, { minHeight: 44 }, active ? styles.sheetPillActive : null]}
             onPress={() => onPick(m.v)}
           >
@@ -380,6 +416,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   // One-line value summaries shown on each card header (read state without opening).
   const modeLabel = modeLoading ? "Loading…" : MODES.find((m) => m.v === mode)?.label || (modeTarget ? "No saved policy" : "Unavailable")
+  const trustLabel = effectiveLevel && !modeLoading ? `${modeLabel} · ${LEVEL_NAME[effectiveLevel]}` : modeLabel
 
   return (
     <ScrollView
@@ -418,13 +455,13 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         </View>
       </TouchableOpacity>
       {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={aiScope} providers={providers} title="AI for this chat" onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
-      {agent === "claude" ? renderCard("behaviour", "settings", "Behaviour", modeLabel, <>
-        <Text style={styles.sheetSection}>PERMISSION POLICY · THIS SESSION</Text>
+      {agent === "claude" ? renderCard("behaviour", "settings", "Trust", trustLabel, <>
+        <Text style={styles.sheetSection}>PERMISSION POLICY · CLAUDE CODE TOOLS</Text>
         <Text style={styles.sheetHint}>Saved on the server for future chat and scheduled runs, across devices. Does not change a run already in progress.</Text>
-        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. Harman authorization is unchanged.</Text>
+        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. This governs the harness's own tools (shell, file edits) only; the Harman level below is separate.</Text>
         {!mode && modeTarget ? <Text style={styles.sheetHint}>No saved policy. Each launch uses its requested mode; scheduled runs request Accept edits.</Text> : null}
         {!sessionId && !path ? <Text style={styles.sheetHint}>Start the chat before setting its permission policy.</Text> : null}
-        {renderPill(MODES, mode, setMode, "sp-mode")}
+        {renderPill(MODES, mode, setMode, "sp-mode", "permission policy", modeSaving)}
         {modeLoading || modeSaving ? <Text style={styles.sheetHint}>{modeSaving ? "Saving…" : "Loading policy…"}</Text> : null}
         {modeError ? <>
           <Text testID="sp-mode-error" accessibilityRole="alert" style={styles.sheetHint}>{modeError}</Text>
@@ -432,6 +469,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <Text style={{ color: t.accent }}>Reload policy</Text>
           </TouchableOpacity>
         </> : null}
+        <Text style={[styles.sheetSection, { marginTop: 16 }]}>HARMAN LEVEL · BOARD AUTHORITY</Text>
+        <Text style={styles.sheetHint}>What this chat may do on the board and in the org (cards, projects, loops, settings), enforced by the Harman server for any harness. IC works cards; Lead also creates projects and schedules loops; Manager also changes org-wide settings. Asks above its level wait for your approval instead of failing. Risky actions always ask you, whatever the level.</Text>
+        {renderPill(LEVELS, level, pickLevel, "sp-level", "Harman level", levelSaving)}
+        {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting as {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from its agent role)"}. Applies from the next run.</Text> : null}
+        {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}
+        {levelNote ? <Text testID="sp-level-note" accessibilityRole="alert" style={styles.sheetHint}>{levelNote}</Text> : null}
       </>) : null}
 
       {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}

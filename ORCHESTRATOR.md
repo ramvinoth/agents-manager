@@ -1,5 +1,11 @@
 # ORCHESTRATOR — the company charter
 
+> **Superseded in part (2026-10-08, card 146):** the Employees roster, card
+> assignment and the Harman manager tick described below were removed. Authority
+> now comes from the agent role (agent_templates.level) or a per-chat override
+> (session_meta.level); see SESSIONS.md "Two trust layers". Read the rest as
+> design history.
+
 Status: **charter (v0)** — the operating contract. No orchestrator code ships until this reads true.
 Owner: Ram. Operator ("the brain"): the manager agent driving the viewer APIs.
 Decisions locked (2026-08-14): **wide autonomy / narrow gate**, **build a real orchestrator**, **charter first**.

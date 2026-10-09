@@ -1,7 +1,7 @@
 """viewer.orglogic — pure org/Kanban logic for the orchestrator ("Harman").
 
 The empire runs on ONE canonical board: a single `cards` list. Every "board" the UI
-shows (per session / project / employee / the CEO dashboard) is that same data through
+shows (per session / project / the CEO dashboard) is that same data through
 a filtered VIEW. The filter + ordering rules that turn one list into a view live here,
 kept PURE (no db, no I/O) so they run under `make unit` and are trivially testable.
 
@@ -16,12 +16,12 @@ from __future__ import annotations
 
 # ── Views: one canonical card list → a filtered/ordered view ──────────────────
 
-def filter_cards(cards, *, session=None, project=None, assignee=None):
+def filter_cards(cards, *, session=None, project=None):
     """Return the cards matching every provided filter (AND semantics). A None
     filter is ignored. This is how a single board becomes a per-session /
-    per-project / per-employee view without any duplicate card storage.
+    per-project view without any duplicate card storage.
 
-    `cards` is a list of dict-like rows with keys session_id / project_id / assignee.
+    `cards` is a list of dict-like rows with keys session_id / project_id.
     Filters compare by value; ids may be int or str — compared as-is (callers pass
     matching types)."""
     out = []
@@ -29,8 +29,6 @@ def filter_cards(cards, *, session=None, project=None, assignee=None):
         if session is not None and c.get("session_id") != session:
             continue
         if project is not None and c.get("project_id") != project:
-            continue
-        if assignee is not None and c.get("assignee") != assignee:
             continue
         out.append(c)
     return out
@@ -87,7 +85,7 @@ PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
 _RED_ACTIONS = {
     # irreversible data loss
     "delete_session", "delete_transcript", "git_reset_hard", "git_force_push",
-    "delete_provider", "delete_file", "delete_employee", "delete_project", "card_delete",
+    "delete_provider", "delete_file", "delete_project", "card_delete",
     "note_delete",
     # overwriting shared team knowledge: skill_propose writes a NEW skill (green);
     # skill_promote overwrites one the team already relies on (red). The same write,
@@ -117,6 +115,10 @@ _RED_ACTIONS = {
     # whole loop fleet). An agent's request therefore always queues for the owner;
     # the owner at the UI self-approves (he is the one delegating).
     "session_mode_set",
+    # the Harman-side twin of session_mode_set: sets the authority LEVEL a
+    # session acts at on the board (ic/lead/manager). Same delegation class —
+    # a model can never raise its own (or a peer's) authority unattended.
+    "session_level_set",
     # destroying a scheduled loop takes its run history with it — same
     # irreversible-removal class as card_delete. Creating/editing a loop stays
     # green: a harman-origin loop cannot FIRE until the owner licenses that origin
@@ -146,6 +148,8 @@ RED_RISK = {
     "system_preamble_set": "Changes the instructions every future session starts with.",
     "session_mode_set": "Changes how much that session may do without asking; "
                         "'bypass' lets it run any command on this machine unattended.",
+    "session_level_set": "Changes what that session may do on the board on its own: "
+                         "'lead' lets it schedule work and delete cards, 'manager' lets it change org settings.",
     "intake_create": "Opens a new door from outside onto a board: anyone with its token can create cards.",
     "intake_rotate": "Issues a new token for the channel; the old one stops working.",
 }
@@ -176,7 +180,7 @@ def is_red(action):
     return classify_action(action) == "red"
 
 
-# ── Responsibility scope: authority level bounds WHAT an employee may do ──────
+# ── Responsibility scope: authority level bounds WHAT a session may do ────────
 # Orthogonal to the Green/Red gate (which bounds HOW RISKY). An action must be
 # BOTH within the caller's responsibility scope AND (if Red) approved by Ram.
 # Levels are ordered least→most authority; each action names the MINIMUM level.
@@ -185,7 +189,7 @@ LEVELS = ("ic", "lead", "manager")
 
 # ── Human authority: the account's role, independent of any session ───────────
 # The OTHER principal. A request has up to two: the human who owns the viewer
-# session (this) and the agent session acting (employee_level, above). Authority
+# session (this) and the agent session acting (its level, above). Authority
 # is the WEAKER of the two — see effective_level.
 #
 # The owner is a ROLE, resolved from users.role at runtime; no name appears in
@@ -203,14 +207,13 @@ _ROLE_CEILING = {
 # action -> minimum level required. Unlisted actions are denied by scope (return
 # False) — deny-by-default; add here to grant.
 _MIN_LEVEL = {
-    # individual contributor: manage cards on work you're assigned
+    # individual contributor: manage cards on one's own board
     "card_create": "ic",
     "card_move": "ic",
     "card_update": "ic",
     "card_comment": "ic",          # discussion on one's own board — green, never red
     "card_dep_add": "ic",          # dependency edges are work-shaping on one's own
     "card_dep_remove": "ic",       # cards (add+remove are both reversible) — green
-    "card_assign_self": "ic",
     "note_create": "ic",           # one's own notes: the knowledge ledger next to cards
     "note_update": "ic",           # (archive/unarchive is a reversible field write)
     "note_delete": "ic",           # irreversible → red, so an agent's delete queues
@@ -227,18 +230,16 @@ _MIN_LEVEL = {
     # run unattended. skill_promote is Red, so an ic's overlapping proposal always
     # queues for the owner rather than being refused outright.
     "skill_promote": "ic",
-    # lead: shape projects + move work across people
+    # lead: shape projects and the board
     "project_create": "lead",
     "project_ensure": "lead",        # find-or-create for a cwd; same authority to create
-    "card_assign": "lead",           # assign to someone else
     "card_delete": "lead",           # remove a work item (also red → queued for MCP)
-    "reassign_across_employees": "lead",
     "approval_resolve": "lead",
     "column_create": "lead",         # the board's SHAPE, not an item on it
     "column_update": "lead",
     "column_delete": "lead",         # not red: cards survive (FK ON DELETE SET NULL)
     # lead: schedule recurring work. A loop re-runs a prompt on a cadence, so it is
-    # board-shaping authority (like assigning work), not an ic act on one's own
+    # board-shaping authority, not an ic act on one's own
     # card. loop_delete is ALSO red → an agent's delete queues for the owner.
     "loop_create": "lead",
     "loop_update": "lead",
@@ -252,18 +253,15 @@ _MIN_LEVEL = {
     "intake_rotate": "lead",
     "intake_update": "lead",
     "intake_delete": "lead",
-    # manager: hire / change the org
-    "employee_create": "manager",
-    "employee_update": "manager",
-    "harman_config": "manager",      # who may act autonomously, and with what budget
+    # manager: change the org
     # WHICH loop origins may fire (the loop_control dropdown) is an org-wide control
-    # panel, same authority tier as harman_config. Not risk-split like the master
+    # panel. Not risk-split like the master
     # switch: setting it to 'none' or 'user' is a de-escalation, and licensing agent
     # loops ('harman'/'both') only decides WHETHER already-authored loops run — the
     # authoring of a harman loop was itself gated (loop_create, lead+).
     "loop_mode_set": "manager",
     # The global system-awareness preamble is org-wide config (it shapes every
-    # session), so it is manager scope like harman_config. It is ALSO Red (above):
+    # session), so it is manager scope like loop_mode_set. It is ALSO Red (above):
     # scope says who may initiate, risk says whether it runs unattended.
     "system_preamble_set": "manager",
     # Same authority as any other Harman config write; the two differ only in RISK
@@ -278,6 +276,8 @@ _MIN_LEVEL = {
     # queues for the owner and a model can never grant itself trust: the scope
     # gate decides who may initiate, the risk gate decides who must consent.
     "session_mode_set": "ic",
+    # Same shape for the Harman authority level (session_level_set is Red).
+    "session_level_set": "ic",
     # Any session that changed server code may ask for the next maintenance
     # window; restart_now is the same request without the wait, so the scope is
     # the same and the Red gate (above) is what makes an agent's ask queue.
@@ -294,7 +294,7 @@ def _level_rank(level):
 
 
 def allowed(action, level):
-    """True if an employee at `level` has the AUTHORITY to perform `action`.
+    """True if a session at `level` has the AUTHORITY to perform `action`.
     Deny-by-default: an action not in the responsibility table, or an unknown
     level, returns False. This is the scope gate ONLY — the Green/Red risk gate
     (classify_action) is applied separately by the caller."""
@@ -395,10 +395,7 @@ def mutates_own_session(acting_session, target_session):
         and acting_session == target_session
 
 
-# ── Harman's autonomous planning: board state → intended actions (PURE) ───────
-# Deterministic list→list so the manager's decisions are unit-tested without a DB
-# or spawning any model. The orchestrator (viewer/orchestrator.py) executes the
-# returned intents; NOTHING here has side effects.
+# ── Board shape: which project / which column (PURE) ──────────────────────────
 
 def resolve_board_project(explicit=None, session_project=None):
     """Which project's board a board-view or card belongs to — the ONE rule every
@@ -490,108 +487,6 @@ def ensure_pipeline_columns(columns):
     return out
 
 
-def _emp_level(emp):
-    """Responsibility level for an employee, from an explicit 'level' or its role
-    name. Conservative: only clear lead/manager role words elevate; default 'ic'."""
-    if emp.get("level") in LEVELS:
-        return emp["level"]
-    role = (emp.get("role") or "").lower()
-    if any(w in role for w in ("manager", "head", "director", "founder", "ceo", "chief")):
-        return "manager"
-    if "lead" in role:
-        return "lead"
-    return "ic"
-
-
-def _spawnable(emp, default_provider):
-    """Can Harman actually start a session for this employee? True if the employee has
-    its own provider preset, or the org supplies a default one to fall back on. (Mirrors
-    _spawn_employee_session's `preset_id = employee.provider or default_provider`.)"""
-    return bool((emp.get("provider") or "").strip() or (default_provider or "").strip())
-
-
-def suitable_employee(card, employees, *, default_provider=""):
-    """Pick an active employee to WORK `card` (an actual doer, not a manager/CEO).
-    Candidates are active, non-manager, and spawnable (own provider or an org default).
-    Among them, prefer one whose role appears in the card title/body (a light skill
-    match), else the first. Returns the employee dict or None. Deterministic.
-
-    Falls back to any active non-manager if none are spawnable (so a misconfigured org
-    still gets an assignment — the spawn just won't fire), and finally to the old
-    first-active behaviour only when no worker exists at all."""
-    active = [e for e in employees if (e.get("status") or "active") == "active"]
-    if not active:
-        return None
-    workers = [e for e in active if _emp_level(e) != "manager"]
-    pool = [e for e in workers if _spawnable(e, default_provider)] or workers or active
-    text = ((card.get("title") or "") + " " + (card.get("body") or "")).lower()
-    for e in pool:
-        role = (e.get("role") or "").strip().lower()
-        if role and role in text:
-            return e
-    return pool[0]
-
-
-def plan_assignments(cards, employees, columns, running, *, projects, budget,
-                     default_provider=""):
-    """Given the board, return a list of intended Action dicts for Harman to execute.
-    PURE — no side effects. `running` is the set of card ids already in flight (the
-    in-progress guard); `projects` is the set of project ids Harman manages (empty =
-    manage nothing); `budget` caps how many NEW spawns this plan may emit.
-
-    Action shapes:
-      {"kind":"assign", "card_id", "employee", "level", "spawn", "reason"}
-      {"kind":"advance", "card_id", "to_column", "reason"}
-      {"kind":"escalate", "approval_kind", "summary", "detail"}
-
-    Rules: only cards whose project_id is in `projects`; an unassigned card in Todo
-    not already running → assign (spawn if the chosen employee has no live session);
-    a card in Doing whose owning session finished-ok → advance to Review. Every
-    candidate passes the responsibility gate (allowed); a red action becomes an
-    escalate (never an execute)."""
-    slots = project_columns(columns)
-    todo, doing, review = slots["todo"], slots["doing"], slots["review"]
-    managed = set(projects or [])
-    running = set(running or [])
-    # employee id -> has a live session? (derived from `running` by assignee is not
-    # enough; callers pass employees already tagged with `_busy` when they hold a
-    # running session — default False.)
-    out = []
-    spawned = 0
-    cap = budget if budget is not None else 0
-    for card in cards:
-        pid = card.get("project_id")
-        if pid not in managed:
-            continue
-        cid = card.get("id")
-        if cid in running:
-            continue
-        col = card.get("column_id")
-        # Unassigned Todo → assign + (maybe) spawn.
-        if col == todo and not card.get("assignee"):
-            emp = suitable_employee(card, employees, default_provider=default_provider)
-            if not emp:
-                continue
-            level = emp.get("level") or _emp_level(emp)
-            want_spawn = not emp.get("_busy")
-            if want_spawn and budget is not None and (len(running) + spawned) >= cap:
-                want_spawn = False  # budget reached; assign but don't spawn this tick
-            if want_spawn:
-                spawned += 1
-            out.append({
-                "kind": "assign", "card_id": cid, "employee": emp.get("id"),
-                "level": level, "spawn": want_spawn,
-                "reason": f"unassigned Todo → {emp.get('name')}",
-            })
-        # Doing card whose session finished successfully → advance to Review.
-        elif col == doing and card.get("_session_done_ok"):
-            if review:
-                out.append({"kind": "advance", "card_id": cid, "to_column": review,
-                            "reason": "session finished ok → Review"})
-    return out
-
-
-
 def _norm_skill(name):
     """Normalize a skill name for comparison: lowercase, non-alphanumeric → single
     space, collapsed + trimmed. So "Ship to TestFlight" ~ "ship-to-testflight"."""
@@ -628,14 +523,14 @@ def dedupe_skill(name, existing_names):
     return False
 
 
-def build_skill_md(name, trigger, body, origin_employee=None):
+def build_skill_md(name, trigger, body, learned_by=None):
     """Assemble a SKILL.md document (pure) for a promoted org skill: YAML frontmatter
     with the name + a `description` (the trigger — when to use the skill), the body
     (the procedure/lesson), and an origin credit line. Deterministic → unit-tested."""
     desc = (trigger or "").replace("\n", " ").strip() or name
     lines = ["---", f"name: {name}", f"description: {desc}", "---", ""]
     lines.append((body or "").strip())
-    if origin_employee:
+    if learned_by:
         lines.append("")
-        lines.append(f"_Learned by {origin_employee}._")
+        lines.append(f"_Learned by {learned_by}._")
     return "\n".join(lines).rstrip() + "\n"

@@ -19,7 +19,7 @@ ones /api/decisions/open reads). Snoozed rows resurface when the snooze lapses.
 """
 import time
 
-from viewer import audit, db, decisions, inbox, orglogic
+from viewer import audit, db, decisions, inbox
 from viewer.engine import _push_label, pending_approvals_all_public
 from viewer import questions
 
@@ -33,7 +33,7 @@ def red_row(approval):
     return dict(approval,
                 action_label=audit.action_label(action) if action else "",
                 subject=inbox.red_subject(intent),
-                risk=orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT),
+                risk=inbox.red_risk(intent),
                 reason=inbox.red_reason(intent))
 
 

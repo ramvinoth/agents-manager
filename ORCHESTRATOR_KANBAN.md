@@ -1,5 +1,11 @@
 # ORCHESTRATOR — Kanban / Empire design (v1)
 
+> **Superseded in part (2026-10-08, card 146):** the Employees roster, card
+> assignment and the Harman manager tick described below were removed. Authority
+> now comes from the agent role (agent_templates.level) or a per-chat override
+> (session_meta.level); see SESSIONS.md "Two trust layers". Read the rest as
+> design history.
+
 Status: **design (v1)** — extends ORCHESTRATOR.md's charter with Ram's Kanban/empire vision
 (2026-08-15). No code until approved. Branch: `feature/orchestrator`.
 

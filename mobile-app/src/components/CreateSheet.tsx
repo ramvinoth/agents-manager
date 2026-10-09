@@ -5,12 +5,8 @@ import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 
 /**
- * A field in a CreateSheet form. `key` is the value returned.
- * - Text field (default): a labelled input; `suggestions` render as tappable chips
- *   above it (e.g. recent working dirs for a project cwd).
- * - Select field: pass `options` and the field renders as single-select chips
- *   instead of an input (e.g. picking an employee's provider). The returned value
- *   is the chosen option's `value`.
+ * A field in a CreateSheet form: a labelled text input whose value is returned
+ * under `key`. `suggestions` render as tappable chips below it (e.g. recent working dirs for a project cwd).
  */
 export type CreateField = {
   key: string
@@ -19,8 +15,6 @@ export type CreateField = {
   required?: boolean
   autoCapitalize?: "none" | "sentences"
   suggestions?: string[]
-  options?: { value: string; label: string }[]
-  defaultValue?: string
 }
 
 /**
@@ -30,8 +24,7 @@ export type CreateField = {
  * calls `onSubmit` with a {key: value} map once the required fields are filled.
  *
  * Deliberately field-driven (not one hard-coded form) so the same component backs
- * both "new project" (name + workspace dir) and "new employee" (name + role) — one
- * source of truth for the create-form look, per the no-duplicate-implementations rule.
+ * any create form (today: "new project" — name + workspace dir) — one source of truth for the create-form look, per the no-duplicate-implementations rule.
  */
 export default function CreateSheet({
   visible,
@@ -54,11 +47,9 @@ export default function CreateSheet({
   const [busy, setBusy] = useState(false)
 
   // Reset the form each time the sheet opens so stale input never carries over.
-  // Seed any field defaults (e.g. a preselected provider) so required selects can
-  // be pre-satisfied.
   useEffect(() => {
     if (visible) {
-      setValues(Object.fromEntries(fields.filter((f) => f.defaultValue).map((f) => [f.key, f.defaultValue as string])))
+      setValues({})
       setBusy(false)
     }
   }, [visible])
@@ -85,35 +76,16 @@ export default function CreateSheet({
           <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>
             {f.label}{f.required ? "" : "  (optional)"}
           </Text>
-          {f.options ? (
-            // Select field: single-select chips (tap again to clear an optional one).
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-              {f.options.map((o) => {
-                const on = (values[f.key] || "") === o.value
-                return (
-                  <TouchableOpacity
-                    key={o.value}
-                    testID={`create-${f.key}-opt-${o.value}`}
-                    onPress={() => setValues((cur) => ({ ...cur, [f.key]: on && !f.required ? "" : o.value }))}
-                    style={{ borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: on ? t.accent : t.chipBg }}
-                  >
-                    <Text style={{ color: on ? t.onAccent : t.text, fontSize: 13 }}>{o.label}</Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </View>
-          ) : (
-            <TextInput
-              testID={`create-${f.key}`}
-              style={[styles.input, { color: t.text, borderColor: t.border }]}
-              value={values[f.key] || ""}
-              onChangeText={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))}
-              placeholder={f.placeholder}
-              placeholderTextColor={t.textMuted}
-              autoCapitalize={f.autoCapitalize || "sentences"}
-              autoCorrect={false}
-            />
-          )}
+          <TextInput
+            testID={`create-${f.key}`}
+            style={[styles.input, { color: t.text, borderColor: t.border }]}
+            value={values[f.key] || ""}
+            onChangeText={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))}
+            placeholder={f.placeholder}
+            placeholderTextColor={t.textMuted}
+            autoCapitalize={f.autoCapitalize || "sentences"}
+            autoCorrect={false}
+          />
           {f.suggestions?.length ? (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
               {f.suggestions.slice(0, 6).map((s) => (

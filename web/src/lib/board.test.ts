@@ -7,7 +7,7 @@ function eq(label: string, got: unknown, want: unknown) {
 }
 
 const C = (o: Partial<Card> & { id: number }): Card => ({
-  title: `c${o.id}`, body: "", column_id: null, assignee: null,
+  title: `c${o.id}`, body: "", column_id: null,
   project_id: null, session_id: null, position: 0,
   created_by: "", created_at: 0, updated_at: 0, ...o,
 })
@@ -16,10 +16,10 @@ const COL = (o: Partial<BoardColumn> & { id: number; name: string; position: num
 })
 
 const cards: Card[] = [
-  C({ id: 1, session_id: "s1", project_id: 10, assignee: 100, column_id: 1, position: 2 }),
-  C({ id: 2, session_id: "s1", project_id: 10, assignee: 200, column_id: 1, position: 1 }),
-  C({ id: 3, session_id: "s2", project_id: 20, assignee: 100, column_id: 2, position: 3 }),
-  C({ id: 4, session_id: "s2", project_id: 10, assignee: 200, column_id: 2, position: 1.5 }),
+  C({ id: 1, session_id: "s1", project_id: 10, column_id: 1, position: 2 }),
+  C({ id: 2, session_id: "s1", project_id: 10, column_id: 1, position: 1 }),
+  C({ id: 3, session_id: "s2", project_id: 20, column_id: 2, position: 3 }),
+  C({ id: 4, session_id: "s2", project_id: 10, column_id: 2, position: 1.5 }),
 ]
 const ids = (cs: Card[]) => cs.map((c) => c.id)
 
@@ -27,9 +27,8 @@ const ids = (cs: Card[]) => cs.map((c) => c.id)
 eq("no filter", ids(filterCards(cards)), [1, 2, 3, 4])
 eq("by session", ids(filterCards(cards, { session: "s1" })), [1, 2])
 eq("by project", ids(filterCards(cards, { project: 10 })), [1, 2, 4])
-eq("by assignee", ids(filterCards(cards, { assignee: 100 })), [1, 3])
 eq("combined AND", ids(filterCards(cards, { session: "s2", project: 10 })), [4])
-eq("no match", filterCards(cards, { assignee: 999 }), [])
+eq("no match", filterCards(cards, { session: "nobody" }), [])
 
 // orderColumn
 eq("order by position", ids(orderColumn([C({ id: 1, position: 3 }), C({ id: 2, position: 1 }), C({ id: 3, position: 2 })])), [2, 3, 1])
@@ -78,7 +77,7 @@ eq("case/whitespace tolerant", decisionActions([COL({ id: 1, name: " REVIEW ", p
 eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
 eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
 eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
-eq("employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
+eq("historical employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
 eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
 eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })
 eq("bare string", formatActor("legacy"), { name: "legacy", kind: "unknown" })

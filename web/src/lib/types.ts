@@ -1,15 +1,5 @@
 // Domain types shared across the app — ported from the vanilla SessionParser.
 
-/** The employee driving a session — the org↔fleet join attached by
- *  _overlay_meta when a session's token carries an employee_id. Absent on
- *  sessions with no linked persona. */
-export interface SessionPersona {
-  id: number
-  name: string
-  role: string
-  avatar: string
-}
-
 export interface SessionListItem {
   path: string
   title: string
@@ -27,8 +17,6 @@ export interface SessionListItem {
   provider?: string
   /** Harness tag: claude | codex | copilot | pi. */
   harness?: string
-  /** The employee driving this session (org↔fleet join); absent when unlinked. */
-  persona?: SessionPersona
   [k: string]: unknown
 }
 
@@ -39,11 +27,6 @@ export interface HarmanConfig {
   /** The master switch. Omitted by servers predating it — treat absence as OFF
    *  (a server with no gate must not be shown as running unattended work). */
   automation_enabled?: boolean
-  enabled: boolean
-  interval: number
-  budget: number
-  projects: number[]
-  default_provider: string
 }
 
 /** WHICH loop origins may fire — orthogonal to the automation master switch.
@@ -297,17 +280,6 @@ export type LoopSchedule = { interval?: number; at?: string }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
 // ---- org / Kanban ----------------------------------------------------------
-export interface Employee {
-  id: number
-  name: string
-  role: string
-  provider: string
-  model: string
-  conv_mode: string
-  avatar: string
-  status: string
-  created_at: number
-}
 export interface OrgProject {
   id: number
   name: string
@@ -381,7 +353,6 @@ export interface Card {
   title: string
   body: string
   column_id: number | null
-  assignee: number | null
   project_id: number | null
   session_id: string | null
   position: number
@@ -471,7 +442,7 @@ export interface InboxMessage {
   snoozed?: boolean
 }
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
-export type CardFilter = { session?: string; project?: number; assignee?: number }
+export type CardFilter = { session?: string; project?: number }
 /** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared
  *  by the owner and every agent session's note_* MCP tools. */
 export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"

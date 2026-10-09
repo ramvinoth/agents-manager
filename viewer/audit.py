@@ -20,6 +20,9 @@ _OUTCOMES = {
     "queued:red": ("queued", "Sent for approval",
                    "This action needs the owner's approval and was placed in the queue. "
                    "Whether it was later approved is not part of this record."),
+    "queued:scope": ("queued", "Sent for approval",
+                     "An agent asked for something above its own authority; it was placed "
+                     "in the owner's queue instead of being refused."),
     "denied:scope": ("denied", "Denied",
                      "The caller's authority did not allow this action."),
     # routes.orchestrator: guards before approval resolution / self mutation.
@@ -31,10 +34,10 @@ _OUTCOMES = {
                          "An agent asked for an approval without saying why; it was sent back."),
     "error:unknown_action": ("error", "Failed",
                              "No handler is registered for this action."),
-    # orchestrator.tick catches an exception for one planned action.
+    # Historical: the retired manager tick (card 146) wrote the five values below.
+    # Nothing records them now; they stay so old audit rows still read as words.
     "error": ("error", "Failed",
               "The manager tick hit an exception while processing this action."),
-    # Tick values intentionally stay Other, not handler-return / approval categories.
     "ok": ("other", "Tick ran",
            "The manager tick finished this operation."),
     "planned": ("other", "Planned (dry run)",
@@ -84,12 +87,11 @@ def outcome_filter(result):
 
 # Controlled action labels describe the requested operation, not its success.
 # References are action-specific: (label, intent arg key, direct-writer key).
-# actions.ACTIONS owns intent keys; orchestrator.tick / board_wake own direct keys.
+# actions.ACTIONS owns intent keys; board_wake / questions / inbox own direct keys.
 _ACTIONS = {
     "card_create": ("Create card", ("Project", "project_id", None)),
     "card_update": ("Update card", ("Card", "card_id", None)),
     "card_move": ("Move card", ("Card", "card_id", None)),
-    "card_assign": ("Assign card", ("Card", "card_id", "card")),
     "card_delete": ("Delete card", ("Card", "card_id", None)),
     "card_comment": ("Comment on card", ("Card", "card_id", None)),
     "note_comment": ("Comment on note", ("Note", "note_id", None)),
@@ -102,9 +104,6 @@ _ACTIONS = {
     "column_delete": ("Delete board column", ("Column", "id", None)),
     "project_create": ("Create project", None),
     "project_ensure": ("Find or create project", None),
-    "employee_create": ("Create employee", None),
-    "employee_update": ("Update employee", ("Employee", "id", None)),
-    "harman_config": ("Change manager configuration", None),
     "automation_pause": ("Pause automation", None),
     "automation_resume": ("Resume automation", None),
     "approval_resolve": ("Resolve approval", ("Approval", "id", "id")),
@@ -113,19 +112,27 @@ _ACTIONS = {
     "loop_delete": ("Delete scheduled work", None),
     "loop_mode_set": ("Change loop firing mode", None),
     "session_mode_set": ("Change session permission mode", None),
+    "session_level_set": ("Change session authority level", None),
     "system_preamble_set": ("Change system preamble", None),
     "skill_propose": ("Propose shared skill", None),
     "skill_promote": ("Promote shared skill", None),
     "self_mutation": ("Change own session controls", None),
-    "tick_dryrun": ("Plan manager action", None),
-    "card_advance": ("Advance card", ("Card", None, "card")),
-    "spawn_session": ("Start employee session", ("Card", None, "card")),
     "escalate": ("Request owner approval", ("Approval", None, "approval")),
     "ask_owner": ("Ask owner a question", None),
     "board_wake": ("Schedule board wake", ("Card", None, "card")),
     "restart_request": ("Request server restart", None),
     "restart_now": ("Restart server now", None),
     "maintenance_restart": ("Maintenance-window restart", None),
+    # Historical: written only by the retired Employees roster and its manager
+    # tick (card 146). Nothing records these now; the labels stay so audit rows
+    # from before the retirement still read as words instead of "Unknown".
+    "card_assign": ("Assign card", ("Card", "card_id", "card")),
+    "employee_create": ("Create employee", None),
+    "employee_update": ("Update employee", ("Employee", "id", None)),
+    "harman_config": ("Change manager configuration", None),
+    "tick_dryrun": ("Plan manager action", None),
+    "card_advance": ("Advance card", ("Card", None, "card")),
+    "spawn_session": ("Start agent session", ("Card", None, "card")),
 }
 
 

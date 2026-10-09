@@ -69,16 +69,38 @@ def _db():
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _run_migrations(prev):
     """Ordered / non-additive schema steps, run after the additive DDL in
     init_db(). `prev` is the schema_version the DB was last stamped with (0 on a
-    fresh install). Today there are none — additive changes are handled by the
-    idempotent DDL above — so this is the intentionally-empty seam where future
-    destructive steps go, each guarded `if prev < N:` and applied in order."""
-    return
+    fresh install). Each step is guarded `if prev < N:`, applied in order, and
+    written IF EXISTS so a fresh install (which never had the old shape) is a
+    no-op."""
+    if prev < 2:
+        # The Employees roster is retired: a session's authority now comes from
+        # its agent role (agent_templates.level) or the owner's per-chat
+        # override (session_meta.level) — see engine.resolve_level. Drop the
+        # roster and every column that pointed at it.
+        with _db() as cur:
+            cur.execute("""
+                ALTER TABLE cards DROP COLUMN IF EXISTS assignee;
+                ALTER TABLE skills_learned DROP COLUMN IF EXISTS origin_employee;
+                ALTER TABLE session_tokens DROP COLUMN IF EXISTS employee_id;
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'session_tokens' AND column_name = 'employee_level')
+                  THEN ALTER TABLE session_tokens RENAME COLUMN employee_level TO level;
+                  END IF;
+                END $$;
+                DROP TABLE IF EXISTS employees;
+                -- The manager tick's knobs (enabled/interval/budget/projects/
+                -- default_provider) went with it; keep only the master switch.
+                UPDATE settings SET value = jsonb_build_object(
+                    'automation_enabled', COALESCE((value->>'automation_enabled')::boolean, false))
+                  WHERE key = 'harman';
+            """)
 
 
 def init_db():
@@ -139,8 +161,7 @@ def init_db():
               session_id     TEXT PRIMARY KEY,
               perm_token     TEXT NOT NULL DEFAULT '',
               kanban_token   TEXT NOT NULL DEFAULT '',
-              employee_id    INTEGER,
-              employee_level TEXT NOT NULL DEFAULT 'ic',
+              level          TEXT NOT NULL DEFAULT 'ic',
               cwd            TEXT NOT NULL DEFAULT '',
               host           TEXT NOT NULL DEFAULT 'local',
               created_at     DOUBLE PRECISION NOT NULL
@@ -169,19 +190,8 @@ def init_db():
             );
             -- ── Orchestrator ("Harman") empire tables ─────────────────────────
             -- ONE canonical Kanban board: a single cards table; every per-session
-            -- / project / employee / CEO "board" is a filtered VIEW of it. See
+            -- / project / CEO "board" is a filtered VIEW of it. See
             -- ORCHESTRATOR_KANBAN.md + viewer/orglogic.py.
-            CREATE TABLE IF NOT EXISTS employees (
-              id         SERIAL PRIMARY KEY,
-              name       TEXT NOT NULL,
-              role       TEXT NOT NULL DEFAULT '',
-              provider   TEXT NOT NULL DEFAULT '',
-              model      TEXT NOT NULL DEFAULT '',
-              conv_mode  TEXT NOT NULL DEFAULT 'chat',
-              avatar     TEXT NOT NULL DEFAULT '',
-              status     TEXT NOT NULL DEFAULT 'active',
-              created_at DOUBLE PRECISION NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS projects (
               id          SERIAL PRIMARY KEY,
               name        TEXT NOT NULL,
@@ -202,7 +212,6 @@ def init_db():
               title      TEXT NOT NULL,
               body       TEXT NOT NULL DEFAULT '',
               column_id  INTEGER REFERENCES board_columns(id) ON DELETE SET NULL,
-              assignee   INTEGER REFERENCES employees(id) ON DELETE SET NULL,
               project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
               session_id TEXT,
               position   DOUBLE PRECISION NOT NULL DEFAULT 1.0,
@@ -213,7 +222,7 @@ def init_db():
             -- The discussion thread on a card: where the owner and the card's
             -- session talk about the work (decisions, questions, status). `author`
             -- is the resolved principal actor, same string audit_log carries
-            -- (user:<name> / an employee or session id) — no FK, because an
+            -- (user:<name> / session:<label>) — no FK, because an
             -- agent's identity is a name, not a row.
             CREATE TABLE IF NOT EXISTS card_comments (
               id         SERIAL PRIMARY KEY,
@@ -354,7 +363,6 @@ def init_db():
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
               path           TEXT NOT NULL DEFAULT '',
-              origin_employee INTEGER REFERENCES employees(id) ON DELETE SET NULL,
               origin_card    INTEGER,
               origin_session TEXT,
               status         TEXT NOT NULL DEFAULT 'proposed',
@@ -381,6 +389,9 @@ def init_db():
             -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
+            -- The Harman authority level (ic < lead < manager) a chat started
+            -- from this role acts at on the board (engine.resolve_level).
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
             -- Lenses are views over a PROJECT (two engineer chats share one Map).
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
             -- Map lens cache: one row per parsed file; re-parsed only when its stamp
@@ -529,8 +540,7 @@ def init_db():
             -- unattended machine must never start running on its own). DO NOTHING
             -- so the legacy-file backfill and any later user edit always win.
             INSERT INTO settings (key, value) VALUES ('harman',
-              $${"automation_enabled": false, "enabled": true, "interval": 30,
-                 "budget": 2, "projects": [], "default_provider": ""}$$::jsonb)
+              $${"automation_enabled": false}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
             -- Loop-firing control. 'mode' is one of user|harman|both|none: which
             -- loop ORIGINS are licensed to fire. It is a different fact from the
@@ -552,9 +562,9 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — employee_list, project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/assign/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set; inbox — inbox_list, inbox_send.
+Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send.
 
-Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.
+Authority: your power is the weaker of the human owner's role and this session's level (ic < lead < manager). A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs at ic, the least authority. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.
 
 Steering rules: you may create/edit loops for OTHER sessions, never your own. session_mode_set changes another session's permission mode (up to 'bypass' — no tool gating at all): it is Red, so an agent's request queues for the owner, and a session may never set its own (the owner grants trust, a model never requests it of itself). Agent-scheduled (harman) loops fire only when the loop-control mode (user|harman|both|none) licenses that origin AND the automation master switch (harman.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
 
@@ -576,8 +586,26 @@ Asking the owner a question is Claude's built-in AskUserQuestion; proposing a pl
 Full design: docs_read ORCHESTRATOR_MCP.md (§8A is the shipped tool list); docs_read system-status shows this machine's live posture (automation switch, loop mode, this preamble).
 
 ## Work discipline (board = the durable ledger, notes = the durable knowledge)
-In-conversation todos are scratch for the current task only. Work that outlives this conversation — parked or deferred items, follow-ups, work handed to another session or employee — becomes a board card via card_create before the session ends. When asked what work is pending, answer from the board (card_list), not from memory. If your card cannot move until another card is done, record that with card_dep_add instead of waiting silently — the owner sees the same edge. Knowledge that outlives the conversation — research, a decision and why it was taken, meeting notes — goes in a note (note_create), not in chat text; read note_list before researching what a peer may already have written. A repeatable PROCEDURE a teammate could follow (how to deploy X, how to diagnose Y) is a skill, not a note: skill_list shows what the team already knows (each skill is invocable as /<name>), skill_read gives the full text, and skill_propose adds what you learned so every session inherits it. The owner sees the same board and notes; nothing should live only in a session's head.$preamble$::text))
+In-conversation todos are scratch for the current task only. Work that outlives this conversation — parked or deferred items, follow-ups, work handed to another session — becomes a board card via card_create before the session ends. When asked what work is pending, answer from the board (card_list), not from memory. If your card cannot move until another card is done, record that with card_dep_add instead of waiting silently — the owner sees the same edge. Knowledge that outlives the conversation — research, a decision and why it was taken, meeting notes — goes in a note (note_create), not in chat text; read note_list before researching what a peer may already have written. A repeatable PROCEDURE a teammate could follow (how to deploy X, how to diagnose Y) is a skill, not a note: skill_list shows what the team already knows (each skill is invocable as /<name>), skill_read gives the full text, and skill_propose adds what you learned so every session inherits it. The owner sees the same board and notes; nothing should live only in a session's head.$preamble$::text))
               ON CONFLICT (key) DO NOTHING;
+            -- The Employees roster retired (authority = agent role / per-chat
+            -- level): rewrite those lines in an installed preamble. Each replace
+            -- is a no-op when its old text is absent (an operator rewrite).
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$org — employee_list, project_list,$o$, $n$org — project_list,$n$))
+              WHERE key = 'system_preamble' AND position($o$org — employee_list, project_list,$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$card_create/move/assign/update/comment$o$, $n$card_create/move/update/comment$n$))
+              WHERE key = 'system_preamble' AND position($o$card_create/move/assign/update/comment$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$trust — session_mode_set;$o$, $n$trust — session_mode_set, session_level_set;$n$))
+              WHERE key = 'system_preamble' AND position($o$trust — session_mode_set;$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.$o$, $n$A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs at ic, the least authority. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.$n$))
+              WHERE key = 'system_preamble' AND position($o$A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$handed to another session or employee —$o$, $n$handed to another session —$n$))
+              WHERE key = 'system_preamble' AND position($o$handed to another session or employee —$o$ in value #>> '{}') > 0;
             -- Note discussions shipped after installs seeded their preamble:
             -- name the tools in the notes line. A targeted, idempotent edit —
             -- an operator-rewritten preamble without that line is left alone.
@@ -591,7 +619,7 @@ In-conversation todos are scratch for the current task only. Work that outlives 
             -- their cursor. Server-side (not per-device) so the signal is the same
             -- on web, mobile, and to an agent asking over MCP. `reader` is the
             -- resolved principal actor (user:<name> for a human — stable across
-            -- their devices — or employee:<name>/session for an agent), never a
+            -- their devices — or session:<label> for an agent), never a
             -- device id. No FK to sessions: transcripts are files, not rows.
             CREATE TABLE IF NOT EXISTS session_seen (
               reader    TEXT NOT NULL,
@@ -1026,19 +1054,19 @@ def inflight_run_bump_resumes(session_id):
                     (session_id,))
 
 
-def session_token_set(session_id, perm_token, kanban_token, employee_id,
-                      employee_level="ic", cwd="", host="local"):
+def session_token_set(session_id, perm_token, kanban_token, level="ic", cwd="",
+                      host="local"):
     with _db() as cur:
         cur.execute(
             "INSERT INTO session_tokens(session_id, perm_token, kanban_token, "
-            "employee_id, employee_level, cwd, host, created_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) "
+            "level, cwd, host, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (session_id) DO UPDATE SET "
             "perm_token = EXCLUDED.perm_token, kanban_token = EXCLUDED.kanban_token, "
-            "employee_id = EXCLUDED.employee_id, employee_level = EXCLUDED.employee_level, "
+            "level = EXCLUDED.level, "
             "cwd = EXCLUDED.cwd, host = EXCLUDED.host, created_at = EXCLUDED.created_at",
-            (session_id, perm_token or "", kanban_token or "", employee_id,
-             employee_level or "ic", cwd or "", host or "local", _now()),
+            (session_id, perm_token or "", kanban_token or "",
+             level or "ic", cwd or "", host or "local", _now()),
         )
 
 
@@ -1135,45 +1163,6 @@ def pending_plan_delete(session_id):
 
 def _now():
     return time.time()
-
-
-# Employees -------------------------------------------------------------------
-
-def employee_create(name, role="", provider="", model="", conv_mode="chat", avatar="", status="active"):
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO employees(name, role, provider, model, conv_mode, avatar, status, created_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (name, role, provider, model, conv_mode, avatar, status, _now()),
-        )
-        return dict(cur.fetchone())
-
-
-def employee_list():
-    with _db() as cur:
-        cur.execute("SELECT * FROM employees ORDER BY id")
-        return [dict(r) for r in cur.fetchall()]
-
-
-def employee_get(emp_id):
-    with _db() as cur:
-        cur.execute("SELECT * FROM employees WHERE id = %s", (emp_id,))
-        row = cur.fetchone()
-    return dict(row) if row else None
-
-
-def employee_update(emp_id, **fields):
-    """Update the given columns (name/role/provider/model/conv_mode/avatar/status)."""
-    allowed = ("name", "role", "provider", "model", "conv_mode", "avatar", "status")
-    sets = {k: v for k, v in fields.items() if k in allowed}
-    if not sets:
-        return employee_get(emp_id)
-    cols = ", ".join(f"{k} = %s" for k in sets)
-    with _db() as cur:
-        cur.execute(f"UPDATE employees SET {cols} WHERE id = %s RETURNING *",
-                    (*sets.values(), emp_id))
-        row = cur.fetchone()
-    return dict(row) if row else None
 
 
 # Projects --------------------------------------------------------------------
@@ -1404,20 +1393,20 @@ def board_columns_ensure(project_id):
 
 # Cards (the ONLY card store) -------------------------------------------------
 
-def card_create(title, body="", column_id=None, assignee=None, project_id=None,
+def card_create(title, body="", column_id=None, project_id=None,
                 session_id=None, position=1.0, created_by=""):
     with _db() as cur:
         cur.execute(
-            "INSERT INTO cards(title, body, column_id, assignee, project_id, session_id, "
+            "INSERT INTO cards(title, body, column_id, project_id, session_id, "
             "position, created_by, created_at, updated_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (title, body, column_id, assignee, project_id, session_id, position,
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (title, body, column_id, project_id, session_id, position,
              created_by, _now(), _now()),
         )
         return dict(cur.fetchone())
 
 
-def card_list(session_id=None, project_id=None, assignee=None, column_id=None):
+def card_list(session_id=None, project_id=None, column_id=None):
     """All cards, optionally narrowed by any combination of filters (AND). The
     canonical fetch behind every board VIEW; ordering by position is applied in
     viewer.orglogic for the pure/testable path."""
@@ -1426,8 +1415,6 @@ def card_list(session_id=None, project_id=None, assignee=None, column_id=None):
         clauses.append("session_id = %s"); params.append(session_id)
     if project_id is not None:
         clauses.append("project_id = %s"); params.append(project_id)
-    if assignee is not None:
-        clauses.append("assignee = %s"); params.append(assignee)
     if column_id is not None:
         clauses.append("column_id = %s"); params.append(column_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -1453,7 +1440,7 @@ def card_titles(card_ids):
 
 
 def card_update(card_id, **fields):
-    allowed = ("title", "body", "column_id", "assignee", "project_id", "session_id", "position")
+    allowed = ("title", "body", "column_id", "project_id", "session_id", "position")
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return card_get(card_id)
@@ -1496,13 +1483,9 @@ def card_last_move(card_id, seconds):
     return (row["column_id"], row["created_at"]) if row else None
 
 
-def card_assign(card_id, assignee):
-    return card_update(card_id, assignee=assignee)
-
-
 def card_delete(card_id):
-    """Hard-delete a card (a pure work item — no provenance to preserve, unlike an
-    employee). Returns True if a row was removed."""
+    """Hard-delete a card (a pure work item — no provenance to preserve).
+    Returns True if a row was removed."""
     with _db() as cur:
         cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
         return cur.rowcount > 0
@@ -1979,13 +1962,13 @@ def audit_list(limit=100, actor=None, action=None, *, before_id=None, result=Non
 
 # Learned skills (provenance ledger; content stays a SKILL.md file) -----------
 
-def skill_learned_record(name, path="", origin_employee=None, origin_card=None,
-                         origin_session=None, status="proposed"):
+def skill_learned_record(name, path="", origin_card=None, origin_session=None,
+                         status="proposed"):
     with _db() as cur:
         cur.execute(
-            "INSERT INTO skills_learned(name, path, origin_employee, origin_card, "
-            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (name, path, origin_employee, origin_card, origin_session, status, _now()),
+            "INSERT INTO skills_learned(name, path, origin_card, "
+            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            (name, path, origin_card, origin_session, status, _now()),
         )
         return dict(cur.fetchone())
 
@@ -2108,6 +2091,8 @@ _BUILTIN_TEMPLATES = [
     {"name": "Product Manager", "description": "PRDs, specs and the board cards that build them.",
      "category": "business", "icon": "clipboard", "model": "sonnet",
      "plugin": "product-manager",
+     # Shapes the board (columns, projects, schedules), not just its own cards.
+     "level": "lead",
      "system_prompt": "You are a senior product manager. Write PRDs and specs as project notes and break specs into board cards (your write-prd, write-spec and spec-to-cards skills). Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
      "goal": "Define products that solve real user problems and drive business outcomes."},
     {"name": "Legal Advisor", "description": "Contract review, compliance guidance, and risk assessment.",
@@ -2128,8 +2113,9 @@ def _seed_agent_templates():
     longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
     so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
     cols = ("description", "category", "icon", "system_prompt", "goal",
-            "model", "cron", "job_prompt", "plugin", "lens")
-    defaults = {"model": "", "cron": None, "job_prompt": None, "plugin": "", "lens": ""}
+            "model", "cron", "job_prompt", "plugin", "lens", "level")
+    defaults = {"model": "", "cron": None, "job_prompt": None, "plugin": "", "lens": "",
+                "level": "ic"}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
             vals = [t.get(c, defaults.get(c)) for c in cols]
@@ -2162,17 +2148,18 @@ def agent_templates_list():
 
 
 def agent_template_create(name, description, category, icon, system_prompt, goal, model="",
-                          cron=None, job_prompt=None, plugin="", lens="", created_by="user"):
+                          cron=None, job_prompt=None, plugin="", lens="", level="ic",
+                          created_by="user"):
     """Create a user-defined template. Returns the new row."""
     with _db() as cur:
         cur.execute(
             """INSERT INTO agent_templates
                (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
-                plugin, lens, is_builtin, created_by, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
+                plugin, lens, level, is_builtin, created_by, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
                RETURNING *""",
             (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
-             plugin, lens, created_by)
+             plugin, lens, level, created_by)
         )
         return cur.fetchone()
 
@@ -2295,26 +2282,6 @@ def loops_due(now, origins=None):
                 "SELECT * FROM loops WHERE enabled = TRUE AND next_run <= %s "
                 "AND origin = ANY(%s) ORDER BY next_run", (now, list(origins)))
         return [dict(_loop_row(r), id=r["id"]) for r in cur.fetchall()]
-
-
-def loops_disable_for_employee(provider_id):
-    """Disable every loop whose session runs AS a given employee, identified by
-    that employee's provider preset id (the session↔employee link, see
-    engine._resolve_employee). Called when an agent is fired/deactivated so its
-    scheduled work stops. enabled=FALSE (not delete) — reversible on rehire, and
-    the schedules + their history are preserved. Returns how many were disabled.
-
-    A blank provider_id matches nothing: an employee with no provider link owns no
-    agent sessions, so firing them must not disable UNrelated loops."""
-    if not provider_id:
-        return 0
-    with _db() as cur:
-        cur.execute(
-            "UPDATE loops SET enabled = FALSE WHERE enabled = TRUE AND session IN "
-            "(SELECT session_id FROM session_meta WHERE data->>'provider' = %s) "
-            "RETURNING id",
-            (provider_id,))
-        return len(cur.fetchall())
 
 
 # Job runs (append-only history) ----------------------------------------------
@@ -2484,26 +2451,6 @@ def session_meta_delete(sid):
     with _db() as cur:
         cur.execute("DELETE FROM session_meta WHERE session_id = %s RETURNING session_id", (sid,))
         return cur.fetchone() is not None
-
-
-def session_personas():
-    """{session_id: {id, name, role, avatar}} for every session whose token is
-    linked to an employee — the join that fuses the org roster to the running
-    fleet. One query for the whole list (the third overlay batch-fetcher next to
-    `session_meta_all`/`session_seen_get`), so the list handler answers 'which
-    persona is driving this session' without a query per row. Sessions with no
-    `employee_id` are simply absent, so the overlay leaves them personaless."""
-    with _db() as cur:
-        cur.execute(
-            "SELECT st.session_id, e.id, e.name, e.role, e.avatar "
-            "FROM session_tokens st JOIN employees e ON e.id = st.employee_id "
-            "WHERE st.employee_id IS NOT NULL"
-        )
-        return {
-            r["session_id"]: {"id": r["id"], "name": r["name"],
-                              "role": r["role"], "avatar": r["avatar"]}
-            for r in cur.fetchall()
-        }
 
 
 # Per-reader unread cursors ---------------------------------------------------
@@ -3064,10 +3011,10 @@ def migrate_legacy_files():
         # Seed only if the row is still the untouched default (no automation flip
         # since install). setting_get returns the seeded default on a fresh DB.
         cur_cfg = setting_get("harman", {}) or {}
-        if not cur_cfg.get("automation_enabled"):
-            merged = dict(cur_cfg)
-            merged.update(data)
-            setting_set("harman", merged)
+        # Only the master switch survives; the file's other keys fed the retired
+        # manager tick (card 146).
+        if not cur_cfg.get("automation_enabled") and isinstance(data, dict):
+            setting_set("harman", {"automation_enabled": bool(data.get("automation_enabled"))})
         _retire(p)
 
     # cloud-drive vendor clients -> settings['drive_clients']

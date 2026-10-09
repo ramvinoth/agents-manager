@@ -3,7 +3,7 @@
 A skill is a `SKILL.md` under `<base>/.claude/skills/<name>/`, where base is the
 user home (scope="user", shared across every session on the host) or a project cwd
 (scope="project"). Both the capabilities route (manual skill CRUD) and the org
-skill-learning path (Harman/employee promotion) go through here — one source of
+skill-learning path (an agent or the owner proposing one) go through here — one source of
 truth for the layout, no duplicated mkdir+write.
 """
 import re

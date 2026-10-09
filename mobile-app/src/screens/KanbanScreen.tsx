@@ -4,7 +4,7 @@ import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-nati
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type BoardColumn, type Card, type CardFilter, type Employee, type OpenDecision } from "../api/client"
+import { api, type BoardColumn, type Card, type CardFilter, type OpenDecision } from "../api/client"
 import { boardScopeFilter, groupByColumn, matchesQuery, nextPosition } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
@@ -28,12 +28,11 @@ type Snapshot = {
   scope: Scope
   columns: BoardColumn[]
   cards: Card[]
-  employees: Employee[]
   decisions: OpenDecision[]
   loading: boolean
   error: string
 }
-const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: [], employees: [], decisions: [], loading: true, error: "" })
+const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: [], decisions: [], loading: true, error: "" })
 
 /**
  * KanbanScreen — the org's ONE canonical board rendered as a filtered VIEW.
@@ -75,7 +74,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; index: number } | null>(null)
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
-  const { columns, cards, employees, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
+  const { columns, cards, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
   const adding = scope.draft?.column
   const newTitle = scope.draft?.title || ""
   const colBounds = scope.bounds
@@ -86,17 +85,16 @@ export default function KanbanScreen({ route, navigation }: Props) {
     const current = () => isCurrent() && generation === scope.generation
     setSnapshot(cur => ({ ...(cur.scope === scope ? cur : emptySnapshot(scope)), error: "" }))
     try {
-      const [b, c, e, d] = await Promise.all([
+      const [b, c, d] = await Promise.all([
         api.orgBoard({ project: scope.filter.project, session: scope.filter.session }),
         api.orgCards(scope.filter),
-        api.orgEmployees().catch(() => ({ employees: [] as Employee[] })),
         // The queue is system-wide (every session's open question/plan/approval),
         // not this filter's — a failed read must not hide the board, so it
         // degrades to "no open decisions" rather than erroring the poll.
         api.openDecisions().catch(() => ({ count: 0, decisions: [] as OpenDecision[] })),
       ])
       if (!current()) return
-      setSnapshot({ scope, columns: b.columns || [], cards: c.cards || [], employees: e.employees || [], decisions: d.decisions || [], loading: false, error: "" })
+      setSnapshot({ scope, columns: b.columns || [], cards: c.cards || [], decisions: d.decisions || [], loading: false, error: "" })
     } catch (err) {
       if (!current()) return
       const e = err as Error & { status?: number }
@@ -184,32 +182,6 @@ export default function KanbanScreen({ route, navigation }: Props) {
     [isCurrent, navigation]
   )
 
-  const promptAssign = useCallback(
-    (card: Card) => {
-      if (!isCurrent() || !employees.length) return
-      Alert.alert(
-        card.title,
-        "Assign to",
-        [
-          ...employees.map((e) => ({
-            text: e.name,
-            onPress: async () => {
-              if (!isCurrent()) return
-              setSnapshot(cur => cur.scope === scope ? { ...cur, cards: cur.cards.map(c => c.id === card.id ? { ...c, assignee: e.id } : c) } : cur)
-              try {
-                await api.orgAssignCard({ card_id: card.id, assignee: e.id })
-              } catch {
-                if (isCurrent()) load()
-              }
-            },
-          })),
-          { text: "Cancel", style: "cancel" as const },
-        ]
-      )
-    },
-    [employees, scope, isCurrent, load]
-  )
-
   async function addCard(columnId: number) {
     if (!isCurrent() || !scope.filter || scope.draft?.column !== columnId) return
     const title = scope.draft.title.trim()
@@ -241,7 +213,6 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // card list, so a move into a filtered column lands after its hidden cards.
   const shown = cards.filter((c) => matchesQuery(c, query))
   const grouped = groupByColumn(shown, columns)
-  const empName = (id: number | null) => employees.find((e) => e.id === id)?.name
 
   return (
     <View testID="kanban-board" style={{ flex: 1, backgroundColor: t.bg }}>
@@ -323,13 +294,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
                   theme={t}
                   index={i}
                   columnCount={colCards.length}
-                  assigneeName={empName(card.assignee)}
                   commentCount={card.comment_count ?? 0}
                   colBounds={colBounds}
                   columns={columns}
                   onDropColumn={(colId) => moveCard(card, colId, 9999)}
                   onTap={() => openCard(card.id)}
-                  onLongPress={() => promptAssign(card)}
                 />
               ))}
               {!colCards.length ? (
@@ -428,23 +397,21 @@ function DecisionBand({
 /**
  * A single draggable card. Drag horizontally past a column boundary → onDropColumn
  * with the target column id (computed from the measured colBounds). A plain tap →
- * onTap (move menu); long-press → onLongPress (assign). Spring back to origin on
+ * onTap (card detail). Spring back to origin on
  * release regardless — the list re-renders from state, so no stale transform.
  */
 function DraggableCard({
-  card, theme: t, assigneeName, commentCount, colBounds, columns, onDropColumn, onTap, onLongPress,
+  card, theme: t, commentCount, colBounds, columns, onDropColumn, onTap,
 }: {
   card: Card
   theme: ReturnType<typeof useTheme>
   index: number
   columnCount: number
-  assigneeName?: string
   commentCount?: number
   colBounds: React.MutableRefObject<Record<number, { x: number; w: number }>>
   columns: BoardColumn[]
   onDropColumn: (columnId: number) => void
   onTap: () => void
-  onLongPress: () => void
 }) {
   const tx = useSharedValue(0)
   const ty = useSharedValue(0)
@@ -491,20 +458,12 @@ function DraggableCard({
         <Pressable
           testID={`kanban-card-${card.id}`}
           onPress={onTap}
-          onLongPress={onLongPress}
-          delayLongPress={300}
           style={{ backgroundColor: t.bubbleAgent, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
         >
           <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>
             <Text style={{ color: t.textMuted }}>#{card.id} </Text>{card.title}
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
-            {assigneeName ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <Icon name="user" size={12} color={t.textMuted} />
-                <Text style={{ color: t.textMuted, fontSize: 12 }}>{assigneeName}</Text>
-              </View>
-            ) : null}
             {commentCount ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                 <Icon name="chat" size={12} color={t.textMuted} />

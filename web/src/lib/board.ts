@@ -15,12 +15,11 @@ function pos(c: { position?: number | null }): number {
   return typeof v === "number" && isFinite(v) ? v : 0
 }
 
-/** Cards matching every provided filter (AND). One board → a session/project/employee view. */
+/** Cards matching every provided filter (AND). One board → a session/project view. */
 export function filterCards(cards: Card[], f: CardFilter = {}): Card[] {
   return cards.filter((c) => {
     if (f.session !== undefined && c.session_id !== f.session) return false
     if (f.project !== undefined && c.project_id !== f.project) return false
-    if (f.assignee !== undefined && c.assignee !== f.assignee) return false
     return true
   })
 }
@@ -131,9 +130,10 @@ export function decisionActions(columns: BoardColumn[], currentColumnId: number 
 
 /**
  * A principal actor string (viewer/server.py: `user:<name>` for a human,
- * `session:<title>` / `employee:<name>` for an agent) rendered for a person:
- * the name alone, plus whether it was a human, an agent, or the reader.
- * "employee:?" is the server's marker for an unlinked agent, never a name.
+ * `session:<title>` for an agent — and `employee:<name>` on audit rows from
+ * before the Employees roster retired) rendered for a person: the name alone,
+ * plus whether it was a human, an agent, or the reader. "employee:?" was the
+ * old marker for an unlinked agent, never a name.
  */
 export type ActorKind = "you" | "human" | "agent" | "unknown"
 export function formatActor(actor: string | null | undefined, selfUsername?: string): { name: string; kind: ActorKind } {

@@ -1,11 +1,11 @@
 """viewer.routes.orchestrator — OrchestratorMixin: the org / Kanban REST API.
 
-Serves the "digital company" (employees, projects, the ONE canonical board + its
+Serves the "digital company" (projects, the ONE canonical board + its
 filtered views, approvals, audit). Two callers, one set of routes:
 
 - The mobile app / CEO: authenticated by the normal viewer session (cookie/Bearer).
   Acts with the authority of their `users.role`.
-- An employee's MCP subprocess: NOT logged in — authenticates with a per-run token
+- An agent session's MCP subprocess: NOT logged in — authenticates with a per-run token
   in the request headers. Its ceiling is the install owner's role.
 
 Both are resolved to ONE principal by server._resolve_principal before any handler
@@ -54,16 +54,6 @@ class OrchestratorMixin:
         """_org_run + send_json — the two-line body most write routes reduce to."""
         resp, status = self._org_run(req, action, args)
         self.send_json(resp, status=status)
-
-    # ── employees ────────────────────────────────────────────────────────────
-    def _g_org_employees(self, req):
-        self.send_json({"employees": db.employee_list()})
-
-    def _p_org_employees(self, req):
-        self._org_send(req, "employee_create", self.read_body() or {})
-
-    def _p_org_employees_update(self, req):
-        self._org_send(req, "employee_update", self.read_body() or {})
 
     # ── projects ─────────────────────────────────────────────────────────────
     def _g_org_projects(self, req):
@@ -130,10 +120,8 @@ class OrchestratorMixin:
     def _g_org_cards(self, req):
         session = (req.query.get("session") or [None])[0]
         project = (req.query.get("project") or [None])[0]
-        assignee = (req.query.get("assignee") or [None])[0]
         cards = db.card_list(session_id=session,
-                             project_id=int(project) if project else None,
-                             assignee=int(assignee) if assignee else None)
+                             project_id=int(project) if project else None)
         counts = db.card_comment_counts()
         deps = db.card_deps_batch([c["id"] for c in cards])
         for c in cards:  # the badge + its dependency state (dual control: the
@@ -339,7 +327,7 @@ class OrchestratorMixin:
     @staticmethod
     def _voter(req):
         """Who a vote belongs to: an agent votes as its SESSION (two sessions
-        sharing an employee are two voices), a human as their user."""
+        sharing a role are two voices), a human as their user."""
         return req.principal.get("session") or req.principal["actor"]
 
     def _g_org_note_comments(self, req):
@@ -413,9 +401,6 @@ class OrchestratorMixin:
 
     def _p_org_cards_move(self, req):
         self._org_send(req, "card_move", self.read_body() or {})
-
-    def _p_org_cards_assign(self, req):
-        self._org_send(req, "card_assign", self.read_body() or {})
 
     def _p_org_cards_update(self, req):
         self._org_send(req, "card_update", self.read_body() or {})
@@ -513,33 +498,20 @@ class OrchestratorMixin:
         self.send_json(get_config())
 
     def _p_org_harman(self, req):
-        """Write Harman config. The master switch takes its own path.
+        """Write Harman config: the automation master switch, its only setting.
 
-        `automation_enabled` is deliberately NOT one of the patch keys below: it is
-        its own pair of actions so that resuming can be Red while pausing stays
-        cheap. Folding it into the `harman_config` patch would make un-pausing a
-        plain `manager` write — and a session running at manager level would be able
-        to restore its own supervision.
+        It is a pair of actions so that resuming can be Red while pausing stays
+        cheap — a session at manager level can stop the machine but can never
+        restore its own supervision.
         """
         body = self.read_body() or {}
-        if "automation_enabled" in body:
-            self._org_send(req, "automation_resume" if body["automation_enabled"]
-                           else "automation_pause", {"reason": body.get("reason") or ""})
+        if "automation_enabled" not in body:
+            self.send_json({"error": "only automation_enabled is configurable"}, status=400)
             return
-        patch = {}
-        if "enabled" in body:
-            patch["enabled"] = bool(body["enabled"])
-        if "interval" in body:
-            patch["interval"] = int(body["interval"])
-        if "budget" in body:
-            patch["budget"] = int(body["budget"])
-        if "projects" in body:
-            patch["projects"] = [int(x) for x in (body["projects"] or [])]
-        if "default_provider" in body:
-            patch["default_provider"] = str(body["default_provider"] or "")
-        self._org_send(req, "harman_config", {"patch": patch})
+        self._org_send(req, "automation_resume" if body["automation_enabled"]
+                       else "automation_pause", {"reason": body.get("reason") or ""})
 
-    # ── Organizational learning: an employee/CEO proposes a skill ─────────────
+    # ── Organizational learning: an agent or the owner proposes a skill ─────────────
     def _g_org_skills(self, req):
         """The team's skill library: every SKILL.md the CLI will load as /<name>
         (disk is the truth for what exists), joined with the learned-skill ledger
@@ -576,7 +548,7 @@ class OrchestratorMixin:
             self.send_json({"error": "Bad skill name"}, status=400); return
         content = orglogic.build_skill_md(name, body.get("trigger", ""),
                                           body.get("body", ""),
-                                          origin_employee=req.principal["actor"])
+                                          learned_by=req.principal["actor"])
         overlaps = orglogic.dedupe_skill(name, skills.list_skill_names())
         resp, status = self._org_run(
             req, "skill_promote" if overlaps else "skill_propose",
@@ -586,8 +558,7 @@ class OrchestratorMixin:
             # Queued for review: record the intent in the skill ledger too, so the
             # library shows a pending entry instead of the proposal vanishing until
             # someone opens the approvals list.
-            rec = db.skill_learned_record(name, path="", origin_employee=None,
-                                          origin_card=body.get("from_card"),
+            rec = db.skill_learned_record(name, path="", origin_card=body.get("from_card"),
                                           origin_session=body.get("session"),
                                           status="proposed")
             resp = {**resp, "skill": rec["id"]}

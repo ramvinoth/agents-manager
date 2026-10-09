@@ -12,9 +12,8 @@ import { api } from "@/lib/api"
 import { fmtAgo } from "@/lib/format"
 import { decisionActions, formatActor, nextPosition, type DecisionAction } from "@/lib/board"
 import { ActorName } from "@/components/ActorName"
-import type { BoardColumn, Card, CardComment, CardDep, Employee } from "@/lib/types"
+import type { BoardColumn, Card, CardComment, CardDep } from "@/lib/types"
 
-const UNASSIGNED = "__unassigned__"
 const POLL_MS = 5000
 
 /**
@@ -29,7 +28,7 @@ const POLL_MS = 5000
  *    see is what the board has, and a failed write says so where it failed.
  *  - The thread polls while open: the agent answers asynchronously, and the
  *    owner should see the reply land without reopening the card. The card's
- *    column and assignee refresh the same way, so an agent's move is visible.
+ *    column refreshes the same way, so an agent's move is visible.
  *  - Every author is shown as a person or an agent by name, never as the raw
  *    `user:` / `session:` principal string.
  *
@@ -39,7 +38,6 @@ const POLL_MS = 5000
  */
 export function CardDetail({
   card: initial,
-  employees,
   allCards,
   columns,
   selfUsername,
@@ -50,7 +48,6 @@ export function CardDetail({
   onClose,
 }: {
   card: Card
-  employees: Employee[]
   allCards: Card[]
   columns: BoardColumn[]
   selfUsername?: string
@@ -124,13 +121,6 @@ export function CardDetail({
   function saveBody(body: string) {
     if (body === card.body) return
     write("body", () => api.orgUpdateCard({ card_id: card.id, body }), apply, "The description was not saved.")
-  }
-
-  function assign(value: string) {
-    const assignee = value === UNASSIGNED ? null : Number(value)
-    if (assignee === card.assignee) return
-    write("assignee", () => api.orgUpdateCard({ card_id: card.id, assignee: assignee as number }), apply,
-      "The assignee was not changed.")
   }
 
   async function post(text: string) {
@@ -219,18 +209,6 @@ export function CardDetail({
                 <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={columns.length ? "No column" : "Not on a board"} /></SelectTrigger>
                 <SelectContent>
                   {columns.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Assignee">
-              <Select value={card.assignee != null ? String(card.assignee) : UNASSIGNED} onValueChange={assign} disabled={busy === "assignee"}>
-                <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                  {employees.map((e) => (
-                    <SelectItem key={e.id} value={String(e.id)}>{e.name}{e.role ? ` · ${e.role}` : ""}</SelectItem>
-                  ))}
                 </SelectContent>
               </Select>
             </Field>

@@ -322,15 +322,6 @@ function SessionRow({
           </span>
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span>{fmtAgo(s.modified)}</span>
-            {s.persona && (
-              <span
-                className="inline-flex items-center gap-1 rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary"
-                title={s.persona.role ? `${s.persona.name} · ${s.persona.role}` : s.persona.name}
-              >
-                {s.persona.avatar ? <span>{s.persona.avatar}</span> : null}
-                {s.persona.name}
-              </span>
-            )}
             {providerName(s.provider) && (
               <span className="rounded bg-muted px-1 py-px text-[10px] font-medium text-foreground/70">
                 {providerName(s.provider)}

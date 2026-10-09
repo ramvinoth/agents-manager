@@ -506,14 +506,13 @@ export default function ChatsScreen({ navigation }: Props) {
                       {name}
                     </Text>
                   </View>
-                  {/* The WhatsApp signature line: what was last said, not metadata.
-                      When a persona drives the session, name it here — the org↔fleet
-                      answer to "who is this" — else fall back to host/harness. */}
+                  {/* The WhatsApp signature line: what was last said, not metadata;
+                      host/harness only when there is nothing said yet. */}
                   <Text
                     style={[styles.chatSub, unread ? { color: t.text, fontWeight: "500" } : null]}
                     numberOfLines={1}
                   >
-                    {item.preview || (item.persona ? `${item.persona.name} · ${hostLabel}` : `Claude · ${hostLabel}`)}
+                    {item.preview || `Claude · ${hostLabel}`}
                   </Text>
                 </View>
                 <View style={styles.chatMetaCol}>

@@ -20,20 +20,18 @@ function pos(c: { position?: number | null }): number {
 
 /** Mobile board entries require a session or explicit project; never widen a malformed filter. */
 export function boardScopeFilter(input: CardFilter = {}): CardFilter | null {
-  const { session, project, assignee } = input
+  const { session, project } = input
   if (session !== undefined && (typeof session !== "string" || !session.trim())) return null
   if (project !== undefined && (!Number.isSafeInteger(project) || project <= 0)) return null
-  if (assignee !== undefined && (!Number.isSafeInteger(assignee) || assignee <= 0)) return null
   if (session === undefined && project === undefined) return null
-  return { session, project, assignee }
+  return { session, project }
 }
 
-/** Cards matching every provided filter (AND). One board → a session/project/employee view. */
+/** Cards matching every provided filter (AND). One board → a session/project view. */
 export function filterCards(cards: Card[], f: CardFilter = {}): Card[] {
   return cards.filter((c) => {
     if (f.session !== undefined && c.session_id !== f.session) return false
     if (f.project !== undefined && c.project_id !== f.project) return false
-    if (f.assignee !== undefined && c.assignee !== f.assignee) return false
     return true
   })
 }
@@ -84,9 +82,10 @@ export function groupByColumn(
 
 /**
  * A principal actor string (viewer/server.py: `user:<name>` for a human,
- * `session:<title>` / `employee:<name>` for an agent) rendered for a person:
- * the name alone, plus whether it was a human, an agent, or the reader.
- * "employee:?" is the server's marker for an unlinked agent, never a name.
+ * `session:<title>` for an agent — and `employee:<name>` on audit rows from
+ * before the employee roster was retired) rendered for a person: the name
+ * alone, plus whether it was a human, an agent, or the reader. "employee:?"
+ * was the old marker for an unlinked agent, never a name.
  *
  * Ported verbatim from web/src/lib/board.ts so both clients label the same
  * author identically — one rule, two renderings, no third copy in a screen.

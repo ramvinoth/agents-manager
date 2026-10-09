@@ -11,7 +11,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
-import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, User, MessageSquare, History, Search } from "lucide-react"
+import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, MessageSquare, History, Search } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -31,14 +31,14 @@ import { CardDetail } from "./CardDetail"
 import { DecisionsBand } from "./DecisionsBand"
 import { AuditDialog } from "../AuditDialog"
 import { isQueued } from "@/lib/types"
-import type { BoardColumn, Card, Employee, OpenDecision, OrgProject } from "@/lib/types"
+import type { BoardColumn, Card, OpenDecision, OrgProject } from "@/lib/types"
 
 /**
  * KanbanDialog — the project's task board in a big modal. Resolves which org
  * project a session-directory (host + cwd) maps to (find-or-create), then loads
- * that project's columns + cards + the employee roster. Full CRUD: drag cards
- * between/within columns (dnd-kit + fractional positions), add/edit/delete cards,
- * assign an employee, and add/rename/delete columns. Every write goes to
+ * that project's columns + cards. Full CRUD: drag cards between/within columns
+ * (dnd-kit + fractional positions), add/edit/delete cards, and add/rename/delete
+ * columns. Every write goes to
  * /api/org/* — the same board an agent chat session sees through its kanban MCP.
  */
 export function KanbanDialog({
@@ -55,7 +55,6 @@ export function KanbanDialog({
   const [project, setProject] = useState<OrgProject | null>(null)
   const [columns, setColumns] = useState<BoardColumn[]>([])
   const [cards, setCards] = useState<Card[]>([])
-  const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState("")
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -79,7 +78,6 @@ export function KanbanDialog({
   const editingSession = useMemo(() => findCardSession(sessions, editing?.session_id), [sessions, editing?.session_id])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-  const empById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees])
 
   useEffect(() => {
     let alive = true
@@ -88,15 +86,13 @@ export function KanbanDialog({
         const proj = await api.orgProjectForCwd({ host, cwd, name })
         if (!alive) return
         setProject(proj)
-        const [b, c, e] = await Promise.all([
+        const [b, c] = await Promise.all([
           api.orgBoard(proj.id),
           api.orgCards({ project: proj.id }),
-          api.orgEmployees(),
         ])
         if (!alive) return
         setColumns(b.columns || [])
         setCards(c.cards || [])
-        setEmployees(e.employees || [])
       } catch (ex: any) {
         if (alive) setErr(String(ex?.message || ex))
       } finally {
@@ -275,7 +271,6 @@ export function KanbanDialog({
                   key={column.id}
                   column={column}
                   cards={colCards}
-                  empById={empById}
                   onAddCard={(t) => addCard(column.id, t)}
                   onEditCard={setEditing}
                   onDeleteCard={(id) => {
@@ -310,7 +305,7 @@ export function KanbanDialog({
             </div>
 
             <DragOverlay>
-              {activeCard ? <CardFace card={activeCard} empById={empById} dragging /> : null}
+              {activeCard ? <CardFace card={activeCard} dragging /> : null}
             </DragOverlay>
           </DndContext>
         )}
@@ -319,7 +314,6 @@ export function KanbanDialog({
       {editing && (
         <CardDetail
           card={editing}
-          employees={employees}
           allCards={cards}
           columns={columns}
           selfUsername={authUser?.username}
@@ -381,7 +375,6 @@ export function KanbanDialog({
 function ColumnView({
   column,
   cards,
-  empById,
   onAddCard,
   onEditCard,
   onDeleteCard,
@@ -390,7 +383,6 @@ function ColumnView({
 }: {
   column: BoardColumn
   cards: Card[]
-  empById: Map<number, Employee>
   onAddCard: (title: string) => void
   onEditCard: (c: Card) => void
   onDeleteCard: (id: number) => void
@@ -436,7 +428,7 @@ function ColumnView({
 
       <div className="flex min-h-12 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
         {cards.map((c) => (
-          <DraggableCard key={c.id} card={c} empById={empById} onEdit={() => onEditCard(c)} onDelete={() => onDeleteCard(c.id)} />
+          <DraggableCard key={c.id} card={c} onEdit={() => onEditCard(c)} onDelete={() => onDeleteCard(c.id)} />
         ))}
       </div>
 
@@ -462,31 +454,28 @@ function ColumnView({
 }
 
 // ── A draggable card ─────────────────────────────────────────────────────────
-function DraggableCard({ card, empById, onEdit, onDelete }: { card: Card; empById: Map<number, Employee>; onEdit: () => void; onDelete: () => void }) {
+function DraggableCard({ card, onEdit, onDelete }: { card: Card; onEdit: () => void; onDelete: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.id })
   return (
     <div ref={setNodeRef} className={cn(isDragging && "opacity-40")}>
-      <CardFace card={card} empById={empById} onEdit={onEdit} onDelete={onDelete} handleProps={{ ...attributes, ...listeners }} />
+      <CardFace card={card} onEdit={onEdit} onDelete={onDelete} handleProps={{ ...attributes, ...listeners }} />
     </div>
   )
 }
 
 function CardFace({
   card,
-  empById,
   dragging,
   onEdit,
   onDelete,
   handleProps,
 }: {
   card: Card
-  empById: Map<number, Employee>
   dragging?: boolean
   onEdit?: () => void
   onDelete?: () => void
   handleProps?: Record<string, unknown>
 }) {
-  const emp = card.assignee != null ? empById.get(card.assignee) : undefined
   return (
     <div className={cn("group rounded-md border border-border bg-background p-2 text-xs shadow-sm", dragging && "rotate-2 shadow-md")}>
       <div className="flex items-start gap-1">
@@ -506,25 +495,16 @@ function CardFace({
           </button>
         )}
       </div>
-      {(emp || (card.comment_count ?? 0) > 0) && (
-        <div className="mt-1.5 flex items-center gap-2 pl-5 text-[10px] text-muted-foreground">
-          {emp && (
-            <span className="flex items-center gap-1">
-              <User className="size-3" /> {emp.name}
-            </span>
-          )}
-          {(card.comment_count ?? 0) > 0 && (
-            <span className="flex items-center gap-1">
-              <MessageSquare className="size-3" /> {card.comment_count}
-            </span>
-          )}
+      {(card.comment_count ?? 0) > 0 && (
+        <div className="mt-1.5 flex items-center gap-1 pl-5 text-[10px] text-muted-foreground">
+          <MessageSquare className="size-3" /> {card.comment_count}
         </div>
       )}
     </div>
   )
 }
 
-// ── Card editor modal (title / body / assignee / the discussion thread) ──────
+// ── Card editor modal (title / body / the discussion thread) ──────
 // The thread is the card's decision surface: the owner and the card's session
 // talk here. A move to Review/Approved/Declined (this dialog, a drag, or the
 // phone) wakes the card's session server-side (boardwatch); a comment from an

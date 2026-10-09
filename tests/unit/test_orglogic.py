@@ -10,10 +10,10 @@ from viewer import orglogic
 # ── filter_cards ──────────────────────────────────────────────────────────────
 
 CARDS = [
-    {"id": 1, "session_id": "s1", "project_id": 10, "assignee": 100, "position": 2.0},
-    {"id": 2, "session_id": "s1", "project_id": 10, "assignee": 200, "position": 1.0},
-    {"id": 3, "session_id": "s2", "project_id": 20, "assignee": 100, "position": 3.0},
-    {"id": 4, "session_id": "s2", "project_id": 10, "assignee": 200, "position": 1.5},
+    {"id": 1, "session_id": "s1", "project_id": 10, "position": 2.0},
+    {"id": 2, "session_id": "s1", "project_id": 10, "position": 1.0},
+    {"id": 3, "session_id": "s2", "project_id": 20, "position": 3.0},
+    {"id": 4, "session_id": "s2", "project_id": 10, "position": 1.5},
 ]
 
 
@@ -33,17 +33,13 @@ def test_filter_by_project():
     assert _ids(orglogic.filter_cards(CARDS, project=10)) == [1, 2, 4]
 
 
-def test_filter_by_assignee():
-    assert _ids(orglogic.filter_cards(CARDS, assignee=100)) == [1, 3]
-
-
 def test_filter_combined_and_semantics():
     # session s2 AND project 10 → only card 4
     assert _ids(orglogic.filter_cards(CARDS, session="s2", project=10)) == [4]
 
 
 def test_filter_no_match():
-    assert orglogic.filter_cards(CARDS, assignee=999) == []
+    assert orglogic.filter_cards(CARDS, session="nobody") == []
 
 
 # ── order_column ────────────────────────────────────────────────────────────
@@ -115,7 +111,7 @@ def test_is_red_helper():
 
 
 def test_card_delete_is_red_and_lead_scoped():
-    # Deleting a card is destructive → red (queued for an MCP employee), and needs
+    # Deleting a card is destructive → red (queued for an agent's ask), and needs
     # lead+ authority (an IC cannot delete work items).
     assert orglogic.classify_action("card_delete") == "red"
     assert orglogic.allowed("card_delete", "ic") is False
@@ -130,21 +126,17 @@ def test_allowed_ic_can_manage_cards():
         assert orglogic.allowed(a, "ic") is True, a
 
 
-def test_allowed_ic_cannot_create_project_or_hire():
+def test_allowed_ic_cannot_create_project():
     assert orglogic.allowed("project_create", "ic") is False
-    assert orglogic.allowed("employee_create", "ic") is False
 
 
-def test_allowed_lead_can_project_and_reassign_not_hire():
+def test_allowed_lead_can_create_project_not_rewrite_the_preamble():
     assert orglogic.allowed("project_create", "lead") is True
-    assert orglogic.allowed("card_assign", "lead") is True
-    assert orglogic.allowed("employee_create", "lead") is False
+    assert orglogic.allowed("system_preamble_set", "lead") is False
 
 
-def test_allowed_manager_can_hire():
-    assert orglogic.allowed("employee_create", "manager") is True
-    assert orglogic.allowed("employee_update", "manager") is True
-    # manager also inherits everything below
+def test_allowed_manager_inherits_everything_below():
+    assert orglogic.allowed("system_preamble_set", "manager") is True
     assert orglogic.allowed("project_create", "manager") is True
     assert orglogic.allowed("card_create", "manager") is True
 
@@ -160,7 +152,21 @@ def test_allowed_unknown_level_denied():
 
 def test_allowed_accepts_dict():
     assert orglogic.allowed({"action": "project_create"}, "lead") is True
-    assert orglogic.allowed({"action": "employee_create"}, "ic") is False
+    assert orglogic.allowed({"action": "project_create"}, "ic") is False
+
+
+def test_retired_roster_actions_are_unknown():
+    """The Employees roster is gone: its actions must not linger in the scope
+    table as a door nothing implements."""
+    for a in ("employee_create", "employee_update", "card_assign", "harman_config"):
+        assert orglogic.allowed(a, "manager") is False, a
+
+
+def test_session_level_set_is_red_and_any_level_may_ask():
+    """Changing a session's authority is the owner's call (Red), but asking is
+    open to every level — the ask queues, it never grants."""
+    assert orglogic.is_red("session_level_set") is True
+    assert orglogic.allowed("session_level_set", "ic") is True
 
 
 # ── effective_level(): TWO principals, authority is the weaker ───────────────
@@ -199,9 +205,9 @@ def test_effective_level_unknown_values_fall_back_not_down():
 
 
 def test_effective_level_gates_a_real_action():
-    # The whole point: a viewer human driving a manager agent still can't hire.
+    # The whole point: a viewer human driving a manager agent still can't make projects.
     lvl = orglogic.effective_level("viewer", "manager")
-    assert orglogic.allowed("employee_create", lvl) is False
+    assert orglogic.allowed("project_create", lvl) is False
     assert orglogic.allowed("card_create", lvl) is True
 
 
@@ -244,8 +250,8 @@ def test_self_approves_denies_agents_and_lesser_humans():
 def test_may_resolve_refuses_the_principal_who_raised_it():
     # The rail that keeps the Red gate from being theatre: escalate, then
     # rubber-stamp yourself.
-    ap = {"id": 1, "created_by": "employee:bob"}
-    assert orglogic.may_resolve(ap, "employee:bob") is False
+    ap = {"id": 1, "created_by": "session:bob"}
+    assert orglogic.may_resolve(ap, "session:bob") is False
     assert orglogic.may_resolve(ap, "user:ram") is True
 
 
@@ -285,8 +291,8 @@ def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
 
 
 def test_setting_the_loop_mode_is_manager_scoped_and_green():
-    # The loop-control dropdown is an org-wide panel — manager tier, same as
-    # harman_config. Green in both directions: de-escalating ('none'/'user') must
+    # The loop-control dropdown is an org-wide panel — manager tier.
+    # Green in both directions: de-escalating ('none'/'user') must
     # be cheap, and licensing already-authored loops only decides WHETHER they run.
     assert orglogic.allowed("loop_mode_set", "lead") is False
     assert orglogic.allowed("loop_mode_set", "manager") is True
@@ -324,7 +330,7 @@ def test_a_human_at_the_ui_is_never_caught_by_the_rail():
     assert orglogic.mutates_own_session("sX", "") is False
 
 
-# ── Harman planning (project_columns / suitable_employee / plan_assignments) ──
+# ── project_columns: which column is Todo / Doing / Review / Done ──────────
 
 COLS = [
     {"id": 1, "name": "Todo", "position": 0},
@@ -345,85 +351,10 @@ def test_project_columns_fallback_position():
     assert s["todo"] == 9 and s["done"] == 7 and s["doing"] == 8
 
 
-def test_suitable_employee_role_match_then_first():
-    emps = [{"id": 1, "name": "Ann", "role": "designer", "status": "active"},
-            {"id": 2, "name": "Bob", "role": "ios dev", "status": "active"}]
-    assert orglogic.suitable_employee({"title": "Fix the iOS dev crash"}, emps)["id"] == 2
-    assert orglogic.suitable_employee({"title": "Write docs"}, emps)["id"] == 1  # first active
-    assert orglogic.suitable_employee({"title": "x"}, [{"id": 3, "status": "paused"}]) is None
-
-
-def test_suitable_employee_excludes_manager_and_ceo():
-    # The CEO/manager (first in the list) must NOT be picked to work a card — only doers.
-    emps = [{"id": 1, "name": "Ram", "role": "Founder/CEO", "status": "active"},
-            {"id": 2, "name": "Harman", "role": "Manager", "status": "active"},
-            {"id": 3, "name": "Ada", "role": "Engineer", "status": "active"}]
-    assert orglogic.suitable_employee({"title": "do the thing"}, emps)["id"] == 3
-
-
-def test_suitable_employee_prefers_spawnable_worker():
-    # With an org default provider absent, prefer the worker that has its own provider.
-    emps = [{"id": 1, "name": "Ann", "role": "eng", "status": "active", "provider": ""},
-            {"id": 2, "name": "Bob", "role": "eng", "status": "active", "provider": "p1"}]
-    assert orglogic.suitable_employee({"title": "x"}, emps)["id"] == 2
-    # A default provider makes everyone spawnable → first worker (role order) wins again.
-    assert orglogic.suitable_employee({"title": "x"}, emps, default_provider="d")["id"] == 1
-
-
-def test_plan_prefers_spawnable_worker_over_ceo():
-    emps = [{"id": 1, "name": "Ram", "role": "Founder/CEO", "status": "active"},
-            {"id": 3, "name": "Ada", "role": "Engineer", "status": "active", "provider": "p1"}]
-    actions = orglogic.plan_assignments([_card(100)], emps, COLS, running=set(),
-                                        projects=[10], budget=2)
-    assert actions[0]["employee"] == 3 and actions[0]["spawn"] is True
-
-
-def _card(id, project=10, column=1, assignee=None, **extra):
-    return {"id": id, "project_id": project, "column_id": column, "assignee": assignee, **extra}
-
-
-def test_plan_assigns_unassigned_todo_in_managed_project():
-    emps = [{"id": 1, "name": "Ann", "role": "", "status": "active"}]
-    actions = orglogic.plan_assignments([_card(100)], emps, COLS, running=set(), projects=[10], budget=2)
-    assert len(actions) == 1
-    a = actions[0]
-    assert a["kind"] == "assign" and a["card_id"] == 100 and a["employee"] == 1 and a["spawn"] is True
-
-
-def test_plan_skips_unmanaged_project():
-    emps = [{"id": 1, "status": "active"}]
-    assert orglogic.plan_assignments([_card(100, project=99)], emps, COLS, running=set(), projects=[10], budget=2) == []
-
-
-def test_plan_skips_running_card():
-    emps = [{"id": 1, "status": "active"}]
-    assert orglogic.plan_assignments([_card(100)], emps, COLS, running={100}, projects=[10], budget=2) == []
-
-
-def test_plan_budget_caps_spawns_not_assigns():
-    emps = [{"id": 1, "status": "active"}]
-    cards = [_card(1), _card(2), _card(3)]
-    actions = orglogic.plan_assignments(cards, emps, COLS, running=set(), projects=[10], budget=2)
-    # all three assigned, but only two spawned (budget=2)
-    assert len(actions) == 3
-    assert sum(1 for a in actions if a["spawn"]) == 2
-
-
-def test_plan_advance_doing_when_session_done():
-    emps = [{"id": 1, "status": "active"}]
-    cards = [_card(5, column=2, assignee=1, _session_done_ok=True)]
-    actions = orglogic.plan_assignments(cards, emps, COLS, running=set(), projects=[10], budget=2)
-    assert actions == [{"kind": "advance", "card_id": 5, "to_column": 3, "reason": "session finished ok → Review"}]
-
-
-def test_plan_no_employee_no_action():
-    assert orglogic.plan_assignments([_card(1)], [], COLS, running=set(), projects=[10], budget=2) == []
-
-
 # ── build_skill_md ───────────────────────────────────────────────────────────
 
 def test_build_skill_md_frontmatter_and_body():
-    md = orglogic.build_skill_md("ship-flow", "when shipping the app", "1. sync\n2. build", origin_employee="Emma")
+    md = orglogic.build_skill_md("ship-flow", "when shipping the app", "1. sync\n2. build", learned_by="Emma")
     assert md.startswith("---\nname: ship-flow\ndescription: when shipping the app\n---\n")
     assert "1. sync\n2. build" in md
     assert "_Learned by Emma._" in md

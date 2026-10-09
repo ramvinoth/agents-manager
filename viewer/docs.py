@@ -22,8 +22,8 @@ from viewer.config import STATIC_DIR
 # boundary: read_doc only opens STATIC_DIR/<id>, and only when <id> is a key here,
 # so a caller can never address a file outside this set.
 _FILE_DOCS = {
-    "SESSIONS.md": ("Sessions & employees",
-                    "What a session is, employee vs normal, and what every session can see."),
+    "SESSIONS.md": ("Sessions & authority",
+                    "What a session is, where its authority comes from, and what every session can see."),
     "README.md": ("Harman — overview",
                   "What Harman is and how the pieces fit together."),
     "ORCHESTRATOR.md": ("Company charter",

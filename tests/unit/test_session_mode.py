@@ -77,10 +77,10 @@ def adb(monkeypatch):
 def test_agent_request_queues_for_the_owner(adb):
     resp, status = actions.execute(
         actions.intent("session_mode_set", {"session": "sess-rsi", "mode": "bypass", "reason": "stale"},
-                       "employee:rsi"),
+                       "session:rsi"),
         "owner", "ic", acting_session="sess-rsi")
     assert status == 200 and resp.get("queued") is True
-    assert "employee:rsi: session_mode_set" in adb.approvals[0]["summary"]
+    assert "session:rsi: session_mode_set" in adb.approvals[0]["summary"]
     assert adb.meta == {}, "nothing is written until the owner approves"
 
 
@@ -211,7 +211,7 @@ def _it(principal, body):
 def test_agent_targets_another_session_via_for_session(monkeypatch):
     f = FakeDb()
     monkeypatch.setattr(actions, "db", f)
-    h = _it({"actor": "employee:rsi", "human_role": "owner",
+    h = _it({"actor": "session:rsi", "human_role": "owner",
              "session_level": "ic", "session": "sess-rsi"},
             {"for_session": "sess-life", "mode": "bypass", "reason": "stale"})
     h._p_session_mode(h.req)
@@ -228,7 +228,7 @@ def test_agent_cannot_target_its_own_session(monkeypatch):
     monkeypatch.setattr(orchestrator, "db", f)
     # The MCP transport mirrors the caller's id into `session`; with no
     # for_session the target falls onto the mirrored value = itself.
-    h = _it({"actor": "employee:rsi", "human_role": "owner",
+    h = _it({"actor": "session:rsi", "human_role": "owner",
              "session_level": "ic", "session": "sess-rsi"},
             {"session": "sess-rsi", "mode": "bypass"})
     h._p_session_mode(h.req)

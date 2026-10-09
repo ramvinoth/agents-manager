@@ -148,7 +148,7 @@ def test_first_event_creates_a_one_shot_wake(floops):
 
 
 def test_origin_is_passed_through_never_guessed(floops):
-    boardwatch.schedule_wake(CARD, "updated by employee:bob", "harman")
+    boardwatch.schedule_wake(CARD, "updated by session:bob", "harman")
     assert floops.loops["bw7"]["origin"] == "harman"
 
 
@@ -256,7 +256,7 @@ def test_human_move_wakes_the_card_session_with_user_origin(board):
 
 def test_agent_on_its_own_card_wakes_nothing(board):
     actions.execute(_it("card_move", {"card_id": 42, "column_id": 12},
-                        "employee:bob"),
+                        "session:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert board.wakes == [] and board.pushes == []
 
@@ -270,10 +270,10 @@ def test_followup_keeps_the_sweep_ledger(board):
     actions.execute(_it("card_comment", {"card_id": 42, "body": "go ahead"}),
                     "owner", "")
     actions.execute(_it("card_comment", {"card_id": 42, "body": "on it"},
-                        "employee:bob"),
+                        "session:bob"),
                     "owner", "ic", acting_session="sess-1")
     actions.execute(_it("card_comment", {"card_id": 42, "body": "any update?"},
-                        "employee:eve"),
+                        "session:eve"),
                     "owner", "ic", acting_session="sess-2")
     assert board.db.attention == [(42, False), (42, True), (42, False)], \
         "human → pending, own session → cleared, foreign agent → pending"
@@ -281,11 +281,11 @@ def test_followup_keeps_the_sweep_ledger(board):
 
 def test_foreign_agent_move_wakes_with_harman_origin(board):
     actions.execute(_it("card_move", {"card_id": 42, "column_id": 12},
-                        "employee:bob"),
+                        "session:bob"),
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
-    assert origin == "harman" and "employee:bob" in event
+    assert origin == "harman" and "session:bob" in event
     assert board.pushes == []
 
 
@@ -294,26 +294,26 @@ def test_agent_comment_on_its_own_card_pushes_but_wakes_nothing(board):
     owner IS the audience for a status comment — the push fires regardless."""
     actions.execute(_it("card_comment",
                         {"card_id": 42, "body": "  Stuck on the API  ",
-                         "author": "employee:bob"}, "employee:bob"),
+                         "author": "session:bob"}, "session:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert board.wakes == []
     # The owner reads the push cold: the title names the card by number and
     # title, and the payload carries the card id so a tap opens THAT card.
-    assert board.pushes == [("Card 42 · Fix login", "employee:bob: Stuck on the API",
+    assert board.pushes == [("Card 42 · Fix login", "session:bob: Stuck on the API",
                              {"card": 42})]
     assert board.db.comments[0]["body"] == "Stuck on the API", "stored stripped"
-    assert board.db.comments[0]["author"] == "employee:bob", "stamped, not forged"
+    assert board.db.comments[0]["author"] == "session:bob", "stamped, not forged"
 
 
 def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
     actions.execute(_it("card_comment", {"card_id": 42, "body": "needs your call",
-                                          "author": "employee:bob"}, "employee:bob"),
+                                          "author": "session:bob"}, "session:bob"),
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
     assert origin == "harman"
-    assert "new comment by employee:bob" in event
-    assert board.pushes == [("Card 42 · Fix login", "employee:bob: needs your call",
+    assert "new comment by session:bob" in event
+    assert board.pushes == [("Card 42 · Fix login", "session:bob: needs your call",
                              {"card": 42})]
 
 
@@ -338,7 +338,7 @@ def test_error_payload_gets_no_followup(monkeypatch):
 
 def test_long_comment_excerpts_in_the_wake_and_the_push(board):
     actions.execute(_it("card_comment", {"card_id": 42, "body": "x" * 250,
-                                          "author": "employee:bob"}, "employee:bob"),
+                                          "author": "session:bob"}, "session:bob"),
                     "owner", "ic", acting_session="sess-2")
     _, event, _ = board.wakes[0]
     assert "…" in event and len(event) < 260
@@ -358,7 +358,7 @@ def test_task_done_lands_on_the_named_done_column_and_wakes(board):
 # ── card_create: a card born bound to a session is work handed to it ──────
 
 def _created(board, session_id, actor, level="", acting=""):
-    board.db.card_create = lambda title, body="", column_id=None, assignee=None, project_id=None, \
+    board.db.card_create = lambda title, body="", column_id=None, project_id=None, \
         session_id_=None, position=1.0, created_by="": {
             "id": 77, "title": title, "body": body, "column_id": column_id,
             "project_id": project_id, "session_id": session_id_}
@@ -384,5 +384,5 @@ def test_card_created_with_no_session_wakes_nothing(board):
 
 
 def test_session_creating_its_own_card_wakes_nothing(board):
-    _created(board, "sess-1", "employee:bob", level="ic", acting="sess-1")
+    _created(board, "sess-1", "session:bob", level="ic", acting="sess-1")
     assert board.wakes == [] and board.db.attention == [(77, True)]

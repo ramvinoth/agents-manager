@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
-from viewer import db
+from viewer import db, orglogic
 from viewer.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, read_back,
     split_lines,
@@ -15,7 +15,8 @@ from viewer.config import (
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    extract_cwd, get_host, session_analysis, start_claude_run, start_copilot_new,
+    extract_cwd, get_host, resolve_level, session_analysis, start_claude_run,
+    start_copilot_new,
 )
 from viewer.loops import USER_ORIGIN, build_schedule
 from viewer.remote import (
@@ -217,6 +218,10 @@ class SessionsMixin:
         if lens and lens not in db.LENSES:
             self.send_json({"error": f"Unknown lens: {lens}"}, status=400)
             return
+        level = (body.get("level") or "ic").strip()
+        if level not in orglogic.LEVELS:
+            self.send_json({"error": f"Unknown level: {level}"}, status=400)
+            return
         row = db.agent_template_create(
             name=name,
             description=(body.get("description") or "").strip(),
@@ -229,6 +234,7 @@ class SessionsMixin:
             job_prompt=(body.get("job_prompt") or "").strip() or None,
             plugin=plugin,
             lens=lens,
+            level=level,
         )
         self.send_json({"id": row["id"]} if row else {"error": "Failed"})
 
@@ -489,8 +495,13 @@ class SessionsMixin:
                      "avatar": meta.get("avatar", ""), "provider": meta.get("provider", ""),
                      "convMode": meta.get("convMode", "chat"), "effort": meta.get("effort", ""),
                      "permission_mode": meta.get("permission_mode", ""),
+                     "level": meta.get("level", ""),
                      "archived": bool(meta.get("archived", False)),
                      "favorite": bool(meta.get("favorite", False))},
+            # The Harman level this session acts at right now (override → its
+            # agent role → ic), so a client shows the effective value next to
+            # the owner's override without re-deriving the resolution order.
+            "effective_level": resolve_level(sid),
             "capabilities": caps,
             "summary": summary,
         })
@@ -548,6 +559,26 @@ class SessionsMixin:
             return
         self._org_send(req, "session_mode_set",
                        {"session": target, "mode": (body.get("mode") or "").strip(),
+                        "reason": body.get("reason") or ""})
+
+    def _p_session_level(self, req):
+        """Set (or clear, level "") the Harman authority level a session acts at
+        on the board — the org-side twin of _p_session_mode, with the same
+        rails: Red (an agent's request queues for the owner), and a session may
+        never change its own level. `for_session` names the target for the
+        same MCP-mirroring reason documented there."""
+        body = self.read_body() or {}
+        target = (body.get("for_session") or body.get("session") or "").strip()
+        if not target:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        if self._self_mutation_denied(
+                req, target,
+                what="its own authority level",
+                reason="a session may not change its own authority level — ask the owner to set it"):
+            return
+        self._org_send(req, "session_level_set",
+                       {"session": target, "level": (body.get("level") or "").strip(),
                         "reason": body.get("reason") or ""})
 
     def _p_session_restore(self, req):
@@ -1099,21 +1130,16 @@ class SessionsMixin:
     def _overlay_meta(self, sessions, reader, harness):
         """Enrich a raw session list in place with the viewer-owned fields the
         thin list carries: the meta overlay (avatar/archived/favorite/provider),
-        the live run flag, the harness tag, the reader's unread bit, and the
-        persona (the employee driving the session, if its token is linked).
+        the live run flag, the harness tag, and the reader's unread bit.
 
-        One `session_meta_all`, one `session_seen_get`, and one
-        `session_personas` per list request, joined in memory — not a query per
-        session. `running` reflects THIS viewer process's CHAT_JOBS (jobs it
-        started); it is not a cross-host truth, which is why it is honestly named
-        per-process rather than global. `unread` is empty when `reader` is
-        unknown, so a listing with no principal is silent rather than lying that
-        everything is unread. `persona` is the org↔fleet join: a session whose
-        token carries an `employee_id` shows WHO is driving it; unlinked sessions
-        simply have no persona."""
+        One `session_meta_all` and one `session_seen_get` per list request,
+        joined in memory — not a query per session. `running` reflects THIS
+        viewer process's CHAT_JOBS (jobs it started); it is not a cross-host
+        truth, which is why it is honestly named per-process rather than global.
+        `unread` is empty when `reader` is unknown, so a listing with no
+        principal is silent rather than lying that everything is unread."""
         all_meta = db.session_meta_all()
         seen = db.session_seen_get(reader) if reader else {}
-        personas = db.session_personas()
         for s in sessions:
             meta = all_meta.get(s.get("id"), {})
             if meta.get("avatar"):
@@ -1125,9 +1151,6 @@ class SessionsMixin:
             s["harness"] = harness
             last = seen.get(s.get("id"))
             s["unread"] = bool(last and s.get("modified") and s["modified"] > last)
-            persona = personas.get(s.get("id"))
-            if persona:
-                s["persona"] = persona
 
     def apply_code_restore(self, sid, state):
         """Overwrite each tracked file with its checkpoint content, backing up

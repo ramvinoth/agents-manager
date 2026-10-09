@@ -13,8 +13,6 @@ function screen(response: unknown, status?: number) {
   const pendingReads: Promise<unknown>[] = []
   const pendingMoves: Promise<unknown>[] = []
   const pendingAttachments: Promise<unknown>[] = []
-  const pendingAssignments: Promise<unknown>[] = []
-  const assignments: { card_id: number; assignee: number }[] = []
   const attachments: { card_id: number; project_id: number }[] = []
   const effects: Function[] = []
   const moves: { card_id: number; column_id: number; position: number }[] = []
@@ -62,11 +60,7 @@ function screen(response: unknown, status?: number) {
       moves.push(body)
       if (pendingMoves.length) return await pendingMoves.shift()!
       return { id: body.card_id, column_id: body.column_id }
-    }, orgAssignCard: async (body: { card_id: number; assignee: number }) => {
-      assignments.push(body)
-      if (pendingAssignments.length) return await pendingAssignments.shift()!
-      return { id: body.card_id, assignee: body.assignee }
-    }, orgEmployees: async () => ({ employees: [{ id: 7, name: "Current worker" }, { id: 8, name: "Next worker" }] }),
+    },
     orgProjects: async () => ({ projects: [{ id: 1, name: "First project" }, { id: 2, name: "Second project" }] }),
     orgUpdateCard: async (body: { card_id: number; project_id: number }) => {
       attachments.push(body)
@@ -102,26 +96,8 @@ function screen(response: unknown, status?: number) {
     },
     respond: (value: unknown, nextStatus?: number) => { response = value; status = nextStatus },
     navigation: () => ({ backs, replaced, token }),
-    posts, deletes, alerts, moves, attachments, assignments,
-    openAssignment: () => {
-      const find = (tree: any): any => {
-        if (!tree || typeof tree !== "object") return
-        if (Array.isArray(tree)) return tree.map(find).find(Boolean)
-        if (tree.type === "Pressable" && JSON.stringify(tree.children).includes("tap to reassign")) return tree
-        return find(tree.children)
-      }
-      const control = find(render())
-      assert.ok(control, "Reachable reassignment control")
-      control.props.onPress()
-      return alerts[alerts.length - 1].buttons!
-    },
-    holdAssignment: () => {
-      let resolve!: (value: unknown) => void
-      let reject!: (error: Error) => void
-      pendingAssignments.push(new Promise((yes, no) => { resolve = yes; reject = no }))
-      return { resolve, reject }
-    },
-    // Explicitly run one rendered effect pass to fetch project/employee choices.
+    posts, deletes, alerts, moves, attachments,
+    // Explicitly run one rendered effect pass to fetch project choices.
     // This is not a React lifecycle emulator; stop the polling effect immediately.
     populateProjects: async () => {
       render()
@@ -170,112 +146,6 @@ const record = { card: { id: 44, title: "Visible card", created_at: 0 }, comment
 const movable = { ...record, card: { ...record.card, column_id: 101 }, columns: [
   { id: 101, name: "Todo" }, { id: 102, name: "Doing" }, { id: 103, name: "Done" },
 ] }
-
-const assigned = { ...movable, card: { ...movable.card, assignee: 7 } }
-
-for (const status of [403, 404]) {
-  test(`failed assignment cannot restore a card removed by refresh ${status}`, async () => {
-    const view = screen(assigned)
-    await view.load()
-    await view.populateProjects()
-    const pending = view.holdAssignment()
-    const action = view.openAssignment().find(b => b.text === "Next worker")!
-    const assigning = action.onPress!()
-    view.respond(null, status)
-    await view.load()
-    pending.reject(new Error("PRIVATE_SERVER_DETAIL"))
-    await assigning
-    assert.ok(JSON.stringify(view.render()).includes("card-detail-unavailable"))
-  })
-}
-
-test("assignment serializes dialog callbacks, reports failure and permits retry", async () => {
-  const view = screen(assigned)
-  await view.load()
-  await view.populateProjects()
-  const actions = view.openAssignment()
-  const next = actions.find(b => b.text === "Next worker")!.onPress!
-  const pending = view.holdAssignment()
-  const assigning = next()
-  await next()
-  await actions.find(b => b.text === "Current worker")!.onPress!()
-  const alertCount = view.alerts.length
-  view.node("card-detail-assign").props.onPress()
-  assert.equal(view.alerts.length, alertCount, "Do not open another picker during assignment")
-  assert.deepEqual(view.assignments, [{ card_id: 44, assignee: 8 }])
-  assert.equal(view.node("card-detail-assign").props.disabled, true)
-  pending.reject(Object.assign(new Error("PRIVATE_SERVER_DETAIL"), { status: 500 }))
-  await assigning
-  assert.equal(view.node("card-detail-assign").props.disabled, false)
-  assert.match(JSON.stringify(view.alerts), /Could not assign card/)
-  assert.doesNotMatch(JSON.stringify(view.alerts), /PRIVATE_SERVER_DETAIL/)
-  assert.match(JSON.stringify(view.node("card-detail-assign")), /Current worker/)
-  view.respond({ ...assigned, card: { ...assigned.card, assignee: 8 } })
-  await view.openAssignment().find(b => b.text === "Next worker")!.onPress!()
-  assert.equal(view.assignments.length, 2)
-  assert.match(JSON.stringify(view.node("card-detail-assign")), /Next worker/)
-})
-
-test("successful assignment stays pending until authoritative refresh completes", async () => {
-  const view = screen(assigned)
-  await view.load()
-  await view.populateProjects()
-  const refresh = view.holdRead()
-  const assigning = view.openAssignment().find(b => b.text === "Next worker")!.onPress!()
-  await Promise.resolve()
-  assert.equal(view.node("card-detail-assign").props.disabled, true)
-  assert.match(JSON.stringify(view.node("card-detail-assign")), /Current worker/)
-  refresh.resolve({ ...assigned, card: { ...assigned.card, assignee: 8 } })
-  await assigning
-  assert.equal(view.node("card-detail-assign").props.disabled, false)
-  assert.match(JSON.stringify(view.node("card-detail-assign")), /Next worker/)
-})
-
-for (const status of [403, 500]) {
-  test(`accepted assignment with refresh ${status} is not reported as a failed write`, async () => {
-    const view = screen(assigned)
-    await view.load()
-    await view.populateProjects()
-    view.respond(null, status)
-    await view.openAssignment().find(b => b.text === "Next worker")!.onPress!()
-    assert.equal(view.alerts.length, 1, "Only the assignment picker, no write error")
-    assert.match(JSON.stringify(view.render()), status === 403 ? /card-detail-unavailable/ : /Could not refresh this card/)
-    view.respond({ ...assigned, card: { ...assigned.card, assignee: 8 } })
-    await view.load()
-    assert.match(JSON.stringify(view.node("card-detail-assign")), /Next worker/)
-    assert.equal(view.assignments.length, 1)
-  })
-}
-
-test("assignment cancellation sends nothing and expired login signs out", async () => {
-  const view = screen(assigned)
-  await view.load()
-  await view.populateProjects()
-  const cancel = view.openAssignment().find(b => b.text === "Cancel")!
-  await cancel.onPress?.()
-  assert.deepEqual(view.assignments, [])
-  const pending = view.holdAssignment()
-  const assigning = view.openAssignment().find(b => b.text === "Next worker")!.onPress!()
-  pending.reject(Object.assign(new Error("PRIVATE_SERVER_DETAIL"), { status: 401 }))
-  await assigning
-  assert.deepEqual(view.navigation(), { backs: 0, replaced: "Login", token: null })
-  assert.equal(view.node("card-detail-assign").props.disabled, false)
-  assert.doesNotMatch(JSON.stringify(view.alerts), /PRIVATE_SERVER_DETAIL/)
-})
-
-test("failed assignment preserves newer card title and column", async () => {
-  const view = screen(assigned)
-  await view.load()
-  await view.populateProjects()
-  const pending = view.holdAssignment()
-  const assigning = view.openAssignment().find(b => b.text === "Next worker")!.onPress!()
-  view.respond({ ...assigned, card: { ...assigned.card, title: "Updated on server", column_id: 103 } })
-  await view.load()
-  pending.reject(new Error("PRIVATE_SERVER_DETAIL"))
-  await assigning
-  assert.ok(JSON.stringify(view.render()).includes("Updated on server"))
-  assert.equal(view.node("card-detail-col-103").props.accessibilityState.selected, true)
-})
 
 for (const status of [403, 404]) {
   test(`failed attachment cannot restore a card removed by refresh ${status}`, async () => {

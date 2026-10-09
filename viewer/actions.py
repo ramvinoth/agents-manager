@@ -38,13 +38,13 @@ def _card_create(a):
             cols = []
         column_id = orglogic.project_columns(cols)["todo"]
     return db.card_create(a.get("title", ""), a.get("body", ""), column_id,
-                          a.get("assignee"), a.get("project_id"), a.get("session"),
+                          a.get("project_id"), a.get("session"),
                           a.get("position", 1.0), a.get("created_by", ""))
 
 
 def _card_update(a):
     fields = {k: v for k, v in a.items()
-              if k in ("title", "body", "column_id", "assignee", "project_id", "position")}
+              if k in ("title", "body", "column_id", "project_id", "position")}
     return db.card_update(a.get("card_id"), **fields) or {"error": "not found"}
 
 
@@ -99,10 +99,6 @@ def _card_move(a, *, by_agent=False):
                                   "move; comment on the card and let the owner decide.")}
     return db.card_move(card["id"], a.get("column_id"),
                         a.get("position", 1.0)) or {"error": "not found"}
-
-
-def _card_assign(a):
-    return db.card_assign(a.get("card_id"), a.get("assignee")) or {"error": "not found"}
 
 
 def _card_delete(a):
@@ -316,31 +312,6 @@ def _project_ensure(a):
                              a.get("name", ""), a.get("created_by", ""))
 
 
-def _employee_create(a):
-    return db.employee_create(a.get("name", ""), a.get("role", ""), a.get("provider", ""),
-                              a.get("model", ""), a.get("conv_mode", "chat"), a.get("avatar", ""))
-
-
-def _employee_update(a):
-    fields = {k: v for k, v in a.items()
-              if k in ("name", "role", "provider", "model", "conv_mode", "avatar", "status")}
-    updated = db.employee_update(a.get("id"), **fields)
-    if not updated:
-        return {"error": "not found"}
-    # Deactivating an employee (status → anything but active, e.g. archived) stops
-    # its scheduled work: disable every loop whose session runs AS this employee,
-    # linked by the employee's provider preset id. Reversible — restoring the
-    # employee leaves the (disabled) loops in place to be re-enabled.
-    if "status" in fields and (fields["status"] or "active") != "active":
-        db.loops_disable_for_employee(updated.get("provider") or "")
-    return updated
-
-
-def _harman_config(a):
-    from viewer.orchestrator import set_config
-    return set_config(a.get("patch") or {})
-
-
 def _automation_set(on):
     from viewer.orchestrator import set_automation
     return set_automation(on)
@@ -369,7 +340,7 @@ def _approval_resolve(a):
 
 # ── Agent-scheduled loops (origin='harman') ──────────────────────────────────
 # The human UI writes loops through routes.sessions (origin='user', ungated — a
-# person editing their own schedules). These three are the AGENT path: an employee
+# person editing their own schedules). These three are the AGENT path: an agent
 # session asks Harman's org gate to schedule recurring work, so they run through
 # execute() like every other org action and carry origin='harman'.
 #
@@ -558,6 +529,26 @@ def _session_mode_set(a):
     return {"session": session, "permission_mode": mode}
 
 
+def _session_level_set(a):
+    """Set (or clear) the Harman authority level a session acts at on the board.
+
+    The Harman-side twin of _session_mode_set: permission mode gates the CLI's
+    own tools (Bash/Edit) inside a run; this level gates the org actions the
+    session asks the server for (orglogic.allowed). A per-chat override over the
+    level of the agent role the chat started from; "" clears it back to the
+    role's level (engine.resolve_level). Applies from the session's next run.
+
+    Red (orglogic): a model may request it, never grant it."""
+    session = (a.get("session") or "").strip()
+    level = (a.get("level") or "").strip()
+    if not session:
+        return {"error": "session required"}
+    if level and level not in orglogic.LEVELS:
+        return {"error": f"level must be one of {', '.join(orglogic.LEVELS)} (or empty to clear)"}
+    db.session_meta_patch(session, {"level": level or None})
+    return {"session": session, "level": level}
+
+
 def _system_preamble_set(a):
     """Set the global system-awareness preamble prepended to EVERY session's
     system prompt (engine.append_system_prompt). Empty string disables it.
@@ -591,8 +582,7 @@ def _skill_write(a):
             db.skill_learned_set_status(s["id"], "active")
         rec = existing[0]
     else:
-        rec = db.skill_learned_record(name, path=str(path), origin_employee=None,
-                                      origin_card=a.get("card"),
+        rec = db.skill_learned_record(name, path=str(path), origin_card=a.get("card"),
                                       origin_session=a.get("session"), status="active")
     return {"promoted": True, "path": str(path), "skill": rec["id"]}
 
@@ -603,7 +593,6 @@ ACTIONS = {
     "card_create": _card_create,
     "card_update": _card_update,
     "card_move": _card_move,
-    "card_assign": _card_assign,
     "card_delete": _card_delete,
     "note_create": _note_create,
     "note_update": _note_update,
@@ -620,9 +609,6 @@ ACTIONS = {
     "column_delete": _column_delete,
     "project_create": _project_create,
     "project_ensure": _project_ensure,
-    "employee_create": _employee_create,
-    "employee_update": _employee_update,
-    "harman_config": _harman_config,
     "automation_pause": _automation_pause,
     "automation_resume": _automation_resume,
     "approval_resolve": _approval_resolve,
@@ -637,6 +623,7 @@ ACTIONS = {
     "intake_update": _intake_update,
     "intake_delete": _intake_delete,
     "session_mode_set": _session_mode_set,
+    "session_level_set": _session_level_set,
     "system_preamble_set": _system_preamble_set,
     "skill_propose": _skill_write,
     "skill_promote": _skill_write,
@@ -796,10 +783,42 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
               file=sys.stderr)
 
 
+def _queue_for_owner(it, acting_session, outcome, need_reason=True):
+    """Park an intent as an owner approval instead of running it.
+
+    An agent's ask is judged cold by the owner, so it must say WHY — without it
+    two asks for the same action read word-for-word identical and sit
+    undecidable. Bounced back to the asking model (fail closed: a route that
+    drops `reason` errors loudly, never queues blank). The stored intent also
+    names the asking session (execute reads only action/args/actor, so a replay
+    is unchanged): the decision queue shows whose request it is, and the
+    outcome is told back to that session. A human asker (an operator at the
+    UI) is not a model and is exempt from the reason rule (need_reason=False)."""
+    action, actor = it.get("action", ""), it.get("actor", "")
+    if need_reason and not str((it.get("args") or {}).get("reason") or "").strip():
+        db.audit_append(actor, action, it, "denied:no_reason")
+        return {"error": "reason required: say in one plain line why you need "
+                         "this — the owner sees it on the decision card"}, 400
+    # `queued` tells the decision card WHY it is asking: "red" (the action is
+    # risky for anyone) or "scope" (fine in itself, but above the asking
+    # session's level) — the two need different "if you approve" lines.
+    ap = db.approval_open(kind="infra", summary=f"{actor}: {action}",
+                          detail=dict(it, session=acting_session or "",
+                                      queued=outcome.split(":", 1)[-1]),
+                          created_by=actor)
+    db.audit_append(actor, action, it, outcome)
+    from viewer import inbox
+    inbox.deliver_red(ap)
+    return {"queued": True, "approval": ap["id"]}, 200
+
+
 def execute(it, human_role, session_level, acting_session=""):
     """Run an intent through both gates, then audit. Returns (payload, status).
 
-    - scope: orglogic.allowed(action, level) — within this authority? → 403
+    - scope: orglogic.allowed(action, level) — within this authority? An AGENT
+      asking above its own level is not refused outright: if the human it acts
+      for could do it, the ask queues for that human (an agent should ask, not
+      hit a wall). Above the human's ceiling too → 403.
     - risk:  orglogic.classify_action(action) — Green runs; Red opens an approval
       holding the INTENT, unless orglogic.self_approves says this principal's own
       action is the approval (the owner clicking in the UI; never an agent).
@@ -815,10 +834,13 @@ def execute(it, human_role, session_level, acting_session=""):
     action = it.get("action", "")
     args, actor = it.get("args") or {}, it.get("actor", "")
     level = orglogic.effective_level(human_role, session_level)
+    handler = ACTIONS.get(action)
     if not orglogic.allowed(action, level):
+        if (session_level and handler is not None
+                and orglogic.allowed(action, orglogic.effective_level(human_role, ""))):
+            return _queue_for_owner(it, acting_session, "queued:scope")
         db.audit_append(actor, action, it, "denied:scope")
         return {"denied": True, "reason": f"{level} not authorized for {action}"}, 403
-    handler = ACTIONS.get(action)
     if handler is None:
         # Scope-allowed but not runnable: a table/registry mismatch, not a caller
         # error. Fail loudly rather than reporting a success that never happened.
@@ -826,24 +848,8 @@ def execute(it, human_role, session_level, acting_session=""):
         return {"error": f"unknown action {action}"}, 500
     if (orglogic.is_red(action)
             and not orglogic.self_approves(human_role, session_level)):
-        # An agent's Red request is judged cold by the owner, so it must say
-        # WHY — without it two asks for the same action read word-for-word
-        # identical and sit undecidable. Bounced back to the asking model (fail
-        # closed: a route that drops `reason` errors loudly, never queues blank).
-        # A human asker (an operator at the UI) is not a model and is exempt.
-        if session_level and not str(args.get("reason") or "").strip():
-            db.audit_append(actor, action, it, "denied:no_reason")
-            return {"error": "reason required: say in one plain line why you need "
-                             "this — the owner sees it on the decision card"}, 400
-        # The stored intent also names the asking session (execute reads only
-        # action/args/actor, so a replay is unchanged): the decision queue shows
-        # whose request it is, and the outcome is told back to that session.
-        ap = db.approval_open(kind="infra", summary=f"{actor}: {action}",
-                              detail=dict(it, session=acting_session or ""), created_by=actor)
-        db.audit_append(actor, action, it, "queued:red")
-        from viewer import inbox
-        inbox.deliver_red(ap)
-        return {"queued": True, "approval": ap["id"]}, 200
+        return _queue_for_owner(it, acting_session, "queued:red",
+                                need_reason=bool(session_level))
     if action in ("card_move", "task_done"):
         # The two handlers that resolve their target column at RUN time — which
         # is exactly where they can clobber a human's live move — get the

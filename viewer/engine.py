@@ -157,7 +157,7 @@ def fire_due_loops(launch, now):
          With it off, agent-origin (harman) loops do not fire; the owner's own
          (user) loops follow the mode alone, because they are a human's asking —
          the machine being unattended does not pause them. Off, then, means
-         exactly "nothing starts without a person asking": no Harman tick, no
+         exactly "nothing starts without a person asking": no
          agent-scheduled work — the switch's documented contract.
     A failed read falls back to 'user' with the switch treated as off — the
     same fail-safe direction the settings seed to. An empty origin set ('none'
@@ -311,16 +311,6 @@ def loop_scheduler(launch):
             except Exception:
                 pass
         fire_due_loops(launch, now)
-        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
-        # thread). Gated by the automation master switch (read fresh so a pause
-        # takes effect within 5s; unreadable → treated as OFF). Self-throttles to
-        # its own interval; exception-safe internally.
-        try:
-            from viewer.orchestrator import automation_enabled, harman_tick
-            if automation_enabled():
-                harman_tick()
-        except Exception:
-            pass
         # The hourly maintenance window (viewer.maintenance): applies queued
         # restart requests at :50. Not gated by the master switch — agents only
         # QUEUE restarts; applying them is the owner's standing policy (Card 133).
@@ -945,7 +935,7 @@ def _write_perm_mcp_config():
     since we omit --strict-mcp-config. Every run sets VIEWER_KANBAN_* env (the token
     is minted unconditionally, see start_claude_run), so viewer_mcp's tools are always
     reachable; the server resolves the caller to at least 'ic' and scopes each write by
-    the session's responsibility level — it does not fail auth for a non-employee run."""
+    the session's responsibility level — it never fails auth for a run with no role."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
     perm = str(Path(__file__).parent / "permission_mcp.py")
     viewer_mcp = str(Path(__file__).parent / "viewer_mcp.py")
@@ -1042,46 +1032,42 @@ def run_settings_paths_in_use():
     return paths
 
 
-def _resolve_employee(session_id):
-    """Map a session to its (employee_row_or_None, responsibility_level). A session
-    is linked to an employee via its session-meta provider preset id (the employee's
-    provider). No link → (None, 'ic') — least authority, the safe default."""
+def resolve_level(session_id):
+    """The Harman authority level (ic < lead < manager) a session runs at.
+
+    One resolution, in order: the owner's per-chat override (session_meta.level,
+    set through the Red session_level_set action), then the level of the agent
+    role the chat was started from (Agents tab template), else 'ic' — least
+    authority, the safe default. A DB hiccup also lands on 'ic', so a storage
+    failure can never raise a session's authority on its own.
+    """
     try:
         meta = db.session_meta_get(session_id) or {}
-        provider_id = meta.get("provider")
-        if not provider_id:
-            return None, "ic"
-        for emp in db.employee_list():
-            if emp.get("provider") == provider_id:
-                return emp, emp.get("level") or _emp_level(emp)
+        if meta.get("level") in orglogic.LEVELS:
+            return meta["level"]
+        tid = meta.get("agentTemplate")
+        tpl = db.agent_template_get(tid) if tid else None
+        if tpl and tpl.get("level") in orglogic.LEVELS:
+            return tpl["level"]
     except Exception:
         pass
-    return None, "ic"
-
-
-def _emp_level(emp):
-    """Derive a responsibility level from an employee's role when no explicit level
-    column is set. Conservative: only obvious lead/manager role names elevate."""
-    role = (emp.get("role") or "").lower()
-    if any(w in role for w in ("manager", "head", "director", "lead")):
-        return "manager" if ("manager" in role or "head" in role or "director" in role) else "lead"
     return "ic"
 
 
 def validate_session_credential(session_id, token):
     """Authenticate an MCP subprocess by its per-run token. Returns
-    {'employee', 'level', 'label'} for the run, or None if unknown/unauthorized
+    {'level', 'label'} for the run, or None if unknown/unauthorized
     (the server then 401s before any handler runs). `label` is the display name
     the run started with (start_claude_run's snapshot) — the same name the chat
     list and pushes use — so the server's principal can name an UNLINKED
-    session ("session:RSI") instead of "employee:?" without rescanning the
+    session ("session:RSI") instead of a bare id without rescanning the
     transcript on every request.
 
     Either per-run token authenticates. `perm_token` and `kanban_token` are two
     secrets for ONE principal: both are minted by the same start_claude_run, for
     the same session, and shipped in the same env to the same child process
     (engine.py ~1109-1199). They are not separate authority scopes — authority is
-    the employee's level, identical whichever token is presented — so treating
+    the session's level, identical whichever token is presented — so treating
     them as one credential keeps the promise that a caller is resolved exactly
     once, and avoids two near-identical validators drifting apart.
 
@@ -1096,8 +1082,7 @@ def validate_session_credential(session_id, token):
             if token not in (job.get("kanban_token") or None,
                              job.get("perm_token") or None):
                 return None
-            return {"employee": job.get("employee"),
-                    "level": job.get("employee_level") or "ic",
+            return {"level": job.get("level") or "ic",
                     "label": job.get("label") or ""}
     # No live job (restart): validate against the persisted tokens. The label
     # is a per-run snapshot (not persisted), so a run outliving a restart
@@ -1107,9 +1092,7 @@ def validate_session_credential(session_id, token):
         if not row or token not in (row.get("kanban_token") or None,
                                     row.get("perm_token") or None):
             return None
-        emp = db.employee_get(row["employee_id"]) if row.get("employee_id") else None
-        return {"employee": emp, "level": row.get("employee_level") or "ic",
-                "label": ""}
+        return {"level": row.get("level") or "ic", "label": ""}
     except Exception:
         return None
 
@@ -1572,14 +1555,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
-    # Kanban (org board) tool token: an employee's agent session can create/move
-    # cards from inside a turn. Minted per run; the route handler validates it and
-    # scopes writes by the employee's responsibility level (see routes/orchestrator).
+    # Kanban (org board) tool token: the agent session can create/move cards from
+    # inside a turn. Minted per run; the route handler validates it and scopes
+    # writes by the session's authority level (see actions.execute).
     kanban_token = secrets.token_hex(16)
     job["kanban_token"] = kanban_token
-    # Resolve which employee (and authority level) this session runs as, from its
-    # session-meta provider link. No employee → default 'ic' scope.
-    job["employee"], job["employee_level"] = _resolve_employee(session_id)
+    # Resolve the authority level this run acts at (override → agent role → ic).
+    job["level"] = resolve_level(session_id)
     # Display-name snapshot for the principal the server derives from this run
     # (read back via validate_session_credential, so the auth path is one dict
     # lookup, never a transcript rescan). Same name the chat list and pushes
@@ -1593,10 +1575,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # subprocess) must stay authorized after a restart. Cleared when the job is
     # reaped. Best-effort — a DB hiccup must not block the run from starting.
     try:
-        emp = job.get("employee") or {}
         db.session_token_set(session_id, perm_token, kanban_token,
-                             emp.get("id"), job.get("employee_level") or "ic",
-                             cwd, host)
+                             job["level"], cwd, host)
     except Exception:
         pass
     cmd += ["--mcp-config", _perm_mcp_config_path(host),

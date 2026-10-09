@@ -210,8 +210,8 @@ def test_missing_or_malformed_actor(actor):
 
 
 def test_actor_is_bounded_without_controls_or_bidi_overrides():
-    actor = audit.project_entry(row(actor=" employee:Zoë\n\t\x00‮ " + "x" * 300))["actor"]
-    assert actor.startswith("employee:Zoë ")
+    actor = audit.project_entry(row(actor=" session:Zoë\n\t\x00‮ " + "x" * 300))["actor"]
+    assert actor.startswith("session:Zoë ")
     assert len(actor) <= 120
     assert not any(c in actor for c in "\n\t\x00‮")
 
@@ -312,7 +312,7 @@ def test_sql_filter_and_projection_cannot_disagree(sql_store, category):
 def test_legacy_response_and_reader_filters_unchanged(sql_store):
     a = row(1)
     sql_store.insert(a)
-    sql_store.insert(row(2, actor="employee:other", action="task_done"))
+    sql_store.insert(row(2, actor="session:other", action="task_done"))
     assert db.audit_list(actor="user:ram", action="card_comment") == [a]
     status, legacy = get("limit=1")
     assert status == 200

@@ -162,9 +162,9 @@ class SessionViewerHandler(
         level) — and is the only value a handler should gate on.
 
         `actor` names the caller the way the owner sees it everywhere else:
-        `user:<name>` for a human at the UI, `employee:<name>` for a session
-        linked to an employee, and `session:<label-or-short-id>` for a session
-        with no employee link — never a fabricated identity ("employee:?").
+        `user:<name>` for a human at the UI and `session:<label-or-short-id>`
+        for an agent session. (Historical audit rows may still read
+        `employee:<name>` from the retired roster; nothing writes it now.)
         The label is the per-run snapshot from the engine (the same name as
         the chat list and pushes); without one (e.g. a run outliving a
         restart) the short id stands in.
@@ -183,18 +183,14 @@ class SessionViewerHandler(
         sid, tok = self._mcp_credential()
         info = validate_session_credential(sid, tok)
         if info:
-            emp = info.get("employee") or {}
             level = info.get("level", "ic")
             # An agent spawned by the loop has no logged-in human. Its ceiling is
             # the install owner's role — never an implicit escalation, and on a
             # fresh install with no owner it resolves to no authority at all.
             human_role = db.owner_role()
-            if emp:
-                actor = f"employee:{emp.get('name') or emp.get('id') or '?'}"
-            else:
-                # No employee link: name it for what it is — the session — with
-                # the label its live run started with, else the short id.
-                actor = f"session:{info.get('label') or str(sid)[:8]}"
+            # Name it for what it is — the session — with the label its live
+            # run started with, else the short id.
+            actor = f"session:{info.get('label') or str(sid)[:8]}"
             req.principal = {
                 "kind": "mcp", "actor": actor,
                 "human_role": human_role, "session_level": level,
@@ -433,7 +429,6 @@ class SessionViewerHandler(
         "/api/providers/models": "_g_providers_models",
         "/api/ai/defaults": "_g_ai_defaults",
         "/api/session/ai": "_g_session_ai",
-        "/api/org/employees": "_g_org_employees",
         "/api/org/projects": "_g_org_projects",
         "/api/org/board": "_g_org_board",
         "/api/org/card": "_g_org_card",
@@ -533,6 +528,7 @@ class SessionViewerHandler(
         "/api/session/rename": "_p_session_rename",
         "/api/session/seen": "_p_session_seen",
         "/api/session/mode": "_p_session_mode",
+        "/api/session/level": "_p_session_level",
         "/api/loops": "_p_loops",
         "/api/loops/edit": "_p_loops_edit",
         "/api/loops/delete": "_p_loops_delete",
@@ -544,8 +540,6 @@ class SessionViewerHandler(
         "/api/ai/defaults": "_p_ai_defaults",
         "/api/session/ai": "_p_session_ai",
         "/api/providers/delete": "_p_providers_delete",
-        "/api/org/employees": "_p_org_employees",
-        "/api/org/employees/update": "_p_org_employees_update",
         "/api/org/projects": "_p_org_projects",
         "/api/org/project-for-cwd": "_p_org_project_for_cwd",
         "/api/org/columns": "_p_org_columns",
@@ -553,7 +547,6 @@ class SessionViewerHandler(
         "/api/org/columns/delete": "_p_org_columns_delete",
         "/api/org/cards": "_p_org_cards",
         "/api/org/cards/move": "_p_org_cards_move",
-        "/api/org/cards/assign": "_p_org_cards_assign",
         "/api/org/cards/update": "_p_org_cards_update",
         "/api/org/cards/done": "_p_org_cards_done",
         "/api/org/cards/delete": "_p_org_cards_delete",

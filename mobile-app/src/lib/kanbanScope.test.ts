@@ -21,7 +21,7 @@ const deferred = () => {
 type Call = ReturnType<typeof deferred> & { name: string; filter: any }
 const settle = () => new Promise<void>(resolve => setImmediate(resolve))
 const columns = [{ id: 1, name: "Shared project todo", position: 1 }, { id: 2, name: "Shared project done", position: 2 }]
-const card = (session: string, id = session === "A" ? 11 : 22) => ({ id, title: `${session}-only-card`, session_id: session, project_id: 7, column_id: 1, position: 1, assignee: 3 })
+const card = (session: string, id = session === "A" ? 11 : 22) => ({ id, title: `${session}-only-card`, session_id: session, project_id: 7, column_id: 1, position: 1 })
 
 // Actual screen, persistent state/ref/callback slots, dependency-aware effects and
 // cleanup. render() deliberately does NOT commit effects: route changes must be
@@ -40,7 +40,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     useCallback(fn: Function, deps: any[]) { const i = cursor++; if (!same(slots[i]?.deps, deps)) slots[i] = { fn, deps }; return slots[i].fn },
     useEffect(fn: Function, deps: any[]) { const i = cursor++; if (!same(slots[i]?.deps, deps)) pending.push({ i, fn, deps }) },
   }
-  const api = Object.fromEntries(["orgBoard", "orgCards", "orgEmployees", "openDecisions", "orgMoveCard", "orgAssignCard", "orgCreateCard"].map(name => [name, (filter: any) => { const call = { name, filter, ...deferred() }; calls.push(call); return call.promise }]))
+  const api = Object.fromEntries(["orgBoard", "orgCards", "openDecisions", "orgMoveCard", "orgCreateCard"].map(name => [name, (filter: any) => { const call = { name, filter, ...deferred() }; calls.push(call); return call.promise }]))
   const modules: Record<string, any> = {
     react: { ...react, default: react },
     "react-native": { ...Object.fromEntries(["ActivityIndicator", "Pressable", "ScrollView", "Text", "TextInput", "TouchableOpacity", "View"].map(x => [x, x])), Alert: { alert: (...args: any[]) => alerts.push(args) } },
@@ -62,7 +62,6 @@ function harness(params: any = { session: "A", project: 7 }) {
   const finish = async (index: number, session: string) => {
     calls.filter(c => c.name === "orgBoard")[index].resolve({ columns })
     loads()[index].resolve({ cards: [card(session)] })
-    calls.filter(c => c.name === "orgEmployees")[index].resolve({ employees: [{ id: 3, name: "Employee" }] })
     calls.filter(c => c.name === "openDecisions")[index]?.resolve({ count: 0, decisions: [] })
     await settle()
   }
@@ -122,10 +121,9 @@ test("unmount invalidates pending loads and captured polling callback", async ()
   assert.equal(v.writes(), writes); assert.equal(v.loads().length, 1); assert.equal(v.timers.size, 0)
 })
 
-test("stale open/assign/add/blur/drop/layout/poll callbacks stay dead across A → B → A", async () => {
+test("stale open/add/blur/drop/layout/poll callbacks stay dead across A → B → A", async () => {
   const v = harness(); v.start(); await v.finish(0, "A")
   const oldDrag = v.drag(), oldAdd = v.node("kanban-add-1"), oldPoll = [...v.timers][0]
-  oldDrag.props.onLongPress(); const oldAssign = v.alerts[0][2][0].onPress
   oldAdd.props.onPress(); v.node("kanban-new-card").props.onChangeText("A draft")
   const oldInput = v.node("kanban-new-card")
   const oldLayout = find(v.render(), n => !!n.props.onLayout)!.props.onLayout
@@ -133,8 +131,8 @@ test("stale open/assign/add/blur/drop/layout/poll callbacks stay dead across A �
   assert.equal(find(v.render(), n => n.props.testID === "kanban-new-card"), undefined, "A draft leaked into B")
   v.go({ session: "A", project: 7 }); v.commit(); await v.finish(2, "A")
   const count = v.calls.length, writes = v.writes(), alerts = v.alerts.length
-  oldDrag.props.onTap(); oldDrag.props.onLongPress(); oldDrag.props.onDropColumn(2)
-  oldAssign(); oldAdd.props.onPress(); oldInput.props.onChangeText("stale draft"); oldInput.props.onBlur(); oldInput.props.onSubmitEditing(); oldPoll()
+  oldDrag.props.onTap(); oldDrag.props.onDropColumn(2)
+  oldAdd.props.onPress(); oldInput.props.onChangeText("stale draft"); oldInput.props.onBlur(); oldInput.props.onSubmitEditing(); oldPoll()
   oldLayout({ nativeEvent: { layout: { x: 999, width: 20 } } })
   await settle()
   assert.equal(v.calls.length, count, "old callback issued a request")
@@ -146,11 +144,10 @@ test("stale open/assign/add/blur/drop/layout/poll callbacks stay dead across A �
 test("captured A action callbacks cannot revive when route returns to A", async () => {
   const v = harness(); v.start(); await v.finish(0, "A")
   const drag = v.drag(), add = v.node("kanban-add-1"), poll = [...v.timers][0]
-  drag.props.onLongPress(); const assign = v.alerts[0][2][0].onPress
   v.go({ session: "B", project: 7 }); v.commit(); await v.finish(1, "B")
   v.go({ session: "A", project: 7 }); v.commit(); await v.finish(2, "A")
   const calls = v.calls.length, writes = v.writes(), alerts = v.alerts.length
-  drag.props.onTap(); drag.props.onLongPress(); drag.props.onDropColumn(2); assign(); add.props.onPress(); poll()
+  drag.props.onTap(); drag.props.onDropColumn(2); add.props.onPress(); poll()
   assert.deepEqual(v.navigations, [], "captured A navigation revived")
   assert.equal(v.calls.length, calls); assert.equal(v.writes(), writes); assert.equal(v.alerts.length, alerts)
 })
@@ -181,14 +178,13 @@ test("effect cleanup/setup replay invalidates first load but permits current set
   assert.equal(v.writes(), writes); assert.ok(visible(v.render(), "A-new"))
 })
 
-for (const action of ["add", "assign", "drop"] as const) {
+for (const action of ["add", "drop"] as const) {
   for (const outcome of ["success", "error"] as const) {
     test(`already-issued ${action} ${outcome} cannot reload or publish obsolete A`, async () => {
       const v = harness(); v.start(); await v.finish(0, "A")
       if (action === "add") { v.node("kanban-add-1").props.onPress(); v.node("kanban-new-card").props.onChangeText("New A"); v.node("kanban-new-card").props.onBlur() }
-      if (action === "assign") { v.drag().props.onLongPress(); v.alerts[0][2][0].onPress() }
       if (action === "drop") v.drag().props.onDropColumn(2)
-      const mutation = v.calls.find(c => /org(Create|Assign|Move)Card/.test(c.name))!
+      const mutation = v.calls.find(c => /org(Create|Move)Card/.test(c.name))!
       assert.ok(mutation)
       v.go({ session: "B", project: 7 }); v.commit(); await v.finish(1, "B")
       const count = v.calls.length, writes = v.writes()
@@ -199,7 +195,7 @@ for (const action of ["add", "assign", "drop"] as const) {
   }
 }
 
-for (const params of [undefined, {}, { session: "" }, { session: "   " }, { session: " ", project: 7 }, { project: 0 }, { assignee: 3 }, { session: "A", project: NaN }, { session: "A", assignee: -1 }]) {
+for (const params of [undefined, {}, { session: "" }, { session: "   " }, { session: " ", project: 7 }, { project: 0 }, { session: "A", project: NaN }]) {
   test(`invalid/missing context makes no API requests: ${JSON.stringify(params)}`, () => {
     const v = harness(null); v.go(params); v.commit(); v.poll()
     assert.equal(v.calls.length, 0)
@@ -208,11 +204,11 @@ for (const params of [undefined, {}, { session: "" }, { session: "   " }, { sess
 }
 
 test("same-project sessions have shared columns, disjoint cards, and preserve every AND filter", async () => {
-  const v = harness({ session: "A", project: 7, assignee: 3 }); v.start(); await v.finish(0, "A")
-  assert.deepEqual(v.loads()[0].filter, { session: "A", project: 7, assignee: 3 })
+  const v = harness({ session: "A", project: 7 }); v.start(); await v.finish(0, "A")
+  assert.deepEqual(v.loads()[0].filter, { session: "A", project: 7 })
   assert.deepEqual(v.calls.find(c => c.name === "orgBoard")!.filter, { session: "A", project: 7 })
-  v.go({ session: "B", project: 7, assignee: 3 }); v.commit(); await v.finish(1, "B")
-  assert.deepEqual(v.loads()[1].filter, { session: "B", project: 7, assignee: 3 })
+  v.go({ session: "B", project: 7 }); v.commit(); await v.finish(1, "B")
+  assert.deepEqual(v.loads()[1].filter, { session: "B", project: 7 })
   assert.ok(visible(v.render(), "B")); assert.equal(visible(v.render(), "A"), false)
   assert.match(JSON.stringify(v.render()), /Shared project todo/)
   v.go({ project: 7 }); v.commit(); await v.finish(2, "Project")

@@ -1,6 +1,6 @@
-"""Unit tests for the two job-history DB helpers that carry real Python logic on
-top of their SQL: retention purge (viewer.db.job_runs_purge) and the fire hook
-(viewer.db.loops_disable_for_employee).
+"""Unit tests for the job-history DB helpers that carry real Python logic on
+top of their SQL: retention purge (viewer.db.job_runs_purge) and the boot /
+token reconciliation helpers.
 
 The SQL itself needs Postgres, but the parts worth a regression test are pure
 control flow — which statements run for which caps, how the removed counts sum,
@@ -82,25 +82,6 @@ class TestJobRunsPurge:
         """A garbage/negative cap must not run a DELETE with a nonsense bound."""
         assert db.job_runs_purge(-5, -1) == 0
         assert cursor.executed == []
-
-
-# ── the fire hook: disable an employee's loops by their provider link ────────
-
-class TestLoopsDisableForEmployee:
-    def test_blank_provider_disables_nothing_and_hits_no_db(self, cursor):
-        """An employee with no provider link owns no agent sessions; firing them
-        must never disable UNrelated loops, so it short-circuits before any query."""
-        assert db.loops_disable_for_employee("") == 0
-        assert cursor.executed == []
-
-    def test_matching_provider_disables_and_counts_its_loops(self, cursor):
-        cursor._results = [[{"id": "l1"}, {"id": "l2"}]]
-        assert db.loops_disable_for_employee("prov-123") == 2
-        assert len(cursor.executed) == 1
-        sql = cursor.executed[0]
-        # Disable (reversible), scoped to sessions linked by that provider id.
-        assert "SET enabled = FALSE" in sql
-        assert "data->>'provider'" in sql
 
 
 # ── boot reconciliation: runs orphaned by a server death ─────────────────────

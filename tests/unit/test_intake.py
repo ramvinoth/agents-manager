@@ -61,7 +61,7 @@ class FakeDB:
     def board_columns_list(self, project_id):
         return [{"id": 70, "name": "Todo", "position": 0}, {"id": 77, "name": "Done", "position": 7}]
 
-    def card_create(self, title, body="", column_id=None, assignee=None, project_id=None,
+    def card_create(self, title, body="", column_id=None, project_id=None,
                     session_id=None, position=1.0, created_by=""):
         row = {"id": 9, "title": title, "body": body, "column_id": column_id,
                "project_id": project_id, "session_id": "", "created_by": created_by}

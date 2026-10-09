@@ -1,14 +1,12 @@
 """The MCP principal's actor string (server._resolve_principal) — the name the
 owner sees in approvals and audit rows:
 
-  human                      → user:<name>
-  session linked to employee → employee:<name>
-  unlinked session           → session:<label> (the live run's display name)
-                               or session:<short-id> when the label is
-                               unavailable (a run outliving a restart).
+  human   → user:<name>
+  session → session:<label> (the live run's display name)
+            or session:<short-id> when the label is
+            unavailable (a run outliving a restart).
 
-An unlinked session is never "employee:?" — that string asserts an identity the
-session does not have. The engine supplies `label` as a per-run snapshot
+The engine supplies `label` as a per-run snapshot
 (start_claude_run), so the auth path reads a dict, never the transcript.
 """
 from viewer import server
@@ -50,40 +48,26 @@ class TestHuman:
         assert p["session"] == ""
 
 
-class TestMcpEmployee:
-    def test_linked_session_names_the_employee(self, monkeypatch):
-        p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": {"name": "Harman", "id": 6},
-                      "level": "ic", "label": "RSI"})
-        assert p["kind"] == "mcp"
-        assert p["actor"] == "employee:Harman"
-        assert p["session"] == SID
-
-    def test_empty_employee_name_falls_back_to_id(self, monkeypatch):
-        p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": {"name": "", "id": 5}, "level": "ic"})
-        assert p["actor"] == "employee:5"
-
+class TestMcpLevel:
     def test_level_still_the_only_gate_value(self, monkeypatch):
-        p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": {"name": "Harman"}, "level": "ic"})
-        assert p["level"] == "ic"
+        p = _resolve(monkeypatch, None, SID, "tok", {"level": "lead", "label": "RSI"})
+        assert p["level"] == "lead"
         assert p["human_role"] == "owner"
 
 
-class TestMcpUnlinked:
+class TestMcpActor:
     def test_named_by_live_run_label(self, monkeypatch):
         p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": None, "level": "ic", "label": "RSI"})
+                     {"level": "ic", "label": "RSI"})
         assert p["actor"] == "session:RSI"
 
     def test_no_label_falls_back_to_short_id(self, monkeypatch):
         p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": None, "level": "ic", "label": ""})
+                     {"level": "ic", "label": ""})
         assert p["actor"] == "session:65cf166a"
 
-    def test_never_employee_question_mark(self, monkeypatch):
-        for variant in (None, {}, {"employee": None}):
+    def test_always_a_session_actor(self, monkeypatch):
+        for variant in (None, {}, {"label": None}):
             p = _resolve(monkeypatch, None, SID, "tok",
                          dict(variant or {}, **{"level": "ic"}))
             assert p is not None

@@ -5,7 +5,7 @@ Two tiers, one transport:
 - **See everything** (read-only): the fleet's sessions, their transcripts and
   analyses, the board, the org, the audit trail. An agent can find out what is
   happening on this machine without being able to change any of it.
-- **Act on the board** (writes): create/move/assign cards, mark work done, propose
+- **Act on the board** (writes): create/move/comment on cards, mark work done, propose
   a learned skill.
 - **Files**: list/read/write on this machine, SSH hosts and the owner's connected
   cloud drives — the same /api/fs the file browser uses, so a drive connected in
@@ -54,7 +54,6 @@ _TOOLS = {
     "chat_status":      ("GET", "/api/chat/status"),
     "host_list":        ("GET", "/api/hosts"),
     "project_list":     ("GET", "/api/org/projects"),
-    "employee_list":    ("GET", "/api/org/employees"),
     "skill_list":       ("GET", "/api/org/skills"),
     "skill_read":       ("GET", "/api/org/skills/read"),
     "docs_list":        ("GET", "/api/org/docs"),
@@ -105,7 +104,6 @@ _TOOLS = {
     # ── Act on the board (writes; gated server-side) ────────────────────────
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
-    "card_assign":   ("POST", "/api/org/cards/assign"),
     "card_update":   ("POST", "/api/org/cards/update"),
     "card_comment":  ("POST", "/api/org/card_comment"),
     "card_dep_add":  ("POST", "/api/org/card_dep_add"),
@@ -119,6 +117,7 @@ _TOOLS = {
     "skill_propose": ("POST", "/api/org/skills/propose"),
     "session_seen":  ("POST", "/api/session/seen"),
     "session_mode_set": ("POST", "/api/session/mode"),
+    "session_level_set": ("POST", "/api/session/level"),
     "inbox_send":    ("POST", "/api/inbox/send"),
     # ── Schedule recurring work (writes; gated + self-mutation rail server-side)
     "loop_create":   ("POST", "/api/org/loops"),
@@ -202,8 +201,6 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "project_list", "description": "All org projects.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
-    {"name": "employee_list", "description": "All org employees, their roles and status.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "skill_list", "description": "The team's skill library: every skill on this machine (name, one-line trigger description, provenance — who learned it, from which card). Each is invocable as /<name> in a session; read one in full with skill_read. Check here before solving a problem a teammate may already have written up.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "skill_read", "description": "Read one skill's full SKILL.md by name (from skill_list): the procedure a teammate distilled, ready to follow.",
@@ -249,9 +246,9 @@ _TOOL_LIST = [
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},
-    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries comment_count (how many messages are in its thread) and its current column. Optionally filtered by session/assignee.",
+    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries comment_count (how many messages are in its thread) and its current column. Optionally filtered by session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string"}, "project": {"type": "integer"}, "assignee": {"type": "integer"}}}},
+         "session": {"type": "string"}, "project": {"type": "integer"}}}},
     {"name": "card", "description": "Read one card in full with its comment thread. On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
@@ -383,9 +380,6 @@ _TOOL_LIST = [
     {"name": "card_move", "description": "Move a card to a column at a position.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "column_id"], "properties": {
          "card_id": {"type": "integer"}, "column_id": {"type": "integer"}, "position": {"type": "number"}}}},
-    {"name": "card_assign", "description": "Assign a card to an employee.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "assignee"], "properties": {
-         "card_id": {"type": "integer"}, "assignee": {"type": "integer"}}}},
     {"name": "card_update", "description": "Update a card's fields.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
@@ -463,6 +457,13 @@ _TOOL_LIST = [
          "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan", "bypass"],
                  "description": "The permission mode for that session's runs."}}}},
+    {"name": "session_level_set",
+     "description": "Set the Harman authority level another session acts at on the board: ic (its own cards, notes, messages), lead (also schedule loops, delete cards, shape columns and projects), manager (also org settings). Empty clears it back to the level of the agent role the chat was started from. This is Harman's org authority, separate from session_mode_set (which gates the harness's own Bash/Edit tools). Red: queues for the owner's approval; never your OWN session. For a single action above your level you do not need this — just call the tool; the server queues that one ask for the owner.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "level", "reason"], "properties": {
+         "reason": _REASON_ARG,
+         "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},
+         "level": {"type": "string", "enum": ["", "ic", "lead", "manager"],
+                   "description": "The authority level, or empty to use the agent role's level."}}}},
 ]
 
 

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
+import { api, type LearnedSkill, type OrgProject } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -11,41 +11,31 @@ import { useTheme } from "../lib/useTheme"
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
 /**
- * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects
- * (each opens its board), and an entry into the read-only audit log. Org
- * approvals are decided in the decision queue (board band → cockpit, Inbox),
- * not here. Read-heavy; mutations are limited to creating employees/projects
- * (manager authority, enforced server-side).
+ * OrgScreen — the org dashboard: projects (each opens its board and code map),
+ * the read-only activity log, and the skills the team has learned. Org approvals
+ * are decided in the decision queue (board band → cockpit, Inbox), not here, and
+ * the automation master switch lives in Profile. Agent authority is set per
+ * chat (Trust) or per agent template — there is no separate employee roster.
  */
 export default function OrgScreen({ navigation }: Props) {
   const t = useTheme()
-  const [employees, setEmployees] = useState<Employee[]>([])
   const [projects, setProjects] = useState<OrgProject[]>([])
-  const [harman, setHarman] = useState<HarmanConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
   // The library route returns every skill on disk; this section is about what the
   // TEAM learned, so it shows only rows with ledger provenance (an id).
   const learned = skills.filter((s) => s.id != null)
-  const [providers, setProviders] = useState<Provider[]>([])
-  const [editEmp, setEditEmp] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   const load = useCallback(async () => {
     setError("")
     try {
-      const [e, p, h, sk, pr] = await Promise.all([
-        api.orgEmployees(),
+      const [p, sk] = await Promise.all([
         api.orgProjects(),
-        api.orgHarman().catch(() => null),
         api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
-        api.providers().catch(() => ({ providers: [] as Provider[] })),
       ])
-      setEmployees(e.employees || [])
       setProjects(p.projects || [])
-      setHarman(h)
       setSkills(sk.skills || [])
-      setProviders(pr.providers || [])
     } catch (err) {
       const ex = err as Error & { status?: number }
       if (ex.status === 401) { setToken(null); navigation.replace("Login"); return }
@@ -61,50 +51,25 @@ export default function OrgScreen({ navigation }: Props) {
     return () => clearInterval(id)
   }, [load])
 
-  // Create employee / project via a cross-platform sheet (Alert.prompt is iOS-only,
-  // so the old inline prompt silently no-opped on Android). A project needs a real
-  // workspace dir — without a cwd a Harman-spawned session falls back to $HOME, which
-  // is wrong — so we offer recent dirs as suggestions.
-  const [creating, setCreating] = useState<null | "employee" | "project">(null)
+  // Create a project via a cross-platform sheet (Alert.prompt is iOS-only, so an
+  // inline prompt silently no-ops on Android). A project needs a real workspace
+  // dir — without a cwd a Harman-spawned session falls back to $HOME, which is
+  // wrong — so we offer recent dirs as suggestions.
+  const [creating, setCreating] = useState(false)
   const [dirs, setDirs] = useState<string[]>([])
 
-  function openCreate(kind: "employee" | "project") {
-    setCreating(kind)
-    if (kind === "project" && !dirs.length) {
+  function openCreate() {
+    setCreating(true)
+    if (!dirs.length) {
       api.projects("local").then((ps) => setDirs(ps.map((p) => p.cwd))).catch(() => {})
     }
   }
 
   async function submitCreate(values: Record<string, string>) {
     try {
-      if (creating === "employee") {
-        await api.orgCreateEmployee({ name: values.name, role: values.role || "", provider: values.provider || "" })
-      } else {
-        await api.orgCreateProject({ name: values.name, cwd: values.cwd || "", description: values.description || "" })
-      }
+      await api.orgCreateProject({ name: values.name, cwd: values.cwd || "", description: values.description || "" })
       load()
     } catch (e) { setError((e as Error).message) }
-  }
-
-  async function patchHarman(patch: Partial<HarmanConfig>) {
-    if (!harman) return
-    const next = { ...harman, ...patch }
-    setHarman(next) // optimistic
-    try {
-      const saved = await api.orgSetHarman(patch)
-      // A queued response means the write became an approval, so the optimistic
-      // state is now a lie — reload rather than paint a change that didn't land.
-      // This screen never sends the master switch (that's Profile), so today only
-      // a policy change could route it here; handling it keeps that safe.
-      if (isQueued(saved)) load()
-      else setHarman(saved)
-    } catch { load() }
-  }
-
-  function toggleManaged(projectId: number) {
-    if (!harman) return
-    const has = harman.projects.includes(projectId)
-    patchHarman({ projects: has ? harman.projects.filter((p) => p !== projectId) : [...harman.projects, projectId] })
   }
 
   if (loading) {
@@ -141,13 +106,8 @@ export default function OrgScreen({ navigation }: Props) {
           <Text style={{ color: t.text, fontWeight: "700", fontSize: 15, marginBottom: 8 }}>Set up your first run</Text>
           {[
             "Create a project — give it a name and the workspace directory the board should work in.",
-            "Add an employee — pick a model (the free local one keeps Opus tokens untouched).",
             "Open the project board and add a card or two describing the work.",
-            // The autonomous-manager step only exists when automation is on —
-            // with the master switch off the app is the plain task system.
-            ...(harman?.automation_enabled === true
-              ? ["Point Harman at the project in the manager panel above — it assigns and runs the work."]
-              : []),
+            "Start a chat in the project's directory and ask it to work the board.",
           ].map((step, i) => (
             <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
               <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>{i + 1}.</Text>
@@ -157,132 +117,7 @@ export default function OrgScreen({ navigation }: Props) {
         </View>
       ) : null}
 
-      {/* The manager panel is orchestration UI: hidden whenever the master
-          switch is OFF so the app reads as the plain task system. `=== true`
-          on purpose — the server always returns the switch (missing → OFF), so
-          anything but an explicit true keeps the panel hidden. The switch
-          itself stays visible in Profile (the one control point). */}
-      {harman && harman.automation_enabled === true ? (
-        <Section title="Harman (manager)">
-          <Row>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: t.text, fontWeight: "600" }}>Autonomous manager</Text>
-                <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                  {harman.enabled
-                    ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
-                    : "Off"}
-                </Text>
-              </View>
-              <Switch value={harman.enabled} onValueChange={(v) => patchHarman({ enabled: v })} />
-            </View>
-            {/* Which projects Harman manages (auto-assign + spawn). Empty = does nothing. */}
-            {projects.length ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-                {projects.map((p) => {
-                  const on = harman.projects.includes(p.id)
-                  return (
-                    <TouchableOpacity
-                      key={p.id}
-                      testID={`harman-proj-${p.id}`}
-                      onPress={() => toggleManaged(p.id)}
-                      style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
-                    >
-                      <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{p.name}</Text>
-                    </TouchableOpacity>
-                  )
-                })}
-              </View>
-            ) : null}
-            {/* Default model new employees run under (free local Qwen keeps Opus tokens untouched). */}
-            {providers.length ? (
-              <View style={{ marginTop: 12 }}>
-                <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Default employee model</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {providers.map((pr) => {
-                    const on = harman.default_provider === pr.id
-                    return (
-                      <TouchableOpacity
-                        key={pr.id}
-                        testID={`harman-provider-${pr.id}`}
-                        onPress={() => patchHarman({ default_provider: on ? "" : pr.id })}
-                        style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
-                      >
-                        <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{pr.name}</Text>
-                      </TouchableOpacity>
-                    )
-                  })}
-                </View>
-              </View>
-            ) : null}
-          </Row>
-        </Section>
-      ) : null}
-
-      <Section title="Employees" onAdd={() => openCreate("employee")}>
-        {employees.length ? employees.map((e) => {
-          const open = editEmp === e.id
-          const provName = providers.find((p) => p.id === e.provider)?.name
-          return (
-            <TouchableOpacity key={e.id} activeOpacity={0.7} onPress={() => setEditEmp(open ? null : e.id)}>
-              <Row>
-                <Text style={{ color: t.text, fontWeight: "600" }}>{e.avatar ? e.avatar + " " : ""}{e.name}</Text>
-                <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                  {e.role || "—"} · {e.status} · {provName || "default model"}
-                </Text>
-                {open ? (
-                  <View style={{ marginTop: 10 }}>
-                    {providers.length ? (
-                      <>
-                        <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Model</Text>
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                          {providers.map((pr) => {
-                            const on = e.provider === pr.id
-                            return (
-                              <TouchableOpacity
-                                key={pr.id}
-                                testID={`emp-${e.id}-provider-${pr.id}`}
-                                onPress={async () => {
-                                  const next = on ? "" : pr.id
-                                  setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, provider: next } : x))
-                                  try { await api.orgUpdateEmployee({ id: e.id, provider: next }); load() } catch { load() }
-                                }}
-                                style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
-                              >
-                                <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{pr.name}</Text>
-                              </TouchableOpacity>
-                            )
-                          })}
-                        </View>
-                        <Text style={{ color: t.textMuted, fontSize: 11, marginTop: 6 }}>
-                          Unset = uses the org default model.
-                        </Text>
-                      </>
-                    ) : null}
-                    {/* Archive is a reversible soft-delete: an archived employee is
-                        skipped by Harman's planner but keeps its card/skill history. */}
-                    <TouchableOpacity
-                      testID={`emp-${e.id}-archive`}
-                      onPress={async () => {
-                        const next = e.status === "archived" ? "active" : "archived"
-                        setEmployees((cur) => cur.map((x) => x.id === e.id ? { ...x, status: next } : x))
-                        try { await api.orgUpdateEmployee({ id: e.id, status: next }); load() } catch { load() }
-                      }}
-                      style={{ marginTop: 12, alignSelf: "flex-start", borderRadius: 8, borderWidth: 1, borderColor: t.border, paddingHorizontal: 12, paddingVertical: 7 }}
-                    >
-                      <Text style={{ color: e.status === "archived" ? t.accent : t.danger, fontSize: 13, fontWeight: "600" }}>
-                        {e.status === "archived" ? "Restore" : "Archive"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </Row>
-            </TouchableOpacity>
-          )
-        }) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No employees yet.</Text>}
-      </Section>
-
-      <Section title="Projects" onAdd={() => openCreate("project")}>
+      <Section title="Projects" onAdd={openCreate}>
         {projects.length ? projects.map((p) => (
           <TouchableOpacity key={p.id} onPress={() => navigation.navigate("Kanban", { project: p.id, title: p.name })}>
             <Row>
@@ -335,24 +170,7 @@ export default function OrgScreen({ navigation }: Props) {
     </ScrollView>
 
       <CreateSheet
-        visible={creating === "employee"}
-        title="New employee"
-        submitLabel="Hire"
-        fields={[
-          { key: "name", label: "Name", placeholder: "e.g. Ada", required: true },
-          { key: "role", label: "Role", placeholder: "e.g. Engineer, Designer", autoCapitalize: "sentences" },
-          ...(providers.length ? [{
-            key: "provider",
-            label: "Model",
-            options: providers.map((p) => ({ value: p.id, label: p.name })),
-            defaultValue: harman?.default_provider || undefined,
-          }] : []),
-        ]}
-        onSubmit={submitCreate}
-        onClose={() => setCreating(null)}
-      />
-      <CreateSheet
-        visible={creating === "project"}
+        visible={creating}
         title="New project"
         fields={[
           { key: "name", label: "Name", placeholder: "e.g. Onboarding revamp", required: true },
@@ -360,7 +178,7 @@ export default function OrgScreen({ navigation }: Props) {
           { key: "description", label: "Description", placeholder: "What is this project?" },
         ]}
         onSubmit={submitCreate}
-        onClose={() => setCreating(null)}
+        onClose={() => setCreating(false)}
       />
     </>
   )

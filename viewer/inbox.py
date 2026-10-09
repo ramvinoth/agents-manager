@@ -220,6 +220,8 @@ def red_subject(intent):
             return f"\"{(lp.get('prompt') or '')[:80]}\" in {_label(lp.get('session') or '')}"
         if action == "session_mode_set":
             return f"{_label(str(args.get('session') or ''))} → {args.get('mode') or '?'}"
+        if action == "session_level_set":
+            return f"{_label(str(args.get('session') or ''))} → {args.get('level') or 'its role default'}"
         if action == "intake_create":
             p = db.project_get(int(args.get("project_id"))) if args.get("project_id") else None
             return f"\"{args.get('name') or ''}\" onto {p['name'] if p else 'a board'}"
@@ -253,18 +255,35 @@ def format_red(action_label, subject, risk, requested_by, reason=""):
             "Deny and nothing happens. The asking session is told either way.")
 
 
+# The "if you approve" line for an ask that queued because it is above the
+# asking session's authority level, not because the action itself is risky.
+SCOPE_RISK = ("It runs once, as asked. The session's own level does not cover "
+              "this kind of action; to let it do this on its own next time, raise "
+              "its level in the chat's settings (Trust).")
+
+
+def red_risk(intent):
+    """The "if you approve" line for a queued intent — the one source both the
+    inbox body and the decision queue read."""
+    from viewer import orglogic
+    intent = intent or {}
+    if intent.get("queued") == "scope":
+        return SCOPE_RISK
+    return orglogic.RED_RISK.get(intent.get("action") or "", orglogic.RED_RISK_DEFAULT)
+
+
 def deliver_red(approval):
     """Put a freshly queued org Red approval in the owner's inbox (and push).
     The mailbox is the asking session's when one asked (so it archives with
     that chat), else the owner's own ("" — e.g. Harman's scheduler). Never
     raises."""
     try:
-        from viewer import audit, orglogic
+        from viewer import audit
         intent = approval.get("detail") or {}
         action = intent.get("action") or ""
         body = format_red(audit.action_label(action) if action else (approval.get("summary") or "Approval"),
                           red_subject(intent),
-                          orglogic.RED_RISK.get(action, orglogic.RED_RISK_DEFAULT),
+                          red_risk(intent),
                           approval.get("created_by") or "",
                           red_reason(intent))
         deliver_decision(str(intent.get("session") or ""), "red", str(approval["id"]), body,
