@@ -78,8 +78,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   useEffect(() => {
     if (online && fromCache) reloadRef.current()
   }, [online, fromCache])
-  // Legacy request preferences remain untouched. Explicit server AI configuration
-  // wins during launch resolution; never coerce a full model ID against a catalog.
+  // The server's explicit AI configuration wins at launch; these are only the
+  // composer's own picks. Never coerce a full model ID against a catalog.
   const sendPrefs = () => {
     const p = composerPrefs()
     return { mode: p.mode, model: p.model }
@@ -537,11 +537,18 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
   // the finger is moving. Cleared on unmount.
+  // Called on every scroll frame: start the fade-in once, then only push the
+  // hide timer back, so a scroll doesn't restart an animation 60 times a second.
+  const dateShown = useRef(false)
   const revealDate = useCallback(() => {
-    dateOpacity.stopAnimation()
-    Animated.timing(dateOpacity, { toValue: 1, duration: 120, useNativeDriver: true }).start()
+    if (!dateShown.current) {
+      dateShown.current = true
+      dateOpacity.stopAnimation()
+      Animated.timing(dateOpacity, { toValue: 1, duration: 120, useNativeDriver: true }).start()
+    }
     if (dateHideTimer.current) clearTimeout(dateHideTimer.current)
     dateHideTimer.current = setTimeout(() => {
+      dateShown.current = false
       Animated.timing(dateOpacity, { toValue: 0, duration: 350, useNativeDriver: true }).start()
     }, 1000)
   }, [dateOpacity])
@@ -1181,8 +1188,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             </View>
           ) : null}
 
-          {/* Per-call tool approvals (Allow/Deny). AskUserQuestion no longer appears
-              here — it's an async pending_question, not a permission gate. */}
+          {/* Per-call tool approvals (Allow/Deny). Questions are the card above. */}
           {pending.map((p) => (
             <View key={p.id} testID={`perm-${p.id}`} style={styles.permCard}>
               <Text style={styles.permTitle}>Allow tool: {p.tool_name}?</Text>

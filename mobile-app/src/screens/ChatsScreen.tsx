@@ -275,6 +275,7 @@ export default function ChatsScreen({ navigation }: Props) {
   // Whether the list on screen is the device's saved copy (the server hasn't
   // answered yet / is unreachable) rather than a live read.
   const [fromCache, setFromCache] = useState(false)
+  const lastSig = useRef("")
   const fresh = useRef(false) // a live read landed; a late cache read must not overwrite it
 
   const load = useCallback(
@@ -284,8 +285,13 @@ export default function ChatsScreen({ navigation }: Props) {
         const s = await api.sessions(host)
         s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
         fresh.current = true
-        setSessions(s)
         setFromCache(false)
+        // The 4s poll mostly returns the same list: skip the re-render and the
+        // cache write unless something changed, so scrolling stays smooth.
+        const sig = JSON.stringify(s)
+        if (sig === lastSig.current) return
+        lastSig.current = sig
+        setSessions(s)
         offlineCache.saveChats(activeServerId(), host, s)
       } catch (e) {
         const err = e as Error & { status?: number }
@@ -333,6 +339,7 @@ export default function ChatsScreen({ navigation }: Props) {
   useEffect(() => {
     // Paint the saved list at once (cold start, or offline), then read live.
     fresh.current = false
+    lastSig.current = "" // the cache may paint over the screen; the next live read must apply
     setLoading(true)
     setFromCache(false)
     offlineCache.loadChats<Session>(activeServerId(), host).then((saved) => {

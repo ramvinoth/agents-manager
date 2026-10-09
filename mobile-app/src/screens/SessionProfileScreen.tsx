@@ -524,9 +524,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <>
               <Text style={styles.sheetSection}>SKILLS</Text>
               {caps.skills.slice(0, 8).map((s) => (
-                <View key={s.path} style={styles.ssLoopRow}>
+                <View key={s.path} style={styles.ssListRow}>
                   <Icon name="sparkle" size={14} color={t.accent} />
-                  <Text style={[styles.ssLoopPrompt, { color: t.text, flex: 1 }]} numberOfLines={1}>/{s.name}</Text>
+                  <Text style={styles.ssListText} numberOfLines={1}>/{s.name}</Text>
                   <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{s.source}</Text>
                 </View>
               ))}
@@ -539,9 +539,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <>
               <Text style={styles.sheetSection}>MCP TOOLS</Text>
               {caps.mcp.slice(0, 8).map((m) => (
-                <View key={`${m.scope}:${m.name}`} style={styles.ssLoopRow}>
+                <View key={`${m.scope}:${m.name}`} style={styles.ssListRow}>
                   <Icon name="tool" size={14} color={t.textMuted} />
-                  <Text style={[styles.ssLoopPrompt, { color: t.text, flex: 1 }]} numberOfLines={1}>{m.name}</Text>
+                  <Text style={styles.ssListText} numberOfLines={1}>{m.name}</Text>
                   <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{m.scope}</Text>
                 </View>
               ))}
@@ -662,10 +662,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {pinnedItems.length ? (
         renderCard("pinned", "pin", "Pinned messages", `${pinnedItems.length} pinned`, <>
           {pinnedItems.map((p) => (
-            <View key={p.uuid} style={styles.ssLoopRow}>
+            <View key={p.uuid} style={styles.ssListRow}>
               <Icon name="pin" size={14} color={t.accent} />
               <TouchableOpacity style={{ flex: 1 }} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
-                <Text style={[styles.ssLoopPrompt, { color: t.text }]} numberOfLines={2}>{p.text || "(no text)"}</Text>
+                <Text style={styles.ssListText} numberOfLines={2}>{p.text || "(no text)"}</Text>
               </TouchableOpacity>
               <TouchableOpacity testID={`sp-pinned-del-${p.uuid}`} onPress={() => unpin(p.uuid)}>
                 <Icon name="close" size={15} color={t.textMuted} />

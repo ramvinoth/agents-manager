@@ -567,8 +567,8 @@ function buildStyles(t: Theme) {
     ssJobPrompt: { fontSize: 13, color: t.text, lineHeight: 18 },
     ssJobSchedule: { fontSize: 11, color: t.accent, fontWeight: "700" },
     ssJobNext: { fontSize: 11, color: t.textMuted },
-    // Legacy aliases (kept for SessionProfileScreen until renamed)
-    ssLoopRow: {
+    // Plain list row (skills, MCP servers, pinned messages)
+    ssListRow: {
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
@@ -581,7 +581,7 @@ function buildStyles(t: Theme) {
       borderColor: t.border,
       backgroundColor: t.bg,
     },
-    ssLoopPrompt: { flex: 1, fontSize: 13, color: t.text },
+    ssListText: { flex: 1, fontSize: 13, color: t.text },
     ssAddBtn: {
       paddingHorizontal: 16,
       paddingVertical: 10,

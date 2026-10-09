@@ -35,6 +35,7 @@ function harness(params: any = { session: "A", project: 7 }) {
   let token: any = "present"
   const react = {
     createElement: (type: unknown, props: any, ...children: unknown[]) => ({ type, props: props || {}, children }),
+    memo: (component: unknown) => component,
     useState(initial: any) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial; return [slots[i], (v: any) => { writes++; slots[i] = typeof v === "function" ? v(slots[i]) : v }] },
     useRef(initial: any) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i] },
     useCallback(fn: Function, deps: any[]) { const i = cursor++; if (!same(slots[i]?.deps, deps)) slots[i] = { fn, deps }; return slots[i].fn },
@@ -77,7 +78,11 @@ function harness(params: any = { session: "A", project: 7 }) {
     unmount: () => { for (const slot of slots) slot?.cleanup?.() },
     replayEffects: () => { for (const slot of slots) { if (slot?.effect) { slot.cleanup?.(); slot.cleanup = slot.effect() } } },
     node: (id: string) => find(render(), n => n.props.testID === id)!,
-    drag: () => find(render(), n => n.type?.name === "DraggableCard")!,
+    // The row receives shared onDrop(card, col)/onTap(id); bind them to its card like the row does.
+    drag: () => {
+      const n = find(render(), n => n.type?.name === "DraggableCardRow")!
+      return { props: { ...(n.props as any), onTap: () => n.props.onTap(n.props.card.id), onDropColumn: (col: number) => n.props.onDrop(n.props.card, col) } }
+    },
   }
 }
 const visible = (tree: unknown, session: string) => JSON.stringify(tree).includes(`${session}-only-card`)

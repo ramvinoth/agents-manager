@@ -136,6 +136,14 @@ export default function KanbanScreen({ route, navigation }: Props) {
     [cards, scope, isCurrent, load]
   )
 
+  // Stable per scope for the memoized rows (the 4s poll re-renders only changed cards),
+  // yet bound to this scope's lifetime so a row captured under an old scope stays dead.
+  const moveRef = useRef(moveCard)
+  moveRef.current = moveCard
+  const dropCard = useCallback((card: Card, colId: number) => {
+    if (isCurrent()) moveRef.current(card, colId, 9999)
+  }, [isCurrent])
+
   const cockpit = useDecisionCockpit(navigation, { onResolved: load, guard: isCurrent })
   const openCard = cockpit.openCard
   // Open the cockpit at the tapped item over the queue as it stands now.
@@ -246,18 +254,16 @@ export default function KanbanScreen({ route, navigation }: Props) {
             ) : null}
 
             <GHScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-              {colCards.map((card, i) => (
+              {colCards.map((card) => (
                 <DraggableCard
                   key={card.id}
                   card={card}
                   theme={t}
-                  index={i}
-                  columnCount={colCards.length}
                   commentCount={card.comment_count ?? 0}
                   colBounds={colBounds}
                   columns={columns}
-                  onDropColumn={(colId) => moveCard(card, colId, 9999)}
-                  onTap={() => openCard(card.id)}
+                  onDrop={dropCard}
+                  onTap={openCard}
                 />
               ))}
               {!colCards.length ? (
@@ -350,19 +356,25 @@ function DecisionBand({
  * onTap (card detail). Spring back to origin on
  * release regardless — the list re-renders from state, so no stale transform.
  */
-function DraggableCard({
-  card, theme: t, commentCount, colBounds, columns, onDropColumn, onTap,
-}: {
+type DraggableCardProps = {
   card: Card
   theme: ReturnType<typeof useTheme>
-  index: number
-  columnCount: number
   commentCount?: number
   colBounds: React.MutableRefObject<Record<number, { x: number; w: number }>>
   columns: BoardColumn[]
-  onDropColumn: (columnId: number) => void
-  onTap: () => void
-}) {
+  onDrop: (card: Card, columnId: number) => void
+  onTap: (cardId: number) => void
+}
+
+// Each poll hands over fresh card objects, so compare what the row draws.
+const DraggableCard = React.memo(DraggableCardRow, (a, b) =>
+  a.card.id === b.card.id && a.card.title === b.card.title && a.card.column_id === b.card.column_id
+  && a.commentCount === b.commentCount && a.theme === b.theme
+  && a.columns.length === b.columns.length && a.columns.every((c, i) => c.id === b.columns[i].id)
+  && a.onDrop === b.onDrop && a.onTap === b.onTap)
+
+function DraggableCardRow({ card, theme: t, commentCount, colBounds, columns, onDrop, onTap }: DraggableCardProps) {
+  const onDropColumn = (columnId: number) => onDrop(card, columnId)
   const tx = useSharedValue(0)
   const ty = useSharedValue(0)
   const dragging = useSharedValue(0)
@@ -407,7 +419,7 @@ function DraggableCard({
       <Animated.View style={style}>
         <Pressable
           testID={`kanban-card-${card.id}`}
-          onPress={onTap}
+          onPress={() => onTap(card.id)}
           style={{ backgroundColor: t.bubbleAgent, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
         >
           <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>
