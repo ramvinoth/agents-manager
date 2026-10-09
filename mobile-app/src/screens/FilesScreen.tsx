@@ -14,6 +14,7 @@ import {
 } from "../lib/files"
 import { HOST_LOCATION, START_PATH, describeLocation, fsScope, isLiveLocation, type Location } from "../lib/location"
 import { useHost } from "../lib/useHost"
+import { offerUndo } from "../lib/undo"
 import { userError } from "../lib/errors"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
@@ -219,27 +220,29 @@ export default function FilesScreen({ navigation }: Props) {
     }
   }
 
-  function confirmDelete(item: FileEntry) {
-    Alert.alert("Delete " + item.name + "?", location === HOST_LOCATION ? "It will be moved to the server's trash." : "It will be moved to the drive's trash.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          setBusy(true)
-          setError("")
-          try {
-            const r = await api.fsDelete(scope, { path: joinPath(path, item.name) })
-            if (r?.error) setError(r.error)
-            else await fetchDir(path, host, location)
-          } catch (e) {
-            setError(userError(e, "this item", "delete"))
-          } finally {
-            setBusy(false)
-          }
-        },
+  // Instant with Undo (lib/undo.ts): the row goes now, the trash move runs when
+  // the window closes. Reload after either so the list is the server's truth.
+  const here = useRef("")
+  here.current = JSON.stringify([scope, path])
+  function remove(item: FileEntry) {
+    const at = { path, host, location, scope }
+    const key = here.current
+    // Only re-read if the owner is still looking at that folder.
+    const refresh = () => { if (here.current === key) return fetchDir(at.path, at.host, at.location) }
+    setEntries((all) => all.filter((e) => e.name !== item.name))
+    offerUndo({
+      label: `${item.name} moved to trash`,
+      undo: () => { refresh() },
+      commit: async () => {
+        try {
+          const r = await api.fsDelete(at.scope, { path: joinPath(at.path, item.name) })
+          if (r?.error) setError(r.error)
+        } catch (e) {
+          setError(userError(e, "this item", "delete"))
+        }
+        await refresh()
       },
-    ])
+    })
   }
 
   // The header carries only the location chip. The terminal lives on Chats:
@@ -338,7 +341,7 @@ export default function FilesScreen({ navigation }: Props) {
               testID={`filestab-${item.name}`}
               style={styles.fsRow}
               onPress={() => (item.dir ? go(joinPath(path, item.name)) : downloadShare(item))}
-              onLongPress={() => confirmDelete(item)}
+              onLongPress={() => remove(item)}
               delayLongPress={350}
             >
               <Icon name={item.dir ? "folder" : "file"} size={18} color={item.dir ? t.warning : t.textMuted} />

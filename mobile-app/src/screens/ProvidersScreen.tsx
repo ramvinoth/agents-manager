@@ -4,6 +4,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Provider } from "../api/client"
 import { aiError, connectionPayload, type KeyAction } from "../lib/aiSelection"
+import { offerUndo } from "../lib/undo"
 import {
   editRows, effectiveWindow, formatTokens, mergeDiscovered, overrideError, overridesPayload, sortRows,
   SOURCE_LABEL, type EditRow,
@@ -112,10 +113,10 @@ export default function ProvidersScreen(_: Props) {
   }
   function cancel() {
     if (saving) return
-    Alert.alert("Discard connection changes?", "The saved connection is unchanged.", [
-      { text: "Keep editing", style: "cancel" },
-      { text: "Discard changes", style: "destructive", onPress: () => { generation.current++; setEditing(null); setError("") } },
-    ])
+    // Closing drops the unsaved edits at once; Undo reopens them as they were.
+    const draft = editing
+    generation.current++; setEditing(null); setError("")
+    if (draft) offerUndo({ label: "Changes discarded", undo: () => setEditing(draft) })
   }
   function deleteConnection() {
     if (!editing?.id) return

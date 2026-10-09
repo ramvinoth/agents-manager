@@ -14,6 +14,7 @@ import { completeLink, neighbours, openLinkQuery, resolveLink, suggestTitles, ty
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
+import { offerUndo } from "../lib/undo"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">
 
@@ -163,10 +164,21 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     }
   }, [id, note])
 
+  // Archiving is a flip, so it happens at once with an Undo (lib/undo.ts).
+  const archive = useCallback(() => {
+    const to = !note?.archived
+    patchNote({ archived: to })
+    navigation.goBack()
+    offerUndo({
+      label: to ? "Note archived" : "Note unarchived",
+      undo: () => { api.orgUpdateNote({ note_id: id, archived: !to }).catch(() => {}) },
+    })
+  }, [id, note?.archived, navigation, patchNote])
+
   const remove = useCallback(() => {
     Alert.alert("Delete this note?", "This cannot be undone. Archiving keeps it on the shelf instead.", [
       { text: "Cancel", style: "cancel" },
-      { text: "Archive instead", onPress: () => { patchNote({ archived: true }); navigation.goBack() } },
+      { text: "Archive instead", onPress: archive },
       { text: "Delete", style: "destructive", onPress: async () => {
         try {
           const r = await api.orgDeleteNote({ note_id: id })
@@ -175,7 +187,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         } catch (e) { Alert.alert("Could not delete", userError(e, "the note", "delete")) }
       } },
     ])
-  }, [id, navigation, patchNote])
+  }, [id, navigation, archive])
 
   useEffect(() => {
     navigation.setOptions({
@@ -193,7 +205,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             <Icon name="pin" size={20} color={note?.pinned ? t.accent : t.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity testID="note-more" onPress={() => Alert.alert("", "", [
-            { text: note?.archived ? "Unarchive" : "Archive", onPress: () => { patchNote({ archived: !note?.archived }); navigation.goBack() } },
+            { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
             { text: "Delete", style: "destructive", onPress: remove },
             { text: "Cancel", style: "cancel" },
           ])} hitSlop={8} style={styles.neHeaderBtn}>
@@ -202,7 +214,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         </View>
       ),
     })
-  }, [navigation, note, preview, t.accent, t.textMuted, patchNote, remove])
+  }, [navigation, note, preview, t.accent, t.textMuted, patchNote, remove, archive])
 
   if (loading) return <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
   if (!note) return <Text style={styles.neMissing}>{error || "This note is unavailable."}</Text>

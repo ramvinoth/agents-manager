@@ -23,7 +23,7 @@ function harness() {
     "../api/client":{api:{sessionMeta:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
     "../state/config":{composerPrefs:()=>({mode:"bypassPermissions"}),setComposerPrefs:(v:any)=>deviceWrites.push(v),notifyEveryReply:()=>false},
     "../lib/aiSelection":{aiSummary:()=>"AI",aiError:(e:any)=>e.message},
-    "../lib/avatars":{AVATARS:[]},"../lib/harmanLevel":{HARMAN_LEVELS:["ic","lead","manager"],LEVEL_NAME:{ic:"Own work",lead:"Workspace",manager:"Organization"},isHarmanLevel:(v:unknown)=>v==="ic"||v==="lead"||v==="manager"},"../lib/interval":{},"../lib/stats":{},"../lib/thread":{},
+    "../lib/avatars":{AVATARS:[]},"../lib/harmanLevel":{HARMAN_LEVELS:["ic","lead","manager"],LEVEL_NAME:{ic:"Own work",lead:"Workspace",manager:"Organization"},isHarmanLevel:(v:unknown)=>v==="ic"||v==="lead"||v==="manager"},"../lib/interval":{},"../lib/undo":{offerUndo:()=>{}},"../lib/stats":{},"../lib/thread":{},
     "../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},
     ...Object.fromEntries(["Avatar","Icon","JobScheduler","ProviderPicker"].map(x=>[`../components/${x}`,{default:x}])),
   }

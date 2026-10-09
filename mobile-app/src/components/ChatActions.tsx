@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react"
-import { Alert, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Text, TextInput, TouchableOpacity, View } from "react-native"
 import SheetModal from "./SheetModal"
 import { useStyles } from "../lib/styles"
 
@@ -40,18 +40,10 @@ export default function ChatActions({
     }
   }, [visible, name])
 
-  function confirmDelete() {
-    Alert.alert("Delete chat?", `“${name}” and its transcript will be removed. This can't be undone.`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          onDelete()
-          onClose()
-        },
-      },
-    ])
+  // No confirm: ChatsScreen deletes with an Undo toast (lib/undo.ts).
+  function del() {
+    onDelete()
+    onClose()
   }
 
   const styles = useStyles()
@@ -121,7 +113,7 @@ export default function ChatActions({
           >
             <Text style={styles.actionText}>{archived ? "Unarchive" : "Archive"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity testID="action-delete" style={styles.actionRow} onPress={confirmDelete}>
+          <TouchableOpacity testID="action-delete" style={styles.actionRow} onPress={del}>
             <Text style={[styles.actionText, styles.actionDanger]}>Delete chat</Text>
           </TouchableOpacity>
         </>

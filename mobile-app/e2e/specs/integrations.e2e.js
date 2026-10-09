@@ -121,6 +121,20 @@ describe("Native integrations — one catalog, every service state", () => {
     assert.deepEqual(writes().at(-1).body, { roots: ["~", "~/Projects"], ops: ["read", "write", "delete"] })
   })
 
+  it("removing a folder is instant and Undo puts it back (card 153)", async () => {
+    await reveal("local-remove-1")
+    await tap("local-remove-1")
+    await $("~undo-toast").waitForDisplayed({ timeout: 5000 })
+    assert.equal(await $("~undo-label").getText(), "Agents can no longer use ~/Projects")
+    await browser.waitUntil(async () => !(await $("~local-root-1").isExisting()), { timeoutMsg: "The folder must go at once, no confirm" })
+    assert.deepEqual(writes().at(-1).body, { roots: ["~"], ops: ["read", "write", "delete"] })
+    await tap("undo-button")
+    await reveal("local-root-1")
+    assert.equal(await $("~local-root-1").getText(), "~/Projects")
+    assert.deepEqual(writes().at(-1).body, { roots: ["~", "~/Projects"], ops: ["read", "write", "delete"] })
+    assert(!(await $("~undo-toast").isExisting()), "Undo closes the toast")
+  })
+
   it("setting up a public client needs only the id and unlocks connecting", async () => {
     assert(!(await $("~integrations-edit-dropbox").isExisting()), "Providers needing setup fold behind More services")
     await reveal("integrations-more")

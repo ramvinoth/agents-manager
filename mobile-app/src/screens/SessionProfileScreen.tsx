@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react"
+import { offerUndo } from "../lib/undo"
 import {
   ActivityIndicator,
   Alert,
@@ -285,33 +286,23 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     setEditingJobId(null)
   }
 
-  // Pause/resume: flip the loop's enabled flag. Confirm first (it changes what
-  // runs on this machine unattended), then optimistic update + refresh. A
+  // Pause/resume: flip the loop's enabled flag at once (optimistic + refresh),
+  // with an Undo toast instead of a confirm — it's a flip either way. A
   // paused loop stops firing (server filters enabled=TRUE); resuming leaves its
   // nextRun untouched, so an overdue loop fires at most once, not a backlog.
   function toggleJob(j: Job) {
-    const pausing = j.enabled !== false
-    Alert.alert(
-      pausing ? "Pause this scheduled job?" : "Resume this scheduled job?",
-      pausing
-        ? "It stops firing on its schedule. You can resume it any time."
-        : "It fires on its schedule again. If its next run time has passed, it fires once, not a backlog.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: pausing ? "Pause" : "Resume",
-          onPress: () => {
-            const next = !(j.enabled ?? true)
-            setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled: next } : x)))
-            api.loopsEdit({ id: j.id, enabled: next })
-              .then(() => sessionId ? api.loops(sessionId) : [])
-              .then((l) => { if (Array.isArray(l)) setJobs(l) })
-              .catch(() => {})
-          },
-        },
-      ],
-    )
+    const set = (enabled: boolean) => {
+      setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled } : x)))
+      api.loopsEdit({ id: j.id, enabled })
+        .then(() => sessionId ? api.loops(sessionId) : [])
+        .then((l) => { if (Array.isArray(l)) setJobs(l) })
+        .catch(() => {})
+    }
+    const next = j.enabled === false
+    set(next)
+    offerUndo({ label: next ? "Job resumed" : "Job paused", undo: () => set(!next) })
   }
+
 
   function toggleNotify(v: boolean) {
     setNotify(v)

@@ -795,6 +795,16 @@ function buildStyles(t: Theme) {
     igChip: { flexDirection: "row", alignItems: "center", gap: 4 },
     igInline: { flex: 1, marginHorizontal: 0, marginTop: 0 },
 
+    // Undo toast (components/UndoToast.tsx): inverted bar, like iOS Mail's
+    undoWrap: { position: "absolute", left: 12, right: 12, alignItems: "center" },
+    undoBar: {
+      flexDirection: "row", alignItems: "center", gap: 16, maxWidth: 520, width: "100%",
+      paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, backgroundColor: t.text,
+      shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4,
+    },
+    undoLabel: { flex: 1, color: t.bg, fontSize: 14 },
+    undoButton: { color: t.bg, fontSize: 14, fontWeight: "700" },
+
     // Plain list row (skills, MCP servers, pinned messages)
     ssListRow: {
       flexDirection: "row",

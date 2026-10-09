@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -16,6 +16,7 @@ import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useHost } from "../lib/useHost"
 import { isTransportError, userError } from "../lib/errors"
+import { offerUndo } from "../lib/undo"
 import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "../lib/styles"
@@ -111,14 +112,24 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
-  async function remove(s: Session) {
-    setSessions((all) => all.filter((x) => x.path !== s.path)) // optimistic; path is unique, id is not
-    try {
-      await api.deleteSession({ session: s.path, host, agent: "claude" })
-    } catch (e) {
-      setError(userError(e, "that chat", "delete"))
-      load()
-    }
+  // Delete is instant with an Undo (lib/undo.ts): the rows leave the list now and
+  // the server delete runs when the Undo window closes. `deleting` keeps the 4s
+  // poll from bringing them back meanwhile.
+  const deleting = useRef(new Set<string>())
+  function remove(paths: string[]) {
+    paths.forEach((p) => deleting.current.add(p))
+    setSessions((all) => all.filter((x) => !deleting.current.has(x.path))) // path is unique, id is not
+    const release = () => { paths.forEach((p) => deleting.current.delete(p)); lastSig.current = "" }
+    offerUndo({
+      label: paths.length > 1 ? `${paths.length} chats deleted` : "Chat deleted",
+      undo: () => { release(); load(true) },
+      commit: async () => {
+        const failed = (await Promise.all(paths.map((p) =>
+          api.deleteSession({ session: p, host, agent: "claude" }).then(() => null, (e) => e)))).filter(Boolean)
+        release()
+        if (failed.length) { setError(userError(failed[0], paths.length > 1 ? "some chats" : "that chat", "delete")); load(true) }
+      },
+    })
   }
 
   function enterSelection(s: Session) {
@@ -140,27 +151,9 @@ export default function ChatsScreen({ navigation }: Props) {
   }
 
   function bulkDelete() {
-    const count = selected.size
-    if (!count) return
-    Alert.alert(`Delete ${count} chat${count > 1 ? "s" : ""}?`, "This can't be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          const paths = Array.from(selected)
-          setSessions((all) => all.filter((x) => !selected.has(x.path)))
-          exitSelection()
-          for (const p of paths) {
-            try {
-              await api.deleteSession({ session: p, host, agent: "claude" })
-            } catch {
-              // best-effort; already removed optimistically
-            }
-          }
-        },
-      },
-    ])
+    if (!selected.size) return
+    remove(Array.from(selected))
+    exitSelection()
   }
 
   // Mark a session read: clear its dot locally (optimistic) and advance the
@@ -282,7 +275,7 @@ export default function ChatsScreen({ navigation }: Props) {
     async (silent = false) => {
       if (!silent) setError("")
       try {
-        const s = await api.sessions(host)
+        const s = (await api.sessions(host)).filter((x) => !deleting.current.has(x.path))
         s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
         fresh.current = true
         setFromCache(false)
@@ -567,7 +560,7 @@ export default function ChatsScreen({ navigation }: Props) {
         onRename={(title) => actionFor && rename(actionFor, title)}
         onArchive={() => actionFor && setFlag(actionFor, "archived", !actionFor.archived)}
         onFavorite={() => actionFor && setFlag(actionFor, "favorite", !actionFor.favorite)}
-        onDelete={() => actionFor && remove(actionFor)}
+        onDelete={() => actionFor && remove([actionFor.path])}
         onSelect={() => actionFor && enterSelection(actionFor)}
       />
     </View>

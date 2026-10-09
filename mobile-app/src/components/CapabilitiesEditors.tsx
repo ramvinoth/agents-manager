@@ -42,9 +42,8 @@ export function EditorModal({
   const styles = useStyles()
   const t = useTheme()
   const insets = useSafeAreaInsets()
-  // Every other destructive action in the app confirms first (ChatActions,
-  // ProvidersScreen, KanbanScreen…). Route delete through the same Alert so a
-  // single mis-tap can't erase a skill/MCP server with no undo.
+  // A skill/MCP server delete is immediate on the server with no restore, so it
+  // confirms (reversible actions use the Undo toast instead — lib/undo.ts).
   const confirmDelete = onDelete
     ? () =>
         Alert.alert(deleteLabel ? `Delete ${deleteLabel}?` : "Delete?", "This can't be undone.", [

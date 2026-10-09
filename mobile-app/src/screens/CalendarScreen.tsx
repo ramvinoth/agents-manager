@@ -8,6 +8,7 @@ import { api, type CalendarEvent } from "../api/client"
 import { agenda, calendarAccounts, draftOf, draftProblem, fieldsOf, isoLocal, newDraft, timeLabel, type CalendarAccount, type EventDraft } from "../lib/calendar"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { userError } from "../lib/errors"
+import { offerUndo } from "../lib/undo"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
@@ -78,18 +79,21 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
     await load()
   }
 
+  // Instant with Undo (lib/undo.ts): the event leaves the agenda now and the
+  // Google delete runs when the window closes. Guests are not emailed.
   function remove(d: EventDraft) {
     if (!account || !d.id) return
-    Alert.alert(`Delete "${d.title || "(no title)"}"?`, "It is removed from your Google Calendar. Guests are not emailed.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive",
-        onPress: async () => {
-          try { await api.calendarDelete(d.id!, account.id); setDraft(null); await load() }
-          catch (e) { Alert.alert("Couldn't delete", userError(e, "this event")) }
-        },
+    const id = d.id, conn = account.id
+    setDraft(null)
+    setEvents((all) => all.filter((e) => e.id !== id))
+    offerUndo({
+      label: `"${d.title || "(no title)"}" deleted`,
+      undo: () => { load() },
+      commit: async () => {
+        try { await api.calendarDelete(id, conn) }
+        catch (e) { Alert.alert("Couldn't delete", userError(e, "this event")); load() }
       },
-    ])
+    })
   }
 
   const toIntegrations = () => navigation.navigate("Integrations")
