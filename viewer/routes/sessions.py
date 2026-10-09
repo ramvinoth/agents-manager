@@ -953,10 +953,16 @@ class SessionsMixin:
         self.serve_session_file(session_path, req.raw_query, agent)
 
     def _p_new_session(self, req):
-        self.handle_new_session()
+        self.handle_new_session(req)
 
-    def handle_new_session(self):
-        """Start a brand-new claude session in a given working directory."""
+    def handle_new_session(self, req):
+        """Start a brand-new claude session in a given working directory.
+
+        An agent (MCP session_create) may start one too, gated: Workspace level,
+        a name is required (a nameless worker shows as a raw id in every list),
+        it can never start a session in bypass mode — that trust is the owner's
+        to grant through session_mode_set — and it cannot attach `jobs`, which
+        are saved as human-origin loops the automation switch would not stop."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -971,6 +977,24 @@ class SessionsMixin:
         if not message:
             self.send_json({"error": "Empty message"}, status=400)
             return
+        principal = req.principal
+        by_agent = principal["kind"] == "mcp"
+        if by_agent:
+            if not orglogic.allowed("session_create", principal["level"]):
+                self.send_json({"error": "Starting a session needs Workspace level"}, status=403)
+                return
+            if not (body.get("title") or "").strip():
+                self.send_json({"error": "A new session needs a title"}, status=400)
+                return
+            if mode in ("bypass", "bypassPermissions"):
+                self.send_json({"error": "An agent cannot start a session in bypass mode; "
+                                         "ask the owner with session_mode_set"}, status=403)
+                return
+            if body.get("jobs"):
+                # jobs are saved with the HUMAN origin (_started), which the
+                # automation switch never stops; an agent schedules via loop_create.
+                self.send_json({"error": "An agent schedules a new session's work with loop_create"}, status=403)
+                return
         jobs, err = self._new_session_jobs(body.get("jobs"), host, body.get("agent", "claude"))
         if err:
             self.send_json({"error": err}, status=400)
@@ -1080,9 +1104,17 @@ class SessionsMixin:
                 return
             self._started(session_id, jobs)
             return
-        if not start_claude_run(session_id, ["--session-id", session_id], message, mode, cwd, model, host, effort=effort):
+        # The name rides on the run itself (claude --name writes the transcript's
+        # custom-title), so it never depends on a client renaming the chat after
+        # it appears. Local only: a remote host's CLI version is not ours to assume.
+        title = (body.get("title") or "").strip()[:200]
+        args = ["--session-id", session_id] + (["--name", title] if title and host == "local" else [])
+        if not start_claude_run(session_id, args, message, mode, cwd, model, host, effort=effort):
             self.send_json({"error": "Busy"}, status=409)
             return
+        if by_agent:
+            db.audit_append(principal["actor"], "session_create",
+                            {"session": session_id, "title": title, "cwd": cwd, "host": host}, "ran")
         self._started(session_id, jobs)
 
     @staticmethod

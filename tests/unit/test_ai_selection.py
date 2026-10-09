@@ -142,6 +142,49 @@ def test_discovery_normalizes_deduplicates_and_legacy_get(monkeypatch):
     assert opener.open.call_args.args[0].get_header("Authorization") == "Bearer saved"
 
 
+_APP_REQ = SimpleNamespace(principal={"kind": "app", "level": "manager", "actor": "user:t", "session": ""})
+
+
+def _create(monkeypatch, tmp_path, body, principal):
+    import io, json
+    from viewer import db
+    from viewer.routes import sessions
+    monkeypatch.setattr(db, "session_meta_set", lambda *a: None)
+    monkeypatch.setattr(db, "setting_get", lambda *a: None)
+    audit = Mock(); monkeypatch.setattr(db, "audit_append", audit)
+    launch = Mock(return_value=True); monkeypatch.setattr(sessions, "start_claude_run", launch)
+    raw = json.dumps({"message": "hi", "cwd": str(tmp_path), **body}).encode()
+    handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
+    handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
+    handler.handle_new_session(SimpleNamespace(principal=principal))
+    return launch, handler.send_json, audit
+
+
+_AGENT = {"kind": "mcp", "level": "lead", "actor": "session:RSI", "session": "s1"}
+
+
+def test_new_session_title_rides_on_the_run_as_name(monkeypatch, tmp_path):
+    launch, _, _= _create(monkeypatch, tmp_path, {"title": "Trader"}, _APP_REQ.principal)
+    args = launch.call_args.args[1]
+    assert args[args.index("--name") + 1] == "Trader"
+
+
+@pytest.mark.parametrize("body,principal,status", [
+    ({"title": "Trader"}, {**_AGENT, "level": "ic"}, 403),          # below Workspace
+    ({}, _AGENT, 400),                                               # nameless worker
+    ({"title": "T", "mode": "bypass"}, _AGENT, 403),                 # trust laundering
+    ({"title": "T", "jobs": [{"prompt": "x", "interval": "1h"}]}, _AGENT, 403),  # human-origin loops
+])
+def test_agent_session_create_is_gated(monkeypatch, tmp_path, body, principal, status):
+    launch, send, _= _create(monkeypatch, tmp_path, body, principal)
+    assert not launch.called and send.call_args.kwargs.get("status") == status
+
+
+def test_agent_session_create_runs_and_is_audited(monkeypatch, tmp_path):
+    launch, _, audit= _create(monkeypatch, tmp_path, {"title": "Trader"}, _AGENT)
+    assert launch.called and audit.call_args.args[:2] == ("session:RSI", "session_create")
+
+
 def test_first_launch_snapshots_ai_and_ignores_stale_client_model(monkeypatch, tmp_path):
     import io, json
     from viewer import db
@@ -154,7 +197,7 @@ def test_first_launch_snapshots_ai_and_ignores_stale_client_model(monkeypatch, t
     raw = json.dumps(payload).encode()
     handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
     handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
-    handler.handle_new_session()
+    handler.handle_new_session(_APP_REQ)
     assert launch.call_args.args[5] == "exact/full:v1"
     assert next(iter(saved.values()))["modelSelection"] == payload["ai"]["model"]
 
@@ -238,7 +281,7 @@ def test_legacy_create_snapshots_only_configured_defaults(monkeypatch, tmp_path,
     raw = json.dumps({"message": "hello", "cwd": str(tmp_path), "model": "legacy"}).encode()
     handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
     handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
-    handler.handle_new_session()
+    handler.handle_new_session(_APP_REQ)
     assert launch.call_args.args[5] == ("server/model" if configured else "legacy")
     assert ("modelSelection" in saved.call_args.args[1]) == configured
 
@@ -257,7 +300,7 @@ def test_custom_first_launch_receives_exact_model_and_saved_config(monkeypatch, 
     raw = json.dumps({"message": "hello", "cwd": str(tmp_path), "ai": selection}).encode()
     handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
     handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
-    handler.handle_new_session()
+    handler.handle_new_session(_APP_REQ)
     assert launch.call_args.kwargs["model"] == "other-model"
     assert preset["model"] == "preset-model"
 
@@ -370,12 +413,12 @@ def _new_session(monkeypatch, tmp_path, **extra):
     raw = json.dumps({"message": "hello", "cwd": str(tmp_path), **extra}).encode()
     handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
     handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
-    handler.handle_new_session()
+    handler.handle_new_session(_APP_REQ)
     return handler.send_json.call_args, launch, loops
 
 
 def test_new_session_saves_its_jobs_in_the_same_request(monkeypatch, tmp_path):
-    call, launch, loops = _new_session(monkeypatch, tmp_path, jobs=[
+    call, launch, loops= _new_session(monkeypatch, tmp_path, jobs=[
         {"prompt": "daily digest", "cron": "0 9 * * *"}, {"prompt": " check ", "interval": "30m"}])
     body = call.args[0]
     assert body["started"] and len(body["jobs"]) == 2
@@ -389,8 +432,8 @@ def test_new_session_refuses_a_bad_job_before_starting_anything(monkeypatch, tmp
     for jobs, msg in (([{"prompt": "x", "cron": "nope"}], "Job 1: Invalid cron"),
                       ([{"prompt": "", "interval": "5m"}], "Job 1 has no prompt"),
                       ("x", "jobs must be a list")):
-        call, launch, loops = _new_session(monkeypatch, tmp_path, jobs=jobs)
+        call, launch, loops= _new_session(monkeypatch, tmp_path, jobs=jobs)
         assert call.kwargs.get("status") == 400 and call.args[0]["error"].startswith(msg)
         assert not launch.called and not loops
-    call, launch, _ = _new_session(monkeypatch, tmp_path, host="box", jobs=[{"prompt": "x", "interval": "5m"}])
+    call, launch, _= _new_session(monkeypatch, tmp_path, host="box", jobs=[{"prompt": "x", "interval": "5m"}])
     assert call.kwargs.get("status") == 400 and not launch.called

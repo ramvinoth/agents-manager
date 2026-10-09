@@ -250,6 +250,9 @@ _MIN_LEVEL = {
     # board-shaping authority, not an ic act on one's own
     # card. loop_delete is ALSO red → an agent's delete queues for the owner.
     "loop_create": "lead",
+    # Starting a new worker session spends runs like a loop does, so the same
+    # authority. Bypass mode is refused at the route (session_mode_set is the door).
+    "session_create": "lead",
     "loop_update": "lead",
     "loop_delete": "lead",
     # lead: intake channels — inbound doors from the outside world onto a board
