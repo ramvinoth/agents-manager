@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
@@ -9,7 +9,7 @@ import { boardScopeFilter, groupByColumn, matchesQuery, nextPosition } from "../
 import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
-import DecisionCockpit from "../components/DecisionCockpit"
+import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { useTheme } from "../lib/useTheme"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
@@ -68,10 +68,6 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // overflowing off-screen. Re-measured when the band/error banner toggles.
   const [viewportH, setViewportH] = useState(0)
   const [query, setQuery] = useState("") // find box: "#107" or words
-  // The decision cockpit walks a FROZEN snapshot of the queue (captured at the
-  // moment of the tap) so the 4s poll can't reshuffle the item under the
-  // reader's thumb. null = closed. New/skipped items reappear on the next open.
-  const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; index: number } | null>(null)
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
   const { columns, cards, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
@@ -140,47 +136,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
     [cards, scope, isCurrent, load]
   )
 
-  const openCard = useCallback(
-    (id: number) => { if (!isCurrent()) return; setCockpit(null); navigation.navigate("CardDetail", { id }) },
-    [navigation, isCurrent]
-  )
-
-  // Open the cockpit at the tapped item, freezing the queue as it stands now so
-  // the 4s poll can't shift the item mid-decision. The cockpit decides in place;
-  // its escape hatches (below) close it before navigating away.
-  const openCockpit = useCallback(
-    (index: number) => {
-      if (!isCurrent()) return
-      setCockpit({ snapshot: decisions.slice(), index })
-    },
-    [isCurrent, decisions]
-  )
-
-  // The cockpit's "open chat" escape hatch (review-needed): jump to the session
-  // that owns a queued decision — the same Thread route push taps use, resolved
-  // id → path on the decision's host. Best-effort: a session no longer listed
-  // (or on an unreachable host) surfaces a hint rather than throwing; the item
-  // stays in the queue either way.
-  const openThread = useCallback(
-    async (d: OpenDecision) => {
-      if (!isCurrent()) return
-      setCockpit(null)
-      const host = d.host || "local"
-      try {
-        const sessions = await api.sessions(host)
-        const match = sessions.find((s) => s.id === d.session)
-        if (match) {
-          if (!isCurrent()) return
-          navigation.navigate("Thread", { host, label: match.title || d.label || match.id.slice(0, 8), path: match.path })
-        } else {
-          Alert.alert(d.label || d.session.slice(0, 8), `This session is not listed on ${host} right now — open it from the chat list, or it will re-appear in the queue while it waits.`)
-        }
-      } catch {
-        /* cross-host or offline: leave the item in the queue */
-      }
-    },
-    [isCurrent, navigation]
-  )
+  const cockpit = useDecisionCockpit(navigation, { onResolved: load, guard: isCurrent })
+  const openCard = cockpit.openCard
+  // Open the cockpit at the tapped item over the queue as it stands now.
+  const openCockpit = useCallback((index: number) => cockpit.open(decisions, index), [cockpit.open, decisions])
 
   async function addCard(columnId: number) {
     if (!isCurrent() || !scope.filter || scope.draft?.column !== columnId) return
@@ -308,16 +267,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
           </View>
         ))}
       </ScrollView>
-      {cockpit ? (
-        <DecisionCockpit
-          decisions={cockpit.snapshot}
-          startIndex={cockpit.index}
-          onClose={() => setCockpit(null)}
-          onResolved={load}
-          onOpenThread={openThread}
-          onOpenCard={openCard}
-        />
-      ) : null}
+      {cockpit.element}
     </View>
   )
 }

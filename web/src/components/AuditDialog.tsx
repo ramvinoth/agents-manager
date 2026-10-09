@@ -38,7 +38,7 @@ export function AuditDialog({
 }: {
   selfUsername?: string
   /** Returns false when the card is not on the host's board; the link then explains itself. */
-  onOpenCard?: (cardId: number) => boolean
+  onOpenCard?: (cardId: number) => Promise<boolean>
   onClose: () => void
 }) {
   const [state, dispatch] = useReducer(auditReducer, undefined, initialAuditState)
@@ -188,7 +188,7 @@ function AuditRow({
   selfUsername?: string
   expanded: boolean
   onToggle: () => void
-  onOpenCard?: (cardId: number) => boolean
+  onOpenCard?: (cardId: number) => Promise<boolean>
 }) {
   const who = formatActor(entry.actor, selfUsername)
   const subject = auditSubject(entry.target)
@@ -234,7 +234,7 @@ function AuditRow({
             </dl>
             {onOpenCard && cardId !== undefined && (
               <div className="mt-3 flex items-center gap-2">
-                <Button size="sm" variant="secondary" disabled={missing} onClick={() => { if (!onOpenCard(cardId)) setMissing(true) }}>
+                <Button size="sm" variant="secondary" disabled={missing} onClick={async () => { if (!(await onOpenCard(cardId))) setMissing(true) }}>
                   Open card
                 </Button>
                 {missing && <span className="text-xs text-muted-foreground">This card is not on this board any more.</span>}

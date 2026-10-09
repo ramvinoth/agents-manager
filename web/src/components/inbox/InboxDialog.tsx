@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { BellOff, Check, FolderOpen, Loader2, Send, Zap } from "lucide-react"
+import { BellOff, Check, Gavel, Loader2, Send, Zap } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,7 +13,9 @@ import {
   orderInbox, replyTo, rowActor, searchInbox, SNOOZE_OPTIONS, type InboxMessage,
 } from "@/lib/inbox"
 import { useStore } from "@/store"
-import type { OrgProject } from "@/lib/types"
+import type { OpenDecision, OrgProject } from "@/lib/types"
+import { queueFrom } from "@/lib/decisions"
+import { DecisionCockpit } from "@/components/kanban/DecisionCockpit"
 
 const POLL_MS = 10000
 
@@ -26,11 +28,11 @@ const POLL_MS = 10000
  *
  * The decision contract: a row may carry a decision (question | plan |
  * approval | card) whose open state the server derives at read time. The
- * deciding tap stays on the per-session routes — here the owner gets
- * "Open chat" (the decision surface) for decisions and a plain reply for
- * messages; snooze skips a decision without dropping it (it resurfaces when
- * the snooze lapses). The "needs you" band lists the open, unsnoozed ones
- * with the total, oldest first.
+ * decision cockpit (shared with the board's band) is the ONE place a
+ * decision is made — "Decide" on a row or the "needs you" band opens it on
+ * that item; this dialog is conversations and history. Messages get a plain
+ * reply; snooze skips a decision without dropping it (it resurfaces when the
+ * snooze lapses). The band lists the open, unsnoozed ones, oldest first.
  */
 export function InboxDialog({
   host, cwd, name, session, sessionTitle, onClose,
@@ -52,6 +54,10 @@ export function InboxDialog({
   const [kind, setKind] = useState<"all" | InboxMessage["kind"]>("all")
   const [q, setQ] = useState("")
   const [openId, setOpenId] = useState<number | null>(null)
+  // The decision queue the cockpit walks (global, oldest first) and the open
+  // cockpit's frozen snapshot — deciding happens there, never in this dialog.
+  const [decisions, setDecisions] = useState<OpenDecision[]>([])
+  const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; at: number } | null>(null)
   const reads = useRef({ issued: 0, applied: 0 })
 
   const sessions = useStore((s) => s.sessions)
@@ -75,8 +81,9 @@ export function InboxDialog({
       const f = session
         ? { session, kind: kindFilter }
         : { project: project?.id, kind: kindFilter }
-      const r = await api.inboxList(f)
+      const [r, open] = await Promise.all([api.inboxList(f), api.openDecisions().catch(() => null)])
       if (request < reads.current.applied) return
+      if (open) setDecisions(open.decisions || [])
       reads.current.applied = request
       setMessages(r.messages || [])
       setQueue(r.queue || null)
@@ -134,17 +141,26 @@ export function InboxDialog({
     setMessages((all) => all.map((x) => (x.id === m.id ? m : x)))
   }
 
-  /** The decision surface: open the owning chat. Enabled only when the
-   *  session is in the live list on this host (a remote session's chat can't
-   *  be opened from here — its row still shows the full context). */
-  function openChat(m: InboxMessage) {
+  /** Open a session's chat. False when it is not in the live list on this
+   *  host (a remote session's chat can't be opened from here). */
+  function openSession(sid: string): boolean {
+    const s = sessions.find((x) => (x as { id?: string }).id === sid)
+    if (!s) return false
+    onClose()
+    loadSession(s.path)
+    return true
+  }
+
+  /** Decide a row: the cockpit, on this row, with this chat's other open
+   *  items next. A row the queue no longer lists (decided elsewhere, or
+   *  snoozed) opens its chat instead. */
+  function decide(m: InboxMessage) {
     // The decision's session: the mailbox owner (the row's session_id) is the
     // asker for every decision kind; fall back to the party fields if absent.
     const sid = m.session_id || (m.sender_type === "session" ? m.sender_id : m.recipient_id)
-    const s = sessions.find((x) => (x as { id?: string }).id === sid)
-    if (!s) return
-    onClose()
-    loadSession(s.path)
+    const { ordered, at } = queueFrom(decisions, m.id, sid)
+    if (at >= 0) setCockpit({ snapshot: ordered, at })
+    else openSession(sid)
   }
 
   function markRead(m: InboxMessage) {
@@ -187,12 +203,20 @@ export function InboxDialog({
           <div className="rounded-md border border-border bg-muted/40 p-2">
             <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Zap className="size-3.5" /> Needs you · {queue.count}
+              {/* Starts on this inbox's oldest; the cockpit then walks the
+                  whole org queue (its "i of n" says how many in all). */}
+              {queueItems.length > 0 && (
+                <Button size="sm" className="ml-auto h-6 px-2 text-xs" data-testid="inbox-decide-all"
+                  onClick={() => decide(queueItems[0])}>
+                  Decide ›
+                </Button>
+              )}
             </div>
             <div className="flex flex-col gap-0.5">
               {queueItems.map((m) => (
                 <button
                   key={m.id}
-                  onClick={() => { setKind("all"); setQ(""); setOpenId(m.id) }}
+                  onClick={() => decide(m)}
                   className="flex items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-accent"
                 >
                   <span className="w-16 shrink-0 text-xs uppercase text-muted-foreground">{INBOX_KIND_LABEL[m.kind]}</span>
@@ -280,7 +304,7 @@ export function InboxDialog({
                   key={open.id}
                   msg={open}
                   label={labels[open.sender_id] || ""}
-                  onOpenChat={() => openChat(open)}
+                  onDecide={() => decide(open)}
                   onRead={() => markRead(open)}
                   onSnooze={(h) => snooze(open, h)}
                   canReply={replyTo(open) !== null}
@@ -288,11 +312,20 @@ export function InboxDialog({
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
                   <span>Pick a message.</span>
-                  <span className="text-xs">Decisions can be snoozed or opened in their chat; messages can be replied to.</span>
+                  <span className="text-xs">Decide opens the cockpit; decisions can be snoozed; messages can be replied to.</span>
                 </div>
               )}
             </section>
           </div>
+        )}
+        {cockpit && (
+          <DecisionCockpit
+            decisions={cockpit.snapshot}
+            startIndex={cockpit.at}
+            onClose={() => setCockpit(null)}
+            onResolved={load}
+            onOpenSession={(d) => openSession(d.session)}
+          />
         )}
       </DialogContent>
     </Dialog>
@@ -302,14 +335,14 @@ export function InboxDialog({
 /** One message in full. The body is plain text written first-line-forward
  *  (the ask, then the context) — rendered as pre-wrap text, not markdown:
  *  the delivery formatters own the shape. Actions are the row's own:
- *  decisions open their chat (the deciding surface) and can be snoozed;
+ *  an open decision opens the cockpit (the deciding surface) and can be snoozed;
  *  messages can be replied to, in place. */
 function RowDetail({
-  msg, label, onOpenChat, onRead, onSnooze, canReply,
+  msg, label, onDecide, onRead, onSnooze, canReply,
 }: {
   msg: InboxMessage
   label: string
-  onOpenChat: () => void
+  onDecide: () => void
   onRead: () => void
   onSnooze: (hours: number) => void
   canReply: boolean
@@ -352,9 +385,9 @@ function RowDetail({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {isDecision && (
-          <Button size="sm" variant="default" onClick={onOpenChat}>
-            <FolderOpen className="size-3.5" /> Open chat
+        {isDecision && msg.open && (
+          <Button size="sm" variant="default" data-testid="inbox-decide" onClick={onDecide}>
+            <Gavel className="size-3.5" /> Decide
           </Button>
         )}
         {isDecision && (

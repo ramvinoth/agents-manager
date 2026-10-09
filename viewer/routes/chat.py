@@ -4,7 +4,7 @@ import os
 import time
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK,
+    CHAT_JOBS, CHAT_LOCK, transcript_path,
 )
 from viewer.adapters import resolve_agent_session
 from viewer.engine import (
@@ -300,7 +300,9 @@ class ChatMixin:
             except Exception:
                 cwd = "~"
         else:
-            full = self.resolve_session_quiet(rel) or None
+            # `rel` is a transcript path from the chat view, or a bare id from
+            # the decision cockpit — either must resume in the session's own cwd.
+            full = self.resolve_session_quiet(rel) or transcript_path(sid)
             cwd = extract_cwd(full) if full else str(Path.home())
             if not cwd or not os.path.isdir(cwd):
                 cwd = str(Path.home())

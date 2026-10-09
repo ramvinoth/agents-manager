@@ -4,14 +4,14 @@ import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type InboxMessage, type Session } from "../api/client"
+import { api, type InboxMessage, type OpenDecision, type Session } from "../api/client"
 import {
   kindLabel, SNOOZE_OPTIONS,
   conversationPreview, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending,
 } from "../lib/inbox"
-import { fmtWaiting } from "../lib/decisions"
+import { fmtWaiting, queueFrom } from "../lib/decisions"
 import { fmtClock, fmtDate } from "../lib/thread"
 import { userError } from "../lib/errors"
 import { useMenuButton } from "../components/SideMenu"
@@ -20,6 +20,7 @@ import { currentHost, setToken } from "../state/config"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
+import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 
@@ -47,10 +48,14 @@ const iso = (sec: number) => new Date(sec * 1000).toISOString()
  *    the owner float to the top with a "needs you" pill, like a pinned chat.
  *  - `session`: that conversation — chat bubbles (the owner's on the right),
  *    day separators, and a composer at the bottom. A decision (question / plan /
- *    approval / card) is a bubble with its two actions: open it where it is
- *    decided (the chat, or the card) and "Later" (snooze — it resurfaces, never
- *    dropped). The deciding tap stays in the chat/card: the inbox is a delivery
- *    surface over the existing decision system, not a second one.
+ *    approval / card / red) is a bubble with two actions: "Decide" and "Later"
+ *    (snooze — it resurfaces, never dropped).
+ *
+ * Deciding happens in ONE place — the DecisionCockpit, the same one the board's
+ * band opens — never here: "Decide" (and the list's "waiting on you" banner)
+ * opens the cockpit at that item over the live queue. An item the queue does
+ * not list right now (snoozed, or already decided elsewhere) falls back to
+ * where it lives: its card, or its chat.
  */
 export default function InboxScreen({ navigation, session, title, host, path, isTab }: Props) {
   const t = useTheme()
@@ -67,6 +72,9 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const [composeOpen, setComposeOpen] = useState(false)
   const [snoozeFor, setSnoozeFor] = useState<number | null>(null)
   const [draft, setDraft] = useState("")
+  // The visible decision queue (the board band's source) — what "Decide"
+  // opens the cockpit over. A failed read degrades to "fall back to the chat".
+  const [queue, setQueue] = useState<OpenDecision[]>([])
   const reads = useRef({ issued: 0, applied: 0 })
   const marked = useRef(new Set<number>())
 
@@ -74,10 +82,14 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     if (!scope) { setError("This conversation has no valid id."); setLoading(false); return }
     const request = ++reads.current.issued
     try {
-      const r = await api.inboxList(scope)
+      const [r, q] = await Promise.all([
+        api.inboxList(scope),
+        api.openDecisions().catch(() => null),
+      ])
       if (request < reads.current.applied) return
       reads.current.applied = request
       setMessages((cur) => withPending(r.messages || [], cur))
+      if (q) setQueue(q.decisions || [])
       setUnread(r.unread || 0)
       setError("")
     } catch (err) {
@@ -119,14 +131,12 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     navigation.push("Inbox", { session: sid, title: name, host: currentHost(), path: byId.get(sid)?.path })
   }, [navigation, byId])
 
-  // Where a decision is decided: a card on its card page, everything else in
-  // the chat. The session resolves id → path on its host; a session no longer
-  // listed explains itself instead of failing silently.
-  const openChat = useCallback(async (m?: InboxMessage) => {
-    if (m?.kind === "card" && m.ref_id) {
-      navigation.navigate("CardDetail", { id: Number(m.ref_id) })
-      return
-    }
+  const cockpit = useDecisionCockpit(navigation, { onResolved: load })
+
+  // The chat this conversation belongs to. The session resolves id → path on
+  // its host; a session no longer listed explains itself instead of failing
+  // silently.
+  const openChat = useCallback(async () => {
     if (!session) return
     const label = title || labels[session] || session.slice(0, 8)
     if (host && path) { navigation.navigate("Thread", { host, label, path }); return }
@@ -139,6 +149,15 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       Alert.alert("Could not open the chat", userError(e, "open the chat"))
     }
   }, [navigation, session, title, labels, host, path])
+
+  // Decide in the cockpit, this chat's items first (lib/decisions.queueFrom).
+  const decide = useCallback((m: InboxMessage) => {
+    const { ordered, at } = queueFrom(queue, m.id, m.session_id)
+    if (at >= 0) { cockpit.open(ordered, at); return }
+    // Not in the visible queue (snoozed, or decided elsewhere): open where it lives.
+    if (m.kind === "card" && m.ref_id) cockpit.openCard(Number(m.ref_id))
+    else void openChat()
+  }, [queue, cockpit.open, cockpit.openCard, openChat])
 
   const menuButton = useMenuButton()
   useScreenHeader(navigation, () => {
@@ -245,12 +264,12 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
                   <TouchableOpacity
                     testID={`inbox-decide-${m.id}`}
-                    onPress={() => void openChat(m)}
+                    onPress={() => decide(m)}
                     style={[styles.filterChip, { backgroundColor: t.accent }]}
                     hitSlop={6}
                   >
                     <Text style={{ color: t.onAccent, fontSize: 13, fontWeight: "700" }}>
-                      {m.kind === "card" ? "Open card" : "Answer in chat"}
+                      Decide
                     </Text>
                   </TouchableOpacity>
                   {!m.snoozed ? (
@@ -304,9 +323,13 @@ export default function InboxScreen({ navigation, session, title, host, path, is
           It comes back on its own when the time is up — nothing is dropped.
         </Text>
       </SheetModal>
+      {cockpit.element}
     </KeyboardAvoidingView>
   ) : (
+    <>
     <ConversationList
+      queueCount={queue.length}
+      onDecideAll={() => cockpit.open(queue, 0)}
       messages={messages}
       labels={labels}
       byId={byId}
@@ -320,14 +343,18 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       setComposeOpen={setComposeOpen}
       sessions={sessions}
     />
+    {cockpit.element}
+    </>
   )
 }
 
 /** The Inbox tab body: search, an "All / Needs you" switch, the conversation
  *  rows, and the "New message" chat picker. */
 function ConversationList({
-  messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, composeOpen, setComposeOpen, sessions,
+  queueCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, composeOpen, setComposeOpen, sessions,
 }: {
+  queueCount: number
+  onDecideAll: () => void
   messages: InboxMessage[]
   labels: Record<string, string>
   byId: Map<string, Session>
@@ -381,6 +408,19 @@ function ConversationList({
             </TouchableOpacity>
           ))}
         </View>
+        {queueCount > 0 ? (
+          <TouchableOpacity
+            testID="inbox-decide-all"
+            onPress={onDecideAll}
+            style={{ flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: t.accent, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 4 }}
+          >
+            <Icon name="check" size={18} color={t.onAccent} />
+            <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "700", flex: 1 }}>
+              {queueCount === 1 ? "1 decision waits on you" : `${queueCount} decisions wait on you`}
+            </Text>
+            <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "700" }}>Decide ›</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       <FlatList<Conversation>
         testID="inbox-list"

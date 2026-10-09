@@ -18,8 +18,11 @@ interface Question {
   multiSelect?: boolean
 }
 
-export function AuqBlock({ block }: { block: ToolUseBlock }) {
-  const answerQuestion = useStore((s) => s.answerQuestion)
+/** `onAnswer` decides for a session other than the open one (the decision
+ *  cockpit); without it the answer goes to the current chat. */
+export function AuqBlock({ block, onAnswer }: { block: ToolUseBlock; onAnswer?: (picks: string[], note: string) => void }) {
+  const storeAnswer = useStore((s) => s.answerQuestion)
+  const answerQuestion = onAnswer || storeAnswer
   const agentLabel = useAgentLabel()
   const input = block.input as { questions?: Question[] } | undefined
   const questions = input?.questions || []

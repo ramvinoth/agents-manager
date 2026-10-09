@@ -415,6 +415,14 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
       if (url.searchParams.get("count_only")) return send({ unread })
       return send({ messages: rows, unread, queue: { count: rows.filter(r => r.open && !r.snoozed).length, items: rows.filter(r => r.open && !r.snoozed) } })
     }
+    // The one decision queue (open, not snoozed) — the cockpit walks this.
+    if (route === "GET /api/decisions/open") {
+      const decisions = inboxRows.filter(r => r.open && !r.snoozed).map(r => ({
+        kind: r.kind, session: r.session_id, host: "local", label: "Native board fixture",
+        waiting_s: 60, summary: r.body, tool_use_id: r.ref_id, inbox_id: r.id, snoozed_until: 0,
+      }))
+      return send({ count: decisions.length, decisions })
+    }
     if (route === "GET /api/integrations") return send(integrations ? integrationsState : NO_INTEGRATIONS)
     if (integrations && route === "GET /api/calendar/events") {
       return send({ calendar: "owner@example.com", time_zone: "UTC", from: url.searchParams.get("start"), to: url.searchParams.get("end"), events: calendarEvents })

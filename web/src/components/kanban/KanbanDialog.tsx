@@ -59,6 +59,9 @@ export function KanbanDialog({
   const [err, setErr] = useState("")
   const [activeId, setActiveId] = useState<number | null>(null)
   const [editing, setEditing] = useState<Card | null>(null) // card editor (null = closed)
+  // The columns of the editing card's board when it is NOT this board (a card
+  // opened from the org-wide decision queue); null = this board's columns.
+  const [editingColumns, setEditingColumns] = useState<BoardColumn[] | null>(null)
   const [addingCol, setAddingCol] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
   const [newColName, setNewColName] = useState("")
@@ -212,6 +215,23 @@ export function KanbanDialog({
     setConfirm(null)
   }
 
+  /** Open a card's detail by id. A card on another project's board (the
+   *  decision queue is org-wide) is read from the server with ITS board's
+   *  columns, so its moves are that board's moves. False = unreadable. */
+  async function openCard(id: number): Promise<boolean> {
+    const here = cards.find((x) => x.id === id)
+    if (here) { setEditingColumns(null); setEditing(here); return true }
+    try {
+      const r = await api.orgCard(id)
+      if (!r.card) return false
+      setEditingColumns(r.columns || [])
+      setEditing(r.card)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="flex h-[90vh] max-w-[95vw] flex-col sm:max-w-[95vw]">
@@ -244,12 +264,7 @@ export function KanbanDialog({
 
         <DecisionsBand
           onOpenSession={openDecision}
-          onOpenCard={(id) => {
-            const c = cards.find((x) => x.id === id)
-            if (!c) return false
-            setEditing(c)
-            return true
-          }}
+          onOpenCard={openCard}
         />
 
         {loading ? (
@@ -315,7 +330,7 @@ export function KanbanDialog({
         <CardDetail
           card={editing}
           allCards={cards}
-          columns={columns}
+          columns={editingColumns ?? columns}
           selfUsername={authUser?.username}
           sessionTitle={editingSession?.title}
           onOpenSession={editingSession ? () => { onClose(); loadSession(editingSession.path) } : undefined}
@@ -327,20 +342,14 @@ export function KanbanDialog({
             const c = editing || cards.find((x) => x.id === id)
             if (c) requestDeleteCard(c)
           }}
-          onClose={() => setEditing(null)}
+          onClose={() => { setEditing(null); setEditingColumns(null) }}
         />
       )}
 
       {auditOpen && (
         <AuditDialog
           selfUsername={authUser?.username}
-          onOpenCard={(id) => {
-            const c = cards.find((x) => x.id === id)
-            if (!c) return false
-            setAuditOpen(false)
-            setEditing(c)
-            return true
-          }}
+          onOpenCard={(id) => { setAuditOpen(false); return openCard(id) }}
           onClose={() => setAuditOpen(false)}
         />
       )}

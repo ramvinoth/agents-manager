@@ -18,8 +18,9 @@ import { useFoldOnDecision } from "./useFoldOnDecision"
  * a 12k-character plan doesn't own the scrollback forever; clicking reopens it,
  * with the buttons gone because the decision is already history.
  */
-export function PlanBlock({ block }: { block: ToolUseBlock }) {
-  const decidePlan = useStore((s) => s.decidePlan)
+export function PlanBlock({ block, onDecide }: { block: ToolUseBlock; onDecide?: (d: "approve" | "deny", feedback?: string) => void }) {
+  const storeDecide = useStore((s) => s.decidePlan)
+  const decidePlan = onDecide || storeDecide
   const agentLabel = useAgentLabel()
   const state = planDecision(block.result)
   const pending = state === "pending"

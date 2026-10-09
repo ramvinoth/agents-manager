@@ -42,3 +42,17 @@ export function firstOpen(len: number, from: number, resolved: Set<number>): num
   for (let i = Math.min(from, len) - 1; i >= 0; i--) if (!resolved.has(i)) return i
   return -1
 }
+
+/**
+ * Open the cockpit from an Inbox decision bubble: the queue re-ordered so the
+ * tapped chat's items come first (in queue order), then everyone else's — so
+ * "next" stays in the conversation being read — and the tapped item's index.
+ * `at` is -1 when the queue does not list that row right now (snoozed, or
+ * decided elsewhere): the caller opens it where it lives instead.
+ */
+export function queueFrom<T extends { session: string; inbox_id: number }>(
+  queue: T[], inboxId: number, session: string,
+): { ordered: T[]; at: number } {
+  const ordered = [...queue.filter((d) => d.session === session), ...queue.filter((d) => d.session !== session)]
+  return { ordered, at: inboxId ? ordered.findIndex((d) => d.inbox_id === inboxId) : -1 }
+}

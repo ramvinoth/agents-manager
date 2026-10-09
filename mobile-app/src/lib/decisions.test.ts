@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { fmtWaiting, firstOpen, stepDecision } from "./decisions.ts"
+import { fmtWaiting, firstOpen, queueFrom, stepDecision } from "./decisions.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -60,6 +60,20 @@ test("firstOpen: advances past a resolved current to the next open", () => {
 test("firstOpen: -1 only when every item is resolved", () => {
   assert.equal(firstOpen(3, 0, new Set([0, 1, 2])), -1)
   assert.equal(firstOpen(0, 0, new Set()), -1)
+})
+
+test("queueFrom: the tapped chat's items lead, in queue order", () => {
+  const q = [{ session: "a", inbox_id: 1 }, { session: "b", inbox_id: 2 }, { session: "a", inbox_id: 3 }, { session: "c", inbox_id: 0 }]
+  const r = queueFrom(q, 3, "a")
+  assert.deepEqual(r.ordered.map((d) => d.inbox_id), [1, 3, 2, 0])
+  assert.equal(r.at, 1)
+})
+
+test("queueFrom: -1 when the row is not in the visible queue (snoozed / decided)", () => {
+  assert.equal(queueFrom([{ session: "a", inbox_id: 1 }], 9, "a").at, -1)
+  // inbox_id 0 means "no row was delivered" — never matched by a real id 0
+  assert.equal(queueFrom([{ session: "a", inbox_id: 0 }], 0, "a").at, -1)
+  assert.equal(queueFrom([], 1, "a").at, -1)
 })
 
 console.log(`${passed} passing`)

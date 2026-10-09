@@ -47,12 +47,19 @@ function harness(params: any = { session: "A", project: 7 }) {
     "react-native-gesture-handler": {}, "react-native-reanimated": {},
     "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
-    "../components/Icon": { default: "Icon" }, "../components/DecisionCockpit": { default: "DecisionCockpit" }, "../lib/useTheme": { useTheme: () => ({}) },
+    "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) },
   }
-  const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/KanbanScreen.tsx"), "utf8")
-  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
-  const exports: { default?: Function } = {}
-  new Function("require", "exports", "setInterval", "clearInterval", js)((name: string) => { assert.ok(name in modules, name); return modules[name] }, exports, (fn: Function) => { timers.add(fn); return fn }, (fn: Function) => timers.delete(fn))
+  // The real cockpit host (its scope guard is under test here too), loaded
+  // through the same transpile with the same stubs.
+  const load = (file: string, extra: Record<string, any> = {}) => {
+    const source = readFileSync(resolve(dirname(process.argv[1]), file), "utf8")
+    const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
+    const exports: Record<string, any> = {}
+    new Function("require", "exports", "setInterval", "clearInterval", js)((name: string) => { const m = extra[name] ?? modules[name]; assert.ok(m, name); return m }, exports, (fn: Function) => { timers.add(fn); return fn }, (fn: Function) => timers.delete(fn))
+    return exports
+  }
+  modules["../components/useDecisionCockpit"] = load("../components/useDecisionCockpit.tsx", { "./DecisionCockpit": { default: "DecisionCockpit" } })
+  const exports = load("../screens/KanbanScreen.tsx") as { default?: Function }
   const navigation = { navigate: (...args: any[]) => navigations.push(args), replace: (...args: any[]) => navigations.push(args), setOptions() {} }
   const render = () => { cursor = 0; pending = []; return exports.default!({ route: { key: routeKey, params }, navigation }) }
   const commit = () => { const effects = pending; pending = []; for (const { i, fn, deps } of effects) { slots[i]?.cleanup?.(); slots[i] = { deps, effect: fn, cleanup: fn() } } }

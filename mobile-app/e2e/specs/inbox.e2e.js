@@ -42,6 +42,14 @@ describe("Native inbox — conversations, bubbles, decisions, composer", functio
     assert.ok(!(await shown("inbox-error")))
   })
 
+  it("Decide opens the one decision cockpit, from the banner and from a bubble", async () => {
+    await tap("inbox-decide-all")
+    await $("~decision-cockpit").waitForDisplayed()
+    assert.match(await $("~cockpit-count").getText(), /1 open/)
+    await tap("cockpit-close")
+    await $("~inbox-list").waitForDisplayed()
+  })
+
   it("Needs you narrows to the waiting chat", async () => {
     await tap("inbox-filter-needs")
     await browser.pause(300)
@@ -73,7 +81,10 @@ describe("Native inbox — conversations, bubbles, decisions, composer", functio
   it("a decision bubble snoozes with Later and keeps its open action", async () => {
     await tap(`inbox-conv-${SESSION}`)
     await $("~inbox-msg-2").waitForDisplayed()
-    assert.ok(await shown("inbox-decide-2"))
+    await tap("inbox-decide-2")
+    await $("~decision-cockpit").waitForDisplayed()
+    await tap("cockpit-close")
+    await $("~inbox-msg-2").waitForDisplayed()
     await tap("inbox-snooze-2")
     await tap("snooze-1")
     await browser.waitUntil(async () => writes("POST /api/inbox/snooze").length === 1, { timeout: 10000 })
