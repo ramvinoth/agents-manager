@@ -12,6 +12,7 @@ import Markdown, { type NoteLinkHandlers } from "../components/Markdown"
 import NoteThread from "../components/NoteThread"
 import { completeLink, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "../lib/noteLinks"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">
 
@@ -35,6 +36,7 @@ const SAVE_DEBOUNCE_MS = 700
  */
 export default function NoteEditorScreen({ route, navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const headerHeight = useHeaderHeight()
   const id = route.params.id
   const [note, setNote] = useState<Note | null>(null)
@@ -178,22 +180,22 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     navigation.setOptions({
       title: KIND_LABEL[note?.kind || "note"],
       headerRight: () => (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+        <View style={styles.neHeaderIcons}>
           {/* Shows the mode you'd switch TO: a pencil while reading, an eye while editing. */}
           <TouchableOpacity testID="note-preview" accessibilityLabel={preview ? "edit-note" : "view-note"}
             onPress={() => setPreview((v) => !v)} hitSlop={8}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+            style={styles.neHeaderBtn}>
             <Icon name={preview ? "edit" : "eye"} size={20} color={t.accent} />
           </TouchableOpacity>
           <TouchableOpacity testID="note-pin" onPress={() => patchNote({ pinned: !note?.pinned })} hitSlop={8}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+            style={styles.neHeaderBtn}>
             <Icon name="pin" size={20} color={note?.pinned ? t.accent : t.textMuted} />
           </TouchableOpacity>
           <TouchableOpacity testID="note-more" onPress={() => Alert.alert("", "", [
             { text: note?.archived ? "Unarchive" : "Archive", onPress: () => { patchNote({ archived: !note?.archived }); navigation.goBack() } },
             { text: "Delete", style: "destructive", onPress: remove },
             { text: "Cancel", style: "cancel" },
-          ])} hitSlop={8} style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+          ])} hitSlop={8} style={styles.neHeaderBtn}>
             <Icon name="more" size={20} color={t.accent} />
           </TouchableOpacity>
         </View>
@@ -202,43 +204,43 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   }, [navigation, note, preview, t.accent, t.textMuted, patchNote, remove])
 
   if (loading) return <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
-  if (!note) return <Text style={{ color: t.danger, padding: 20 }}>{error || "This note is unavailable."}</Text>
+  if (!note) return <Text style={styles.neMissing}>{error || "This note is unavailable."}</Text>
 
   const who = formatActor(note.created_by, username())
   const kinds = Object.keys(KIND_LABEL) as NoteKind[]
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: t.bg }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={headerHeight}>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={headerHeight}>
+      <ScrollView contentContainerStyle={styles.neContent} keyboardShouldPersistTaps="handled">
         <TextInput
           testID="note-title"
-          style={{ color: t.text, fontSize: 24, fontWeight: "700", paddingVertical: 4 }}
+          style={styles.neTitle}
           placeholder="Title"
           placeholderTextColor={t.textMuted}
           value={title}
           onChangeText={(v) => { setTitle(v); queue({ title: v }) }}
           returnKeyType="next"
         />
-        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginVertical: 8 }}>
+        <View style={styles.neKinds}>
           {kinds.map((k) => (
             <TouchableOpacity key={k} testID={`note-kind-${k}`} onPress={() => patchNote({ kind: k })}
-              style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: note.kind === k ? t.accent : t.chipBg }}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: note.kind === k ? t.onAccent : t.textMuted }}>{KIND_LABEL[k]}</Text>
+              style={[styles.nePill, note.kind === k && styles.nePillActive]}>
+              <Text style={[styles.neKindText, note.kind === k && styles.neKindTextActive]}>{KIND_LABEL[k]}</Text>
             </TouchableOpacity>
           ))}
         </View>
-        <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 10 }}>
+        <Text style={styles.neMeta}>
           {who.kind === "you" ? "You" : who.kind === "agent" ? `Agent ${who.name}` : who.name} · {note.archived ? "archived · " : ""}
           {saving ? "saving…" : error ? error : `edited ${new Date(note.updated_at * 1000).toLocaleString()}`}
         </Text>
-        {flash ? <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 8 }}>{flash}</Text> : null}
+        {flash ? <Text style={styles.neFlash}>{flash}</Text> : null}
         {suggestions.length ? (
           <ScrollView horizontal keyboardShouldPersistTaps="always" showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 8 }} contentContainerStyle={{ gap: 6 }}>
+            style={styles.neSuggestRow} contentContainerStyle={styles.cdChips}>
             {suggestions.map((s) => (
               <TouchableOpacity key={s} testID={`note-suggest-${s}`} onPress={() => pickSuggestion(s)}
-                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: t.chipBg }}>
-                <Text style={{ color: t.accent, fontWeight: "600" }}>{s}</Text>
+                style={styles.neSuggest}>
+                <Text style={styles.neLinkText}>{s}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -248,7 +250,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         ) : (
           <TextInput
             testID="note-body"
-            style={{ color: t.text, fontSize: 16, lineHeight: 24, minHeight: 300, textAlignVertical: "top" }}
+            style={styles.neBody}
             placeholder="Write in markdown — # headings, - lists, **bold**. Type [[ to link a note, #tag to group notes."
             placeholderTextColor={t.textMuted}
             value={body}
@@ -261,31 +263,31 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           />
         )}
         {near.backlinks.length || near.links.length || near.ghosts.length ? (
-          <View testID="note-links" style={{ marginTop: 24, borderTopWidth: 1, borderTopColor: t.border, paddingTop: 12, gap: 6 }}>
+          <View testID="note-links" style={styles.neLinks}>
             {near.backlinks.length ? (
-              <Text style={{ color: t.textMuted, fontSize: 12, fontWeight: "600" }}>
+              <Text style={styles.neLinksLabel}>
                 LINKED FROM {near.backlinks.length} NOTE{near.backlinks.length === 1 ? "" : "S"}
               </Text>
             ) : null}
             {near.backlinks.map((b, i) => (
-              <TouchableOpacity key={`b${i}`} onPress={() => navigation.push("NoteEditor", { id: b.source })} style={{ paddingVertical: 4 }}>
-                <Text style={{ color: t.accent, fontWeight: "600" }}>{b.title || "Untitled"}</Text>
-                {b.context ? <Text style={{ color: t.textMuted, fontSize: 13 }} numberOfLines={2}>{b.context}</Text> : null}
+              <TouchableOpacity key={`b${i}`} onPress={() => navigation.push("NoteEditor", { id: b.source })} style={styles.neBacklink}>
+                <Text style={styles.neLinkText}>{b.title || "Untitled"}</Text>
+                {b.context ? <Text style={styles.neBacklinkContext} numberOfLines={2}>{b.context}</Text> : null}
               </TouchableOpacity>
             ))}
             {near.links.length || near.ghosts.length ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
-                <Text style={{ color: t.textMuted, fontSize: 12, fontWeight: "600" }}>LINKS TO</Text>
+              <View style={styles.neOutLinks}>
+                <Text style={styles.neLinksLabel}>LINKS TO</Text>
                 {near.links.map((l, i) => (
                   <TouchableOpacity key={`l${i}`} onPress={() => navigation.push("NoteEditor", { id: l.target })}
-                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: t.chipBg }}>
-                    <Text style={{ color: t.accent, fontSize: 13 }}>{l.title || "Untitled"}{l.heading ? ` › ${l.heading}` : ""}</Text>
+                    style={styles.nePill}>
+                    <Text style={styles.neOutLinkText}>{l.title || "Untitled"}{l.heading ? ` › ${l.heading}` : ""}</Text>
                   </TouchableOpacity>
                 ))}
                 {near.ghosts.map((g) => (
                   <TouchableOpacity key={`g${g}`} onPress={() => void follow(g)} accessibilityHint="Not written yet — tap to create"
-                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: t.border }}>
-                    <Text style={{ color: t.textMuted, fontSize: 13 }}>{g} +</Text>
+                    style={styles.neGhost}>
+                    <Text style={styles.neGhostText}>{g} +</Text>
                   </TouchableOpacity>
                 ))}
               </View>

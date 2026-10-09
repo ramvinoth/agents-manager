@@ -213,7 +213,7 @@ export default function IntegrationsScreen() {
   const groups = byCategory(view.providers, view.categories)
 
   return (
-    <ScrollView testID="integrations-screen" style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
+    <ScrollView testID="integrations-screen" style={styles.page} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
       <Text style={[styles.sheetHint, { marginTop: 12 }]}>
         Connect once; every agent chat can use it, within your limits.
       </Text>

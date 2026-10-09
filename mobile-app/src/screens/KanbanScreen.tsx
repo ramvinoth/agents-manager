@@ -184,9 +184,9 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const grouped = groupByColumn(shown, columns)
 
   return (
-    <View testID="kanban-board" style={st.kbBoard}>
+    <View testID="kanban-board" style={st.page}>
       {error ? (
-        <Text style={st.kbError}>{error}</Text>
+        <Text style={st.errorBanner}>{error}</Text>
       ) : null}
       {decisions.length ? (
         <DecisionBand decisions={decisions} theme={t} onOpen={openCockpit} />

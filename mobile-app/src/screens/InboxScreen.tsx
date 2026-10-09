@@ -378,7 +378,7 @@ function ConversationList({
   const pickable = sessions.filter((s) => !s.archived)
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       {errorBar}
       <View style={styles.ibHead}>
         <View style={styles.ibSearch}>

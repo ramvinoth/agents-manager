@@ -253,7 +253,7 @@ export default function ProfileScreen({ navigation }: Props) {
   const version = Constants.expoConfig?.version
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+    <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 32 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       {/* Who and where you are — the one thing a Profile tab must answer first. */}
       <View style={styles.spCard} testID="profile-identity">
         <View style={styles.spCardHead}>

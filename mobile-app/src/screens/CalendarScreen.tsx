@@ -124,7 +124,7 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       {accounts.length > 1 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 18, paddingTop: 10 }}>
           {accounts.map((a) => (

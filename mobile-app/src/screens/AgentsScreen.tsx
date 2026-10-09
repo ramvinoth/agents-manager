@@ -27,6 +27,7 @@ import { LEVEL_NAME } from "../lib/harmanLevel"
 import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import Icon, { type IconName } from "../components/Icon"
 
@@ -39,6 +40,7 @@ const CATEGORIES = [
 
 export default function AgentsScreen({ navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const [templates, setTemplates] = useState<AgentTemplate[] | null>(null)
   const [error, setError] = useState("")
   const [refreshing, setRefreshing] = useState(false)
@@ -78,7 +80,7 @@ export default function AgentsScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       {/* Compact category filter chips */}
       <ScrollView
         horizontal

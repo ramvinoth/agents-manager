@@ -57,7 +57,7 @@ export default function LoginScreen({ navigation }: Props) {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: t.bg }}
+      style={styles.page}
       contentContainerStyle={{ padding: 16 }}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"

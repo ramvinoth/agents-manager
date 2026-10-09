@@ -6,6 +6,7 @@ import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
 import { setToken, username } from "../state/config"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 import type { Theme } from "../lib/theme"
 import { formatActor } from "../lib/board"
 import { AUDIT_FILTERS, auditError, auditReducer, auditSubject, auditTime, groupAuditEntries, initialAuditState, resultTone, type AuditEntry, type AuditFilter, type AuditLoad, type AuditSection } from "../lib/audit"
@@ -20,6 +21,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Audit">
  */
 export default function AuditScreen({ navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const insets = useSafeAreaInsets()
   const [state, dispatch] = useReducer(auditReducer, undefined, initialAuditState)
   const list = useRef<SectionList<AuditEntry, AuditSection>>(null)
@@ -61,7 +63,7 @@ export default function AuditScreen({ navigation }: Props) {
   const linkText = { color: t.accent, fontSize: 15, fontWeight: "600" as const }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }} style={{ flexGrow: 0, borderBottomWidth: 1, borderColor: t.border }}>
         {AUDIT_FILTERS.map(filter => {
           const on = filter.value === state.filter

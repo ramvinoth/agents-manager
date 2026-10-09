@@ -143,7 +143,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   const templates = noteTemplates()
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8 }}>
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: t.chipBg, borderRadius: 10, paddingHorizontal: 10 }}>
           <Icon name="search" size={16} color={t.textMuted} />

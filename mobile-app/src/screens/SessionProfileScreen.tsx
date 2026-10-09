@@ -416,7 +416,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: t.bg }}
+      style={styles.page}
       contentContainerStyle={{ paddingBottom: 48 }}
       keyboardShouldPersistTaps="handled"
       // Pad the scroll content by the keyboard height and scroll the focused

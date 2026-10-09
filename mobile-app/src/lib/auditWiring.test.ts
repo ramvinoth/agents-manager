@@ -36,7 +36,7 @@ function harness(path: string, props: Record<string, unknown> = {}) {
     "react-native-safe-area-context": { useSafeAreaInsets: () => ({ bottom: 0 }) },
     "../api/client": { api: { orgAudit: (filter: audit.AuditFilter, before?: number) => new Promise<audit.AuditPage>((resolve, reject) => calls.push({ filter, before, resolve, reject })) } },
     "../state/config": { setToken: () => { clearedToken = true }, username: () => "" },
-    "../lib/useTheme": { useTheme: () => ({}) },
+    "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/audit": audit,
     "../lib/board": { formatActor: (actor: string) => ({ name: actor, kind: "unknown" }) },
     // The detail screen borrows the feed's badge and chip palette; both are pure markup.

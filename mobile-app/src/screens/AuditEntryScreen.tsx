@@ -7,6 +7,7 @@ import { auditSubject, auditTimestamp, resultTone } from "../lib/audit"
 import { formatActor } from "../lib/board"
 import { username } from "../state/config"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 import { ActorBadge, toneColors } from "./AuditScreen"
 
 type Props = NativeStackScreenProps<RootStackParamList, "AuditEntry">
@@ -18,6 +19,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "AuditEntry">
  */
 export default function AuditEntryScreen({ route, navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const insets = useSafeAreaInsets()
   const { entry } = route.params
   const who = formatActor(entry.actor, username())
@@ -32,7 +34,7 @@ export default function AuditEntryScreen({ route, navigation }: Props) {
   ]
 
   return (
-    <ScrollView testID="audit-entry" style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 16, paddingBottom: Math.max(insets.bottom, 20), gap: 16 }}>
+    <ScrollView testID="audit-entry" style={styles.page} contentContainerStyle={{ padding: 16, paddingBottom: Math.max(insets.bottom, 20), gap: 16 }}>
       <View style={{ flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
         <ActorBadge name={who.name} kind={who.kind} t={t} size={40} />
         <View style={{ flex: 1, gap: 4 }}>

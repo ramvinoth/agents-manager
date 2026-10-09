@@ -7,6 +7,7 @@ import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
@@ -19,6 +20,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Org">
  */
 export default function OrgScreen({ navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const [projects, setProjects] = useState<OrgProject[]>([])
   const [skills, setSkills] = useState<LearnedSkill[]>([])
   // The library route returns every skill on disk; this section is about what the
@@ -96,7 +98,7 @@ export default function OrgScreen({ navigation }: Props) {
 
   return (
     <>
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 16 }}>
+    <ScrollView style={styles.page} contentContainerStyle={{ padding: 16 }}>
       {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
 
       {/* First-run guide: shown until the CEO has at least one project. A fresh

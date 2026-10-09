@@ -352,7 +352,7 @@ export default function ChatsScreen({ navigation }: Props) {
   }, [host]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       <OfflineBanner saved={fromCache && sessions.length > 0} onRetry={() => load(false)} />
       {loading ? (
         <View style={styles.center}>

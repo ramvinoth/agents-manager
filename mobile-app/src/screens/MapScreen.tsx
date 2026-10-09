@@ -15,6 +15,7 @@ import { api, type MapLevel, type MapNode, type MapView } from "../api/client"
 import { crumbs, drillTarget } from "../lib/codeMap"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 import MermaidView from "../components/MermaidView"
 import { isDarkBg } from "../components/Markdown"
 import Icon, { type IconName } from "../components/Icon"
@@ -28,6 +29,7 @@ const ICONS: Record<MapNode["kind"], IconName> = {
 
 export default function MapScreen({ navigation, route }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   const { project, session, title } = route.params
   const [at, setAt] = useState<{ level: MapLevel; path: string }>({ level: "project", path: "" })
   const [view, setView] = useState<MapView | null>(null)
@@ -58,7 +60,7 @@ export default function MapScreen({ navigation, route }: Props) {
 
   const trail = crumbs(at, title)
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 40 }}>
+    <ScrollView style={styles.page} contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 40 }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: "center", gap: 4 }}>
         {trail.map((c, i) => {
           const last = i === trail.length - 1

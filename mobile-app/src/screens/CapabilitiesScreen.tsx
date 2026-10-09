@@ -5,6 +5,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { currentHost } from "../state/config"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 import CapabilitiesPanel from "../components/CapabilitiesPanel"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Capabilities">
@@ -16,6 +17,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Capabilities">
  */
 export default function CapabilitiesScreen({ route, navigation }: Props) {
   const t = useTheme()
+  const styles = useStyles()
   // A session passes its host + cwd (project scope); the menu entry passes
   // nothing → this host, user/global scope.
   const host = route.params?.host || currentHost()
@@ -30,7 +32,7 @@ export default function CapabilitiesScreen({ route, navigation }: Props) {
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false) }, []))
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
+    <View style={styles.page}>
       <CapabilitiesPanel host={host} cwd={cwd} active={focused} testPrefix="cap" />
     </View>
   )

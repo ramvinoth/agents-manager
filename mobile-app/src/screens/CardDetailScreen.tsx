@@ -244,20 +244,20 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center" }}>
+      <View style={styles.center}>
         <ActivityIndicator />
       </View>
     )
   }
   if (!card) return (
-    <View testID="card-detail-unavailable" style={{ flex: 1, backgroundColor: t.bg, padding: 24, justifyContent: "center", gap: 16 }}>
-      <Text accessibilityRole="header" style={{ color: t.text, fontSize: 20, fontWeight: "600" }}>Card unavailable</Text>
-      <Text accessibilityLiveRegion="polite" style={{ color: t.text, fontSize: 16 }}>{error || "This card could not be loaded."}</Text>
-      <Pressable testID="card-detail-retry" accessibilityRole="button" onPress={() => { setLoading(true); void load() }} style={{ minHeight: 44, justifyContent: "center" }}>
-        <Text style={{ color: t.text, fontSize: 17 }}>Try again</Text>
+    <View testID="card-detail-unavailable" style={styles.cdUnavailable}>
+      <Text accessibilityRole="header" style={styles.cdUnavailableTitle}>Card unavailable</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.cdUnavailableBody}>{error || "This card could not be loaded."}</Text>
+      <Pressable testID="card-detail-retry" accessibilityRole="button" onPress={() => { setLoading(true); void load() }} style={styles.cdAction}>
+        <Text style={styles.cdActionText}>Try again</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={{ minHeight: 44, justifyContent: "center" }}>
-        <Text style={{ color: t.text, fontSize: 17 }}>Go back</Text>
+      <Pressable accessibilityRole="button" onPress={() => navigation.goBack()} style={styles.cdAction}>
+        <Text style={styles.cdActionText}>Go back</Text>
       </Pressable>
     </View>
   )
@@ -270,21 +270,21 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: t.bg }}
+      style={styles.page}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
     >
-      {error ? <Text style={{ color: t.danger, padding: 12 }}>{error}</Text> : null}
+      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
       <ScrollView
         ref={sheet}
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 12, gap: 10 }}
+        contentContainerStyle={styles.cdContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <Text style={{ color: t.text, fontSize: 18, fontWeight: "700", flex: 1, marginRight: 8 }}>
-            <Text style={{ color: t.textMuted, fontWeight: "500" }}>#{card.id} </Text>{card.title}
+        <View style={styles.cdHead}>
+          <Text style={styles.cdTitle}>
+            <Text style={styles.cdTitleId}>#{card.id} </Text>{card.title}
           </Text>
           <Pressable onPress={deleteCard} hitSlop={8} testID="card-detail-delete">
             <Icon name="trash" size={18} color={t.danger} />
@@ -292,10 +292,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         </View>
 
         {card.body ? (
-          <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{card.body}</Text>
+          <Text style={styles.cdBody}>{card.body}</Text>
         ) : null}
 
-        <Text style={{ color: t.textMuted, fontSize: 12 }}>
+        <Text style={styles.cdMeta}>
           opened by <ActorName name={creator.name} kind={creator.kind} /> · {fmt(card.created_at)}
         </Text>
 
@@ -305,8 +305,8 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         <View>
           {columns.length ? (
             <>
-              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>MOVE TO</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+              <Text style={styles.cdSectionLabel}>MOVE TO</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cdChips}>
                 {columns.map((col) => {
                   const active = col.id === card.column_id
                   return (
@@ -317,17 +317,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                       disabled={moving}
                       accessibilityRole="button"
                       accessibilityState={{ disabled: moving, busy: moving && active, selected: active }}
-                      style={{
-                        opacity: moving ? 0.6 : 1,
-                        backgroundColor: active ? t.accent : t.surface,
-                        borderWidth: 1,
-                        borderColor: active ? t.accent : t.border,
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                      }}
+                      style={[styles.cdChip, active && styles.cdChipActive, moving && styles.dimmed]}
                     >
-                      <Text style={{ color: active ? t.onAccent : t.text, fontSize: 12, fontWeight: "600" }}>
+                      <Text style={[styles.cdChipText, active && styles.cdChipTextActive]}>
                         {col.name}
                       </Text>
                     </Pressable>
@@ -337,11 +329,11 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             </>
           ) : (
             <>
-              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>
+              <Text style={styles.cdSectionLabel}>
                 ON NO BOARD — ATTACH TO A PROJECT
               </Text>
               {projects.length ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cdChips}>
                   {projects.map((p) => (
                     <Pressable
                       key={p.id}
@@ -350,24 +342,16 @@ export default function CardDetailScreen({ route, navigation }: Props) {
                       disabled={attaching}
                       accessibilityRole="button"
                       accessibilityState={{ disabled: attaching, busy: attaching }}
-                      style={{
-                        opacity: attaching ? 0.6 : 1,
-                        backgroundColor: t.surface,
-                        borderWidth: 1,
-                        borderColor: t.border,
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                      }}
+                      style={[styles.cdChip, attaching && styles.dimmed]}
                     >
-                      <Text style={{ color: t.text, fontSize: 12, fontWeight: "600" }}>
+                      <Text style={styles.cdChipText}>
                         {p.name}
                       </Text>
                     </Pressable>
                   ))}
                 </ScrollView>
               ) : (
-                <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>
+                <Text style={styles.cdEmpty}>
                   No projects exist yet — create one first, then this card can join a board.
                 </Text>
               )}
@@ -375,23 +359,23 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           )}
         </View>
 
-        <View style={{ height: 1, backgroundColor: t.border, marginVertical: 4 }} />
+        <View style={styles.cdRule} />
 
         {comments.length ? (
           comments.map((c) => {
             const who = formatActor(c.author, self)
             return (
-              <View key={c.id} style={{ backgroundColor: t.surface, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: who.kind === "agent" ? t.accent : t.border }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4, alignItems: "center" }}>
+              <View key={c.id} style={[styles.cdComment, who.kind === "agent" && styles.cdCommentAgent]}>
+                <View style={styles.cdCommentHead}>
                   <ActorName name={who.name} kind={who.kind} />
-                  <Text style={{ color: t.textMuted, fontSize: 11 }}>{fmt(c.created_at)}</Text>
+                  <Text style={styles.cdCommentTime}>{fmt(c.created_at)}</Text>
                 </View>
-                <Text style={{ color: t.text, fontSize: 14, lineHeight: 20 }}>{c.body}</Text>
+                <Text style={styles.cdBody}>{c.body}</Text>
               </View>
             )
           })
         ) : (
-          <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic" }}>No comments yet — start the discussion.</Text>
+          <Text style={styles.cdEmpty}>No comments yet — start the discussion.</Text>
         )}
       </ScrollView>
 
@@ -429,12 +413,12 @@ export default function CardDetailScreen({ route, navigation }: Props) {
  *  name, agents get a small "agent" marker. The rule is formatActor in
  *  lib/board.ts (shared with the web card detail) — this is display only. */
 function ActorName({ name, kind }: { name: string; kind: ActorKind }) {
-  const t = useTheme()
+  const styles = useStyles()
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-      <Text style={{ color: t.text, fontSize: 12, fontWeight: "700" }}>{kind === "you" ? "you" : name}</Text>
+    <View style={styles.cdActor}>
+      <Text style={styles.cdActorName}>{kind === "you" ? "you" : name}</Text>
       {kind === "agent" ? (
-        <Text style={{ color: t.accent, fontSize: 10, fontWeight: "700" }}>agent</Text>
+        <Text style={styles.cdActorAgent}>agent</Text>
       ) : null}
     </View>
   )

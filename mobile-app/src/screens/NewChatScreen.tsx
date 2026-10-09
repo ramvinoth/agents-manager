@@ -166,7 +166,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: t.bg }}
+      style={styles.page}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
     >

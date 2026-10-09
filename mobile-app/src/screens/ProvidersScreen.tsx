@@ -135,7 +135,7 @@ export default function ProvidersScreen(_: Props) {
   const errorText = error ? <Text testID="provider-error" accessibilityRole="alert" style={[styles.sheetHint, { color: t.danger }]}>{error}</Text> : null
 
   if (!editing) return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={styles.sheetHint}>
         A provider is a connection to a model server. It can serve many models, and each model has its own
         context window. Chats pick a provider and model in their AI settings.
@@ -174,7 +174,7 @@ export default function ProvidersScreen(_: Props) {
 
   const rows = sortRows(editing.rows, editing.model)
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+    <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       {errorText}
       <Text style={styles.sheetSection}>{editing.id ? "CONNECTION" : "NEW CONNECTION"}</Text>
       <TextInput testID="provider-name" style={styles.ssInput} value={editing.name}

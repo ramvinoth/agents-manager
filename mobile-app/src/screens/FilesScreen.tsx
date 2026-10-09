@@ -258,7 +258,7 @@ export default function FilesScreen({ navigation }: Props) {
   }), [location, drives, hostLabel])
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }} {...pan.panHandlers}>
+    <View style={styles.page} {...pan.panHandlers}>
       {/* Nav toolbar: Back / Forward / Up mirror the edge-swipe gestures so history
           is reachable without swiping. */}
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 6, paddingTop: 4, gap: 2 }}>
