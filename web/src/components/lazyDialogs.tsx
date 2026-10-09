@@ -25,3 +25,4 @@ export const PairPhoneDialog = onDemand(() => import("./PairPhoneDialog").then((
 export const HostDialog = onDemand(() => import("./HostDialog").then((m) => m.HostDialog))
 export const EnvDialog = onDemand(() => import("./EnvDialog").then((m) => m.EnvDialog))
 export const MarketplaceDialog = onDemand(() => import("./MarketplaceDialog").then((m) => m.MarketplaceDialog))
+export const NewSessionDialog = onDemand(() => import("./NewSessionDialog").then((m) => m.NewSessionDialog))
