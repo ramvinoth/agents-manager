@@ -229,10 +229,12 @@ export function Composer() {
     else localStorage.removeItem("draft:" + currentSessionPath)
   }, [text, currentSessionPath])
 
-  // Fork/revert hand the removed message back to the composer to edit & resend.
+  // Fork/revert and un-queue hand a message back to the composer to edit & resend.
+  // Prepend (not replace) so an in-progress draft is preserved when a queued
+  // message is pulled back — mirrors mobile's unqueue.
   useEffect(() => {
     if (pendingDraft != null) {
-      setText(pendingDraft)
+      setText((cur) => (cur.trim() ? `${pendingDraft}\n\n${cur}` : pendingDraft))
       clearPendingDraft()
       taRef.current?.focus()
     }

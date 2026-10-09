@@ -174,9 +174,13 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
       }
     },
     removeQueued: async (i) => {
-      const { currentSessionPath } = get()
+      const { currentSessionPath, queue } = get()
+      const removed = queue[i]
       await api.chatQueueRemove({ path: currentSessionPath, index: i }).catch(() => {})
-      set({ queue: get().queue.filter((_, idx) => idx !== i) })
+      // Pulling a message off the queue returns its text to the composer (not a
+      // silent discard) — mirrors mobile's unqueue, so an un-queue is editable,
+      // not lost. The composer prepends it, preserving any in-progress draft.
+      set({ queue: queue.filter((_, idx) => idx !== i), pendingDraft: removed ?? null })
     },
     steerMessage: async (msg) => {
       const { currentSessionPath } = get()

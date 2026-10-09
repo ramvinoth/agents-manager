@@ -93,7 +93,10 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   const repoName = repo.includes("/") ? repo.split("/")[1] : repo
   const targetDir = repoName ? `${parentDir.replace(/\/+$/, "") || "~"}/${repoName}` : ""
+  // A clone with no typed name is named after its repo, so it still has one.
+  const title = name.trim() || (src === "clone" ? repoName : "")
   const startDisabled =
+    !title ||
     !message.trim() ||
     cloning ||
     (src === "dir" ? !cwd.trim() : !repo.trim() || !parentDir.trim() || !gitConfigured)
@@ -134,8 +137,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
     await startNewSession({
       cwd: dir,
       message: message.trim(),
-      // Repo name is a sensible default title when cloning and none was given.
-      title: name.trim() || (src === "clone" ? repoName : ""),
+      title,
       systemPrompt: advanced ? systemPrompt : "",
       goal: advanced ? goal : "",
     })
@@ -165,6 +167,27 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {/* Name, then message: both required, in that order — the name is how
+              this session is told apart in every list, push and decision card. */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Session name</label>
+            <Input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={src === "clone" && repoName ? repoName : "e.g. Refactor auth"}
+              maxLength={200}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">First message</label>
+            <Textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={`What should ${agentLabel} do?`}
+              className="min-h-24"
+            />
+          </div>
           <div className="flex gap-1 rounded-md bg-muted p-0.5 text-xs">
             {(
               [
@@ -321,24 +344,6 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
               )}
             </div>
           )}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Session name</label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={src === "clone" && repoName ? repoName : "Optional — defaults to an auto title"}
-              maxLength={200}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">First message</label>
-            <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={`What should ${agentLabel} do?`}
-              className="min-h-24"
-            />
-          </div>
           <button
             className="text-xs text-muted-foreground hover:text-foreground"
             onClick={() => setAdvanced((a) => !a)}
@@ -361,6 +366,11 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={cloning}>
             Cancel
           </Button>
+          {startDisabled && !cloning && (
+            <span className="mr-auto self-center text-xs text-muted-foreground">
+              {!title ? "Name the session to start" : !message.trim() ? "Write the first message to start" : "Pick where it runs to start"}
+            </span>
+          )}
           <Button onClick={start} disabled={startDisabled}>
             {cloning && <Loader2 className="mr-1.5 size-4 animate-spin" />}
             {cloning ? "Cloning…" : "Start session"}
