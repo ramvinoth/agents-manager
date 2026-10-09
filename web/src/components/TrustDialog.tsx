@@ -20,11 +20,14 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
     if (!open) return
     let live = true
     setNote(""); setBusy(true)
-    api.sessionDetail(path).then((d) => {
+    // session-meta, not session-detail: Trust needs three stored fields, and
+    // the detail also summarises the whole transcript (seconds on a big chat).
+    api.sessionMeta(path).then((d) => {
       if (!live) return
+      if (!d.session || typeof d.permission_mode !== "string") throw new Error("old server")
       setTarget(d.session)
-      setMode(d.meta.permission_mode || "")
-      setLevel(isHarmanLevel(d.meta.level) ? d.meta.level : "")
+      setMode(d.permission_mode)
+      setLevel(isHarmanLevel(d.level) ? d.level : "")
       setEffective(isHarmanLevel(d.effective_level) ? d.effective_level : "")
     }).catch(() => { if (live) setNote("Could not load this chat's Trust. Close and try again.") })
       .finally(() => { if (live) setBusy(false) })

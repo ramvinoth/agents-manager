@@ -316,10 +316,7 @@ class SessionsMixin:
                 cwd = remote_extract_cwd(req.host, rel)
             except Exception:
                 cwd = ""
-            self.send_json({"session": sid, "goal": meta.get("goal", ""),
-                            "systemPrompt": meta.get("systemPrompt", ""),
-                            "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                            "cwd": cwd})
+            self.send_json(dict(self._meta_doc(sid, meta), cwd=cwd))
             return
         full = self.resolve_session_quiet(rel)
         if not full:
@@ -327,10 +324,21 @@ class SessionsMixin:
             return
         sid = full.stem
         meta = db.session_meta_get(sid)
-        self.send_json({"session": sid, "goal": meta.get("goal", ""),
-                        "systemPrompt": meta.get("systemPrompt", ""),
-                        "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
-                        "cwd": extract_cwd(full)})
+        self.send_json(dict(self._meta_doc(sid, meta), cwd=extract_cwd(full)))
+
+    @staticmethod
+    def _meta_doc(sid, meta):
+        """The cheap per-session settings document: stored meta plus the
+        Trust fields (saved permission policy, level override and the level
+        that applies). Trust reads THIS, not /api/session-detail — the detail
+        also summarises the transcript, a full read of a file that can be
+        hundreds of MB (measured 7.7s cold on a 450MB chat)."""
+        return {"session": sid, "goal": meta.get("goal", ""),
+                "systemPrompt": meta.get("systemPrompt", ""),
+                "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                "permission_mode": meta.get("permission_mode", ""),
+                "level": meta.get("level", ""),
+                "effective_level": resolve_level(sid)}
 
     def serve_remote_session_file(self, host, rel_path, q):
         if not any(k in q for k in ("tail", "before", "from")):

@@ -3,7 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
@@ -429,7 +429,7 @@ class ApiClient {
 
   // ---- session metadata / summary / analysis ----
   sessionMeta(path: string) {
-    return this.getJSON(`/api/session-meta?session=${encodeURIComponent(path)}` + this.qs())
+    return this.getJSON<SessionMeta>(`/api/session-meta?session=${encodeURIComponent(path)}` + this.qs())
   }
   sessionMetaSave(body: Body) {
     return this.postRes("/api/session-meta", body)
@@ -446,7 +446,7 @@ class ApiClient {
     )
   }
   /** A chat's Trust (lib/trust.ts). Red: the owner's own tap applies; anyone
-   *  else's ask queues. `session` is the id sessionDetail returned. */
+   *  else's ask queues. `session` is the id sessionMeta returned. */
   sessionModeSet(session: string, mode: PermissionPolicy) {
     return this.postJSON<TrustWrite>("/api/session/mode", { for_session: session, mode })
   }

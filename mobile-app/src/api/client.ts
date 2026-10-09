@@ -137,7 +137,10 @@ export type AgentInfo = {
 }
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass"
 export type PermApproval = { id: string; tool_name: string; input: unknown }
-export type SessionMeta = { goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string }
+/** GET /api/session-meta: stored per-chat settings plus Trust (saved permission
+ *  policy, level override "" = none, and the level that applies). Cheap — no transcript read. */
+export type SessionMeta = { session?: string; goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string
+  permission_mode?: string; level?: string; effective_level?: string }
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
@@ -555,10 +558,6 @@ export const api = {
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
 
-  sessionDetail: (host: string, id: string) =>
-    req<{ session: string; meta: { permission_mode: string; level?: string }; effective_level?: HarmanLevel; running: boolean }>(
-      "GET", `/api/session-detail?${new URLSearchParams({ host, id, agent: "claude" })}`
-    ),
   sessionModeSet: (session: string, mode: PermissionMode) =>
     req<{ session?: string; permission_mode?: PermissionMode; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
       "POST", "/api/session/mode", { for_session: session, mode }

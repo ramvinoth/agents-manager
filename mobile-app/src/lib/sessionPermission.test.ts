@@ -20,10 +20,10 @@ function harness() {
   const modules:Record<string,any> = {
     react:{...react,default:react},
     "react-native":Object.fromEntries(["ActivityIndicator","ScrollView","Switch","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x])),
-    "../api/client":{api:{sessionDetail:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionMeta:async()=>({}),sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
+    "../api/client":{api:{sessionMeta:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
     "../state/config":{composerPrefs:()=>({mode:"bypassPermissions"}),setComposerPrefs:(v:any)=>deviceWrites.push(v),notifyEveryReply:()=>false},
     "../lib/aiSelection":{aiSummary:()=>"AI",aiError:(e:any)=>e.message},
-    "../lib/avatars":{AVATARS:[]},"../lib/interval":{},"../lib/stats":{},"../lib/thread":{},
+    "../lib/avatars":{AVATARS:[]},"../lib/harmanLevel":{HARMAN_LEVELS:["ic","lead","manager"],LEVEL_NAME:{ic:"Own work",lead:"Workspace",manager:"Organization"},isHarmanLevel:(v:unknown)=>v==="ic"||v==="lead"||v==="manager"},"../lib/interval":{},"../lib/stats":{},"../lib/thread":{},
     "../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},
     ...Object.fromEntries(["Avatar","Icon","JobScheduler","ProviderPicker"].map(x=>[`../components/${x}`,{default:x}])),
   }
@@ -46,12 +46,12 @@ test("permission client uses existing authority endpoints and canonical target",
   }
   const modules:Record<string,any>={"./transport":{serverFetch},"../lib/model":{},"../lib/audit":{},"../lib/errors":{isTransportError:()=>false},"../lib/reachability":{reachability:{report(){}}}}
   new Function("require","exports",js)((name:string)=>modules[name],exports)
-  await exports.api.sessionDetail("remote", "p/session-1.jsonl")
+  await exports.api.sessionMeta("remote", "p/session-1.jsonl")
   await exports.api.sessionModeSet("session-1","bypass")
   const url=new URL(calls[0].url)
-  assert.equal(url.pathname,"/api/session-detail")
+  assert.equal(url.pathname,"/api/session-meta")
   assert.equal(url.searchParams.get("host"),"remote")
-  assert.equal(url.searchParams.get("id"),"p/session-1.jsonl")
+  assert.equal(url.searchParams.get("session"),"p/session-1.jsonl")
   assert.equal(new URL(calls[1].url).pathname,"/api/session/mode")
   assert.equal(calls[1].method,"POST")
   assert.deepEqual(JSON.parse(calls[1].body),{for_session:"session-1",mode:"bypass"})
@@ -61,7 +61,7 @@ test("profile saves canonical server policy, not device preference, only after A
   const h=harness();await h.effects()
   assert.equal(h.reads.length,1,"permission mode must be read from server")
   assert.equal(h.node("sp-mode-bypass").props.disabled,true)
-  h.reads[0].resolve({session:"session-1",meta:{permission_mode:"acceptEdits"}});await settle()
+  h.reads[0].resolve({session:"session-1",permission_mode:"acceptEdits"});await settle()
   assert.equal(h.node("sp-mode-acceptEdits").props.accessibilityState.selected,true)
   const press=h.node("sp-mode-bypass").props.onPress
   const saving=press();press()
@@ -74,7 +74,7 @@ test("profile saves canonical server policy, not device preference, only after A
 })
 
 test("failed, queued and mismatched saves retain confirmed policy and allow retry",async()=>{
-  const h=harness();await h.effects();h.reads[0].resolve({session:"session-1",meta:{permission_mode:"default"}});await settle()
+  const h=harness();await h.effects();h.reads[0].resolve({session:"session-1",permission_mode:"default"});await settle()
   for(const result of [{error:"invalid"},{queued:true,approval:"a1"},{denied:true,reason:"Denied"},{session:"other",permission_mode:"bypass"}]){
     const saving=h.node("sp-mode-bypass").props.onPress();h.writes.at(-1).resolve(result);await saving
     assert.equal(h.node("sp-mode-default").props.accessibilityState.selected,true)
@@ -89,7 +89,7 @@ test("unset policy is not inferred from composer preference; read failures retry
   const h=harness();await h.effects();h.reads[0].reject(new Error("Offline"));await settle()
   assert.equal(h.node("sp-mode-bypass").props.disabled,true)
   h.node("sp-mode-retry").props.onPress();await h.effects()
-  h.reads[1].resolve({session:"session-1",meta:{permission_mode:""}});await settle()
+  h.reads[1].resolve({session:"session-1",permission_mode:""});await settle()
   assert.equal(h.node("sp-mode-bypass").props.accessibilityState.selected,false)
   assert.match(JSON.stringify(h.render()),/No saved policy/)
 })
@@ -97,7 +97,7 @@ test("unset policy is not inferred from composer preference; read failures retry
 test("path-only sessions use the server-resolved identity when saving",async()=>{
   const h=harness();h.change({sessionId:""});await h.effects()
   assert.deepEqual(h.reads[0].args,["local","project/session-1.jsonl"])
-  h.reads[0].resolve({session:"session-1",meta:{permission_mode:""}});await settle()
+  h.reads[0].resolve({session:"session-1",permission_mode:""});await settle()
   const saving=h.node("sp-mode-bypass").props.onPress()
   assert.deepEqual(h.writes[0].args,["session-1","bypass"])
   h.writes[0].resolve({session:"session-1",permission_mode:"bypass"});await saving
@@ -105,16 +105,16 @@ test("path-only sessions use the server-resolved identity when saving",async()=>
 })
 
 test("scope changes ignore old reads and writes; other harnesses have no controls",async()=>{
-  const h=harness();await h.effects();h.reads[0].resolve({session:"session-1",meta:{permission_mode:"default"}});await settle()
+  const h=harness();await h.effects();h.reads[0].resolve({session:"session-1",permission_mode:"default"});await settle()
   const saving=h.node("sp-mode-bypass").props.onPress()
   h.change({host:"remote",path:"p/session-2.jsonl",sessionId:"session-2"});await h.effects()
-  h.reads[1].resolve({session:"session-2",meta:{permission_mode:"plan"}});await settle()
+  h.reads[1].resolve({session:"session-2",permission_mode:"plan"});await settle()
   h.writes[0].resolve({session:"session-1",permission_mode:"bypass"});await saving
   assert.equal(h.node("sp-mode-plan").props.accessibilityState.selected,true)
   h.change({sessionId:"session-3"});await h.effects()
   h.change({sessionId:"session-4"});await h.effects()
-  h.reads[3].resolve({session:"session-4",meta:{permission_mode:"default"}});await settle()
-  h.reads[2].resolve({session:"session-3",meta:{permission_mode:"bypass"}});await settle()
+  h.reads[3].resolve({session:"session-4",permission_mode:"default"});await settle()
+  h.reads[2].resolve({session:"session-3",permission_mode:"bypass"});await settle()
   assert.equal(h.node("sp-mode-default").props.accessibilityState.selected,true)
   h.change({agent:"codex"});await h.effects()
   assert.doesNotMatch(JSON.stringify(h.render()),/sp-mode-bypass/)

@@ -58,7 +58,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [modeError, setModeError] = useState("")
   const [modeReload, setModeReload] = useState(0)
   // Harman level: the override stored on the session ("" = none) and the level
-  // that actually applies (override → the agent it was started from → Own work), both from sessionDetail.
+  // that actually applies (override → the agent it was started from → Own work), both from sessionMeta.
   const [level, setLevel] = useState<HarmanLevel | "">("")
   const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
   const [levelSaving, setLevelSaving] = useState(false)
@@ -69,25 +69,35 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     modeRequest.current = request
     setModeState(""); setModeTarget(""); setModeError(""); setModeSaving(false)
     setLevel(""); setEffectiveLevel(""); setLevelNote("")
-    const id = sessionId || path
-    setModeLoading(agent === "claude" && !!id)
-    if (agent === "claude" && id) {
-      api.sessionDetail(host, id).then(detail => {
+    const claude = agent === "claude"
+    setModeLoading(claude && !!path)
+    if (path) {
+      // ONE cheap read feeds the profile fields and Trust. session-meta, not
+      // session-detail: the detail also summarises the whole transcript
+      // (seconds on a big chat). A Trust retry re-reads it, which is harmless.
+      api.sessionMeta(host, path).then(meta => {
         if (!request.active) return
-        if (!detail.session || typeof detail.meta?.permission_mode !== "string") {
+        setSystemPrompt(meta.systemPrompt || "")
+        setGoal(meta.goal || "")
+        if (meta.avatar) setAvatar(meta.avatar)
+        setPinned(Array.isArray(meta.pinned) ? meta.pinned : [])
+        if (meta.cwd) { setCwd(meta.cwd); loadGit(meta.cwd) }
+        // Skills + MCP tools resolve from the working dir (host-aware).
+        api.capabilities(host, meta.cwd || undefined).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
+        if (!claude) return
+        if (!meta.session || typeof meta.permission_mode !== "string") {
           throw new Error("Server did not return the session permission policy.")
         }
-        const stored = detail.meta.permission_mode
+        const stored = meta.permission_mode
         if (stored && !MODES.some(m => m.v === stored)) {
           throw new Error("Unrecognized server permission policy. Update the app before changing it.")
         }
-        setModeTarget(detail.session)
+        setModeTarget(meta.session)
         setModeState(stored)
-        const lv = detail.meta.level
-        setLevel(isHarmanLevel(lv) ? lv : "")
-        setEffectiveLevel(detail.effective_level || "")
+        setLevel(isHarmanLevel(meta.level) ? meta.level : "")
+        setEffectiveLevel(isHarmanLevel(meta.effective_level) ? meta.effective_level : "")
       }).catch(e => {
-        if (request.active) setModeError(e?.message || "Could not load permission policy. Please retry.")
+        if (request.active && claude) setModeError(e?.message || "Could not load permission policy. Please retry.")
       }).finally(() => { if (request.active) setModeLoading(false) })
     }
     return () => { request.active = false }
@@ -130,23 +140,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [syncing, setSyncing] = useState(false)
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
 
-  // Load meta + jobs + stats once. A missing session (fresh chat with no path
-  // yet) simply shows empty fields — everything still saves once it exists.
+  // Load jobs + stats once (meta loads with Trust above). A missing session
+  // (fresh chat with no path yet) simply shows empty fields — everything still
+  // saves once it exists.
   useEffect(() => {
     if (path) {
-      api
-        .sessionMeta(host, path)
-        .then((m) => {
-          setSystemPrompt(m.systemPrompt || "")
-          setGoal(m.goal || "")
-          if (m.avatar) setAvatar(m.avatar)
-          setPinned(Array.isArray(m.pinned) ? m.pinned : [])
-          if (m.cwd) { setCwd(m.cwd); loadGit(m.cwd) }
-          // Skills + MCP tools resolve from the working dir, so load them once
-          // the cwd is known (host-aware, same endpoint the drawer/tab use).
-          api.capabilities(host, m.cwd || undefined).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
-        })
-        .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
     }
     if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setJobs(l)).catch(() => {})

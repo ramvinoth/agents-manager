@@ -231,6 +231,11 @@ export interface SessionMeta {
   goal?: string
   systemPrompt?: string
   cwd?: string
+  /** Trust: the saved permission policy, the level override ("" = none) and
+   *  the level that applies. Cheap — no transcript read. */
+  permission_mode?: string
+  level?: string
+  effective_level?: string
 }
 
 /**
