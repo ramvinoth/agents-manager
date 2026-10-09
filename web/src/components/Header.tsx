@@ -75,15 +75,16 @@ export function Header() {
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
   // so showing New/Harman/host/panels here would only open dialogs that then 401.
+  const themeToggle = (
+    <Button variant="ghost" size="icon" className="size-7" onClick={toggle} aria-label="Toggle theme">
+      {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+    </Button>
+  )
+
   if (needsAuth) {
     return (
       <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3">
-        <div className="flex items-center gap-2 font-semibold">
-          <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Bot className="size-3.5" />
-          </div>
-          <span className="text-sm">Agents</span>
-        </div>
+        <Brand />
         <div className="flex min-w-0 items-center gap-2">
           {droppedFile && (
             <span className="flex min-w-0 items-center gap-1 truncate text-sm text-muted-foreground">
@@ -91,9 +92,7 @@ export function Header() {
               <span className="truncate">{droppedFile}</span>
             </span>
           )}
-          <Button variant="ghost" size="icon" className="size-7" onClick={toggle} aria-label="Toggle theme">
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
+          {themeToggle}
         </div>
       </header>
     )
@@ -105,12 +104,7 @@ export function Header() {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
       <MobileNav />
-      <div className="flex items-center gap-2 font-semibold">
-        <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Bot className="size-3.5" />
-        </div>
-        <span className="hidden text-sm sm:inline">Agents</span>
-      </div>
+      <Brand compact />
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -265,9 +259,7 @@ export function Header() {
         </DropdownMenu>
       )}
 
-      <Button variant="ghost" size="icon" className="size-7" onClick={toggle} aria-label="Toggle theme">
-        {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-      </Button>
+      {themeToggle}
 
       <NewSessionDialog open={nsOpen} onOpenChange={setNsOpen} />
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
@@ -286,5 +278,17 @@ export function Header() {
       )}
       {hostEdit !== undefined && <HostDialog host={hostEdit} onClose={() => setHostEdit(undefined)} />}
     </header>
+  )
+}
+
+/** The product mark; `compact` hides the name on narrow screens. */
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 font-semibold">
+      <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
+        <Bot className="size-3.5" />
+      </div>
+      <span className={compact ? "hidden text-sm sm:inline" : "text-sm"}>Harman</span>
+    </div>
   )
 }
