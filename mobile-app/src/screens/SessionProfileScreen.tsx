@@ -12,6 +12,7 @@ import {
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
+import { HARMAN_LEVELS, LEVEL_NAME, isHarmanLevel } from "../lib/harmanLevel"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
@@ -36,11 +37,8 @@ const MODES: { v: PermissionMode; label: string }[] = [
 // "" = no per-chat override: the level of the agent role the chat started from.
 const LEVELS: { v: HarmanLevel | ""; label: string }[] = [
   { v: "", label: "Role default" },
-  { v: "ic", label: "IC" },
-  { v: "lead", label: "Lead" },
-  { v: "manager", label: "Manager" },
+  ...HARMAN_LEVELS.map((v) => ({ v, label: LEVEL_NAME[v] })),
 ]
-const LEVEL_NAME: Record<HarmanLevel, string> = { ic: "IC", lead: "Lead", manager: "Manager" }
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
@@ -60,7 +58,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [modeError, setModeError] = useState("")
   const [modeReload, setModeReload] = useState(0)
   // Harman level: the override stored on the session ("" = none) and the level
-  // that actually applies (override → agent role → ic), both from sessionDetail.
+  // that actually applies (override → agent role → Worker), both from sessionDetail.
   const [level, setLevel] = useState<HarmanLevel | "">("")
   const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
   const [levelSaving, setLevelSaving] = useState(false)
@@ -86,7 +84,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         setModeTarget(detail.session)
         setModeState(stored)
         const lv = detail.meta.level
-        setLevel(lv === "ic" || lv === "lead" || lv === "manager" ? lv : "")
+        setLevel(isHarmanLevel(lv) ? lv : "")
         setEffectiveLevel(detail.effective_level || "")
       }).catch(e => {
         if (request.active) setModeError(e?.message || "Could not load permission policy. Please retry.")
@@ -470,7 +468,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         </> : null}
         <Text style={[styles.sheetSection, { marginTop: 16 }]}>HARMAN LEVEL · BOARD AUTHORITY</Text>
-        <Text style={styles.sheetHint}>What this chat may do on the board and in the org (cards, projects, loops, settings), enforced by the Harman server for any harness. IC works cards; Lead also creates projects and schedules loops; Manager also changes org-wide settings. Asks above its level wait for your approval instead of failing. Risky actions always ask you, whatever the level.</Text>
+        <Text style={styles.sheetHint}>What this chat may do on the board and in the org (cards, projects, loops, settings), enforced by the Harman server for any harness. Worker works its own cards, notes and messages; Lead also creates projects, columns and scheduled loops; Manager also changes org-wide settings. Asks above its level wait for your approval instead of failing. Risky actions always ask you, whatever the level.</Text>
         {renderPill(LEVELS, level, pickLevel, "sp-level", "Harman level", levelSaving)}
         {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting as {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from its agent role)"}. Applies from the next run.</Text> : null}
         {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}

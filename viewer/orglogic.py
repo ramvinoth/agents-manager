@@ -186,6 +186,10 @@ def is_red(action):
 # Levels are ordered least→most authority; each action names the MINIMUM level.
 
 LEVELS = ("ic", "lead", "manager")
+# What a person reads for each level. "ic" is an internal key (individual
+# contributor), never shown: Worker = its own cards, notes and messages; Lead
+# also projects, loops and columns; Manager also org-wide settings.
+LEVEL_NAMES = {"ic": "Worker", "lead": "Lead", "manager": "Manager"}
 
 # ── Human authority: the account's role, independent of any session ───────────
 # The OTHER principal. A request has up to two: the human who owns the viewer

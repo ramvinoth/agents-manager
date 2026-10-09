@@ -289,3 +289,12 @@ def test_red_reason_folds_whitespace_caps_length_and_tolerates_junk():
 def test_red_subject_names_nothing_for_unknown_or_argless_actions():
     assert inbox.red_subject({"action": "restart_now", "args": {}}) == ""
     assert inbox.red_subject({}) == ""
+
+
+def test_red_subject_names_a_level_in_words_not_its_key(monkeypatch):
+    monkeypatch.setattr(inbox, "_label", lambda s: s)
+    ask = lambda lv: inbox.red_subject({"action": "session_level_set",
+                                        "args": {"session": "s1", "level": lv}})
+    assert ask("ic") == "s1 → Worker", "the internal key never reaches the owner"
+    assert ask("lead") == "s1 → Lead"
+    assert ask("") == "s1 → its agent role default"

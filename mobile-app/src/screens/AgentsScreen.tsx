@@ -23,6 +23,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type AgentTemplate } from "../api/client"
+import { LEVEL_NAME } from "../lib/harmanLevel"
 import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -234,9 +235,18 @@ export default function AgentsScreen({ navigation }: Props) {
                     {tmpl.description}
                   </Text>
                 ) : null}
-                {/* Model + schedule badges */}
-                {(tmpl.model || tmpl.cron) ? (
+                {/* Level + model + schedule badges. The level is what a chat
+                    started from this role may do on the board ("from its
+                    agent role" in the chat's Trust settings). */}
+                {(tmpl.level || tmpl.model || tmpl.cron) ? (
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+                    {tmpl.level ? (
+                      <View testID={`agent-level-${tmpl.id}`} style={{ backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                        <Text style={{ fontSize: 10, fontWeight: "700", color: t.textMuted }}>
+                          {LEVEL_NAME[tmpl.level]}
+                        </Text>
+                      </View>
+                    ) : null}
                     {tmpl.model ? (
                       <View style={{ backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
                         <Text style={{ fontSize: 10, fontWeight: "700", color: t.textMuted, textTransform: "capitalize" }}>
