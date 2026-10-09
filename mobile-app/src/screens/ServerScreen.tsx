@@ -63,7 +63,7 @@ export default function ServerScreen({ navigation }: Props) {
       <Text style={styles.label}>Name (optional)</Text>
       <TextInput
         testID="server-name"
-        accessibilityLabel="server-name"
+        accessibilityLabel="Server name"
         style={styles.input}
         placeholder="Home, Cloud…"
         autoCapitalize="words"

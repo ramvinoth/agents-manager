@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -339,6 +339,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       setNeedsOnly={setNeedsOnly}
       errorBar={errorBar}
       onOpen={openConversation}
+      onRefresh={load}
       composeOpen={composeOpen}
       setComposeOpen={setComposeOpen}
       sessions={sessions}
@@ -351,7 +352,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
 /** The Inbox tab body: search, an "All / Needs you" switch, the conversation
  *  rows, and the "New message" chat picker. */
 function ConversationList({
-  queueCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, composeOpen, setComposeOpen, sessions,
+  queueCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, onRefresh, composeOpen, setComposeOpen, sessions,
 }: {
   queueCount: number
   onDecideAll: () => void
@@ -364,6 +365,7 @@ function ConversationList({
   setNeedsOnly: (v: boolean) => void
   errorBar: React.ReactNode
   onOpen: (sid: string, name: string) => void
+  onRefresh: () => void
   composeOpen: boolean
   setComposeOpen: (v: boolean) => void
   sessions: Session[]
@@ -426,6 +428,7 @@ function ConversationList({
         testID="inbox-list"
         data={shown}
         keyExtractor={(c) => c.session}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={styles.ibEmpty}>
             <Icon name="mail" size={36} color={t.textMuted} />

@@ -26,11 +26,15 @@ function buildStyles(t: Theme) {
     flex1: { flex: 1 },
     faded: { opacity: 0.5 },
     rowCenter: { flexDirection: "row", alignItems: "center" },
+    // Header/toolbar icon controls (components/HeaderButton) and their row.
+    headerIcons: { flexDirection: "row", alignItems: "center", gap: 2 },
+    headerBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
     center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: t.bg },
     label: { fontSize: 13, fontWeight: "600", color: t.text, marginTop: 12, marginBottom: 6 },
     hint: { fontSize: 12, color: t.textMuted, marginTop: 8 },
     error: { color: t.danger, marginTop: 12 },
     errorBanner: { color: t.danger, padding: 12 },
+    infoBanner: { color: t.textMuted, padding: 12 },
     input: {
       borderWidth: 1,
       borderColor: t.border,
@@ -655,8 +659,6 @@ function buildStyles(t: Theme) {
     cdActorAgent: { color: t.accent, fontSize: 10, fontWeight: "700" },
     dimmed: { opacity: 0.6 },
     // Note editor (NoteEditorScreen): header icons, kind chips, link panel
-    neHeaderIcons: { flexDirection: "row", alignItems: "center", gap: 2 },
-    neHeaderBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
     neMissing: { color: t.danger, padding: 20 },
     neContent: { padding: 16, paddingBottom: 40 },
     neTitle: { color: t.text, fontSize: 24, fontWeight: "700", paddingVertical: 4 },

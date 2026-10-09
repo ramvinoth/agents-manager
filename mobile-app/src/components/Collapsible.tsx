@@ -34,7 +34,7 @@ export default function Collapsible({
         <Pressable
           testID="show-more"
           accessibilityRole="button"
-          accessibilityLabel={showToggle ? "show-more" : "show-less"}
+          accessibilityLabel={showToggle ? "Show more" : "Show less"}
           onPress={() => setExpanded((e) => !e)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           style={styles.showMoreRow}

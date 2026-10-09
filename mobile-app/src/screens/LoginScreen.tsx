@@ -87,7 +87,7 @@ export default function LoginScreen({ navigation }: Props) {
           <Text style={styles.label}>Setup code</Text>
           <TextInput
             testID="login-setup-code"
-            accessibilityLabel="login-setup-code"
+            accessibilityLabel="Setup code"
             style={styles.input}
             autoCapitalize="characters"
             autoCorrect={false}
@@ -120,7 +120,7 @@ export default function LoginScreen({ navigation }: Props) {
           even across app restarts (the active server persists). */}
       <TouchableOpacity
         testID="login-change-server"
-        accessibilityLabel="change-server"
+        accessibilityLabel="Change server"
         style={{ marginTop: 22, alignItems: "center" }}
         onPress={() => setServerOpen(true)}
       >

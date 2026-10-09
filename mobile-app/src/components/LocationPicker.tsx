@@ -202,7 +202,7 @@ export function LocationHeaderButton({
   return (
     <TouchableOpacity
       testID="location-header-button"
-      accessibilityLabel="switch-location"
+      accessibilityLabel="Switch location"
       onPress={onPress}
       hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
       style={{ flexDirection: "row", alignItems: "center", maxWidth: 72, height: 32 }}

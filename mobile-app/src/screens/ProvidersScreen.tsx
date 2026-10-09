@@ -79,7 +79,7 @@ export default function ProvidersScreen(_: Props) {
         setDiscoveryNote(`${r.choices.length} model${r.choices.length === 1 ? "" : "s"} found` +
           (known === r.choices.length ? "." : `; the endpoint reports a context window for ${known}. Set the rest yourself if you know them.`))
       } else {
-        setDiscoveryNote(r.status === "error" ? r.error || "Discovery failed." : "The endpoint did not list any models. Add a model by its ID below.")
+        setDiscoveryNote(r.status === "error" ? r.error || "Discovery failed." : "This provider didn't list any models. Add one by its ID below.")
       }
     } catch (e) { if (request === generation.current) setDiscoveryNote(aiError(e)) }
     finally { if (request === generation.current) setDiscovering(false) }
@@ -209,7 +209,7 @@ export default function ProvidersScreen(_: Props) {
         <TouchableOpacity testID="provider-load-models" disabled={!editing.baseUrl.trim() || !!keyProblem || discovering} onPress={discover}
           style={(!editing.baseUrl.trim() || !!keyProblem) && styles.faded}>
           <Text style={styles.pvLink}>
-            {discovering ? "Discovering…" : editing.rows.some(r => r.discovered) ? "Refresh from endpoint" : "Discover models"}
+            {discovering ? "Discovering…" : editing.rows.some(r => r.discovered) ? "Refresh model list" : "Discover models"}
           </Text>
         </TouchableOpacity>
       </View>

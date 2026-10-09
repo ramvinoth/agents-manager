@@ -7,7 +7,7 @@ import { api, isQueued, type Note, type NoteKind } from "../api/client"
 import { KIND_LABEL } from "../lib/notes"
 import { formatActor } from "../lib/board"
 import { setToken, username } from "../state/config"
-import Icon from "../components/Icon"
+import HeaderButton from "../components/HeaderButton"
 import Markdown, { type NoteLinkHandlers } from "../components/Markdown"
 import NoteThread from "../components/NoteThread"
 import { completeLink, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "../lib/noteLinks"
@@ -194,23 +194,17 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     navigation.setOptions({
       title: KIND_LABEL[note?.kind || "note"],
       headerRight: () => (
-        <View style={styles.neHeaderIcons}>
+        <View style={styles.headerIcons}>
           {/* Shows the mode you'd switch TO: a pencil while reading, an eye while editing. */}
-          <TouchableOpacity testID="note-preview" accessibilityLabel={preview ? "edit-note" : "view-note"}
-            onPress={() => setPreview((v) => !v)} hitSlop={8}
-            style={styles.neHeaderBtn}>
-            <Icon name={preview ? "edit" : "eye"} size={20} color={t.accent} />
-          </TouchableOpacity>
-          <TouchableOpacity testID="note-pin" onPress={() => patchNote({ pinned: !note?.pinned })} hitSlop={8}
-            style={styles.neHeaderBtn}>
-            <Icon name="pin" size={20} color={note?.pinned ? t.accent : t.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity testID="note-more" onPress={() => showActions(note?.title || "This note", [
-            { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
-            { text: "Delete", destructive: true, onPress: remove },
-          ])} hitSlop={8} style={styles.neHeaderBtn}>
-            <Icon name="more" size={20} color={t.accent} />
-          </TouchableOpacity>
+          <HeaderButton testID="note-preview" label={preview ? "Edit note" : "Preview note"} icon={preview ? "edit" : "eye"} color={t.accent}
+            onPress={() => setPreview((v) => !v)} />
+          <HeaderButton testID="note-pin" label={note?.pinned ? "Unpin note" : "Pin note"} icon="pin" color={note?.pinned ? t.accent : t.textMuted}
+            onPress={() => patchNote({ pinned: !note?.pinned })} />
+          <HeaderButton testID="note-more" label="Note actions" icon="more" color={t.accent}
+            onPress={() => showActions(note?.title || "This note", [
+              { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
+              { text: "Delete", destructive: true, onPress: remove },
+            ])} />
         </View>
       ),
     })

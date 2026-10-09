@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type LearnedSkill, type OrgProject } from "../api/client"
@@ -99,7 +99,8 @@ export default function OrgScreen({ navigation }: Props) {
 
   return (
     <>
-    <ScrollView style={styles.page} contentContainerStyle={{ padding: 16 }}>
+    <ScrollView style={styles.page} contentContainerStyle={{ padding: 16 }}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
       {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
 
       {/* First-run guide: shown until the CEO has at least one project. A fresh

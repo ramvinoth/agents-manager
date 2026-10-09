@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -13,6 +13,7 @@ import * as FileSystem from "expo-file-system"
 import * as Sharing from "expo-sharing"
 import { filterByTags, type NoteGraph } from "../lib/noteLinks"
 import Icon from "../components/Icon"
+import HeaderButton from "../components/HeaderButton"
 import SheetModal from "../components/SheetModal"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
@@ -61,7 +62,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   const reads = useRef({ issued: 0, applied: 0 })
 
   const load = useCallback(async () => {
-    if (!scope) { setError("This notes view has no valid scope."); setLoading(false); return }
+    if (!scope) { setError("This notes view isn't linked to a chat or project. Go back and open Notes again."); setLoading(false); return }
     const request = ++reads.current.issued
     try {
       const [r, g] = await Promise.all([
@@ -94,10 +95,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
     title: title || "Notes",
     headerLeft: undefined,
     headerRight: () => (
-      <TouchableOpacity testID="notes-add" accessibilityLabel="new-note" onPress={() => setPicking(true)} hitSlop={8}
-        style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
-        <Icon name="add" size={22} color={t.accent} />
-      </TouchableOpacity>
+      <HeaderButton testID="notes-add" label="New note" icon="add" size={22} color={t.accent} onPress={() => setPicking(true)} />
     ),
   }), [title, t.accent])
 
@@ -166,10 +164,9 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
         >
           <Text style={[styles.filterChipText, showArchived && styles.filterChipTextActive]}>Archived</Text>
         </TouchableOpacity>
-        <TouchableOpacity testID="notes-export" accessibilityLabel="export-notes" onPress={exportVault} hitSlop={8} disabled={exporting}
-          style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+        <HeaderButton testID="notes-export" label="Export notes" onPress={exportVault} disabled={exporting}>
           {exporting ? <ActivityIndicator size="small" color={t.accent} /> : <Icon name="upload" size={20} color={t.accent} />}
-        </TouchableOpacity>
+        </HeaderButton>
       </View>
 
       {tagChips.length ? (
@@ -201,6 +198,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
           testID="notes-list"
           data={shown}
           keyExtractor={(n) => String(n.id)}
+          refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
           contentContainerStyle={{ paddingBottom: 24 }}
           ListEmptyComponent={
             <View style={{ alignItems: "center", paddingTop: 60, paddingHorizontal: 32 }}>

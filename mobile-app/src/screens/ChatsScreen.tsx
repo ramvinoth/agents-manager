@@ -14,6 +14,7 @@ import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
+import HeaderButton from "../components/HeaderButton"
 import { useHost } from "../lib/useHost"
 import { isTransportError, userError } from "../lib/errors"
 import { offerUndo } from "../lib/undo"
@@ -223,43 +224,19 @@ export default function ChatsScreen({ navigation }: Props) {
             </TouchableOpacity>
           ),
           headerRight: () => (
-            <TouchableOpacity
-              testID="bulk-delete"
-              onPress={bulkDelete}
-              disabled={selected.size === 0}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4, opacity: selected.size === 0 ? 0.3 : 1 }}
-            >
-              <Icon name="trash" size={21} color={t.danger} />
-            </TouchableOpacity>
+            <HeaderButton testID="bulk-delete" label="Delete selected chats" icon="trash" size={21} color={t.danger}
+              onPress={bulkDelete} disabled={selected.size === 0} style={{ marginRight: 4 }} />
           ),
         }
       : {
           title: "Chats",
           headerLeft: menuButton,
           headerRight: () => (
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <TouchableOpacity
-                testID="chats-terminal"
-                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })}
-                accessibilityLabel="open-terminal"
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}
-              >
-                <Icon name="terminal" size={21} color={t.accent} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                testID="new-chat-button"
-                onPress={() => navigation.navigate("NewChat")}
-                accessibilityLabel="new-chat"
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                // Fixed, centered 32pt box so the glyph sits dead-center inside iOS's
-                // header (and the iOS-26 "glass" tap enclosure) instead of being
-                // baseline-aligned hard against the trailing edge.
-                style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 4 }}
-              >
-                <Icon name="add" size={24} color={t.accent} />
-              </TouchableOpacity>
+            <View style={styles.headerIcons}>
+              <HeaderButton testID="chats-terminal" label="Open terminal" icon="terminal" size={21} color={t.accent}
+                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })} />
+              <HeaderButton testID="new-chat-button" label="New chat" icon="add" size={24} color={t.accent} style={{ marginRight: 4 }}
+                onPress={() => navigation.navigate("NewChat")} />
             </View>
           ),
         },

@@ -39,6 +39,7 @@ import QuestionCard from "../components/QuestionCard"
 import PlanCard from "../components/PlanCard"
 import { ItemView, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
+import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
@@ -469,7 +470,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       headerTitle: () => (
         <TouchableOpacity
           testID="header-title"
-          accessibilityLabel="open-session-profile"
+          accessibilityLabel="Session details"
           onPress={() =>
             isCurrentThread() && navigation.isFocused() && navigation.navigate("SessionProfile", {
               host,
@@ -492,28 +493,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       ),
       headerRight: () => (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <TouchableOpacity
-            testID="thread-call"
-            accessibilityLabel="call-mode"
-            onPress={() => navigation.navigate("Call", { label, path })}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
-          >
-            <Icon name="phone" size={20} color={t.accent} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="thread-tools"
-            accessibilityLabel="skills-and-tools"
-            onPress={() => setCapDrawerOpen((o) => !o)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 2 }}
-          >
-            <Icon name="tool" size={20} color={capDrawerOpen ? t.text : t.accent} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            testID="thread-more"
-            accessibilityLabel="more-options"
+        <View style={styles.headerIcons}>
+          <HeaderButton testID="thread-call" label="Voice call" icon="phone" color={t.accent}
+            onPress={() => navigation.navigate("Call", { label, path })} />
+          <HeaderButton testID="thread-tools" label="Skills and tools" icon="tool" color={capDrawerOpen ? t.text : t.accent}
+            onPress={() => setCapDrawerOpen((o) => !o)} />
+          <HeaderButton testID="thread-more" label="More options" icon="more" color={t.accent} style={{ marginRight: 4 }}
             onPress={() => {
               showActions(label || "This chat", [
                 { text: "Search", onPress: () => setSearchOpen(true) },
@@ -523,12 +508,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 // A map needs the session's project; an unsent chat has none yet.
                 ...(sessionId ? [{ text: "Map", onPress: openMap }] : []),
               ])
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
-          >
-            <Icon name="more" size={20} color={t.accent} />
-          </TouchableOpacity>
+            }} />
         </View>
       ),
     })
@@ -1129,7 +1109,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             <>
               <TouchableOpacity
                 testID="run-queue"
-                accessibilityLabel="run-queue"
+                accessibilityLabel="Queue after this run"
                 style={styles.runModeToggle}
                 onPress={() => primary("queue")}
               >
@@ -1138,7 +1118,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
               </TouchableOpacity>
               <TouchableOpacity
                 testID="run-interrupt"
-                accessibilityLabel="run-interrupt"
+                accessibilityLabel="Interrupt and send now"
                 style={styles.runModeToggle}
                 onPress={() => primary("steer")}
               >
@@ -1272,7 +1252,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         <View style={styles.composerBar}>
           <TouchableOpacity
             testID="composer-attach"
-            accessibilityLabel="composer-attach"
+            accessibilityLabel="Attach a file"
             style={[styles.circleBtn, styles.gearBtn]}
             onPress={attach}
             disabled={attaching}

@@ -101,7 +101,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       })}
     </View>
   )
-  const rows = [{id: "", name: "Built-in (runner default)"}, ...providers].filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
+  const rows = [{id: "", name: "Built-in (default)"}, ...providers].filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
   return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
     <SafeAreaView testID="ai-editor" style={styles.page}>
       <View style={{flexDirection: "row", alignItems: "center", padding: 12, gap: 12}}>
@@ -117,7 +117,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       <FlatList data={modelChoices(discovery, draft.model, search)} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
           <Text style={styles.sheetHint}>{localOnly ? "Only this unsent chat. Defaults are unchanged." : scope.id ? "Changes apply to future runs, not a response already in progress." : "For new chats on this Harman server. Existing chats are unchanged."}</Text>
-          {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This selection is unsupported on this host or runner. Choose supported settings.")}</Text> : null}
+          {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This machine can't run that combination. Pick a different provider or model.")}</Text> : null}
           {config.issue ? <Text style={styles.sheetHint}>{config.issue}</Text> : null}
           <Text style={styles.sheetSection}>PROVIDER</Text>
           <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={styles.ssInput} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch}/>
@@ -128,11 +128,11 @@ export default function ProviderPicker({ config, scope, providers, title, localO
           {caps?.efforts.length ? segGroup("ai-effort", caps.efforts.map(e => ({key: e, id: `ai-effort-${e || "default"}`, label: EFFORT_LABEL[e] ?? (e || "Auto")})), draft.effort, e => setDraft({...draft, effort: e})) : null}
           <Text style={styles.sheetSection}>MODEL</Text>
           {row("ai-model-default", "Default model", draft.model?.kind === "default", () => setDraft({...draft, model: {kind: "default"}}))}
-          {scope.id ? row("ai-model-legacy", "Remove explicit override (legacy request behavior)", draft.model === null, () => setDraft({...draft, model: null})) : null}
+          {scope.id ? row("ai-model-legacy", "No override — use what this chat started with", draft.model === null, () => setDraft({...draft, model: null})) : null}
           {caps?.manualModelId ? <TextInput testID="ai-model-manual" accessibilityLabel="Explicit model ID" style={styles.ssInput} placeholder="Enter full model ID" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} editable={!busy} value={draft.model?.kind === "id" ? draft.model.id : ""} onChangeText={id => setDraft({...draft, model: {kind: "id", id}})}/> : null}
-          <Text testID="ai-discovery-status" style={styles.sheetHint}>{loading ? "Loading model choices…" : discovery?.status === "error" ? discovery.error || "Model discovery failed." : discovery?.status === "unsupported" ? "Discovery is unsupported. Use runner default or enter a model ID." : discovery?.status === "empty" ? "No models returned. Enter an explicit ID or use runner default." : "A discovered model is not a guarantee of execution access."}</Text>
+          <Text testID="ai-discovery-status" style={styles.sheetHint}>{loading ? "Loading models…" : discovery?.status === "error" ? discovery.error || "Couldn't load the model list." : discovery?.status === "unsupported" ? "This provider doesn't list its models. Use the default, or type a model ID." : discovery?.status === "empty" ? "This provider listed no models. Use the default, or type a model ID." : "Listed models may still need access on your provider account."}</Text>
           {loading ? <ActivityIndicator color={t.accent}/> : null}
-          <TouchableOpacity testID="ai-discovery-retry" onPress={() => setRetry(r => r+1)} style={{padding: 16}}><Text style={{color: t.accent}}>Retry discovery</Text></TouchableOpacity>
+          {discovery && discovery.status !== "ok" && !loading ? <TouchableOpacity testID="ai-discovery-retry" onPress={() => setRetry(r => r+1)} style={{padding: 16}}><Text style={{color: t.accent}}>Try again</Text></TouchableOpacity> : null}
           <TextInput testID="ai-model-search" accessibilityLabel="Search models" style={styles.ssInput} placeholder="Search model IDs" placeholderTextColor={t.textMuted} value={search} onChangeText={setSearch}/>
         </>}
         renderItem={({item}) => row(`ai-model-${item.id}`, item.label === item.id ? item.id : `${item.label}\n${item.id}`, draft.model?.kind === "id" && draft.model.id === item.id, () => setDraft({...draft, model: {kind: "id", id: item.id}}))}

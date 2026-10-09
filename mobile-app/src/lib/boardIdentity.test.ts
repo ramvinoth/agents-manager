@@ -96,7 +96,7 @@ function screen(initial: Route) {
     "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/boardSwipe": boardSwipe,
-    ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon"].map(n => [`../components/${n}`, { default: n }])),
+    ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", WorkingBubble: "WorkingBubble" },
   }
   const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/ThreadScreen.tsx"), "utf8")

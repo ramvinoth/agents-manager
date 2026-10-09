@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import Icon from "./Icon"
+import HeaderButton from "./HeaderButton"
 import { MENU_SECTIONS, type MenuItem } from "../lib/menu"
 import { useTheme } from "../lib/useTheme"
 
@@ -19,10 +20,7 @@ export function useMenuButton(): () => React.ReactNode {
   const open = useContext(SideMenuContext)
   const t = useTheme()
   return () => (
-    <TouchableOpacity testID="menu-button" accessibilityLabel="open-menu" onPress={open} hitSlop={10}
-      style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
-      <Icon name="menu" size={24} color={t.accent} />
-    </TouchableOpacity>
+    <HeaderButton testID="menu-button" label="Open menu" icon="menu" size={24} color={t.accent} onPress={open} />
   )
 }
 
