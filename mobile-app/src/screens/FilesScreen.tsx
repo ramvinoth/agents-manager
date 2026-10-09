@@ -158,7 +158,7 @@ export default function FilesScreen({ navigation }: Props) {
       await api.fsUpload(scope, path, uri, name, mime)
       await fetchDir(path, host, location)
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "this file", "upload"))
     } finally {
       setBusy(false)
     }
@@ -188,7 +188,7 @@ export default function FilesScreen({ navigation }: Props) {
         if (r?.error) setError(r.error)
         else await fetchDir(path, host, location)
       } catch (e) {
-        setError((e as Error).message)
+        setError(userError(e, "the folder", "create"))
       } finally {
         setBusy(false)
       }
@@ -213,7 +213,7 @@ export default function FilesScreen({ navigation }: Props) {
       }
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest)
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "this file", "download"))
     } finally {
       setBusy(false)
     }
@@ -233,7 +233,7 @@ export default function FilesScreen({ navigation }: Props) {
             if (r?.error) setError(r.error)
             else await fetchDir(path, host, location)
           } catch (e) {
-            setError((e as Error).message)
+            setError(userError(e, "this item", "delete"))
           } finally {
             setBusy(false)
           }

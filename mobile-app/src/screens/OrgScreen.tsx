@@ -8,6 +8,7 @@ import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
@@ -71,7 +72,7 @@ export default function OrgScreen({ navigation }: Props) {
     try {
       await api.orgCreateProject({ name: values.name, cwd: values.cwd || "", description: values.description || "" })
       load()
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) { setError(userError(e, "the project", "create")) }
   }
 
   if (loading) {

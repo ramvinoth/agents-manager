@@ -6,6 +6,7 @@ import { api } from "../api/client"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "HostEdit">
 
@@ -54,7 +55,7 @@ export default function HostEditScreen({ route, navigation }: Props) {
       setOk(!!r.ok)
     } catch (e) {
       setStatus("")
-      setError((e as Error).message)
+      setError(userError(e, "this server", "test"))
     } finally {
       setBusy(false)
     }
@@ -68,7 +69,7 @@ export default function HostEditScreen({ route, navigation }: Props) {
       if (r?.error) throw new Error(r.error)
       navigation.goBack()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "this server", "save"))
     } finally {
       setBusy(false)
     }

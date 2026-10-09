@@ -13,6 +13,7 @@ import NoteThread from "../components/NoteThread"
 import { completeLink, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "../lib/noteLinks"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">
 
@@ -105,7 +106,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       refreshGraph()
       navigation.push("NoteEditor", { id: n.id })
     } catch (e) {
-      Alert.alert("Could not create note", (e as Error).message)
+      Alert.alert("Could not create note", userError(e, "the note", "create"))
     }
   }, [graph, projectId, id, navigation, refreshGraph])
 
@@ -158,7 +159,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       setNote(await api.orgUpdateNote({ note_id: id, ...fields }))
     } catch (e) {
       setNote(prev)
-      Alert.alert("Could not update note", (e as Error).message)
+      Alert.alert("Could not update note", userError(e, "the note", "save"))
     }
   }, [id, note])
 
@@ -171,7 +172,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           const r = await api.orgDeleteNote({ note_id: id })
           if (isQueued(r)) { Alert.alert("Queued for approval", "Deleting is irreversible, so the owner has to approve it."); return }
           navigation.goBack()
-        } catch (e) { Alert.alert("Could not delete", (e as Error).message) }
+        } catch (e) { Alert.alert("Could not delete", userError(e, "the note", "delete")) }
       } },
     ])
   }, [id, navigation, patchNote])

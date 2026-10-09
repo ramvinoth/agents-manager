@@ -9,6 +9,7 @@ import Icon from "./Icon"
 import QuestionCard from "./QuestionCard"
 import PlanCard from "./PlanCard"
 import SheetModal from "./SheetModal"
+import { userError } from "../lib/errors"
 
 const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard" | "warning"> = {
   question: "help",
@@ -104,7 +105,7 @@ export default function DecisionCockpit({
         if (alive) setStatus(s)
       })
       .catch((e) => {
-        if (alive) setLoadError((e as Error).message || "Could not load this item.")
+        if (alive) setLoadError(userError(e, "this item"))
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -147,7 +148,7 @@ export default function DecisionCockpit({
       api
         .inboxSnooze(d.inbox_id, hours)
         .then(() => goResolved()) // out of sight for now; the board's queue re-reads without it
-        .catch((e) => setLoadError((e as Error).message))
+        .catch((e) => setLoadError(userError(e, "this item", "postpone")))
         .finally(() => setBusy(false))
     },
     [busy, d, goResolved]
@@ -171,7 +172,7 @@ export default function DecisionCockpit({
         .catch((e) => {
           // 409 = already answered elsewhere → it's resolved, advance.
           if ((e as Error & { status?: number }).status === 409) goResolved()
-          else setLoadError((e as Error).message)
+          else setLoadError(userError(e, "your answer", "send"))
         })
         .finally(() => setBusy(false))
     },
@@ -187,7 +188,7 @@ export default function DecisionCockpit({
         .then(() => goResolved())
         .catch((e) => {
           if ((e as Error & { status?: number }).status === 409) goResolved()
-          else setLoadError((e as Error).message)
+          else setLoadError(userError(e, "your answer", "send"))
         })
         .finally(() => setBusy(false))
     },
@@ -203,7 +204,7 @@ export default function DecisionCockpit({
         .then(() => goResolved())
         .catch((e) => {
           if ((e as Error & { status?: number }).status === 409) goResolved()
-          else setLoadError((e as Error).message)
+          else setLoadError(userError(e, "your answer", "send"))
         })
         .finally(() => setBusy(false))
     },
@@ -220,7 +221,7 @@ export default function DecisionCockpit({
         .catch((e) => {
           // 404 = decided elsewhere or gone → it's resolved, advance.
           if ((e as Error & { status?: number }).status === 404) goResolved()
-          else setLoadError((e as Error).message)
+          else setLoadError(userError(e, "your answer", "send"))
         })
         .finally(() => setBusy(false))
     },

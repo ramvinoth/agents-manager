@@ -9,6 +9,7 @@ import { useTheme } from "../lib/useTheme"
 import Icon from "./Icon"
 import SheetModal from "./SheetModal"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 /**
  * LocationPicker — the Files screen's "where am I looking" sheet. One list: the
@@ -55,7 +56,7 @@ export default function LocationPicker({
     setError("")
     api.drives()
       .then((r) => { setDrives(r.drives || []); setVendors(r.vendors || []) })
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "your drives")))
   }, [visible])
 
   function openIntegrations() {
@@ -89,7 +90,7 @@ export default function LocationPicker({
       onChange(drive.id, fresh.drives || [])
       onClose()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the drive", "connect"))
       // A new account whose consent failed is removed server-side — drop it here too.
       api.drives().then((fresh) => setDrives(fresh.drives || [])).catch(() => {})
     } finally {
@@ -104,7 +105,7 @@ export default function LocationPicker({
       setDrives((all) => [...all, r.drive])
       await connect(r.drive)
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the drive", "connect"))
     }
   }
 
@@ -122,7 +123,7 @@ export default function LocationPicker({
             setDrives(rest)
             if (value === drive.id) onChange(HOST_LOCATION, rest)
           } catch (e) {
-            setError((e as Error).message)
+            setError(userError(e, "the drive", "remove"))
           }
         },
       },

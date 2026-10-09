@@ -8,6 +8,7 @@ import { parsePairLink } from "../lib/pairLink"
 import { pairFromLink } from "../state/signin"
 import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Server">
 
@@ -46,7 +47,7 @@ export default function ServerScreen({ route, navigation }: Props) {
       // (brand-new) server needs sign-in.
       navigation.replace(token() ? "Home" : "Login")
     } catch (e) {
-      setError(`Can't reach server: ${(e as Error).message}`)
+      setError(userError(e, "this server", "reach"))
     } finally {
       setBusy(false)
     }

@@ -12,6 +12,7 @@ import Icon from "../components/Icon"
 import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
@@ -162,7 +163,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
       await api.orgCreateCard({ title, column_id: columnId, session: scope.filter.session, project_id: scope.filter.project })
       if (isCurrent()) load()
     } catch (e) {
-      if (isCurrent()) setSnapshot(cur => ({ ...cur, error: (e as Error).message }))
+      if (isCurrent()) setSnapshot(cur => ({ ...cur, error: userError(e, "the card", "create") }))
     }
   }
 

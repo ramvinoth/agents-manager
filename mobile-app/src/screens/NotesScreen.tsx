@@ -16,6 +16,7 @@ import Icon from "../components/Icon"
 import SheetModal from "../components/SheetModal"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList>
@@ -119,7 +120,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
       if (status >= 400) throw new Error(`Export failed (HTTP ${status})`)
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest, { mimeType: "application/zip", UTI: "public.zip-archive" })
     } catch (e) {
-      Alert.alert("Could not export notes", (e as Error).message)
+      Alert.alert("Could not export notes", userError(e, "your notes", "export"))
     } finally {
       FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {})
       setExporting(false)
@@ -134,7 +135,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
       const n = await api.orgCreateNote({ title: "", body, kind, session: scope?.session, project_id: scope?.project })
       navigation.navigate("NoteEditor", { id: n.id })
     } catch (e) {
-      Alert.alert("Could not create note", (e as Error).message)
+      Alert.alert("Could not create note", userError(e, "the note", "create"))
     } finally {
       creating.current = false
     }

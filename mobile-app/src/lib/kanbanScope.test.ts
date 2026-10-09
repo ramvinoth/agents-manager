@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path"
 import { test } from "node:test"
 import ts from "typescript"
 import * as board from "./board.ts"
+import * as errors from "./errors.ts"
 
 type Node = { type: any; props: Record<string, any>; children: unknown[] }
 function find(tree: unknown, predicate: (node: Node) => boolean): Node | undefined {
@@ -49,6 +50,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
     "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
+    "../lib/errors": errors,
   }
   // The real cockpit host (its scope guard is under test here too), loaded
   // through the same transpile with the same stubs.
