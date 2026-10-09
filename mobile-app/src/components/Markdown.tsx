@@ -194,7 +194,7 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
       return <View style={styles.mdHr} />
     case "mathblock":
       // Display equation → full-fidelity KaTeX in a WebView (bundled offline).
-      return <MathView tex={b.text} dark={isDarkBg(t.bg)} textColor={color || t.text} />
+      return <MathView tex={b.text} textColor={color || t.text} />
     default:
       return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={base} />
   }

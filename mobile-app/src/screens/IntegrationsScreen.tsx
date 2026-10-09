@@ -796,7 +796,6 @@ function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
  *  client setup) renders under the step that needs the redirect address. */
 function SetupSteps({ p, steps = p.setup, redirect }: { p: IntegrationProvider; steps?: SetupStep[]; redirect?: React.ReactNode }) {
   const styles = useStyles()
-  const t = useTheme()
   return (
     <View testID={`setup-${p.id}`} style={styles.igGap8}>
       {steps.map((st, i) => (

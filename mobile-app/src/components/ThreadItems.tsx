@@ -259,7 +259,6 @@ export function ExchangeView({
 
 function StepView({ block }: { block: Block }) {
   const t = useTheme()
-  const styles = useStyles()
   if (block.kind === "text") {
     return (
       <View style={{ marginVertical: 4 }}>

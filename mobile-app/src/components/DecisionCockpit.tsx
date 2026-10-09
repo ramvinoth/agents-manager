@@ -286,7 +286,7 @@ export default function DecisionCockpit({
             status?.pending_question ? (
               <QuestionCard input={status.pending_question.questions} onAnswer={answerQuestion} />
             ) : !loading && !loadError ? (
-              <ResolvedElsewhere t={t} styles={styles} onOpen={() => onOpenThread(d)} />
+              <ResolvedElsewhere styles={styles} onOpen={() => onOpenThread(d)} />
             ) : null
           ) : null}
 
@@ -294,7 +294,7 @@ export default function DecisionCockpit({
             status?.pending_plan ? (
               <PlanCard input={status.pending_plan.plan} onDecide={decidePlan} />
             ) : !loading && !loadError ? (
-              <ResolvedElsewhere t={t} styles={styles} onOpen={() => onOpenThread(d)} />
+              <ResolvedElsewhere styles={styles} onOpen={() => onOpenThread(d)} />
             ) : null
           ) : null}
 
@@ -396,7 +396,7 @@ export default function DecisionCockpit({
 /** A question/plan whose durable row is no longer there (decided on another
  *  device, or the row lives on a host this viewer can't read live): we have the
  *  summary but not the full content. Offer the thread rather than a stale card. */
-function ResolvedElsewhere({ t, styles, onOpen }: { t: ReturnType<typeof useTheme>; styles: ReturnType<typeof useStyles>; onOpen: () => void }) {
+function ResolvedElsewhere({ styles, onOpen }: { styles: ReturnType<typeof useStyles>; onOpen: () => void }) {
   return (
     <View testID="cockpit-unavailable" style={styles.permCard}>
       <Text style={styles.permTitle}>Full details aren't loadable here</Text>

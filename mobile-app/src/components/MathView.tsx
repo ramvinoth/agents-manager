@@ -19,7 +19,7 @@ import { WebView } from "react-native-webview"
 const KATEX_CSS = "https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css"
 const KATEX_JS = "https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"
 
-function buildHtml(tex: string, dark: boolean, textColor: string): string {
+function buildHtml(tex: string, textColor: string): string {
   const texLiteral = JSON.stringify(tex)
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
@@ -52,10 +52,10 @@ function buildHtml(tex: string, dark: boolean, textColor: string): string {
 </body></html>`
 }
 
-export default function MathView({ tex, dark, textColor }: { tex: string; dark: boolean; textColor: string }) {
+export default function MathView({ tex, textColor }: { tex: string; textColor: string }) {
   const [height, setHeight] = useState(44)
   const [failed, setFailed] = useState(false)
-  const html = useMemo(() => buildHtml(tex, dark, textColor), [tex, dark, textColor])
+  const html = useMemo(() => buildHtml(tex, textColor), [tex, textColor])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // If the WebView never posts a height (offline + JS blocked, or a load error),
