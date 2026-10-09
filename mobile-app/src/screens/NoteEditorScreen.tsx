@@ -108,7 +108,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       refreshGraph()
       navigation.push("NoteEditor", { id: n.id })
     } catch (e) {
-      Alert.alert("Could not create note", userError(e, "the note", "create"))
+      setFlash(userError(e, "the note", "create"))
     }
   }, [graph, projectId, id, navigation, refreshGraph])
 
@@ -147,7 +147,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       if (!alive) return
       const e = err as Error & { status?: number }
       if (e.status === 401) { setToken(null); navigation.replace("Login"); return }
-      setError(e.status === 404 ? "This note was removed." : e.message || "Could not open this note")
+      setError(e.status === 404 ? "This note was removed." : userError(e, "the note", "open"))
       setLoading(false)
     })
     return () => { alive = false; flush() }
@@ -161,7 +161,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       setNote(await api.orgUpdateNote({ note_id: id, ...fields }))
     } catch (e) {
       setNote(prev)
-      Alert.alert("Could not update note", userError(e, "the note", "save"))
+      setFlash(userError(e, "the note", "save"))
     }
   }, [id, note])
 
@@ -183,9 +183,9 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
       { text: "Delete", style: "destructive", onPress: async () => {
         try {
           const r = await api.orgDeleteNote({ note_id: id })
-          if (isQueued(r)) { Alert.alert("Queued for approval", "Deleting is irreversible, so the owner has to approve it."); return }
+          if (isQueued(r)) { setFlash("Deletion is waiting for the owner's approval. The note stays until then."); return }
           navigation.goBack()
-        } catch (e) { Alert.alert("Could not delete", userError(e, "the note", "delete")) }
+        } catch (e) { setFlash(userError(e, "the note", "delete")) }
       } },
     ])
   }, [id, navigation, archive])
