@@ -18,6 +18,7 @@ import {
   KeyRound,
   Plug,
   MessageSquarePlus,
+  Wrench,
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
@@ -105,9 +106,15 @@ export function Header() {
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2 text-xs">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 gap-1.5 px-2 text-xs"
+            data-track="host picker"
+            aria-label={`Host: ${hostLabel}`}
+          >
             <Server className="size-3.5 text-muted-foreground" />
-            {hostLabel}
+            <span className="hidden max-w-40 truncate sm:inline">{hostLabel}</span>
             <ChevronDown className="size-3 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
@@ -150,36 +157,14 @@ export function Header() {
 
       <Button
         variant="outline"
-        size="icon"
-        className="size-7"
-        onClick={() => setEnvOpen(true)}
-        title={`Environment variables for ${hostLabel}`}
+        size="sm"
+        className="h-7 shrink-0 gap-1 px-2 text-xs"
+        onClick={() => setNsOpen(true)}
+        data-track="New"
+        aria-label="New session"
       >
-        <KeyRound className="size-4 text-muted-foreground" />
-      </Button>
-
-      <Button
-        variant="outline"
-        size="icon"
-        className="size-7"
-        onClick={() => setIntOpen(true)}
-        title="Integrations: connect your accounts so agents can use them"
-      >
-        <Plug className="size-4 text-muted-foreground" />
-      </Button>
-
-      <Button
-        variant="outline"
-        size="icon"
-        className="size-7"
-        onClick={openFs}
-        title={`Browse files on ${hostLabel} or a cloud drive`}
-      >
-        <FolderOpen className="size-4 text-muted-foreground" />
-      </Button>
-
-      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setNsOpen(true)}>
-        <Plus className="size-3.5" /> New
+        <Plus className="size-3.5" />
+        <span className="hidden sm:inline">New</span>
       </Button>
 
       <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -194,50 +179,78 @@ export function Header() {
         {!droppedFile && <SessionActions />}
       </div>
 
-      <Button
-        variant={panel === "browser" ? "secondary" : "ghost"}
-        size="icon"
-        className="size-7"
-        onClick={() => openPanel("browser")}
-        title="Browser panel"
-      >
-        <Globe className="size-4" />
-      </Button>
-      <Button
-        variant={panel === "terminal" ? "secondary" : "ghost"}
-        size="icon"
-        className="size-7"
-        onClick={() => openPanel("terminal")}
-        title="Terminal panel"
-      >
-        <TerminalIcon className="size-4" />
-      </Button>
+      {/* Workspace tools live in one menu: on screen every visit, each was
+          tapped 0 times in 30 days as its own header button (card 151). */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2 text-xs"
+            data-track="tools menu"
+            aria-label="Tools"
+          >
+            <Wrench className="size-3.5" />
+            <span className="hidden sm:inline">Tools</span>
+            <ChevronDown className="size-3 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuItem onClick={openFs}>
+            <FolderOpen className="size-3.5" /> Files
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openPanel("browser")}>
+            <Globe className="size-3.5" /> Browser panel
+            {panel === "browser" && <Check className="ml-auto size-3.5" />}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openPanel("terminal")}>
+            <TerminalIcon className="size-3.5" /> Terminal panel
+            {panel === "terminal" && <Check className="ml-auto size-3.5" />}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setIntOpen(true)}>
+            <Plug className="size-3.5" /> Integrations
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setEnvOpen(true)}>
+            <KeyRound className="size-3.5" /> Environment variables · {hostLabel}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-      {auth &&
-        (auth.loggedIn ? (
-          <Badge variant="secondary" className="gap-1 text-xs">
-            <ShieldCheck className="size-3 text-emerald-500" />
-            {auth.subscriptionType || "logged in"}
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
-            <ShieldAlert className="size-3" /> not logged in
-          </Badge>
-        ))}
+      {/* Only the problem state earns header space; "logged in" lives in the account menu. */}
+      {auth && !auth.loggedIn && (
+        <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+          <ShieldAlert className="size-3" /> not logged in
+        </Badge>
+      )}
 
       {authUser && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 max-w-32 gap-1 px-2 text-xs" data-track="account menu">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 max-w-32 shrink-0 gap-1 px-2 text-xs"
+              data-track="account menu"
+              aria-label="Account"
+            >
               <User className="size-3.5 shrink-0" />
-              <span className="truncate">{authUser.username}</span>
+              <span className="hidden truncate sm:inline">{authUser.username}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel className="max-w-56 truncate text-xs font-normal text-muted-foreground">
               {authUser.username}
             </DropdownMenuLabel>
+            {auth?.loggedIn && (
+              <DropdownMenuLabel className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                <ShieldCheck className="size-3 text-emerald-500" /> Claude: {auth.subscriptionType || "logged in"}
+              </DropdownMenuLabel>
+            )}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={toggle}>
+              {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />} {dark ? "Light mode" : "Dark mode"}
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setFeedbackOpen(true)}>
               <MessageSquarePlus className="size-3.5" /> Send feedback
             </DropdownMenuItem>
@@ -256,7 +269,7 @@ export function Header() {
         </DropdownMenu>
       )}
 
-      {themeToggle}
+      {!authUser && themeToggle}
 
       {nsOpen && <NewSessionDialog open onOpenChange={setNsOpen} />}
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
