@@ -1050,6 +1050,7 @@ class SessionsMixin:
             return
 
         session_id = str(uuid_mod.uuid4())
+        title = (body.get("title") or "").strip()[:200]
         # Pre-store system prompt / goal so the very first run already gets them.
         sp = (body.get("systemPrompt") or "").strip()
         goal = (body.get("goal") or "").strip()
@@ -1060,6 +1061,10 @@ class SessionsMixin:
             conv_mode = "chat"
         meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
                 "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+        if title:
+            # The fallback name until the transcript carries its own custom-title
+            # (a remote run gets no --name, and the client's rename can fail).
+            meta["title"] = title
         # Started from an agent template: its plugin rides on every Claude run
         # (engine --plugin-dir) and its lens turns on for this project. Read
         # from the template row, never from the body, so a client cannot name
@@ -1107,7 +1112,6 @@ class SessionsMixin:
         # The name rides on the run itself (claude --name writes the transcript's
         # custom-title), so it never depends on a client renaming the chat after
         # it appears. Local only: a remote host's CLI version is not ours to assume.
-        title = (body.get("title") or "").strip()[:200]
         args = ["--session-id", session_id] + (["--name", title] if title and host == "local" else [])
         if not start_claude_run(session_id, args, message, mode, cwd, model, host, effort=effort):
             self.send_json({"error": "Busy"}, status=409)
@@ -1187,6 +1191,10 @@ class SessionsMixin:
             s["archived"] = bool(meta.get("archived", False))
             s["favorite"] = bool(meta.get("favorite", False))
             s["provider"] = meta.get("provider", "")
+            # A transcript with no title of its own lists as its short id; the
+            # name given at creation is the better label until it gets one.
+            if meta.get("title") and s.get("title") in ("", (s.get("id") or "")[:8]):
+                s["title"] = meta["title"]
             s["running"] = self.session_busy(s.get("id"))
             s["harness"] = harness
             last = seen.get(s.get("id"))

@@ -119,10 +119,10 @@ def _push_label(session_id, cwd=""):
     else the project the transcript lives in, else a short session id. The raw-id
     fallback is the LAST resort — a bare 'Chat <id>' is useless for the owner to
     tell which session is asking (#31/#42)."""
-    name = _session_title(session_id)
+    meta = db.session_meta_get(session_id) or {}
+    name = _session_title(session_id) or (meta.get("title") or "").strip()
     if name:
         return name
-    meta = db.session_meta_get(session_id) or {}
     goal = (meta.get("goal") or "").strip()
     if goal:
         return goal[:60]

@@ -40,6 +40,11 @@ def test_title_preferred(label_env, monkeypatch):
     assert engine._push_label(SID, "/any/cwd") == "Fix the login bug"
 
 
+def test_creation_name_when_transcript_has_none(label_env, monkeypatch):
+    monkeypatch.setattr(db, "session_meta_get", lambda sid: {"title": "RSI", "goal": "g"})
+    assert engine._push_label(SID, "/any/cwd") == "RSI"
+
+
 def test_goal_second(label_env):
     label_env["goal"] = "Finish the migration to Postgres, for real this time"
     assert engine._push_label(SID, "") == "Finish the migration to Postgres, for real this time"[:60]

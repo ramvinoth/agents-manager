@@ -169,6 +169,35 @@ def test_new_session_title_rides_on_the_run_as_name(monkeypatch, tmp_path):
     assert args[args.index("--name") + 1] == "Trader"
 
 
+def test_new_session_title_is_stored_as_the_fallback_name(monkeypatch, tmp_path):
+    """A remote run gets no --name and the client's rename can fail; the name
+    given at creation is kept in session_meta so the list still shows it."""
+    from viewer import db
+    saved = {}
+    monkeypatch.setattr(db, "session_meta_set", lambda sid, data: saved.update(data))
+    from viewer.routes import sessions
+    monkeypatch.setattr(sessions, "start_claude_run", Mock(return_value=True))
+    import io, json
+    raw = json.dumps({"message": "hi", "cwd": str(tmp_path), "title": " RSI "}).encode()
+    handler = sessions.SessionsMixin(); handler.headers = {"Content-Length": str(len(raw))}
+    handler.rfile = io.BytesIO(raw); handler.send_json = Mock()
+    monkeypatch.setattr(db, "setting_get", lambda *a: None)
+    handler.handle_new_session(_APP_REQ)
+    assert saved["title"] == "RSI"
+
+
+def test_list_falls_back_to_the_creation_name_only_for_untitled(monkeypatch):
+    from viewer import db
+    from viewer.routes import sessions
+    sid = "abcdef12-0000"
+    monkeypatch.setattr(db, "session_meta_all", lambda: {sid: {"title": "RSI"}, "x": {"title": "Old"}})
+    monkeypatch.setattr(db, "session_seen_get", lambda r: {})
+    handler = sessions.SessionsMixin(); handler.session_busy = lambda s: False
+    rows = [{"id": sid, "title": sid[:8]}, {"id": "x", "title": "Renamed in CLI"}]
+    handler._overlay_meta(rows, "", "claude")
+    assert [r["title"] for r in rows] == ["RSI", "Renamed in CLI"]
+
+
 @pytest.mark.parametrize("body,principal,status", [
     ({"title": "Trader"}, {**_AGENT, "level": "ic"}, 403),          # below Workspace
     ({}, _AGENT, 400),                                               # nameless worker
