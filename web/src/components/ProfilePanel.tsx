@@ -7,10 +7,7 @@ import { useStore } from "@/store"
 import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
 import { agentScheduleHint, loopModeFor, scheduleFlags, scheduleSummary } from "@/lib/schedules"
 import type { LoopMode } from "@/lib/types"
-import { AISelectionDialog } from "./settings/AISelectionDialog"
-import { AuditDialog } from "./AuditDialog"
-import { PairPhoneDialog } from "./PairPhoneDialog"
-import { IntegrationsDialog } from "./IntegrationsDialog"
+import { AISelectionDialog, AuditDialog, PairPhoneDialog, IntegrationsDialog } from "@/components/lazyDialogs"
 
 function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
   return (

@@ -20,9 +20,6 @@ import {
   MessageSquarePlus,
 } from "lucide-react"
 import { NewSessionDialog } from "./NewSessionDialog"
-import { HostDialog } from "./HostDialog"
-import { EnvDialog } from "./EnvDialog"
-import { IntegrationsDialog } from "./IntegrationsDialog"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
 import { SessionActions } from "./SessionActions"
@@ -40,6 +37,7 @@ import {
 import { useStore } from "@/store"
 import { describeHost } from "@/lib/host"
 import type { HostInfo } from "@/lib/types"
+import { HostDialog, EnvDialog, IntegrationsDialog } from "@/components/lazyDialogs"
 
 function useTheme() {
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark")

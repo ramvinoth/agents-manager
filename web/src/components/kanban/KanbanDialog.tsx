@@ -29,10 +29,10 @@ import { groupByColumn, orderColumn, nextPosition, findCardSession, matchesQuery
 import { useStore } from "@/store"
 import { CardDetail } from "./CardDetail"
 import { DecisionsBand } from "./DecisionsBand"
-import { AuditDialog } from "../AuditDialog"
 import { isQueued } from "@/lib/types"
 import type { BoardColumn, Card, OpenDecision, OrgProject } from "@/lib/types"
 import { userError } from "@/lib/errors"
+import { AuditDialog } from "@/components/lazyDialogs"
 
 /**
  * KanbanDialog — the project's task board in a big modal. Resolves which org

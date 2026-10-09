@@ -23,9 +23,9 @@ import {
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { AnalyticsPanel } from "@/components/AnalyticsPanel"
-import { MarketplaceDialog } from "@/components/MarketplaceDialog"
 import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Skill } from "@/lib/types"
+import { MarketplaceDialog } from "@/components/lazyDialogs"
 
 const NEW_SKILL =
   "---\ndescription: What this skill does and when to use it\n---\n\n# New Skill\n\nInstructions for Claude when this skill is invoked.\n"

@@ -1,11 +1,23 @@
 // Markdown → HTML — ported from the vanilla MarkdownRenderer. Returns an HTML
 // string rendered via dangerouslySetInnerHTML inside a .markdown-content box.
 
-import katex from "katex"
+import type katexModule from "katex"
+
+// KaTeX (~270 KB + CSS) loads the first time a message holds math, not with the
+// app. Until it arrives a formula renders as its source in <code>; <Markdown>
+// re-renders once loadKatex() resolves.
+let katex: typeof katexModule | null = null
+let katexLoading: Promise<void> | null = null
+export const katexLoaded = () => katex !== null
+export function loadKatex(): Promise<void> {
+  katexLoading ??= Promise.all([import("katex"), import("katex/dist/katex.min.css")]).then(([m]) => { katex = m.default })
+  return katexLoading
+}
 
 /** Render one TeX string to KaTeX HTML. throwOnError:false → a malformed formula
  *  shows KaTeX's red error text instead of throwing / blanking the message. */
-export function renderKatex(tex: string, display: boolean): string {
+function renderKatex(tex: string, display: boolean): string {
+  if (!katex) throw new Error("katex not loaded")
   return katex.renderToString(tex, { displayMode: display, throwOnError: false, output: "html" })
 }
 

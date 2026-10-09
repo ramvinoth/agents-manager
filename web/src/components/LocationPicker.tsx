@@ -11,10 +11,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { waitForConsent } from "@/lib/integrations"
-import { IntegrationsDialog } from "@/components/IntegrationsDialog"
 import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "@/lib/location"
 import type { Drive } from "@/lib/types"
 import { userError } from "@/lib/errors"
+import { IntegrationsDialog } from "@/components/lazyDialogs"
 
 /**
  * LocationPicker — the file browser's "where am I looking" chip. One menu:

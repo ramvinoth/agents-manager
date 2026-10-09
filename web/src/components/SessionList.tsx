@@ -3,15 +3,12 @@ import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPe
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
-import { KanbanDialog } from "@/components/kanban/KanbanDialog"
-import { NotesDialog } from "@/components/notes/NotesDialog"
-import { MapDialog } from "@/components/map/MapDialog"
-import { InboxDialog } from "@/components/inbox/InboxDialog"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
 import { api } from "@/lib/api"
 import type { SessionListItem, SessionDetail } from "@/lib/types"
+import { KanbanDialog, NotesDialog, MapDialog, InboxDialog } from "@/components/lazyDialogs"
 
 interface Group {
   dir: string

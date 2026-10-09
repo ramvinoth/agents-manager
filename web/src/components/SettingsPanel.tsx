@@ -21,9 +21,9 @@ import { useStore, sessionIdOf } from "@/store"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { LoopsDialog } from "./settings/LoopsDialog"
 import { GitDialog } from "./settings/GitDialog"
-import { AISelectionDialog } from "./settings/AISelectionDialog"
 import { aiSummary } from "@/lib/aiSelection"
 import type { VisibleTypes } from "@/lib/types"
+import { AISelectionDialog } from "@/components/lazyDialogs"
 
 function SectionHeader({
   icon: Icon,
