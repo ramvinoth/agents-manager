@@ -14,7 +14,7 @@ import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
 import type { UsageEvent } from "../lib/usage"
 
-export type User = { id: number; username: string }
+export type User = { id: number; username: string; role?: string }
 export type Host = {
   id: string
   label: string

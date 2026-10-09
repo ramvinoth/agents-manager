@@ -28,6 +28,8 @@ import { useHost } from "../lib/useHost"
 import { useMenuButton } from "../components/SideMenu"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
+import { agentScheduleHint, loopModeFor, roleLabel, scheduleFlags, scheduleSummary } from "../lib/schedules"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
@@ -37,20 +39,11 @@ const THEME_OPTS: { v: ThemePref; label: string }[] = [
   { v: "dark", label: "Dark" },
 ]
 
-// Loop-firing modes, in escalating order of what's licensed to run. Labels are
-// the plain-language version of loops.LOOP_MODES: "None" pauses every loop,
-// "Both" licenses every origin. The value is what the server stores.
-const LOOP_OPTS: { v: LoopMode; label: string }[] = [
-  { v: "none", label: "None" },
-  { v: "user", label: "Yours" },
-  { v: "harman", label: "Agent" },
-  { v: "both", label: "Both" },
-]
-
 /**
- * Profile tab, ordered by how often each thing is touched: who and where you are,
- * everyday preferences, feedback, then the rare power settings (automation, AI,
- * the system preamble, collapsed), and sign out last behind a confirm.
+ * Profile tab, grouped by REACH so nobody has to guess what a control affects:
+ * who and where you are; THIS PHONE (theme, notifications — this device only);
+ * AGENTS ON THIS SERVER (automation, schedules, AI defaults, the preamble —
+ * every agent and chat on the server, owner-only); feedback; sign out last.
  */
 export default function ProfileScreen({ navigation }: Props) {
   const styles = useStyles()
@@ -64,6 +57,10 @@ export default function ProfileScreen({ navigation }: Props) {
   // because a switch showing "off" that never reached the server would be the
   // one lie this control must not tell.
   const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  // The account's server role (viewer/orglogic.HUMAN_ROLES). Only an owner may
+  // change the server-wide settings below; everyone else is told so up front
+  // instead of discovering it from a refusal.
+  const [role, setRole] = useState<string | undefined>(undefined)
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
   // The loop-firing mode — WHICH loop origins may run, independent of the master
@@ -144,6 +141,9 @@ export default function ProfileScreen({ navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       let alive = true
+      api.me()
+        .then((r) => alive && setRole(r.user?.role))
+        .catch(() => {})
       api.orgHarman()
         .then((h) => alive && setHarman(h))
         .catch(() => alive && setHarman(null))
@@ -185,7 +185,7 @@ export default function ProfileScreen({ navigation }: Props) {
         setHarman(res)
       }
     } catch (e) {
-      setAutoErr((e as Error).message || "Couldn't change it.")
+      setAutoErr(userError(e, "automation", "change"))
       setHarman(await api.orgHarman().catch(() => null))
     } finally {
       setAutoBusy(false)
@@ -201,7 +201,7 @@ export default function ProfileScreen({ navigation }: Props) {
       // a non-manager session is refused (403) and lands in catch, never queued.
       setLoop(await api.orgSetLoopControl(mode))
     } catch (e) {
-      setLoopErr((e as Error).message || "Couldn't change it.")
+      setLoopErr(userError(e, "schedules", "change"))
       setLoop(await api.orgLoopControl().catch(() => null))
     } finally {
       setLoopBusy(false)
@@ -224,7 +224,7 @@ export default function ProfileScreen({ navigation }: Props) {
         setPreMsg("Saved.")
       }
     } catch (e) {
-      setPreMsg((e as Error).message || "Couldn't save it.")
+      setPreMsg(userError(e, "the system preamble", "save"))
       setPreamble(await api.orgSystemPreamble().then((p) => p.preamble).catch(() => null))
     } finally {
       setPreBusy(false)
@@ -235,29 +235,18 @@ export default function ProfileScreen({ navigation }: Props) {
   // rendering that as "off" would tell you the machine is paused when that build
   // has no gate at all and is still firing scheduled jobs. Unknown says so.
   const autoKnown = harman ? typeof harman.automation_enabled === "boolean" : false
+  const automation = autoKnown ? harman!.automation_enabled : undefined
   const autoHint = autoErr
     ? autoErr
     : !harman
       ? "Can't reach the server — state unknown."
       : !autoKnown
         ? "This server is too old to have the switch — it still runs jobs on their own. Update it."
-        : harman.automation_enabled
-          ? "On — scheduled jobs and the autonomous manager can start work on their own."
-          : "Off — nothing runs unless you ask. Scheduled jobs and the manager are paused."
-
-  // The loop picker's own hint. Its meaning is independent of the master switch:
-  // "Yours" keeps the owner's schedules firing even while automation is paused.
-  const loopHint = loopErr
-    ? loopErr
-    : !loop
-      ? "Can't reach the server — loop state unknown."
-      : loop.mode === "none"
-        ? "Paused — no scheduled loops fire, yours or the agents'."
-        : loop.mode === "user"
-          ? "Only your own scheduled loops fire. Agent-created loops stay paused."
-          : loop.mode === "harman"
-            ? "Only agent-created loops fire. Your own scheduled loops stay paused."
-            : "Every scheduled loop fires — yours and the agents'."
+        : automation
+          ? "Agents may start work without you: their own schedules and the board manager."
+          : "Agents start nothing on their own. They work when you message them."
+  const flags = loop ? scheduleFlags(loop.mode) : null
+  const isOwner = role === "owner"
 
   const me = username()
   const build = Constants.ios?.buildNumber
@@ -273,7 +262,7 @@ export default function ProfileScreen({ navigation }: Props) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.spCardTitle} numberOfLines={1}>{me || "Signed in"}</Text>
-            <Text style={styles.spCardSummary}>Owner of this Harman server</Text>
+            <Text testID="profile-role" style={styles.spCardSummary}>{roleLabel(role)}</Text>
           </View>
         </View>
         <View style={styles.spCardBody}>
@@ -296,8 +285,12 @@ export default function ProfileScreen({ navigation }: Props) {
       <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />
       <HostPicker visible={hostOpen} onClose={() => setHostOpen(false)} navigation={navigation} />
 
-      <Card icon="sun" title="Appearance">
-        <View style={[styles.segRow, { marginTop: 12 }]} testID="theme-switch">
+      <Text style={styles.sheetSection}>THIS PHONE</Text>
+      <View style={styles.spCard}>
+        <View style={styles.ssRow}>
+          <Text style={[styles.ssRowLabel, { flex: 1 }]}>Theme</Text>
+        </View>
+        <View style={styles.segRow} testID="theme-switch">
           {THEME_OPTS.map((o) => {
             const on = pref === o.v
             return (
@@ -307,115 +300,87 @@ export default function ProfileScreen({ navigation }: Props) {
             )
           })}
         </View>
-      </Card>
-
-      <Card icon="mail" title="Notifications">
-        <View style={styles.ssRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.ssRowLabel}>Every reply</Text>
-            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>
-              {notify ? "A notification each time an agent finishes a turn." : "Only questions and approvals that need you."}
-            </Text>
-          </View>
+        <SettingRow
+          label="Notify on every reply"
+          hint={notify ? "A notification each time an agent finishes a turn." : "Only questions and approvals that need you."}
+        >
           <Switch testID="profile-notify" value={notify} onValueChange={toggleNotify} trackColor={{ true: t.accent, false: t.border }} />
-        </View>
-      </Card>
+        </SettingRow>
+        <View style={{ height: 12 }} />
+      </View>
 
-      <Card icon="megaphone" title="Feedback" summary="Agents read every note and turn it into work on the board.">
-        <TextInput
-          testID="feedback-input"
-          style={[styles.input, { marginHorizontal: 14, marginTop: 12, minHeight: 72, textAlignVertical: "top", fontSize: 14 }]}
-          value={feedback}
-          onChangeText={(v) => { setFeedback(v); if (feedbackSent) setFeedbackSent(false) }}
-          multiline
-          placeholder="What is confusing, slow, missing or never used?"
-          placeholderTextColor={t.textMuted}
-        />
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8 }}>
-          <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }]}>{feedbackSent ? "Sent — thank you." : ""}</Text>
-          <TouchableOpacity
-            testID="send-feedback"
-            style={[styles.button, { marginTop: 0, paddingVertical: 10, paddingHorizontal: 20, opacity: feedback.trim() ? 1 : 0.5 }]}
-            disabled={!feedback.trim()}
-            onPress={() => { recordFeedback("Profile", feedback.trim()); setFeedback(""); setFeedbackSent(true) }}
-          >
-            <Text style={styles.buttonText}>Send</Text>
-          </TouchableOpacity>
-        </View>
-      </Card>
-
-      <Text style={styles.sheetSection}>ADVANCED</Text>
-      <Card icon="flash" title="Automation">
-        <View style={styles.ssRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.ssRowLabel}>Run work on its own</Text>
-            <Text style={[styles.ssRowHint, { maxWidth: undefined }, autoErr || (harman && !autoKnown) ? { color: t.danger } : null]}>
-              {autoHint}
-            </Text>
-          </View>
+      <Text style={styles.sheetSection}>AGENTS ON THIS SERVER</Text>
+      <Text testID="server-scope-hint" style={styles.sheetHint}>
+        {isOwner
+          ? "These apply to every agent and chat on this server, from any device."
+          : "These apply to every agent and chat on this server. Only the owner can change them; a change you make is sent to them for approval or refused."}
+      </Text>
+      <Card icon="flash" title="Autonomy" summary={loop ? scheduleSummary(loop.mode, automation) : loopErr || "Loading…"} testID="profile-autonomy">
+        <SettingRow label="Let agents work on their own" hint={autoHint} danger={!!autoErr || (!!harman && !autoKnown)}>
           <Switch
             testID="profile-automation"
-            value={harman?.automation_enabled === true}
+            value={automation === true}
             disabled={!autoKnown || autoBusy}
             onValueChange={toggleAutomation}
             trackColor={{ true: t.accent, false: t.border }}
           />
-        </View>
-        <Text style={[styles.ssRowLabel, { paddingHorizontal: 18, marginTop: 14 }]}>Scheduled loops that may fire</Text>
-        <View style={styles.segRow} testID="loop-mode-switch">
-          {LOOP_OPTS.map((o) => {
-            const on = loop?.mode === o.v
-            return (
-              <TouchableOpacity
-                key={o.v}
-                testID={`loop-mode-${o.v}`}
-                style={[styles.seg, on ? styles.segActive : null]}
-                disabled={!loop || loopBusy}
-                onPress={() => chooseLoopMode(o.v)}
-              >
-                <Text style={[styles.segText, on ? styles.segTextActive : null]}>{o.label}</Text>
-              </TouchableOpacity>
-            )
-          })}
-        </View>
-        <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 6, maxWidth: undefined }, loopErr ? { color: t.danger } : null]}>
-          {loopHint}
-        </Text>
+        </SettingRow>
+        <SettingRow label="Your schedules" hint={flags?.mine ? "Recurring jobs you set on a chat fire on time." : "Recurring jobs you set on a chat stay paused."}>
+          <Switch
+            testID="schedules-mine"
+            value={flags?.mine === true}
+            disabled={!flags || loopBusy}
+            onValueChange={(v) => { if (flags) void chooseLoopMode(loopModeFor({ ...flags, mine: v })) }}
+            trackColor={{ true: t.accent, false: t.border }}
+          />
+        </SettingRow>
+        <SettingRow label="Agents' schedules" hint={loop ? agentScheduleHint(loop.mode, automation) : "Can't reach the server — state unknown."}>
+          <Switch
+            testID="schedules-agents"
+            value={flags?.agents === true}
+            disabled={!flags || loopBusy}
+            onValueChange={(v) => { if (flags) void chooseLoopMode(loopModeFor({ ...flags, agents: v })) }}
+            trackColor={{ true: t.accent, false: t.border }}
+          />
+        </SettingRow>
+        {loopErr ? <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 8, maxWidth: undefined, color: t.danger }]}>{loopErr}</Text> : null}
       </Card>
 
-      <Card icon="sparkle" title="AI">
+      <Card icon="sparkle" title="AI for new chats">
         <TouchableOpacity testID="profile-ai-defaults" style={styles.profileInfoRow} disabled={!aiConfig?.capabilities.editable} onPress={() => setAIOpen(true)}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.ssRowLabel}>New-chat defaults</Text>
-            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErr || "Loading…"}</Text>
-            {aiConfig?.issue ? <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{aiConfig.issue}</Text> : null}
-            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>Existing chats are unchanged.</Text>
+            <Text style={styles.ssRowLabel}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErr || "Loading…"}</Text>
+            <Text style={[styles.ssRowHint, { maxWidth: undefined }, aiConfig?.issue ? { color: t.danger } : null]}>
+              {aiConfig?.issue || "What every new chat starts with. Existing chats keep their own."}
+            </Text>
           </View>
           <Icon name="chevronRight" size={18} color={t.textMuted} />
         </TouchableOpacity>
         <TouchableOpacity testID="open-providers" style={styles.profileInfoRow} onPress={() => navigation.navigate("Providers")}>
-          <Text style={[styles.ssRowLabel, { flex: 1 }]}>Provider connections</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.ssRowLabel}>Model providers</Text>
+            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>Add or edit the endpoints and keys chats can use.</Text>
+          </View>
           <Icon name="chevronRight" size={18} color={t.textMuted} />
         </TouchableOpacity>
       </Card>
-      {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="New-chat defaults" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
+      {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for new chats" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
 
       <Card
         icon="book"
         title="System preamble"
-        summary={preamble === null ? "Loading…" : preamble ? `${preamble.length} characters, sent to every new session` : "Off — sessions get no system text"}
+        summary={preamble === null ? "Loading…" : preamble ? `On — ${preamble.length.toLocaleString()} characters every agent reads first` : "Off — agents get no shared instructions"}
         open={preOpen}
         onToggle={() => setPreOpen((v) => !v)}
         testID="toggle-preamble"
       >
-        <Text style={[styles.ssRowHint, { paddingHorizontal: 14, marginTop: 10, maxWidth: undefined }]}>
-          Prepended to every session's system prompt, so each one knows it is a node in the
-          system and how its tools are gated. Empty disables it. Applies to sessions started
-          after you save.
+        <Text style={[styles.ssRowHint, { paddingHorizontal: 14, marginTop: 4, maxWidth: undefined }]}>
+          Shared instructions put at the top of every agent's prompt: how Harman works and how its
+          tools are gated. Empty turns it off. Chats started after you save get the new text.
         </Text>
         <TextInput
           testID="system-preamble"
-          style={[styles.input, { marginHorizontal: 14, marginTop: 8, minHeight: 140, textAlignVertical: "top", fontSize: 13 }]}
+          style={[styles.input, { marginHorizontal: 14, marginTop: 8, minHeight: 140, maxHeight: 320, textAlignVertical: "top", fontSize: 13 }]}
           value={draft}
           editable={preamble !== null && !preBusy}
           onChangeText={(v) => {
@@ -425,13 +390,18 @@ export default function ProfileScreen({ navigation }: Props) {
           multiline
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder={preamble === null ? "Loading…" : "No preamble — sessions get no system-awareness text."}
+          placeholder={preamble === null ? "Loading…" : "No preamble — agents get no shared instructions."}
           placeholderTextColor={t.textMuted}
         />
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8, gap: 12 }}>
           <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }, preMsg && preMsg !== "Saved." ? { color: t.danger } : null]}>
             {preMsg}
           </Text>
+          {draft !== preamble && preamble !== null ? (
+            <TouchableOpacity testID="revert-preamble" disabled={preBusy} onPress={() => { setDraft(preamble); setPreMsg("") }}>
+              <Text style={{ color: t.textMuted, fontSize: 14, fontWeight: "600" }}>Revert</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             testID="save-preamble"
             style={[styles.button, { marginTop: 0, paddingVertical: 10, paddingHorizontal: 20, opacity: preamble === null || preBusy || draft === preamble ? 0.5 : 1 }]}
@@ -442,6 +412,32 @@ export default function ProfileScreen({ navigation }: Props) {
           </TouchableOpacity>
         </View>
       </Card>
+
+      <Text style={styles.sheetSection}>FEEDBACK</Text>
+      <View style={[styles.spCard, { paddingBottom: 12 }]}>
+        <TextInput
+          testID="feedback-input"
+          style={[styles.input, { marginHorizontal: 14, marginTop: 12, minHeight: 72, textAlignVertical: "top", fontSize: 14 }]}
+          value={feedback}
+          onChangeText={(v) => { setFeedback(v); if (feedbackSent) setFeedbackSent(false) }}
+          multiline
+          placeholder="What's confusing, slow, missing or never used?"
+          placeholderTextColor={t.textMuted}
+        />
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8, gap: 12 }}>
+          <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }]}>
+            {feedbackSent ? "Sent — thank you." : "Saved on the server, where the agents improving Harman read it."}
+          </Text>
+          <TouchableOpacity
+            testID="send-feedback"
+            style={[styles.button, { marginTop: 0, paddingVertical: 10, paddingHorizontal: 20, opacity: feedback.trim() ? 1 : 0.5 }]}
+            disabled={!feedback.trim()}
+            onPress={() => { recordFeedback("Profile", feedback.trim()); setFeedback(""); setFeedbackSent(true) }}
+          >
+            <Text style={styles.buttonText}>Send</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Outlined, not a filled red slab: the least-used action must not be the
           loudest thing on the screen. The confirm guards the stray tap. */}
@@ -470,7 +466,7 @@ function Card({ icon, title, summary, open = true, onToggle, testID, children }:
       <View style={styles.spCardIcon}><Icon name={icon} size={16} color={t.accent} /></View>
       <View style={{ flex: 1 }}>
         <Text style={styles.spCardTitle}>{title}</Text>
-        {summary ? <Text style={styles.spCardSummary}>{summary}</Text> : null}
+        {summary ? <Text testID={testID ? `${testID}-summary` : undefined} style={styles.spCardSummary}>{summary}</Text> : null}
       </View>
       {onToggle ? <Icon name={open ? "chevronDown" : "chevronRight"} size={18} color={t.textMuted} /> : null}
     </>
@@ -481,6 +477,21 @@ function Card({ icon, title, summary, open = true, onToggle, testID, children }:
         ? <TouchableOpacity testID={testID} activeOpacity={0.7} style={styles.spCardHead} onPress={onToggle}>{head}</TouchableOpacity>
         : <View style={[styles.spCardHead, { paddingBottom: 0 }]}>{head}</View>}
       {open ? <View style={{ paddingBottom: 14 }}>{children}</View> : null}
+    </View>
+  )
+}
+
+/** One label + hint + control row inside a settings card. */
+function SettingRow({ label, hint, danger, children }: { label: string; hint: string; danger?: boolean; children: ReactNode }) {
+  const styles = useStyles()
+  const t = useTheme()
+  return (
+    <View style={styles.ssRow}>
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text style={styles.ssRowLabel}>{label}</Text>
+        <Text style={[styles.ssRowHint, { maxWidth: undefined }, danger ? { color: t.danger } : null]}>{hint}</Text>
+      </View>
+      {children}
     </View>
   )
 }

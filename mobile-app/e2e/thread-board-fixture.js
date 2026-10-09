@@ -156,6 +156,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
   // open / effective_status. One chat (SESSION) has an open question waiting on
   // the owner; the other (BOARD_SESSION_B) has an unread free message.
   const inboxRows = inbox ? clone(INBOX) : []
+  let loopMode = "none" // viewer/loops: POST applies and echoes the mode
   const waiting = m => m.recipient_type === "user" && m.effective_status === "sent" && m.open !== false
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1")
@@ -175,7 +176,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     } catch { return send({ error: "Invalid JSON" }, 400) }
     if (route === "GET /api/auth/state") return send({ signupOpen: false, user: null })
     if (route === "POST /api/auth/signin") return send({ user: { id: 1, username: "fixture" }, token: "local-fixture-only" })
-    if (route === "GET /api/auth/me") return send({ user: { id: 1, username: "fixture" } })
+    if (route === "GET /api/auth/me") return send({ user: { id: 1, username: "fixture", role: "owner" } })
     if (route === "POST /api/session/seen" || route === "POST /api/push/register") return send({ ok: true })
 
     if (ai && ["/api/ai/defaults", "/api/session/ai"].includes(url.pathname)) {
@@ -340,6 +341,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     }
     // Usage telemetry (src/lib/usage.ts) is the owner's own screen-open counter, not a mutation.
     if (route === "POST /api/usage") return send({ ok: true })
+    if (route === "POST /api/org/loop-control") { loopMode = body.mode; return send({ mode: loopMode }) }
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
     if (url.pathname === "/api/org/skills") return send({ skills: [] })
@@ -360,7 +362,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     if (url.pathname === "/api/chat/status") return send({ running: false, pending_approvals: [] })
     if (url.pathname === "/api/resolve" && ai) return send({ found: true, path: `/fixture/${NEW_SESSION}.jsonl` })
     if (url.pathname === "/api/org/harman") return send({ enabled: false, automation_enabled: false, projects: [] })
-    if (url.pathname === "/api/org/loop-control") return send({ mode: "none" })
+    if (url.pathname === "/api/org/loop-control") return send({ mode: loopMode })
     if (url.pathname === "/api/org/system-preamble") return send({ preamble: "Isolated native fixture" })
     if (boardIsolation && ["/api/org/board", "/api/org/cards"].includes(url.pathname)) {
       const session = url.searchParams.get("session"), project = url.searchParams.get("project"), assignee = url.searchParams.get("assignee")
