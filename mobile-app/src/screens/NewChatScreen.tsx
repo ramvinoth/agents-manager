@@ -158,10 +158,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const extras = [title.trim() && "name", sendJobs.length && `${sendJobs.length} job${sendJobs.length > 1 ? "s" : ""}`,
     systemPrompt.trim() && "instructions", goal.trim() && "goal"].filter(Boolean).join(" · ")
 
-  const card = { backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, marginTop: 12, overflow: "hidden" as const }
-  const row = { paddingHorizontal: 14, paddingVertical: 10 }
-  const divider = <View style={{ height: 1, backgroundColor: t.border, marginHorizontal: 14 }} />
-  const rowLabel = (text: string) => <Text style={{ fontSize: 12, color: t.textMuted, marginBottom: 6 }}>{text}</Text>
+  const divider = <View style={styles.ncDivider} />
+  const rowLabel = (text: string) => <Text style={styles.ncLabel}>{text}</Text>
   const mode_ = modeOf(mode)
 
   return (
@@ -171,35 +169,35 @@ export default function NewChatScreen({ navigation, route }: Props) {
       keyboardVerticalOffset={headerHeight}
     >
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 }}
+        style={styles.flex1}
+        contentContainerStyle={styles.ncScroll}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
         {template ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 12, marginTop: 4, borderRadius: 12, borderWidth: 1, borderColor: catColor + "25", backgroundColor: catColor + "0C" }}>
-            <View style={{ width: 34, height: 34, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: catColor + "1A" }}>
+          <View style={[styles.ncTemplate, { borderColor: catColor + "25", backgroundColor: catColor + "0C" }]}>
+            <View style={[styles.ncTemplateIcon, { backgroundColor: catColor + "1A" }]}>
               <Icon name={iconName} size={17} color={catColor} />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 15, fontWeight: "700", color: t.text }}>{template.name}</Text>
+            <View style={styles.flex1}>
+              <Text style={styles.ncTemplateName}>{template.name}</Text>
               {template.description ? (
-                <Text style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 16 }} numberOfLines={2}>{template.description}</Text>
+                <Text style={styles.ncTemplateDesc} numberOfLines={2}>{template.description}</Text>
               ) : null}
             </View>
             <TouchableOpacity testID="newchat-clear-template" accessibilityLabel="Start without this agent" hitSlop={8} onPress={clearTemplate}
-              style={{ width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: t.chipBg }}>
+              style={styles.ncClose}>
               <Icon name="close" size={12} color={t.textMuted} />
             </TouchableOpacity>
           </View>
         ) : null}
 
         {/* The one required field. */}
-        <View style={card}>
+        <View style={styles.ncCard}>
           <TextInput
             testID="newchat-message"
             autoFocus
-            style={{ fontSize: 16, color: t.text, paddingHorizontal: 14, paddingTop: 14, paddingBottom: 14, minHeight: 110, maxHeight: 260, textAlignVertical: "top" }}
+            style={styles.ncMessage}
             placeholder={template ? `What should ${template.name} do?` : "What should the agent do?"}
             placeholderTextColor={t.textMuted + "80"}
             value={message}
@@ -209,8 +207,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
         </View>
 
         {/* Where it works, how much it may do on its own, which AI. */}
-        <View style={card}>
-          <View style={row}>
+        <View style={styles.ncCard}>
+          <View style={styles.ncRow}>
             {rowLabel("Folder")}
             {projects.length ? (
               <Dropdown
@@ -232,21 +230,21 @@ export default function NewChatScreen({ navigation, route }: Props) {
                 onChangeText={setCwd}
               />
             ) : null}
-            {!typing && cwd ? <Text style={{ fontSize: 11, color: t.textMuted, marginTop: 4 }} numberOfLines={1}>{cwd}</Text> : null}
-            {projectsError ? <Text style={{ fontSize: 11, color: t.textMuted, marginTop: 4 }}>{projectsError} Type a path instead.</Text> : null}
+            {!typing && cwd ? <Text style={styles.ncSmallHint} numberOfLines={1}>{cwd}</Text> : null}
+            {projectsError ? <Text style={styles.ncSmallHint}>{projectsError} Type a path instead.</Text> : null}
           </View>
           {divider}
-          <View style={row}>
+          <View style={styles.ncRow}>
             {rowLabel("Permissions")}
             <Dropdown testIDPrefix="newchat-mode" value={mode} options={MODES} onChange={setMode} />
-            <Text testID="newchat-mode-hint" style={{ fontSize: 11, marginTop: 4, color: mode === "bypassPermissions" ? t.danger : t.textMuted }}>{mode_.hint}</Text>
+            <Text testID="newchat-mode-hint" style={[styles.ncSmallHint, mode === "bypassPermissions" && styles.ncDanger]}>{mode_.hint}</Text>
           </View>
           {divider}
           <TouchableOpacity testID="newchat-ai-row" disabled={!aiConfig?.capabilities.editable || busy} onPress={() => setProviderPickerOpen(true)}
-            style={[row, { flexDirection: "row", alignItems: "center" }]}>
-            <View style={{ flex: 1 }}>
+            style={[styles.ncRow, styles.rowCenter]}>
+            <View style={styles.flex1}>
               {rowLabel("AI")}
-              <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={2}>{ai ? aiSummary(ai, providers) : aiErrorText || "Loading AI settings…"}</Text>
+              <Text style={styles.ncValue} numberOfLines={2}>{ai ? aiSummary(ai, providers) : aiErrorText || "Loading AI settings…"}</Text>
             </View>
             {aiConfig?.capabilities.editable ? <Icon name="chevronRight" size={14} color={t.textMuted} /> : null}
           </TouchableOpacity>
@@ -255,47 +253,47 @@ export default function NewChatScreen({ navigation, route }: Props) {
         </View>
 
         {/* Everything optional, collapsed until wanted; the summary says what is set. */}
-        <View style={card}>
-          <TouchableOpacity testID="newchat-more" style={[row, { flexDirection: "row", alignItems: "center", paddingVertical: 12 }]} onPress={() => setShowMore((v) => !v)}>
+        <View style={styles.ncCard}>
+          <TouchableOpacity testID="newchat-more" style={[styles.ncRow, styles.rowCenter, styles.ncMoreRow]} onPress={() => setShowMore((v) => !v)}>
             <Icon name={showMore ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
-            <Text style={{ fontSize: 14, fontWeight: "600", color: t.text, marginLeft: 8 }}>More options</Text>
-            <Text style={{ fontSize: 12, color: t.textMuted, marginLeft: 8, flex: 1 }} numberOfLines={1}>
+            <Text style={styles.ncMoreTitle}>More options</Text>
+            <Text style={styles.ncMoreSummary} numberOfLines={1}>
               {extras || "Name, jobs, instructions, goal"}
             </Text>
           </TouchableOpacity>
           {showMore ? (
             <>
               {divider}
-              <View style={row}>
+              <View style={styles.ncRow}>
                 {rowLabel("Chat name")}
                 <TextInput testID="newchat-title" style={[styles.input, { fontSize: 14 }]} placeholder="Optional — e.g. Refactor auth"
                   placeholderTextColor={t.textMuted + "80"} value={title} onChangeText={setTitle} />
               </View>
               {divider}
-              <View style={row}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={{ fontSize: 12, color: t.textMuted }}>Scheduled jobs</Text>
+              <View style={styles.ncRow}>
+                <View style={styles.ncSpread}>
+                  <Text style={styles.ncJobsLabel}>Scheduled jobs</Text>
                   {local && jobForm === -2 ? (
                     <TouchableOpacity testID="newchat-add-job" hitSlop={8} onPress={() => setJobForm(-1)}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: t.accent + "15" }}>
+                      style={styles.ncAddBtn}>
                       <Icon name="add" size={13} color={t.accent} />
-                      <Text style={{ fontSize: 11, fontWeight: "600", color: t.accent }}>Add</Text>
+                      <Text style={styles.ncAddText}>Add</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
                 {!local ? (
-                  <Text style={{ fontSize: 12, color: t.textMuted, marginTop: 6 }}>Jobs run on this machine's scheduler — start the chat here to add one.</Text>
+                  <Text style={styles.ncJobsHint}>Jobs run on this machine's scheduler — start the chat here to add one.</Text>
                 ) : !jobs.length && jobForm === -2 ? (
-                  <Text style={{ fontSize: 12, color: t.textMuted, marginTop: 6 }}>Have the agent come back on a schedule — e.g. a daily summary.</Text>
+                  <Text style={styles.ncJobsHint}>Have the agent come back on a schedule — e.g. a daily summary.</Text>
                 ) : null}
                 {sendJobs.map((job, i) => (
                   <View key={i}>
                     <TouchableOpacity testID={`newchat-job-${i}`} activeOpacity={0.65} onPress={() => setJobForm(jobForm === i ? -2 : i)}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 }}>
+                      style={styles.ncJob}>
                       <Icon name="repeat" size={15} color={t.accent} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, color: t.text }} numberOfLines={2}>{job.prompt}</Text>
-                        <Text style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }}>{describeSchedule(job)}</Text>
+                      <View style={styles.flex1}>
+                        <Text style={styles.ncJobPrompt} numberOfLines={2}>{job.prompt}</Text>
+                        <Text style={styles.ncJobWhen}>{describeSchedule(job)}</Text>
                       </View>
                       <TouchableOpacity testID={`newchat-remove-job-${i}`} accessibilityLabel="Remove job" hitSlop={8}
                         onPress={() => { setJobs((prev) => prev.filter((_, j) => j !== i)); setJobForm(-2) }}>
@@ -314,14 +312,14 @@ export default function NewChatScreen({ navigation, route }: Props) {
                 ) : null}
               </View>
               {divider}
-              <View style={row}>
+              <View style={styles.ncRow}>
                 {rowLabel("Instructions (system prompt)")}
                 <TextInput testID="newchat-system-prompt" style={[styles.input, { fontSize: 14, minHeight: 72, textAlignVertical: "top" }]}
                   placeholder="How the agent should behave in this chat" placeholderTextColor={t.textMuted + "80"} multiline
                   value={systemPrompt} onChangeText={setSystemPrompt} />
               </View>
               {divider}
-              <View style={row}>
+              <View style={styles.ncRow}>
                 {rowLabel("Goal")}
                 <TextInput testID="newchat-goal" style={[styles.input, { fontSize: 14 }]} placeholder="What counts as done — the agent checks it before stopping"
                   placeholderTextColor={t.textMuted + "80"} value={goal} onChangeText={setGoal} />
@@ -332,26 +330,26 @@ export default function NewChatScreen({ navigation, route }: Props) {
       </ScrollView>
 
       {/* Pinned above the keyboard: the error, why Start is off, and Start. */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 14, borderTopWidth: 1, borderTopColor: t.border, backgroundColor: t.bg }}>
+      <View style={styles.ncFooter}>
         {error ? (
-          <Text testID="newchat-error" style={{ fontSize: 13, color: t.danger, marginBottom: 8 }}>{error}</Text>
+          <Text testID="newchat-error" style={styles.ncError}>{error}</Text>
         ) : null}
         <TouchableOpacity
           testID="newchat-start"
-          style={{ backgroundColor: t.accent, borderRadius: 12, paddingVertical: 14, alignItems: "center", opacity: blocker || busy ? 0.45 : 1 }}
+          style={[styles.ncStart, (!!blocker || busy) && styles.ncStartOff]}
           onPress={start}
           disabled={!!blocker || busy}
         >
           {busy ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={styles.ncBusy}>
               <ActivityIndicator color={t.onAccent} size="small" />
-              <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "500" }}>Starting…</Text>
+              <Text style={styles.ncBusyText}>Starting…</Text>
             </View>
           ) : (
-            <Text style={{ color: t.onAccent, fontSize: 16, fontWeight: "600" }}>Start chat</Text>
+            <Text style={styles.ncStartText}>Start chat</Text>
           )}
         </TouchableOpacity>
-        <Text testID="newchat-start-hint" style={{ fontSize: 11, color: t.textMuted, textAlign: "center", marginTop: 6 }}>
+        <Text testID="newchat-start-hint" style={styles.ncStartHint}>
           {blocker || `Runs on ${local ? "this machine" : host} · ${mode_.label}`}
         </Text>
       </View>
