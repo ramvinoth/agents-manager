@@ -1,5 +1,11 @@
 /**
- * JobScheduler — the "new job" creation form.
+ * JobScheduler — the add/edit job form, presented as a bottom sheet.
+ *
+ * The form scrolls inside the sheet while Cancel / Add stay pinned in a footer
+ * below it, and SheetModal rides the whole sheet above the keyboard — so with
+ * the keyboard up every field is reachable by scrolling and the buttons are
+ * never hidden. Each opening remounts the form (a fresh `key`), which is how a
+ * new job starts blank and an edit starts from that job's saved values.
  *
  * Two scheduling modes, chosen by a segmented toggle (see interval.ts for why
  * the axes are separate):
@@ -13,11 +19,12 @@
  *     the device's UTC offset; the server stores it as a one-shot (kind "once")
  *     that fires once and then retires.
  *
- * On submit, calls onSubmit(prompt, { cron?, interval?, at? }) — the same
- * contract every consumer screen already relies on.
+ * On submit, calls onSubmit(prompt, { cron?, interval?, at?, provider? }); the
+ * caller closes the sheet.
  */
-import React, { useEffect, useState } from "react"
+import React, { useState } from "react"
 import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import SheetModal from "./SheetModal"
 import DateTimePicker from "@react-native-community/datetimepicker"
 import { type Provider } from "../api/client"
 import {
@@ -68,26 +75,41 @@ function initialOnce(v?: JobInitialValues): Date {
   return d
 }
 
-export default function JobScheduler({
-  onSubmit,
-  styles,
-  initialValues,
-  onCancel,
-  providers,
-}: {
+type FormProps = {
   onSubmit: (prompt: string, schedule: JobSchedule) => void
   styles: ReturnType<typeof import("../lib/styles").useStyles>
-  /** When set, pre-fills the form for editing. */
+  /** The job being edited; omit for a new job. */
   initialValues?: JobInitialValues
-  /** Called when the user cancels editing (only shown in edit mode). */
-  onCancel?: () => void
+  onClose: () => void
   /** Saved provider presets. When passed, a "Model provider" picker appears so a
    *  job can pin its runs to a specific endpoint; omit it to hide the picker (the
    *  job then inherits the session's own provider). */
   providers?: Provider[]
-}) {
+}
+
+export default function JobScheduler({ visible, ...form }: FormProps & { visible: boolean }) {
+  // A new key on every opening remounts the form, so it starts from
+  // initialValues (or blank) instead of whatever the last opening left behind.
+  // Counted during render (not in an effect) so the first frame of the slide-in
+  // already shows the fresh form.
+  const [openings, setOpenings] = useState(0)
+  const [wasVisible, setWasVisible] = useState(visible)
+  if (visible !== wasVisible) {
+    setWasVisible(visible)
+    if (visible) setOpenings((n) => n + 1)
+  }
+  return (
+    <SheetModal visible={visible} onClose={form.onClose}>
+      <JobForm key={openings} {...form} />
+    </SheetModal>
+  )
+}
+
+function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormProps) {
   const t = useTheme()
-  const isEdit = !!initialValues
+  // Fixed for this opening: the caller clears initialValues as the sheet slides
+  // out, and the title must not flip to "New job" mid-animation.
+  const [isEdit] = useState(!!initialValues)
 
   const [prompt, setPrompt] = useState(initialValues?.prompt ?? "")
   const [mode, setMode] = useState<Mode>(initialMode(initialValues))
@@ -117,25 +139,6 @@ export default function JobScheduler({
   // this stays "" (inherit).
   const [provider, setProvider] = useState(initialValues?.provider ?? "")
 
-  // Reset form when initialValues changes (e.g. tapping a different job to edit).
-  useEffect(() => {
-    if (!initialValues) return
-    setPrompt(initialValues.prompt)
-    setMode(initialMode(initialValues))
-    setOnce(initialOnce(initialValues))
-    const sp = initialValues.interval && !initialValues.cron ? splitInterval(initialValues.interval) : null
-    setAmount(sp ? String(sp.value) : "30")
-    setUnit(sp?.unit ?? "m")
-    const p = initialValues.cron ? parseCron(initialValues.cron) : null
-    setKind(p?.kind ?? "daily")
-    const d = new Date()
-    d.setHours(p?.hour ?? 9, p?.minute ?? 0, 0, 0)
-    setTime(d)
-    setDow(p?.dow ?? 1)
-    setDom(p?.dom ?? 1)
-    setProvider(initialValues.provider ?? "")
-  }, [initialValues?.prompt, initialValues?.cron, initialValues?.interval, initialValues?.provider, initialValues?.at, initialValues?.kind, initialValues?.nextRun]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // The schedule the current selection would produce — clamped, so the preview
   // is honest about the [30s, 24h] floor/ceiling the server enforces.
   const schedule: JobSchedule = {
@@ -151,20 +154,21 @@ export default function JobScheduler({
 
   function submit() {
     const p = prompt.trim()
-    if (!p) return
-    onSubmit(p, schedule)
-    if (!isEdit) {
-      setPrompt("")
-      setAmount("30")
-      setUnit("m")
-      setProvider("")
-    }
+    if (p) onSubmit(p, schedule)
   }
 
   const previewInterval = mode === "interval" ? (schedule.interval ?? 0) : 0
 
   return (
-    <View>
+    <View style={{ flexShrink: 1 }}>
+      <View style={styles.sheetGrabber} />
+      <Text style={styles.sheetTitle}>{isEdit ? "Edit job" : "New job"}</Text>
+      <ScrollView
+        style={{ flexShrink: 1 }}
+        contentContainerStyle={{ paddingTop: 10, paddingBottom: 8 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
       {/* Prompt */}
       <TextInput
         testID="job-prompt"
@@ -375,24 +379,24 @@ export default function JobScheduler({
         </>
       ) : null}
 
-      {/* Submit + Cancel */}
-      <View style={{ marginHorizontal: 18, marginTop: 12, flexDirection: "row", gap: 8 }}>
-        {isEdit && onCancel ? (
-          <TouchableOpacity
-            testID="job-cancel"
-            style={[styles.ssAddBtn, { flex: 1, backgroundColor: t.chipBg }]}
-            onPress={onCancel}
-          >
-            <Text style={[styles.ssAddBtnText, { color: t.text }]}>Cancel</Text>
-          </TouchableOpacity>
-        ) : null}
+      </ScrollView>
+
+      {/* Footer: outside the scroll, so it stays on screen above the keyboard. */}
+      <View style={{ marginHorizontal: 18, marginTop: 8, flexDirection: "row", gap: 8 }}>
+        <TouchableOpacity
+          testID="job-cancel"
+          style={[styles.ssAddBtn, { flex: 1, backgroundColor: t.chipBg }]}
+          onPress={onClose}
+        >
+          <Text style={[styles.ssAddBtnText, { color: t.text }]}>Cancel</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           testID="job-add"
           style={[styles.ssAddBtn, { flex: 1, opacity: prompt.trim() ? 1 : 0.5 }]}
           disabled={!prompt.trim()}
           onPress={submit}
         >
-          <Text style={styles.ssAddBtnText}>{isEdit ? "Update job" : "Add job"}</Text>
+          <Text style={styles.ssAddBtnText}>{isEdit ? "Save" : "Add job"}</Text>
         </TouchableOpacity>
       </View>
     </View>

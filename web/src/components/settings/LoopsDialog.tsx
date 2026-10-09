@@ -105,7 +105,7 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Loops</DialogTitle>
           <DialogDescription>Automatically re-run a prompt on a schedule for this session.</DialogDescription>

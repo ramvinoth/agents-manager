@@ -123,7 +123,7 @@ const MARKET_MCP = [
   { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
 ]
 
-async function startFixture({ ai = false, audit = false, integrations = false, inbox = false, market = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   // `reply` swaps the newest agent message, so a spec can render any markdown in a real bubble.
@@ -161,6 +161,9 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
   // the owner; the other (BOARD_SESSION_B) has an unread free message.
   const inboxRows = inbox ? clone(INBOX) : []
   let loopMode = "none" // viewer/loops: POST applies and echoes the mode
+  // Scheduled jobs (viewer/loops): create and edit are recorded and applied, so a
+  // spec can prove the job sheet sends exactly one write per Add / Save.
+  const jobRows = [], jobWrites = []
   const waiting = m => m.recipient_type === "user" && m.effective_status === "sent" && m.open !== false
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1")
@@ -341,6 +344,21 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     }
     // Usage telemetry (src/lib/usage.ts) is the owner's own screen-open counter, not a mutation.
     if (route === "POST /api/usage") return send({ ok: true })
+    if (jobs && route === "POST /api/loops") {
+      if (!body || !body.session || !body.prompt) return send({ error: "Invalid fixture job" }, 400)
+      jobWrites.push({ route, body: clone(body) })
+      const id = `job-${jobRows.length + 1}`
+      jobRows.push({ id, session: body.session, prompt: body.prompt, interval: body.interval, cron: body.cron, kind: body.at ? "once" : "", enabled: true, provider: body.provider || "" })
+      return send({ created: id })
+    }
+    if (jobs && route === "POST /api/loops/edit") {
+      const row = body && jobRows.find(j => j.id === body.id)
+      if (!row) return send({ error: "Unknown fixture job" }, 404)
+      jobWrites.push({ route, body: clone(body) })
+      Object.assign(row, body)
+      return send({ updated: row.id })
+    }
+    if (jobs && route === "GET /api/loops") return send(jobRows)
     if (route === "POST /api/org/loop-control") { loopMode = body.mode; return send({ mode: loopMode }) }
     // Connection editor (ProvidersScreen): draft discovery reports per-model windows;
     // a save is recorded and echoed the way viewer/providers.upsert_preset returns it.
@@ -453,7 +471,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
   })
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve) })
   return {
-    url: `http://127.0.0.1:${server.address().port}`, requests, forbidden, state, board, audit: auditScenario?.state,
+    url: `http://127.0.0.1:${server.address().port}`, requests, forbidden, state, board, jobWrites, audit: auditScenario?.state,
     close: () => new Promise(resolve => { holds.forEach(h => h.release(503)); server.close(resolve); server.closeIdleConnections() }),
   }
 }

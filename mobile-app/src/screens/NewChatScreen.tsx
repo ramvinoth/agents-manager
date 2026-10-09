@@ -287,7 +287,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
               <View style={styles.ncRow}>
                 <View style={styles.ncSpread}>
                   <Text style={styles.ncJobsLabel}>Scheduled jobs</Text>
-                  {local && jobForm === -2 ? (
+                  {local ? (
                     <TouchableOpacity testID="newchat-add-job" hitSlop={8} onPress={() => setJobForm(-1)}
                       style={styles.ncAddBtn}>
                       <Icon name="add" size={13} color={t.accent} />
@@ -297,12 +297,12 @@ export default function NewChatScreen({ navigation, route }: Props) {
                 </View>
                 {!local ? (
                   <Text style={styles.ncJobsHint}>Jobs run on this machine's scheduler — start the chat here to add one.</Text>
-                ) : !jobs.length && jobForm === -2 ? (
+                ) : !jobs.length ? (
                   <Text style={styles.ncJobsHint}>Have the agent come back on a schedule — e.g. a daily summary.</Text>
                 ) : null}
                 {sendJobs.map((job, i) => (
                   <View key={i}>
-                    <TouchableOpacity testID={`newchat-job-${i}`} activeOpacity={0.65} onPress={() => setJobForm(jobForm === i ? -2 : i)}
+                    <TouchableOpacity testID={`newchat-job-${i}`} activeOpacity={0.65} onPress={() => setJobForm(i)}
                       style={styles.ncJob}>
                       <Icon name="repeat" size={15} color={t.accent} />
                       <View style={styles.flex1}>
@@ -314,16 +314,19 @@ export default function NewChatScreen({ navigation, route }: Props) {
                         <Icon name="trash" size={14} color={t.danger} />
                       </TouchableOpacity>
                     </TouchableOpacity>
-                    {jobForm === i ? (
-                      <JobScheduler styles={styles} initialValues={job} onCancel={() => setJobForm(-2)}
-                        onSubmit={(prompt, schedule) => { setJobs((prev) => prev.map((j, k) => k === i ? { prompt, ...schedule } : j)); setJobForm(-2) }} />
-                    ) : null}
                   </View>
                 ))}
-                {jobForm === -1 ? (
-                  <JobScheduler styles={styles} onCancel={() => setJobForm(-2)}
-                    onSubmit={(prompt, schedule) => { setJobs((prev) => [...prev, { prompt, ...schedule }]); setJobForm(-2) }} />
-                ) : null}
+                <JobScheduler
+                  visible={jobForm !== -2}
+                  styles={styles}
+                  initialValues={jobForm >= 0 ? jobs[jobForm] : undefined}
+                  onClose={() => setJobForm(-2)}
+                  onSubmit={(prompt, schedule) => {
+                    const job = { prompt, ...schedule }
+                    setJobs((prev) => jobForm >= 0 ? prev.map((j, k) => k === jobForm ? job : j) : [...prev, job])
+                    setJobForm(-2)
+                  }}
+                />
               </View>
               {divider}
               <View style={styles.ncRow}>

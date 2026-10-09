@@ -254,6 +254,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       .then(() => api.loops(sessionId))
       .then((l) => Array.isArray(l) && setJobs(l))
       .catch(() => {})
+    setJobSheet(null)
   }
 
   function removeJob(id: string) {
@@ -267,7 +268,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           style: "destructive",
           onPress: () => {
             setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
-            if (editingJobId === id) setEditingJobId(null)
             api.loopsDelete(id).catch(() => {})
           },
         },
@@ -275,15 +275,17 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     )
   }
 
+  // The job sheet: null = closed, "new" = add, else the id of the job being edited.
+  const [jobSheet, setJobSheet] = useState<string | null>(null)
+  const editingJob = jobs.find((j) => j.id === jobSheet)
   // Edit: update the job via API, then refresh the list.
-  const [editingJobId, setEditingJobId] = useState<string | null>(null)
   function editJob(id: string, prompt: string, schedule: JobSchedule) {
     api
       .loopsEdit({ id, prompt, ...schedule })
       .then(() => sessionId ? api.loops(sessionId) : [])
       .then((l) => { if (Array.isArray(l)) setJobs(l) })
       .catch(() => {})
-    setEditingJobId(null)
+    setJobSheet(null)
   }
 
   // Pause/resume: flip the loop's enabled flag at once (optimistic + refresh),
@@ -605,9 +607,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           return (
           <View key={j.id}>
             <TouchableOpacity
-              style={[styles.ssJobRow, editingJobId === j.id ? { backgroundColor: t.accent + "10", borderRadius: 8 } : null]}
+              testID={`sp-job-${j.id}`}
+              style={styles.ssJobRow}
               activeOpacity={0.65}
-              onPress={() => setEditingJobId(editingJobId === j.id ? null : j.id)}
+              onPress={() => setJobSheet(j.id)}
             >
               <View style={{ flex: 1, opacity: paused ? 0.5 : 1 }}>
                 <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
@@ -634,19 +637,21 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
                 <Icon name="trash" size={15} color={t.danger} />
               </TouchableOpacity>
             </TouchableOpacity>
-            {editingJobId === j.id ? (
-              <JobScheduler
-                styles={styles}
-                providers={providers}
-                initialValues={{ prompt: j.prompt, cron: j.cron, interval: j.interval, kind: j.kind, nextRun: j.nextRun, provider: j.provider }}
-                onCancel={() => setEditingJobId(null)}
-                onSubmit={(prompt, schedule) => editJob(j.id, prompt, schedule)}
-              />
-            ) : null}
           </View>
           )
         })}
-        <JobScheduler onSubmit={addJob} styles={styles} providers={providers} />
+        <TouchableOpacity testID="sp-job-new" style={[styles.ssAddBtn, { marginHorizontal: 18, marginTop: 8 }]} onPress={() => setJobSheet("new")}>
+          <Text style={styles.ssAddBtnText}>Add job</Text>
+        </TouchableOpacity>
+        <JobScheduler
+          visible={jobSheet !== null}
+          styles={styles}
+          providers={providers}
+          initialValues={editingJob ? { prompt: editingJob.prompt, cron: editingJob.cron, interval: editingJob.interval, kind: editingJob.kind, nextRun: editingJob.nextRun, provider: editingJob.provider } : undefined}
+          onClose={() => setJobSheet(null)}
+          // A job deleted while its sheet was open is dropped, never re-created.
+          onSubmit={(prompt, schedule) => jobSheet === "new" ? addJob(prompt, schedule) : editingJob ? editJob(editingJob.id, prompt, schedule) : setJobSheet(null)}
+        />
       </>)}
 
       {/* ── PINNED messages (collapsed; only shown when present). ── */}

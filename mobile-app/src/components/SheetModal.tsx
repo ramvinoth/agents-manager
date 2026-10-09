@@ -55,9 +55,12 @@ export default function SheetModal({
             style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)", opacity: anim }]}
             pointerEvents="none"
           />
-          {/* Sheet: slides up; stop propagation so taps inside don't close. */}
-          <Animated.View style={{ transform: [{ translateY }] }}>
-            <Pressable accessible={false} style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          {/* Sheet: slides up; stop propagation so taps inside don't close. Capped
+              below the top of the space the keyboard leaves, and allowed to
+              shrink, so a tall sheet scrolls its body instead of running off
+              the top of the screen. */}
+          <Animated.View style={{ maxHeight: "92%", transform: [{ translateY }] }}>
+            <Pressable accessible={false} style={[styles.sheet, { flexShrink: 1 }]} onPress={(e) => e.stopPropagation()}>
               {children}
             </Pressable>
           </Animated.View>
