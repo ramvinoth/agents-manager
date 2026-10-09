@@ -142,7 +142,6 @@ export function useAssistantTurn(
         async (e) => {
           if (handled || !e.wake) return
           const cmd = parseBargeTail(e.text)
-          if (cmd.kind === "none") return // stray tail — keep speaking
           handled = true
           await stopSpeaking().catch(() => {}) // interrupt playback now
           await teardown()
