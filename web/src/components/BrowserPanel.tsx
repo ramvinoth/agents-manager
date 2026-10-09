@@ -387,7 +387,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
       </div>
 
       <Dialog open={mcpConfirm} onOpenChange={setMcpConfirm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Use this browser as an MCP server?</DialogTitle>
           </DialogHeader>

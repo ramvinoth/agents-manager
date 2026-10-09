@@ -44,11 +44,15 @@ const initialSelection = { provider: "", model: null, convMode: "agent", effort:
 function aiCapabilities(provider = "", host = "local", agent = "claude") {
   return { ...capabilities, editable: agent === "claude", customProviders: agent === "claude" && host === "local", conversationModes: provider ? ["agent", "chat"] : ["agent"], efforts: provider ? [""] : capabilities.efforts }
 }
+// Mirrors viewer/providers.model_rows: one row per known model with its effective window.
+function modelRow(id, discovered = 0, override = 0) {
+  return { id, contextWindow: override || discovered, source: override ? "override" : discovered ? "discovered" : "", discovered, override, maxOutput: 0 }
+}
 const providers = [
   { id: PROVIDER, name: "Fixture Alpha", model: "fixture-alpha-default" },
   { id: "fixture-beta", name: "Fixture Beta", model: "fixture-beta-default" },
   { id: "fixture-error", name: "Fixture Discovery Failure", model: "fixture-error-default" },
-].map(p => ({ ...p, baseUrl: "http://fixture.invalid/v1", hasKey: false, isDefault: false }))
+].map(p => ({ ...p, baseUrl: "http://fixture.invalid/v1", hasKey: false, isDefault: false, models: [modelRow(p.model)] }))
 const models = Array.from({ length: 140 }, (_, i) => `fixture/vendor/full-model-id-${String(i).padStart(3, "0")}`)
 function validSelection(s) {
   return s && Object.keys(s).sort().join() === "convMode,effort,model,provider" &&
@@ -142,7 +146,7 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
   const state = {
     defaults: { revision: 0, configured: false, selection: clone(initialSelection), capabilities },
     sessions: { [SESSION]: { revision: 0, selection: clone(initialSelection), capabilities } },
-    creations: [], failNextSave: false, discoveryFailure: true,
+    creations: [], failNextSave: false, discoveryFailure: true, providerSaves: [],
     permissionMode: "acceptEdits",
   }
   // Mirrors viewer/integrations.view(): one Google account with every service
@@ -196,10 +200,6 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
         if (defaults) target.configured = true
         return send(target)
       }
-    }
-    if (ai && route === "GET /api/session-detail") {
-      if (url.searchParams.get("id") !== SESSION) return send({ error: "Unknown fixture session" }, 404)
-      return send({ session: SESSION, meta: { permission_mode: state.permissionMode }, running: false })
     }
     if (ai && route === "POST /api/session/mode") {
       if (body.for_session !== SESSION || !["default", "acceptEdits", "plan", "bypass"].includes(body.mode) || Object.keys(body).sort().join() !== "for_session,mode") return send({ error: "Invalid permission policy" }, 400)
@@ -342,6 +342,22 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
     // Usage telemetry (src/lib/usage.ts) is the owner's own screen-open counter, not a mutation.
     if (route === "POST /api/usage") return send({ ok: true })
     if (route === "POST /api/org/loop-control") { loopMode = body.mode; return send({ mode: loopMode }) }
+    // Connection editor (ProvidersScreen): draft discovery reports per-model windows;
+    // a save is recorded and echoed the way viewer/providers.upsert_preset returns it.
+    if (ai && route === "POST /api/providers/models") {
+      if (!body || typeof body.baseUrl !== "string" || "apiKey" in body && body.apiKeyAction !== "replace") return send({ error: "Invalid fixture draft" }, 400)
+      const found = [["fixture-alpha-default", 131072], ["fixture-alpha-large", 262144], ["fixture-alpha-mystery", 0]]
+      return send({ models: found.map(f => f[0]), choices: found.map(([id, w]) => ({ id, label: id, contextWindow: w, maxOutput: 0 })), status: "ok", source: "endpoint", manualModelId: true })
+    }
+    if (ai && route === "POST /api/providers") {
+      const overrides = body && body.modelOverrides
+      if (!body || typeof body.model !== "string" || !body.model || "contextLimit" in body || !overrides || typeof overrides !== "object" ||
+          Object.values(overrides).some(n => !Number.isInteger(n) || n < 0)) return send({ error: "Invalid fixture connection" }, 400)
+      state.providerSaves.push(clone(body))
+      const prev = providers.find(p => p.id === body.id) || {}
+      return send({ ...prev, id: body.id || "fixture-new", name: body.name, baseUrl: body.baseUrl, model: body.model,
+        models: Object.entries(overrides).map(([id, n]) => modelRow(id, 0, n)) })
+    }
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
     if (url.pathname === "/api/org/skills") return send({ skills: [] })
@@ -356,7 +372,9 @@ async function startFixture({ ai = false, audit = false, integrations = false, i
       }
       return send({ lines: thread, start: 0, end: thread.length, size: thread.length })
     }
-    if (url.pathname === "/api/session-meta") return send({ pinned: [], cwd: "/fixture" })
+    // Mirrors viewer/routes/sessions._meta_doc: Trust reads its policy from here.
+    if (url.pathname === "/api/session-meta") return send({ session: (url.searchParams.get("session") || "").split("/").pop().replace(/\.jsonl$/, ""), pinned: [], cwd: "/fixture",
+      permission_mode: ai ? state.permissionMode : "", level: "", effective_level: "ic" })
     if (url.pathname === "/api/session-summary") return send({ models: [], messages: 20, toolCalls: 0 })
     if (url.pathname === "/api/git/status") return send({ repo: false })
     if (url.pathname === "/api/chat/status") return send({ running: false, pending_approvals: [] })

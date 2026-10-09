@@ -32,6 +32,8 @@ export type IconName =
   | "chevronDown"
   | "chevronRight"
   | "check"
+  | "radioOn"
+  | "radioOff"
   | "flash"
   | "clock"
   | "calendar"
@@ -106,6 +108,8 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   chevronDown: "chevron-down",
   chevronRight: "chevron-forward",
   check: "checkmark",
+  radioOn: "radio-button-on",
+  radioOff: "radio-button-off",
   flash: "flash-outline",
   clock: "time-outline",
   calendar: "calendar-outline",

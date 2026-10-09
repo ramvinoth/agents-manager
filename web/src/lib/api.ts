@@ -6,6 +6,7 @@ import type { NoteGraph } from "./noteLinks"
 import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
+import type { KeyAction } from "./providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
 
@@ -362,29 +363,30 @@ class ApiClient {
   providers() {
     return this.getJSON<{ providers: Provider[] }>("/api/providers")
   }
-  /** Create (omit id) or update a preset. apiKey omitted = keep existing;
-   *  contextLimit 0 = clear, omitted = keep. Returns the saved public preset. */
+  /** Create (omit id) or update a connection. apiKeyAction keep|replace|remove
+   *  (replace sends apiKey). modelOverrides is the full {model: tokens} map of
+   *  owner-set context windows; it replaces the previous one. */
   providerSave(body: {
     id?: string
     name: string
     baseUrl: string
     model: string
+    apiKeyAction: KeyAction
     apiKey?: string
-    contextLimit?: number
+    modelOverrides: Record<string, number>
   }) {
-    return this.postJSON<Provider & { error?: string }>("/api/providers", body)
+    return this.postStrict<Provider>("/api/providers", body)
   }
   providerDelete(id: string) {
     return this.postJSON<{ deleted?: boolean }>("/api/providers/delete", { id })
   }
-  /** List an endpoint's models — from a saved preset (id) or by probing a
-   *  baseUrl+key before saving. The key never leaves the server. */
-  providerModels(q: { id: string } | { baseUrl: string; key?: string }) {
-    const params: Record<string, string> =
-      "id" in q ? { id: q.id } : { baseUrl: q.baseUrl, ...(q.key ? { key: q.key } : {}) }
-    return this.getJSON<ModelDiscovery & { error?: string }>(
-      "/api/providers/models?" + new URLSearchParams(params).toString()
-    )
+  /** A saved connection's models (the server learns their limits). */
+  providerModels(q: { id: string }) {
+    return this.getJSON<ModelDiscovery & { error?: string }>("/api/providers/models?" + new URLSearchParams(q).toString())
+  }
+  /** Probe a draft connection. POST, so a typed key never lands in a URL. */
+  providerDraftModels(draft: { id?: string; baseUrl: string; apiKeyAction: KeyAction; apiKey?: string }) {
+    return this.postStrict<ModelDiscovery>("/api/providers/models", draft)
   }
 
   // ---- AI selection (server-owned; viewer/ai.py) ----

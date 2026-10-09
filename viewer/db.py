@@ -506,6 +506,15 @@ def init_db():
               is_default    BOOLEAN NOT NULL DEFAULT FALSE,
               created_at    DOUBLE PRECISION NOT NULL
             );
+            -- Per-model context facts for a connection: {model: {discovered?,
+            -- maxOutput?, override?}} (viewer.providers.model_rows reads it).
+            ALTER TABLE providers ADD COLUMN IF NOT EXISTS model_limits JSONB NOT NULL DEFAULT '{}'::jsonb;
+            -- Legacy: the old single per-connection context_limit seeds the
+            -- default model's override once (while model_limits is still empty).
+            -- It is not zeroed here so a server still running the old code keeps
+            -- working until its restart; every new-code write zeroes it instead.
+            UPDATE providers SET model_limits = jsonb_build_object(model, jsonb_build_object('override', context_limit))
+              WHERE context_limit > 0 AND model <> '' AND model_limits = '{}'::jsonb;
             -- Append-only history: one row per loop firing, for auditability.
             -- loop_id is SET NULL (not CASCADE) on delete so a run's audit trail
             -- OUTLIVES the schedule it came from — a deleted/edited loop must not
@@ -2694,12 +2703,12 @@ def host_env_unset_all(hid):
 
 
 # Provider presets ------------------------------------------------------------
-# Same {id: {name, baseUrl, model, apiKey, contextLimit, isDefault}} shape the
-# providers file held, so providers.py's public API is untouched.
+# {id: {name, baseUrl, model, apiKey, isDefault, modelLimits}};
+# modelLimits is JSONB, wrapped on write.
 _PROVIDER_COLS = (
     ("name", "name", ""), ("baseUrl", "base_url", ""), ("model", "model", ""),
-    ("apiKey", "api_key", ""), ("contextLimit", "context_limit", 0),
-    ("isDefault", "is_default", False),
+    ("apiKey", "api_key", ""), ("isDefault", "is_default", False),
+    ("modelLimits", "model_limits", {}),
 )
 
 
@@ -2714,7 +2723,8 @@ def providers_load():
 
 def provider_upsert(pid, rec, default_change=None):
     cols = [col for _, col, _ in _PROVIDER_COLS]
-    vals = [rec.get(jk, dflt) for jk, _, dflt in _PROVIDER_COLS]
+    vals = [Json(rec.get(jk) or {}) if jk == "modelLimits" else rec.get(jk, dflt)
+            for jk, _, dflt in _PROVIDER_COLS]
     setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
     with _db() as cur:
         # The old-client default flag is an adapter once canonical defaults exist.
@@ -2734,9 +2744,16 @@ def provider_upsert(pid, rec, default_change=None):
         cur.execute(
             f"INSERT INTO providers (id, {', '.join(cols)}, created_at) "
             f"VALUES (%s, {', '.join(['%s'] * len(cols))}, %s) "
-            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}, context_limit = 0",
             (pid, *vals, _now()),
         )
+
+
+def provider_limits_set(pid, limits):
+    """Replace only a connection's per-model facts (discovery cache), so a
+    concurrent edit of its name/key/default is never clobbered."""
+    with _db() as cur:
+        cur.execute("UPDATE providers SET model_limits = %s, context_limit = 0 WHERE id = %s", (Json(limits), pid))
 
 
 def provider_delete(pid):
@@ -3012,6 +3029,9 @@ def migrate_legacy_files():
     if data is not None:
         if _table_empty("providers"):
             for pid, rec in data.items():
+                limit = int(rec.pop("contextLimit", 0) or 0)
+                if limit and rec.get("model"):
+                    rec["modelLimits"] = {rec["model"]: {"override": limit}}
                 provider_upsert(pid, rec)
         _retire(p)
 

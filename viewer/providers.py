@@ -1,7 +1,11 @@
 """Custom LLM provider presets (OpenAI-compatible endpoints, e.g. a llama-swap box).
 
-A "provider" is a reusable, named connection to an OpenAI-compatible endpoint:
-{id, name, baseUrl, model} plus a secret apiKey. A chat session opts into one by
+A "provider" is a reusable, named CONNECTION to an OpenAI-compatible endpoint:
+{id, name, baseUrl, model (the connection's default model)} plus a secret apiKey.
+One connection serves every model its endpoint lists. A context window is a fact
+about a MODEL, so it lives per model in `modelLimits` ({model: {discovered,
+maxOutput, override}}): `discovered` is cached from the endpoint's /v1/models
+metadata, `override` is the owner's correction and wins. A chat session opts into one by
 storing the preset id in its session-meta ("provider"); the custom runner then
 proxies that session's turns to {baseUrl}/v1/chat/completions.
 
@@ -22,6 +26,35 @@ def valid_id(pid):
     return isinstance(pid, str) and len(pid) <= 128 and bool(_ID_RE.fullmatch(pid))
 
 
+def _limits(rec):
+    raw = rec.get("modelLimits")
+    return {m: v for m, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
+
+
+def context_window(rec, model):
+    """The real context window (tokens) of `model` on this connection: the owner's
+    override, else the endpoint's discovered value, else 0 (unknown)."""
+    facts = _limits(rec).get(model) or {}
+    return int(facts.get("override") or 0) or int(facts.get("discovered") or 0)
+
+
+def model_rows(rec):
+    """The connection's known models (its default first, then by id), each with
+    its effective window and where that number came from."""
+    limits = _limits(rec)
+    default = rec.get("model", "")
+    ids = sorted(set(limits) | ({default} if default else set()), key=lambda m: (m != default, m))
+    rows = []
+    for m in ids:
+        facts = limits.get(m, {})
+        override, discovered = int(facts.get("override") or 0), int(facts.get("discovered") or 0)
+        rows.append({"id": m, "contextWindow": override or discovered,
+                     "source": "override" if override else "discovered" if discovered else "",
+                     "discovered": discovered, "override": override,
+                     "maxOutput": int(facts.get("maxOutput") or 0)})
+    return rows
+
+
 def _public(pid, rec):
     """The safe view of a preset — everything EXCEPT the apiKey."""
     return {
@@ -29,9 +62,10 @@ def _public(pid, rec):
         "name": rec.get("name", ""),
         "baseUrl": rec.get("baseUrl", ""),
         "model": rec.get("model", ""),
-        # The endpoint's real context window (engine --max-model-len). Optional; 0
-        # means "unknown/unset" and no window is declared to Claude Code.
-        "contextLimit": int(rec.get("contextLimit") or 0),
+        "models": model_rows(rec),
+        # Legacy read field for clients that predate per-model limits: the
+        # default model's effective window.
+        "contextLimit": context_window(rec, rec.get("model", "")),
         # When True this provider is auto-selected for new sessions (falls back to
         # Built-in/Claude when no provider is marked default).
         "isDefault": bool(rec.get("isDefault")),
@@ -45,7 +79,7 @@ _OUTPUT_RESERVE = 32000
 _CONTEXT_SLACK = 2000
 
 
-def _declared_context(context_limit):
+def _declared_context(context_limit, output=_OUTPUT_RESERVE):
     """The window to DECLARE to Claude Code (CLAUDE_CODE_MAX_CONTEXT_TOKENS) for an
     endpoint whose real engine limit is `context_limit`. Pure + testable.
 
@@ -58,9 +92,9 @@ def _declared_context(context_limit):
     limit = int(context_limit or 0)
     if limit <= 0:
         return 0
-    declared = limit - _OUTPUT_RESERVE - _CONTEXT_SLACK
+    declared = limit - output - _CONTEXT_SLACK
     # Never go non-positive on a tiny/misconfigured limit; fall back to a safe floor.
-    return declared if declared > _OUTPUT_RESERVE else max(limit - _CONTEXT_SLACK, 1)
+    return declared if declared > output else max(limit - _CONTEXT_SLACK, 1)
 
 
 
@@ -119,19 +153,35 @@ def anthropic_env(pid, model=None, preset=None):
     # CLAUDE_CODE_MAX_CONTEXT_TOKENS "applies directly and proactive compaction
     # continues at the declared window". Without this the harness assumes the
     # endpoint's own limit and overshoots it by ~1 (input+output boundary). The
-    # window is a property of the model+provider, so it's derived from THIS preset's
-    # contextLimit — not a per-session or global setting.
-    declared = _declared_context(rec.get("contextLimit")) if selected_model == rec.get("model", "") else 0
+    # window is a property of the MODEL on this connection, so it is resolved for
+    # whichever model this run selected — not a per-session or global setting.
+    max_output = int((_limits(rec).get(selected_model) or {}).get("maxOutput") or 0)
+    output = min(_OUTPUT_RESERVE, max_output) if max_output else _OUTPUT_RESERVE
+    declared = _declared_context(context_window(rec, selected_model), output)
     if declared:
         env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(declared)
-        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(_OUTPUT_RESERVE)
+        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(output)
     return env
 
 
-def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, is_default=None):
+def _clean_overrides(overrides):
+    if not isinstance(overrides, dict):
+        raise ValueError("modelOverrides must map model ids to token counts")
+    out = {}
+    for m, n in overrides.items():
+        if not isinstance(m, str) or not m.strip() or len(m) > 256 or type(n) is not int or n < 0:
+            raise ValueError("Invalid model override")
+        out[m.strip()] = n
+    return out
+
+
+def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, is_default=None,
+                  model_overrides=None):
     """Create or update a preset. A blank id mints a new uuid4 id. When api_key is
-    None the existing key is preserved (edit without re-typing the secret). When
-    context_limit is None the existing value is preserved; pass 0 to clear it.
+    None the existing key is preserved (edit without re-typing the secret).
+    `model_overrides` ({model: tokens}, 0 clears) replaces the owner's context
+    overrides; discovered facts are kept. `context_limit` is the legacy single
+    field: it sets (0 clears) the DEFAULT model's override. None keeps either.
     When is_default is True, all OTHER presets are un-defaulted (at most one default).
     Returns the public view of the saved preset."""
     base_url = (base_url or "").strip().rstrip("/")
@@ -143,17 +193,32 @@ def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, 
     if not pid:
         pid = _uuid.uuid4().hex[:12]
     prev = get_preset(pid) or {}
+    model = (model or "").strip()
+    limits = {m: dict(v) for m, v in _limits(prev).items()}
+    # Discovered facts belong to the endpoint they came from.
+    if prev and base_url != (prev.get("baseUrl") or "").rstrip("/"):
+        limits = {m: {"override": v["override"]} for m, v in limits.items() if v.get("override")}
+    overrides = None
+    if model_overrides is not None:
+        overrides = _clean_overrides(model_overrides)
+        for facts in limits.values():
+            facts.pop("override", None)
+    if context_limit is not None and model:
+        overrides = {**(overrides or {}), model: max(0, int(context_limit))}
+    for m, n in (overrides or {}).items():
+        facts = limits.setdefault(m, {})
+        if n:
+            facts["override"] = n
+        else:
+            facts.pop("override", None)
     rec = {
         "name": (name or "").strip() or base_url,
         "baseUrl": base_url,
-        "model": (model or "").strip(),
+        "model": model,
         # Preserve the existing key when the caller didn't supply a new one.
         "apiKey": prev.get("apiKey", "") if api_key is None else str(api_key),
-        # Preserve the existing context limit when unspecified; a supplied value
-        # (including 0 to clear) wins.
-        "contextLimit": int(prev.get("contextLimit") or 0) if context_limit is None
-        else max(0, int(context_limit)),
         "isDefault": bool(prev.get("isDefault")) if is_default is None else bool(is_default),
+        "modelLimits": {m: v for m, v in limits.items() if v},
     }
     # provider_upsert clears every other preset's default in the same transaction
     # when this one is the default, so at most one default survives.
@@ -167,6 +232,26 @@ def upsert_preset(pid, name, base_url, model, api_key=None, context_limit=None, 
         public["isDefault"] = pid == defaults["selection"]["provider"]
     return public
 
+
+def remember_discovered(pid, facts):
+    """Cache what the endpoint itself reports ({model: {discovered, maxOutput}})
+    on a saved connection, so a launch can declare the window with no network
+    call. Owner overrides are untouched; models the endpoint stopped listing keep
+    only their override. Returns the updated record (None if unknown)."""
+    rec = get_preset(pid)
+    if not rec:
+        return None
+    limits = {}
+    for m, v in _limits(rec).items():
+        if v.get("override"):
+            limits[m] = {"override": v["override"]}
+    for m, f in facts.items():
+        merged = {**limits.get(m, {}), **{k: n for k, n in f.items() if n}}
+        if merged:
+            limits[m] = merged
+    if limits != _limits(rec):
+        db.provider_limits_set(pid, limits)
+    return {**rec, "modelLimits": limits}
 
 
 def delete_preset(pid):

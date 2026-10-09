@@ -73,7 +73,7 @@ function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => v
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{skill ? (readonly ? "View skill" : "Edit skill") : "New skill"}</DialogTitle>
         </DialogHeader>
@@ -173,7 +173,7 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{server ? (readonly ? "View MCP server" : "Edit MCP server") : "Add MCP server"}</DialogTitle>
         </DialogHeader>

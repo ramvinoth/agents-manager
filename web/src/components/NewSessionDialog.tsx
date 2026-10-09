@@ -147,7 +147,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
   return (
     <Dialog open={open} onOpenChange={(o) => !cloning && onOpenChange(o)}>
       <DialogContent
-        className="max-w-lg"
+        className="sm:max-w-lg"
         // This is a form with a typed draft: never dismiss on an outside click/focus
         // (that also keeps it open while the folder picker is layered above it).
         onInteractOutside={(e) => e.preventDefault()}

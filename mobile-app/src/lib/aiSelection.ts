@@ -3,7 +3,7 @@ export type AIModel = { kind: "default" } | { kind: "id"; id: string } | null
 export type AISelection = { provider: string; model: AIModel; convMode: "agent" | "chat"; effort: string }
 export type AICapabilities = { editable: boolean; customProviders: boolean; conversationModes: string[]; efforts: string[]; manualModelId: boolean }
 export type AIConfig = { revision: number; configured?: boolean; selection: AISelection; capabilities: AICapabilities; issue?: string }
-export type ModelDiscovery = { models: string[]; choices: { id: string; label: string }[]; status: "ok" | "empty" | "unsupported" | "error"; source: "endpoint" | "runner"; manualModelId: boolean; error?: string }
+export type ModelDiscovery = { models: string[]; choices: { id: string; label: string; contextWindow?: number; maxOutput?: number }[]; status: "ok" | "empty" | "unsupported" | "error"; source: "endpoint" | "runner"; manualModelId: boolean; error?: string }
 export type KeyAction = "keep" | "remove" | "replace"
 export type ConnectionDraft = { id?: string; baseUrl: string; apiKeyAction: KeyAction; apiKey?: string }
 

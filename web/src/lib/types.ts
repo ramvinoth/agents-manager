@@ -1,3 +1,4 @@
+import type { ModelRow } from "./providerModels"
 // Domain types shared across the app — ported from the vanilla SessionParser.
 
 export interface SessionListItem {
@@ -239,17 +240,19 @@ export interface SessionMeta {
 }
 
 /**
- * A saved custom LLM provider (OpenAI/Anthropic-compatible endpoint) from the
- * global library at /api/providers. `apiKey` is never returned by the server —
- * it's write-only. `contextLimit` is the endpoint's real max context in tokens
- * (0/undefined = unknown), used to declare the window to the agent harness.
+ * A saved model connection (OpenAI/Anthropic-compatible endpoint) from the
+ * global library at /api/providers. One connection serves many models; `model`
+ * is the default one. `models` carries each known model's context window
+ * (discovered from the endpoint or overridden by the owner). `apiKey` is
+ * write-only and never returned.
  */
 export interface Provider {
   id: string
   name: string
   baseUrl: string
   model: string
-  contextLimit?: number
+  models?: ModelRow[]
+  isDefault?: boolean
 }
 
 export interface GitRepo {

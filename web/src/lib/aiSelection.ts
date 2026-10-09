@@ -26,7 +26,8 @@ export type AIConfig = {
 }
 export type ModelDiscovery = {
   models: string[]
-  choices: { id: string; label: string }[]
+  /** Discovery reports each model's context window where the endpoint says it. */
+  choices: { id: string; label: string; contextWindow?: number; maxOutput?: number }[]
   status: "ok" | "empty" | "unsupported" | "error"
   source: "endpoint" | "runner"
   manualModelId: boolean

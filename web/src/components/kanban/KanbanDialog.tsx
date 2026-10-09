@@ -356,7 +356,7 @@ export function KanbanDialog({
 
       {confirm && (
         <Dialog open onOpenChange={(o) => !o && setConfirm(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>
                 {confirm.kind === "card"

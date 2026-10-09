@@ -64,7 +64,7 @@ export function SessionActions() {
       {isClaude ? <TrustDialog path={currentSessionPath} open={trustOpen} onOpenChange={setTrustOpen} /> : null}
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Rename session</DialogTitle>
           </DialogHeader>
@@ -97,7 +97,7 @@ export function SessionActions() {
       </Dialog>
 
       <Dialog open={delOpen} onOpenChange={setDelOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Delete session?</DialogTitle>
           </DialogHeader>

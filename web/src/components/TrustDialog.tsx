@@ -59,7 +59,7 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>Trust</DialogTitle></DialogHeader>
         <div className="space-y-4 text-sm">
           <section className="space-y-1.5">

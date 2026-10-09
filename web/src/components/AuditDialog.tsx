@@ -72,7 +72,7 @@ export function AuditDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[85vh] max-w-2xl flex-col gap-0 p-0">
+      <DialogContent className="flex h-[85vh] sm:max-w-2xl flex-col gap-0 p-0">
         <DialogHeader className="border-b border-border px-5 pt-5 pb-3">
           <DialogTitle>Activity</DialogTitle>
           <DialogDescription>Who did what, and when — every recorded board change, approval and denial across the org.</DialogDescription>

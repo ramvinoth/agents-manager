@@ -12,12 +12,20 @@ from viewer import providers
 from viewer.routes.providers import ProvidersMixin
 
 
-def test_override_model_does_not_reuse_preset_context(monkeypatch):
+def test_context_window_follows_the_selected_model(monkeypatch):
+    # The window is a fact of each MODEL on the connection, so a session that picks
+    # another model gets THAT model's window, never the default model's.
     monkeypatch.setattr(providers, "get_preset", lambda _: {
-        "baseUrl": "https://example.invalid", "model": "preset-model", "contextLimit": 242000})
+        "baseUrl": "https://example.invalid", "model": "preset-model",
+        "modelLimits": {"preset-model": {"override": 242000},
+                        "known": {"discovered": 128000, "maxOutput": 8000}}})
     env = providers.anthropic_env("p", model="other/full:model[1m]")
     assert env["ANTHROPIC_MODEL"] == "other/full:model[1m]"
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env
+    env = providers.anthropic_env("p", model="known")
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == str(128000 - 8000 - 2000)
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "8000"
+    assert providers.anthropic_env("p")["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == str(242000 - 32000 - 2000)
 
 
 def test_builtin_discovery_is_explicitly_unsupported():
@@ -254,10 +262,11 @@ def test_custom_first_launch_receives_exact_model_and_saved_config(monkeypatch, 
     assert preset["model"] == "preset-model"
 
 
-def test_legacy_get_draft_discovery_shape(monkeypatch):
+def test_get_discovery_never_takes_a_key_in_the_url(monkeypatch):
     handler = ProvidersMixin(); handler.send_json = Mock(); handler._discover_models = Mock()
     handler._g_providers_models(SimpleNamespace(query={"baseUrl": ["https://draft.invalid"], "key": ["draft-key"]}, principal={"user": {"id": 1}}))
-    handler._discover_models.assert_called_once_with("https://draft.invalid", "draft-key")
+    handler._discover_models.assert_not_called()
+    assert handler.send_json.call_args.args[0]["status"] == "unsupported"
 
 
 def test_legacy_web_provider_save_preserves_key_and_context(monkeypatch):
@@ -266,7 +275,7 @@ def test_legacy_web_provider_save_preserves_key_and_context(monkeypatch):
     handler = ProvidersMixin(); handler.send_json = Mock()
     handler.read_body = lambda: {"id": "p", "name": "old", "baseUrl": "https://old.invalid", "model": "m"}
     handler._p_providers(SimpleNamespace(principal={"user": {"id": 1}}))
-    assert save.call_args.args[4:] == ("keep", None, None)
+    assert save.call_args.args[4:] == ("keep", None, None, None)
 
 
 def test_full_model_id_reaches_cli_command():
@@ -289,7 +298,8 @@ def test_real_loop_launch_uses_provider_associated_model(monkeypatch, tmp_path, 
     monkeypatch.setattr(engine, "CLAUDE_DIR", root)
     monkeypatch.setattr(engine, "extract_cwd", lambda _: str(tmp_path))
     monkeypatch.setattr(db, "session_meta_get", lambda _: ai.meta_fields(choice("p", {"kind": "id", "id": "session-model"})))
-    monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "https://example.invalid", "model": pid + "-default", "contextLimit": 242000})
+    monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "https://example.invalid", "model": pid + "-default",
+        "modelLimits": {pid + "-default": {"override": 242000}}})
     launch = Mock(return_value=True); monkeypatch.setattr(engine, "start_claude_run", launch)
     assert engine.run_loop_iteration("s", "projects/s.jsonl", "hello", provider=override)
     env = launch.call_args.kwargs["provider_env"]

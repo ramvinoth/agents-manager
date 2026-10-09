@@ -93,7 +93,7 @@ export function HostDialog({ host, onClose }: { host: HostInfo | null; onClose: 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{editing ? "Edit host" : "Add remote host"}</DialogTitle>
           <DialogDescription>

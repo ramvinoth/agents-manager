@@ -10,6 +10,7 @@ import { normModel } from "../lib/model"
 import { isTransportError } from "../lib/errors"
 import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
+import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
 import type { UsageEvent } from "../lib/usage"
@@ -144,7 +145,9 @@ export type SessionMeta = { session?: string; goal?: string; systemPrompt?: stri
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
-export type Provider = { id: string; name: string; baseUrl: string; model: string; contextLimit?: number; isDefault?: boolean }
+// `models`: the connection's known models, each with its own context window
+// (owner override, else what the endpoint reports).
+export type Provider = { id: string; name: string; baseUrl: string; model: string; models?: ModelRow[]; isDefault?: boolean }
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
@@ -587,7 +590,7 @@ export const api = {
     req<AIConfig>("GET", `${scope.id ? "/api/session/ai" : "/api/ai/defaults"}?${new URLSearchParams({ host: scope.host, agent: scope.agent || "claude", ...(scope.id ? { id: scope.id } : {}), ...(selection ? { provider: selection.provider, convMode: selection.convMode } : {}) })}`),
   aiSave: (scope: { id?: string; host: string; agent?: string }, revision: number, selection: AISelection) =>
     req<AIConfig>("POST", scope.id ? "/api/session/ai" : "/api/ai/defaults", { ...scope, agent: scope.agent || "claude", revision, selection }),
-  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; apiKeyAction?: KeyAction; contextLimit?: number }) =>
+  providerSave: (body: { id?: string; name: string; baseUrl: string; model: string; apiKey?: string; apiKeyAction?: KeyAction; modelOverrides: Record<string, number> }) =>
     req<Provider & { error?: string }>("POST", "/api/providers", body),
   providerDelete: (id: string) => req<{ deleted?: boolean }>("POST", "/api/providers/delete", { id }),
   providerDefault: () => req<{ id: string }>("GET", "/api/providers/default"),

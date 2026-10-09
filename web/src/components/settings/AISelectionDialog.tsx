@@ -181,7 +181,7 @@ export function AISelectionDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && close()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{hint}</DialogDescription>

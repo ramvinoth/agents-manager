@@ -4,261 +4,274 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Provider } from "../api/client"
 import { aiError, connectionPayload, type KeyAction } from "../lib/aiSelection"
+import {
+  editRows, effectiveWindow, formatTokens, mergeDiscovered, overrideError, overridesPayload, sortRows,
+  SOURCE_LABEL, type EditRow,
+} from "../lib/providerModels"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Providers">
 
-type Draft = { id: string; name: string; baseUrl: string; apiKey: string; model: string; contextLimit: string; originalUrl: string; originalContext: string; apiKeyAction: KeyAction }
+/** The connection being edited: endpoint + key, and its model table (each model
+ *  has its own context window; the owner may override what the endpoint reports). */
+type Draft = { id: string; name: string; baseUrl: string; originalUrl: string; apiKey: string; apiKeyAction: KeyAction; model: string; rows: EditRow[] }
 
-/** Shared server connections. Selecting AI for a chat never edits these presets. */
-export default function ProvidersScreen({ navigation }: Props) {
+const KEY_LABEL: Record<KeyAction, string> = { keep: "Keep saved key", replace: "Set new key", remove: "No key" }
+
+function summary(p: Provider): string {
+  const rows = p.models || []
+  const def = rows.find(r => r.id === p.model)
+  const known = rows.filter(r => r.contextWindow).length
+  return `Default ${p.model || "—"} · ${def?.contextWindow ? `${formatTokens(def.contextWindow)} context` : "context unknown"}` +
+    (rows.length > 1 ? ` · ${rows.length} models, ${known} known` : "")
+}
+
+/** Shared server connections. Selecting AI for a chat never edits these. */
+export default function ProvidersScreen(_: Props) {
   const styles = useStyles()
   const t = useTheme()
 
   const [providers, setProviders] = useState<Provider[]>([])
-  const [editing, setEditing] = useState<Draft | null>(null) // null = list view; Draft = editor open
-  const [modelOptions, setModelOptions] = useState<string[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [savingProvider, setSavingProvider] = useState(false)
-  const [customModel, setCustomModel] = useState(false)
-
+  const [editing, setEditing] = useState<Draft | null>(null) // null = list view
+  const [discovering, setDiscovering] = useState(false)
+  const [discoveryNote, setDiscoveryNote] = useState("")
+  const [newModel, setNewModel] = useState("")
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [discoveryStatus, setDiscoveryStatus] = useState("")
   const generation = useRef(0)
   useEffect(() => () => { generation.current++ }, [])
-  useEffect(() => {
-    api.providers().then((r) => setProviders(r.providers || [])).catch(e => setError(aiError(e)))
-  }, [])
+  const load = () => api.providers().then(r => setProviders(r.providers || [])).catch(e => setError(aiError(e)))
+  useEffect(() => { load() }, [])
 
-  // Open the editor: blank for a new preset, or pre-filled to edit one. The apiKey
-  // is never returned by the server, so the field starts empty and an empty value
-  // on save means "keep the existing key".
   function openEditor(p?: Provider) {
-    generation.current++; setLoadingModels(false); setError(""); setDiscoveryStatus("")
-    setModelOptions([])
-    setCustomModel(false)
-    setEditing(
-      p
-        ? { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: "", model: p.model, contextLimit: p.contextLimit ? String(p.contextLimit) : "", originalContext: p.contextLimit ? String(p.contextLimit) : "", originalUrl: p.baseUrl, apiKeyAction: "keep" }
-        : { id: "", name: "", baseUrl: "", apiKey: "", model: "", contextLimit: "", originalContext: "", originalUrl: "", apiKeyAction: "remove" }
-    )
+    generation.current++; setDiscovering(false); setError(""); setDiscoveryNote(""); setNewModel("")
+    setEditing(p
+      ? { id: p.id, name: p.name, baseUrl: p.baseUrl, originalUrl: p.baseUrl, apiKey: "", apiKeyAction: "keep", model: p.model, rows: editRows(p.models) }
+      : { id: "", name: "", baseUrl: "", originalUrl: "", apiKey: "", apiKeyAction: "remove", model: "", rows: [] })
+  }
+  /** Endpoint or key changed: a discovery in flight answers for the old connection. */
+  function patchConnection(change: Partial<Draft>) {
+    generation.current++; setDiscovering(false); setDiscoveryNote("")
+    setEditing(e => e ? { ...e, ...change } : e)
+  }
+  function setRow(id: string, change: Partial<EditRow>) {
+    setEditing(e => e ? { ...e, rows: e.rows.map(r => r.id === id ? { ...r, ...change } : r) } : e)
   }
 
-  function changeDraft(change: Partial<Draft>) {
-    generation.current++; setLoadingModels(false); setModelOptions([]); setDiscoveryStatus("")
-    setEditing(e => e ? {...e, ...change} : e)
-  }
-  async function loadModels() {
-    if (!editing) return
+  let keyProblem = ""
+  if (editing) { try { connectionPayload(editing, editing.originalUrl) } catch (e) { keyProblem = aiError(e) } }
+  const badOverride = editing?.rows.some(r => overrideError(r.override))
+  const canSave = !!editing && !!editing.baseUrl.trim() && !!editing.model && !keyProblem && !badOverride && !saving
+
+  async function discover() {
+    if (!editing || keyProblem) return
     const request = ++generation.current
-    setLoadingModels(true); setError("")
+    setDiscovering(true); setDiscoveryNote("")
     try {
-      const result = await api.providerDraftModels(connectionPayload(editing, editing.originalUrl))
+      const r = await api.providerDraftModels(connectionPayload(editing, editing.originalUrl))
       if (request !== generation.current) return
-      if (!result.status) throw new Error("Server update required for draft model discovery.")
-      setModelOptions(result.models || [])
-      setDiscoveryStatus(result.status === "error" ? result.error || "Discovery failed" : result.status === "empty" ? "No models returned. Enter a model ID manually." : result.status === "unsupported" ? "Discovery unsupported. Enter a model ID manually." : "Models loaded from the draft endpoint.")
-      if (result.status !== "ok") setCustomModel(true)
-    } catch (e) { if (request === generation.current) { setError(aiError(e)); setCustomModel(true) } }
-    finally { if (request === generation.current) setLoadingModels(false) }
+      if (r.status === "ok") {
+        setEditing(d => d ? { ...d, rows: mergeDiscovered(d.rows, r.choices), model: d.model || r.choices[0]?.id || "" } : d)
+        const known = r.choices.filter(c => c.contextWindow).length
+        setDiscoveryNote(`${r.choices.length} model${r.choices.length === 1 ? "" : "s"} found` +
+          (known === r.choices.length ? "." : `; the endpoint reports a context window for ${known}. Set the rest yourself if you know them.`))
+      } else {
+        setDiscoveryNote(r.status === "error" ? r.error || "Discovery failed." : "The endpoint did not list any models. Add a model by its ID below.")
+      }
+    } catch (e) { if (request === generation.current) setDiscoveryNote(aiError(e)) }
+    finally { if (request === generation.current) setDiscovering(false) }
   }
-  async function saveProvider() {
-    if (!editing || savingProvider) return
-    setSavingProvider(true); setError("")
+  function addModel() {
+    const id = newModel.trim()
+    if (!editing || !id) return
+    setEditing(e => e && !e.rows.some(r => r.id === id)
+      ? { ...e, rows: [...e.rows, { id, discovered: 0, maxOutput: 0, override: "" }], model: e.model || id } : e)
+    setNewModel("")
+  }
+  function removeRow(id: string) {
+    setEditing(e => {
+      if (!e) return e
+      const rows = e.rows.filter(r => r.id !== id)
+      return { ...e, rows, model: e.model === id ? rows[0]?.id || "" : e.model }
+    })
+  }
+  async function save() {
+    if (!editing || !canSave) return
+    setSaving(true); setError("")
     try {
       const saved = await api.providerSave({
-        ...connectionPayload(editing, editing.originalUrl), name: editing.name.trim() || editing.baseUrl.trim(), model: editing.model.trim(),
-        ...(editing.contextLimit !== editing.originalContext ? {contextLimit: Number(editing.contextLimit) || 0} : {}),
+        ...connectionPayload(editing, editing.originalUrl), name: editing.name.trim() || editing.baseUrl.trim(),
+        model: editing.model, modelOverrides: overridesPayload(editing.rows),
       })
       if (saved.error || !saved.id) throw new Error(saved.error || "Server did not confirm the connection.")
-      setProviders(all => [...all.filter(p => p.id !== saved.id), saved].sort((a,b) => a.name.localeCompare(b.name)))
+      await load()
       generation.current++; setEditing(null)
-    } catch (e) { setError(aiError(e)) } finally { setSavingProvider(false) }
+    } catch (e) { setError(aiError(e)) } finally { setSaving(false) }
   }
   function cancel() {
-    if (savingProvider) return
-    Alert.alert("Discard connection changes?", "The saved connection is unchanged.", [{text: "Keep editing", style: "cancel"}, {text: "Discard changes", style: "destructive", onPress: () => { generation.current++; setEditing(null); setError("") }}])
+    if (saving) return
+    Alert.alert("Discard connection changes?", "The saved connection is unchanged.", [
+      { text: "Keep editing", style: "cancel" },
+      { text: "Discard changes", style: "destructive", onPress: () => { generation.current++; setEditing(null); setError("") } },
+    ])
   }
-  function deleteProvider(p: Provider) {
-    Alert.alert(p.name, "Delete this connection? Chats using it may become unavailable until you choose another provider.", [
-      {text: "Cancel", style: "cancel"}, {text: "Delete", style: "destructive", onPress: async () => {
+  function deleteConnection() {
+    if (!editing?.id) return
+    const id = editing.id
+    Alert.alert(editing.name, "Delete this connection? Chats using it need another provider.", [
+      { text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: async () => {
         setError("")
         try {
-          const result = await api.providerDelete(p.id)
-          if (!result.deleted) throw new Error("Server did not confirm deletion.")
-          setProviders(all => all.filter(x => x.id !== p.id))
-          if (editing?.id === p.id) { generation.current++; setEditing(null) }
+          if (!(await api.providerDelete(id)).deleted) throw new Error("Server did not confirm deletion.")
+          setProviders(all => all.filter(x => x.id !== id))
+          generation.current++; setEditing(null)
         } catch (e) { setError(aiError(e)) }
-      }},
+      } },
     ])
   }
 
-  return (
-    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+  const errorText = error ? <Text testID="provider-error" accessibilityRole="alert" style={[styles.sheetHint, { color: t.danger }]}>{error}</Text> : null
+
+  if (!editing) return (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }}>
       <Text style={styles.sheetHint}>
-        Providers route a session to your own model endpoint. Manage them here; pick one per chat in its
-        settings. Changing a preset default affects chats that use that default. Saving a connection does not change new-chat defaults.
+        A provider is a connection to a model server. It can serve many models, and each model has its own
+        context window. Chats pick a provider and model in their AI settings.
       </Text>
-
-      {error ? <Text testID="provider-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error}</Text> : null}
-
-      {/* Built-in (Claude) — the built-in login, not a stored provider. */}
+      {errorText}
       <Text style={styles.sheetSection}>BUILT-IN</Text>
-      <View style={styles.profileInfoRow}>
+      <View style={[styles.profileInfoRow, { justifyContent: "flex-start" }]}>
         <Icon name="sparkle" size={18} color={t.accent} />
-        <View style={{ flex: 1, marginLeft: 10 }}>
+        <View style={{ flex: 1 }}>
           <Text style={{ color: t.text, fontWeight: "600" }}>Built-in (Claude)</Text>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Uses the host’s runner configuration and authentication.</Text>
+          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Your Claude login. Always available.</Text>
         </View>
       </View>
-
-      {/* Custom providers — the editable library. */}
-      <Text style={styles.sheetSection}>PROVIDERS</Text>
-      {providers.length ? providers.map((p) => (
-        <View key={p.id} style={styles.profileInfoRow}>
+      <Text style={styles.sheetSection}>CONNECTIONS</Text>
+      {providers.length ? providers.map(p => (
+        <TouchableOpacity key={p.id} testID={`provider-edit-${p.id}`} style={[styles.profileInfoRow, { justifyContent: "flex-start" }]} onPress={() => openEditor(p)}>
           <Icon name="server" size={18} color={t.accent} />
-          <TouchableOpacity
-            testID={`provider-edit-${p.id}`}
-            style={{ flex: 1, marginLeft: 10 }}
-            onPress={() => openEditor(p)}
-          >
-            <Text style={{ color: t.text, fontWeight: "600" }}>
-              {p.name}
-            </Text>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{p.baseUrl}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity testID={`provider-delete-${p.id}`} onPress={() => deleteProvider(p)} hitSlop={8} style={{ marginRight: 6 }}>
-            <Icon name="trash" size={17} color={t.danger} />
-          </TouchableOpacity>
-          <TouchableOpacity testID={`provider-edit-chevron-${p.id}`} onPress={() => openEditor(p)} hitSlop={8}>
-            <Icon name="chevronRight" size={18} color={t.textMuted} />
-          </TouchableOpacity>
-        </View>
-      )) : (
-        <Text style={[styles.sheetHint, { fontStyle: "italic" }]}>No custom providers yet.</Text>
-      )}
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ color: t.text, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>{p.name}</Text>
+              {p.isDefault ? <Text style={{ color: t.accent, fontSize: 11, fontWeight: "600" }}>NEW-CHAT DEFAULT</Text> : null}
+            </View>
+            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1, fontFamily: "Menlo" }} numberOfLines={1}>{p.baseUrl}</Text>
+            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{summary(p)}</Text>
+          </View>
+          <Icon name="chevronRight" size={18} color={t.textMuted} />
+        </TouchableOpacity>
+      )) : <Text style={[styles.sheetHint, { fontStyle: "italic" }]}>No connections yet.</Text>}
+      <View style={{ marginHorizontal: 18, marginTop: 14 }}>
+        <TouchableOpacity testID="provider-add" style={styles.ssAddBtn} onPress={() => openEditor()}>
+          <Text style={styles.ssAddBtnText}>+ Add connection</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  )
 
-      {!editing ? (
-        <View style={{ flexDirection: "row", gap: 14, marginHorizontal: 18, marginTop: 14, flexWrap: "wrap" }}>
-          <TouchableOpacity testID="provider-add" style={styles.ssAddBtn} onPress={() => openEditor()}>
-            <Text style={styles.ssAddBtnText}>+ Add provider</Text>
-          </TouchableOpacity>
-
-        </View>
+  const rows = sortRows(editing.rows, editing.model)
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+      {errorText}
+      <Text style={styles.sheetSection}>{editing.id ? "CONNECTION" : "NEW CONNECTION"}</Text>
+      <TextInput testID="provider-name" style={styles.ssInput} value={editing.name}
+        onChangeText={name => setEditing(e => e ? { ...e, name } : e)}
+        placeholder="Name (e.g. Qwen on the GPU box)" placeholderTextColor={t.textMuted} />
+      <TextInput testID="provider-baseurl" style={styles.ssInput} value={editing.baseUrl}
+        onChangeText={baseUrl => patchConnection({ baseUrl })}
+        placeholder="Endpoint URL (https://inference.example.com)" placeholderTextColor={t.textMuted}
+        autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+      <View style={{ flexDirection: "row", marginHorizontal: 18, marginTop: 8, borderRadius: 10, borderWidth: 1, borderColor: t.border, overflow: "hidden" }} accessibilityRole="radiogroup">
+        {(["keep", "replace", "remove"] as KeyAction[]).filter(a => editing.id || a !== "keep").map(a => {
+          const on = editing.apiKeyAction === a
+          return (
+            <TouchableOpacity key={a} testID={`provider-key-${a}`} accessibilityRole="radio" accessibilityState={{ selected: on }}
+              onPress={() => patchConnection({ apiKeyAction: a })}
+              style={{ flex: 1, paddingVertical: 9, alignItems: "center", backgroundColor: on ? t.accent : "transparent" }}>
+              <Text style={{ fontSize: 13, fontWeight: "600", color: on ? "#fff" : t.textMuted }}>{KEY_LABEL[a]}</Text>
+            </TouchableOpacity>
+          )
+        })}
+      </View>
+      {editing.apiKeyAction === "replace" ? (
+        <TextInput testID="provider-key" style={styles.ssInput} value={editing.apiKey}
+          onChangeText={apiKey => patchConnection({ apiKey })}
+          placeholder="API key (sk-…)" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} secureTextEntry />
       ) : null}
+      <Text style={[styles.sheetHint, keyProblem ? { color: t.danger } : null]}>{keyProblem || "Stored on the server; never shown again."}</Text>
 
-      {/* Editor — create or edit one provider. */}
-      {editing ? (
-        <View style={{ paddingHorizontal: 18, gap: 8, marginTop: 16 }}>
-          <Text style={styles.sheetSection}>{editing.id ? "EDIT PROVIDER" : "NEW PROVIDER"}</Text>
-          <TextInput
-            testID="provider-name"
-            style={styles.ssInput}
-            value={editing.name}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, name: v } : e))}
-            placeholder="Name (e.g. Qwen 3.8-27B)"
-            placeholderTextColor={t.textMuted}
-          />
-          <TextInput
-            testID="provider-baseurl"
-            style={styles.ssInput}
-            value={editing.baseUrl}
-            onChangeText={(baseUrl) => changeDraft({baseUrl})}
-            placeholder="Base URL (https://inference.braintwin.ai)"
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-          />
-          <TextInput
-            testID="provider-key"
-            style={styles.ssInput}
-            value={editing.apiKey}
-            onChangeText={(apiKey) => changeDraft({apiKey, apiKeyAction: apiKey.trim() ? "replace" : editing.id ? "keep" : "remove"})}
-            placeholder={editing.id ? "API key (leave blank to keep current)" : "API key (sk-…, optional)"}
-            placeholderTextColor={t.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry
-          />
-          <View style={{flexDirection: "row", flexWrap: "wrap", gap: 12}}>
-            {(["keep", "remove", "replace"] as KeyAction[]).filter(action => editing.id || action !== "keep").map(action => <TouchableOpacity key={action} testID={`provider-key-${action}`} onPress={() => changeDraft({apiKeyAction: action})} style={{padding: 12}} accessibilityState={{selected: editing.apiKeyAction === action}}><Text style={{color: editing.apiKeyAction === action ? t.accent : t.textMuted}}>{action === "keep" ? "Keep saved key" : action === "remove" ? "Remove key" : "Replace key"}</Text></TouchableOpacity>)}
-          </View>
-          <Text testID="provider-discovery-status" style={styles.sheetHint}>{discoveryStatus}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <TouchableOpacity
-              testID="provider-load-models"
-              style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() ? 1 : 0.5 }]}
-              disabled={!editing.baseUrl.trim() || loadingModels}
-              onPress={loadModels}
-            >
-              <Text style={styles.ssAddBtnText}>{loadingModels ? "Loading…" : "Load models"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity testID="provider-model-custom" onPress={() => setCustomModel((c) => !c)}>
-              <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
-                {customModel ? "Pick from list" : "Enter manually"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          {customModel || (!modelOptions.length && !!editing.model) ? (
-            <TextInput
-              testID="provider-model-input"
-              style={styles.ssInput}
-              value={editing.model}
-              onChangeText={(v) => setEditing((e) => (e ? { ...e, model: v } : e))}
-              placeholder="Model name (e.g. qwen3.8-27b)"
-              placeholderTextColor={t.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          ) : modelOptions.length ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
-              {modelOptions.map((m) => {
-                const active = editing.model === m
-                return (
-                  <TouchableOpacity
-                    key={m}
-                    testID={`provider-model-${m}`}
-                    style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
-                    onPress={() => setEditing((e) => (e ? { ...e, model: m } : e))}
-                  >
-                    <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m}</Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </ScrollView>
-          ) : (
-            <Text style={styles.sheetHint}>Load models from the endpoint, or tap “Enter manually”.</Text>
-          )}
-          <TextInput
-            testID="provider-context-limit"
-            style={styles.ssInput}
-            value={editing.contextLimit}
-            onChangeText={(v) => setEditing((e) => (e ? { ...e, contextLimit: v.replace(/[^0-9]/g, "") } : e))}
-            placeholder="Context limit (tokens, e.g. 242000)"
-            placeholderTextColor={t.textMuted}
-            keyboardType="number-pad"
-          />
-          <Text style={styles.sheetHint}>
-            The endpoint&apos;s real max context. Lets the agent compact before overflowing it. Leave blank if unsure.
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16, paddingRight: 18 }}>
+        <Text style={[styles.sheetSection, { marginTop: 0 }]}>MODELS</Text>
+        <TouchableOpacity testID="provider-load-models" disabled={!editing.baseUrl.trim() || !!keyProblem || discovering} onPress={discover}
+          style={{ opacity: editing.baseUrl.trim() && !keyProblem ? 1 : 0.5 }}>
+          <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
+            {discovering ? "Discovering…" : editing.rows.some(r => r.discovered) ? "Refresh from endpoint" : "Discover models"}
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
-            <TouchableOpacity
-              testID="provider-save"
-              style={[styles.ssAddBtn, { opacity: editing.baseUrl.trim() && editing.model.trim() ? 1 : 0.5 }]}
-              disabled={!editing.baseUrl.trim() || !editing.model.trim() || savingProvider}
-              onPress={saveProvider}
-            >
-              <Text style={styles.ssAddBtnText}>{savingProvider ? "Saving…" : "Save"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity testID="provider-cancel" onPress={cancel} disabled={savingProvider}>
-              <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.sheetHint}>
+        Each model has its own context window; Harman compacts a chat before it overflows. Tap a model to make it the default. Leave the override blank to use what the endpoint reports.
+      </Text>
+      {discoveryNote ? <Text testID="provider-discovery-status" accessibilityRole="text" style={styles.sheetHint}>{discoveryNote}</Text> : null}
+
+      <View style={{ marginHorizontal: 18, marginTop: 8, borderRadius: 10, borderWidth: rows.length ? 1 : 0, borderColor: t.border }}>
+        {rows.map((r, i) => {
+          const isDefault = r.id === editing.model
+          const eff = effectiveWindow(r)
+          const bad = overrideError(r.override)
+          return (
+            <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: t.border }}>
+              <TouchableOpacity testID={`provider-model-${r.id}`} accessibilityRole="radio" accessibilityState={{ selected: isDefault }}
+                onPress={() => setEditing(e => e ? { ...e, model: r.id } : e)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }} hitSlop={4}>
+                <Icon name={isDefault ? "radioOn" : "radioOff"} size={18} color={isDefault ? t.accent : t.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: t.text, fontSize: 13, fontFamily: "Menlo" }} numberOfLines={1}>{r.id}</Text>
+                  <Text style={{ fontSize: 11, marginTop: 1, color: eff.source ? t.textMuted : t.warning }}>
+                    {formatTokens(eff.tokens)} · {SOURCE_LABEL[eff.source]}{isDefault ? " · default" : ""}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+              <TextInput testID={`provider-override-${r.id}`} value={r.override} onChangeText={override => setRow(r.id, { override })}
+                placeholder={r.discovered ? formatTokens(r.discovered) : "e.g. 128k"} placeholderTextColor={t.textMuted}
+                autoCapitalize="none" autoCorrect={false} accessibilityLabel={`Context override for ${r.id}`}
+                style={{ width: 78, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: bad ? t.danger : t.border, backgroundColor: t.inputBg, color: t.text, fontSize: 13, textAlign: "right" }} />
+              {!r.discovered ? (
+                <TouchableOpacity testID={`provider-remove-${r.id}`} onPress={() => removeRow(r.id)} hitSlop={8} accessibilityLabel={`Remove ${r.id}`}>
+                  <Icon name="close" size={16} color={t.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )
+        })}
+      </View>
+      {badOverride ? <Text style={[styles.sheetHint, { color: t.danger }]}>Use a token count like 128000, 128k or 1m.</Text> : null}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginRight: 18 }}>
+        <TextInput testID="provider-model-input" style={[styles.ssInput, { flex: 1 }]} value={newModel} onChangeText={setNewModel}
+          onSubmitEditing={addModel} returnKeyType="done" placeholder="Add a model by ID" placeholderTextColor={t.textMuted}
+          autoCapitalize="none" autoCorrect={false} />
+        <TouchableOpacity testID="provider-model-add" onPress={addModel} disabled={!newModel.trim()} style={{ marginTop: 8, opacity: newModel.trim() ? 1 : 0.5 }}>
+          <Text style={{ color: t.accent, fontSize: 14, fontWeight: "600" }}>Add</Text>
+        </TouchableOpacity>
+      </View>
+      {!editing.model ? <Text style={styles.sheetHint}>Discover models or add one by ID; the default is what new chats on this connection use.</Text> : null}
+
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 18, marginTop: 18 }}>
+        <TouchableOpacity testID="provider-save" style={[styles.ssAddBtn, { opacity: canSave ? 1 : 0.5 }]} disabled={!canSave} onPress={save}>
+          <Text style={styles.ssAddBtnText}>{saving ? "Saving…" : "Save"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity testID="provider-cancel" onPress={cancel} disabled={saving}>
+          <Text style={{ color: t.textMuted, fontSize: 14, fontWeight: "600" }}>Cancel</Text>
+        </TouchableOpacity>
+        <View style={{ flex: 1 }} />
+        {editing.id ? (
+          <TouchableOpacity testID={`provider-delete-${editing.id}`} onPress={deleteConnection} disabled={saving}>
+            <Text style={{ color: t.danger, fontSize: 14, fontWeight: "600" }}>Delete</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </ScrollView>
   )
 }

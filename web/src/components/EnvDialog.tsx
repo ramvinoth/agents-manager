@@ -70,7 +70,7 @@ export function EnvDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Environment · {label}</DialogTitle>
           <DialogDescription>
