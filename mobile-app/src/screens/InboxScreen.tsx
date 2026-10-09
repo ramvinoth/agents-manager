@@ -216,8 +216,8 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   }
 
   const errorBar = error ? (
-    <TouchableOpacity testID="inbox-error" onPress={() => void load()} style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-      <Text style={{ color: t.danger }}>{error} · Tap to try again</Text>
+    <TouchableOpacity testID="inbox-error" onPress={() => void load()} style={styles.ibRetry}>
+      <Text style={styles.ibRetryText}>{error} · Tap to try again</Text>
     </TouchableOpacity>
   ) : null
 
@@ -225,7 +225,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
 
   return session ? (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: t.thread }}
+      style={styles.ibThread}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
     >
@@ -252,23 +252,23 @@ export default function InboxScreen({ navigation, session, title, host, path, is
             <View
               testID={`inbox-msg-${m.id}`}
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
-                decision && m.open ? { borderLeftWidth: 3, borderLeftColor: t.accent } : null]}
+                decision && m.open ? styles.ibOpenDecision : null]}
             >
               {decision ? (
-                <Text style={{ color: m.open ? t.accent : t.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.4, marginBottom: 4 }}>
+                <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>
                   {kindLabel(m.kind).toUpperCase()}{badge ? ` · ${badge}` : ""}
                 </Text>
               ) : null}
               <Text style={styles.bubbleText} selectable>{m.body}</Text>
               {decision && m.open ? (
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <View style={styles.ibActions}>
                   <TouchableOpacity
                     testID={`inbox-decide-${m.id}`}
                     onPress={() => decide(m)}
-                    style={[styles.filterChip, { backgroundColor: t.accent }]}
+                    style={[styles.filterChip, styles.ibDecideChip]}
                     hitSlop={6}
                   >
-                    <Text style={{ color: t.onAccent, fontSize: 13, fontWeight: "700" }}>
+                    <Text style={styles.ibDecideText}>
                       Decide
                     </Text>
                   </TouchableOpacity>
@@ -276,10 +276,10 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                     <TouchableOpacity
                       testID={`inbox-snooze-${m.id}`}
                       onPress={() => setSnoozeFor(m.id)}
-                      style={[styles.filterChip, { backgroundColor: t.chipBg }]}
+                      style={[styles.filterChip, styles.ibLaterChip]}
                       hitSlop={6}
                     >
-                      <Text style={{ color: t.text, fontSize: 13 }}>Later</Text>
+                      <Text style={styles.ibLaterText}>Later</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -315,11 +315,11 @@ export default function InboxScreen({ navigation, session, title, host, path, is
         <Text style={styles.sheetTitle}>Not now — remind me in</Text>
         {SNOOZE_OPTIONS.map((o) => (
           <TouchableOpacity key={o.hours} testID={`snooze-${o.hours}`} onPress={() => void snooze(o.hours)}
-            style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
-            <Text style={{ color: t.text, fontSize: 16, fontWeight: "600" }}>{o.label}</Text>
+            style={styles.ibSheetRow}>
+            <Text style={styles.ibSheetRowText}>{o.label}</Text>
           </TouchableOpacity>
         ))}
-        <Text style={{ color: t.textMuted, fontSize: 13, paddingHorizontal: 18, paddingBottom: 8 }}>
+        <Text style={styles.ibSheetNote}>
           It comes back on its own when the time is up — nothing is dropped.
         </Text>
       </SheetModal>
@@ -380,12 +380,12 @@ function ConversationList({
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
       {errorBar}
-      <View style={{ paddingHorizontal: 12, paddingTop: 8, gap: 8 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: t.chipBg, borderRadius: 10, paddingHorizontal: 10 }}>
+      <View style={styles.ibHead}>
+        <View style={styles.ibSearch}>
           <Icon name="search" size={16} color={t.textMuted} />
           <TextInput
             testID="inbox-search"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 8, color: t.text, fontSize: 15 }}
+            style={styles.ibSearchInput}
             placeholder="Search"
             placeholderTextColor={t.textMuted}
             value={query}
@@ -393,7 +393,7 @@ function ConversationList({
             clearButtonMode="while-editing"
           />
         </View>
-        <View style={{ flexDirection: "row", gap: 6, paddingBottom: 4 }}>
+        <View style={styles.ibFilters}>
           {([false, true] as const).map((v) => (
             <TouchableOpacity
               key={String(v)}
@@ -412,13 +412,13 @@ function ConversationList({
           <TouchableOpacity
             testID="inbox-decide-all"
             onPress={onDecideAll}
-            style={{ flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: t.accent, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 4 }}
+            style={styles.ibDecideAll}
           >
             <Icon name="check" size={18} color={t.onAccent} />
-            <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "700", flex: 1 }}>
+            <Text style={[styles.ibDecideAllText, { flex: 1 }]}>
               {queueCount === 1 ? "1 decision waits on you" : `${queueCount} decisions wait on you`}
             </Text>
-            <Text style={{ color: t.onAccent, fontSize: 15, fontWeight: "700" }}>Decide ›</Text>
+            <Text style={styles.ibDecideAllText}>Decide ›</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -427,13 +427,13 @@ function ConversationList({
         data={shown}
         keyExtractor={(c) => c.session}
         ListEmptyComponent={
-          <View style={{ alignItems: "center", paddingTop: 60, paddingHorizontal: 32 }}>
+          <View style={styles.ibEmpty}>
             <Icon name="mail" size={36} color={t.textMuted} />
-            <Text style={{ color: t.text, fontWeight: "600", fontSize: 16, marginTop: 12 }}>
+            <Text style={styles.ibEmptyTitle}>
               {query ? "No matches" : needsOnly ? "Nothing waits on you" : "No conversations yet"}
             </Text>
             {!query && !needsOnly ? (
-              <Text style={{ color: t.textMuted, textAlign: "center", marginTop: 6 }}>
+              <Text style={styles.ibEmptyBody}>
                 When an agent asks you something or writes to you, the conversation shows up here. Tap + to message a chat.
               </Text>
             ) : null}
@@ -451,7 +451,7 @@ function ConversationList({
               <Avatar avatar={s?.avatar} seed={c.session} size={46} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.chatName, bold ? styles.chatNameUnread : null]} numberOfLines={1}>{c.name}</Text>
-                <Text style={[styles.chatSub, bold ? { color: t.text, fontWeight: "500" } : null]} numberOfLines={2}>
+                <Text style={[styles.chatSub, bold ? styles.ibSubUnread : null]} numberOfLines={2}>
                   {conversationPreview(c)}
                 </Text>
               </View>
@@ -460,12 +460,12 @@ function ConversationList({
                   {fmtWaiting(Math.max(0, Date.now() / 1000 - c.at))}
                 </Text>
                 {c.open > 0 ? (
-                  <View style={{ backgroundColor: t.accent, borderRadius: 9, paddingHorizontal: 7, paddingVertical: 2 }}>
-                    <Text style={{ color: t.onAccent, fontSize: 11, fontWeight: "700" }}>needs you</Text>
+                  <View style={styles.ibPill}>
+                    <Text style={styles.ibPillText}>needs you</Text>
                   </View>
                 ) : bold ? (
-                  <View style={{ backgroundColor: t.accent, borderRadius: 9, minWidth: 18, paddingHorizontal: 5, alignItems: "center" }}>
-                    <Text style={{ color: t.onAccent, fontSize: 11, fontWeight: "700" }}>{c.unread}</Text>
+                  <View style={styles.ibCountPill}>
+                    <Text style={styles.ibPillText}>{c.unread}</Text>
                   </View>
                 ) : null}
               </View>
@@ -476,7 +476,7 @@ function ConversationList({
       <SheetModal visible={composeOpen} onClose={() => setComposeOpen(false)}>
         <Text style={styles.sheetTitle}>New message to…</Text>
         <FlatList
-          style={{ maxHeight: 420 }}
+          style={styles.ibPicker}
           data={pickable}
           keyExtractor={(s) => s.id}
           ListEmptyComponent={<Text style={[styles.systemText, { padding: 18 }]}>No chats on this server yet.</Text>}
@@ -484,10 +484,10 @@ function ConversationList({
             <TouchableOpacity
               testID={`inbox-to-${s.id}`}
               onPress={() => { setComposeOpen(false); onOpen(s.id, s.title || s.id.slice(0, 8)) }}
-              style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingVertical: 10 }}
+              style={styles.ibPickRow}
             >
               <Avatar avatar={s.avatar} seed={s.id} size={34} />
-              <Text style={{ color: t.text, fontSize: 16, flex: 1 }} numberOfLines={1}>{s.title || s.id.slice(0, 8)}</Text>
+              <Text style={styles.ibPickName} numberOfLines={1}>{s.title || s.id.slice(0, 8)}</Text>
             </TouchableOpacity>
           )}
         />

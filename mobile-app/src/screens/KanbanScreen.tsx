@@ -11,6 +11,7 @@ import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
@@ -50,6 +51,7 @@ const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: 
  */
 export default function KanbanScreen({ route, navigation }: Props) {
   const t = useTheme()
+  const st = useStyles()
   const filter = boardScopeFilter(route.params)
   const key = JSON.stringify([route.key, filter])
   const scopeRef = useRef<Scope | null>(null)
@@ -165,12 +167,12 @@ export default function KanbanScreen({ route, navigation }: Props) {
   }
 
   if (!scope.filter) {
-    return <View testID="kanban-unavailable" style={{ flex: 1, backgroundColor: t.bg, padding: 16 }}><Text style={{ color: t.text }}>Open a board from a chat or project.</Text></View>
+    return <View testID="kanban-unavailable" style={st.screen}><Text style={st.kbCardTitle}>Open a board from a chat or project.</Text></View>
   }
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center" }}>
+      <View style={st.center}>
         <ActivityIndicator />
       </View>
     )
@@ -182,14 +184,14 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const grouped = groupByColumn(shown, columns)
 
   return (
-    <View testID="kanban-board" style={{ flex: 1, backgroundColor: t.bg }}>
+    <View testID="kanban-board" style={st.kbBoard}>
       {error ? (
-        <Text style={{ color: t.danger, padding: 12 }}>{error}</Text>
+        <Text style={st.kbError}>{error}</Text>
       ) : null}
       {decisions.length ? (
         <DecisionBand decisions={decisions} theme={t} onOpen={openCockpit} />
       ) : null}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginHorizontal: 10, marginTop: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: t.border, backgroundColor: t.surface }}>
+      <View style={st.kbFind}>
         <Icon name="search" size={14} color={t.textMuted} />
         <TextInput
           testID="kanban-find"
@@ -202,7 +204,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
           returnKeyType="go"
           // Go on a single hit opens it — "#107" + Go jumps straight to the card.
           onSubmitEditing={() => { if (shown.length === 1) navigation.navigate("CardDetail", { id: shown[0].id }) }}
-          style={{ flex: 1, color: t.text, fontSize: 14, paddingVertical: 8 }}
+          style={st.kbFindInput}
         />
         {query ? (
           <Pressable onPress={() => setQuery("")} hitSlop={8} testID="kanban-find-clear">
@@ -213,7 +215,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
       <ScrollView
         horizontal
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 10, gap: 10 }}
+        contentContainerStyle={st.kbLanes}
         showsHorizontalScrollIndicator={false}
         onLayout={(ev) => { if (isCurrent()) setViewportH(ev.nativeEvent.layout.height) }}
       >
@@ -225,11 +227,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
               const { x, width } = ev.nativeEvent.layout
               colBounds.current[column.id] = { x, w: width }
             }}
-            style={{ width: COL_W, maxHeight: viewportH ? viewportH - 20 : undefined, backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 8 }}
+            style={[st.kbColumn, { width: COL_W, maxHeight: viewportH ? viewportH - 20 : undefined }]}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <Text style={{ color: t.text, fontWeight: "700", fontSize: 14 }}>
-                {column.name} <Text style={{ color: t.textMuted, fontWeight: "500" }}>{colCards.length}</Text>
+            <View style={st.kbColumnHead}>
+              <Text style={st.kbColumnName}>
+                {column.name} <Text style={st.kbColumnCount}>{colCards.length}</Text>
               </Text>
               {column.id > 0 ? (
                 <TouchableOpacity testID={`kanban-add-${column.id}`} onPress={() => { if (isCurrent()) { scope.draft = { column: column.id, title: "" }; redrawDraft(n => n + 1) } }} hitSlop={8}>
@@ -241,7 +243,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
             {adding === column.id ? (
               <TextInput
                 testID="kanban-new-card"
-                style={{ backgroundColor: t.inputBg, color: t.text, borderRadius: 8, padding: 8, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
+                style={st.kbNewCard}
                 placeholder="Card title…"
                 placeholderTextColor={t.textMuted}
                 value={newTitle}
@@ -267,7 +269,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
                 />
               ))}
               {!colCards.length ? (
-                <Text style={{ color: t.textMuted, fontSize: 12, fontStyle: "italic", padding: 8 }}>No cards</Text>
+                <Text style={st.kbEmpty}>No cards</Text>
               ) : null}
             </GHScrollView>
           </View>
@@ -305,42 +307,34 @@ function DecisionBand({
   theme: ReturnType<typeof useTheme>
   onOpen: (index: number) => void
 }) {
+  const st = useStyles()
   return (
-    <View style={{ backgroundColor: t.surface, borderBottomWidth: 1, borderBottomColor: t.border, paddingHorizontal: 12, paddingVertical: 8, gap: 6 }}>
-      <Text style={{ color: t.text, fontWeight: "700", fontSize: 13 }}>
-        Decisions <Text style={{ color: t.accent, fontWeight: "700" }}>{decisions.length}</Text>
-        <Text style={{ color: t.textMuted, fontWeight: "400" }}> · tap to decide</Text>
+    <View style={st.kbBand}>
+      <Text style={st.kbBandTitle}>
+        Decisions <Text style={st.kbBandCount}>{decisions.length}</Text>
+        <Text style={st.kbBandHint}> · tap to decide</Text>
       </Text>
-      <ScrollView style={{ maxHeight: 140 }} contentContainerStyle={{ gap: 4 }}>
+      <ScrollView style={st.kbBandList} contentContainerStyle={st.kbBandListContent}>
         {decisions.map((d, i) => (
           <Pressable
             key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.run_id}`}
             testID={`decision-${d.kind}-${d.session}`}
             onPress={() => onOpen(i)}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              backgroundColor: t.bg,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: t.border,
-              padding: 8,
-            }}
+            style={st.kbBandRow}
           >
             <Icon name={DECISION_ICON[d.kind] || "help"} size={16} color={t.accent} />
             <View style={{ flex: 1 }}>
-              <Text style={{ color: t.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>
+              <Text style={st.kbBandRowTitle} numberOfLines={1}>
                 {d.kind === "card" ? d.summary : d.label || d.session.slice(0, 8)}
                 {d.host !== "local" ? ` · ${d.host}` : ""}
               </Text>
-              <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
+              <Text style={st.kbSmallMuted} numberOfLines={1}>
                 {d.kind === "card"
                   ? `${d.column} · ${d.label || "agent"} is waiting on you`
                   : d.summary || "waiting for a decision"}
               </Text>
             </View>
-            <Text style={{ color: t.textMuted, fontSize: 12, flexShrink: 0 }}>
+            <Text style={[st.kbSmallMuted, { flexShrink: 0 }]}>
               {fmtWaiting(d.waiting_s)}
             </Text>
           </Pressable>
@@ -374,6 +368,7 @@ const DraggableCard = React.memo(DraggableCardRow, (a, b) =>
   && a.onDrop === b.onDrop && a.onTap === b.onTap)
 
 function DraggableCardRow({ card, theme: t, commentCount, colBounds, columns, onDrop, onTap }: DraggableCardProps) {
+  const st = useStyles()
   const onDropColumn = (columnId: number) => onDrop(card, columnId)
   const tx = useSharedValue(0)
   const ty = useSharedValue(0)
@@ -420,16 +415,16 @@ function DraggableCardRow({ card, theme: t, commentCount, colBounds, columns, on
         <Pressable
           testID={`kanban-card-${card.id}`}
           onPress={() => onTap(card.id)}
-          style={{ backgroundColor: t.bubbleAgent, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: t.border }}
+          style={st.kbCard}
         >
-          <Text style={{ color: t.text, fontSize: 14 }} numberOfLines={3}>
-            <Text style={{ color: t.textMuted }}>#{card.id} </Text>{card.title}
+          <Text style={st.kbCardTitle} numberOfLines={3}>
+            <Text style={st.kbMuted}>#{card.id} </Text>{card.title}
           </Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <View style={st.kbCardMeta}>
             {commentCount ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+              <View style={st.kbCardStat}>
                 <Icon name="chat" size={12} color={t.textMuted} />
-                <Text style={{ color: t.textMuted, fontSize: 12 }}>{commentCount}</Text>
+                <Text style={st.kbSmallMuted}>{commentCount}</Text>
               </View>
             ) : null}
           </View>

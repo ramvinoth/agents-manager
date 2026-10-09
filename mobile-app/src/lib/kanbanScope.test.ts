@@ -48,7 +48,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     "react-native-gesture-handler": {}, "react-native-reanimated": {},
     "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
-    "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) },
+    "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
   }
   // The real cockpit host (its scope guard is under test here too), loaded
   // through the same transpile with the same stubs.
