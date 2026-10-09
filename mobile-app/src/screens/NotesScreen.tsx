@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -52,6 +52,8 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  // A failed export/create; kept apart from `error`, which the 8 s poll clears.
+  const [actionError, setActionError] = useState("")
   const [query, setQuery] = useState("")
   const [showArchived, setShowArchived] = useState(false)
   const [picking, setPicking] = useState(false)
@@ -79,7 +81,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
       reads.current.applied = request
       const e = err as Error & { status?: number }
       if (e.status === 401) { setToken(null); navigation.replace("Login"); return }
-      setError(e.message || "Could not load notes")
+      setError(userError(e, "your notes"))
     } finally {
       setLoading(false)
     }
@@ -112,13 +114,14 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   async function exportVault() {
     if (exporting) return
     setExporting(true)
+    setActionError("")
     const dest = FileSystem.cacheDirectory + "Harman notes.zip"
     try {
       const status = await api.orgNotesExport(scope?.project, dest)
-      if (status >= 400) throw new Error(`Export failed (HTTP ${status})`)
+      if (status >= 400) throw Object.assign(new Error(`HTTP ${status}`), { status })
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest, { mimeType: "application/zip", UTI: "public.zip-archive" })
     } catch (e) {
-      Alert.alert("Could not export notes", userError(e, "your notes", "export"))
+      setActionError(userError(e, "your notes", "export"))
     } finally {
       FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {})
       setExporting(false)
@@ -129,11 +132,12 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
     if (creating.current) return
     creating.current = true
     setPicking(false)
+    setActionError("")
     try {
       const n = await api.orgCreateNote({ title: "", body, kind, session: scope?.session, project_id: scope?.project })
       navigation.navigate("NoteEditor", { id: n.id })
     } catch (e) {
-      Alert.alert("Could not create note", userError(e, "the note", "create"))
+      setActionError(userError(e, "the note", "create"))
     } finally {
       creating.current = false
     }
@@ -189,7 +193,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
         />
       ) : null}
 
-      {error ? <Text style={{ color: t.danger, paddingHorizontal: 16, paddingBottom: 6 }}>{error}</Text> : null}
+      {error || actionError ? <Text testID="notes-error" accessibilityLiveRegion="polite" style={styles.errorBanner}>{error || actionError}</Text> : null}
 
       {loading && !notes.length ? (
         <ActivityIndicator style={{ marginTop: 32 }} color={t.accent} />

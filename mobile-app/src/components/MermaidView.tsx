@@ -15,12 +15,13 @@
  * diagram text can't break out of the template or inject script.
  */
 import React, { useMemo, useRef, useState } from "react"
-import { Alert, Pressable, Text, View } from "react-native"
+import { Pressable, Text, View } from "react-native"
 import { WebView } from "react-native-webview"
 import * as Clipboard from "expo-clipboard"
 import * as FileSystem from "expo-file-system"
 import * as Sharing from "expo-sharing"
 import { useTheme } from "../lib/useTheme"
+import { showActions } from "../lib/actionSheet"
 
 const MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
 
@@ -151,10 +152,9 @@ export default function MermaidView({
     if (saving) return
     // Let the user pick the format. PNG saves to Photos everywhere; SVG is the
     // lossless vector (opens in Files/Safari/email, but not the Photos gallery).
-    Alert.alert("Download diagram", "Choose a format", [
+    showActions("Download diagram", [
       { text: "PNG (image)", onPress: () => exportAs("png") },
       { text: "SVG (vector)", onPress: () => exportAs("svg") },
-      { text: "Cancel", style: "cancel" },
     ])
   }
 

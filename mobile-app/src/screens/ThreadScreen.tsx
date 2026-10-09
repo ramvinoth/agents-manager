@@ -240,18 +240,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // shows them, so a steered message can't flash-and-vanish mid-run.
   const pendingSteers = useRef<{ kind: "user"; id: string; text: string }[]>([])
   // --- Autoscroll model: an INVERTED list --------------------------------------
-  // The thread renders newest-first with `inverted`, so item 0 sits at the bottom
-  // of the screen and the list grows upward. This makes "stay on the latest" the
-  // list's natural resting state — new messages and streaming steps prepend at
-  // offset 0 (the anchored edge), so the viewport holds on the newest message for
-  // free. There is NOTHING to imperatively scroll: no follow flag, no
-  // stickToBottom, no onContentSizeChange snapping. Scrolling up to read history
-  // moves you away from offset 0 and is never yanked back, because nothing drives
-  // the viewport. This is how WhatsApp/iMessage/Gifted-Chat solve it.
-  // The one remaining scroll command is the jump-to-latest button, which scrolls
-  // back to offset 0. `distanceFromBottom` here is the inverted list's scroll
-  // offset (0 = pinned to the newest); it only drives the jump button's
-  // visibility, never the auto-scroll.
+  // Newest-first with `inverted`: item 0 sits at the bottom and new items prepend
+  // at offset 0, so "stay on the latest" is the list's resting state and reading
+  // history is never yanked back — nothing scrolls imperatively (the WhatsApp /
+  // iMessage approach). The only scroll command is jump-to-latest;
+  // `distanceFromBottom` (0 = pinned to newest) just drives that button.
   const distanceFromBottom = useRef(0)
 
   // The transcript lines currently rendered and the byte offset they end at. A

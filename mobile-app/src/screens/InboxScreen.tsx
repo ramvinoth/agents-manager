@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -66,6 +66,8 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  // A failed action (send/snooze/open); kept apart from `error`, which the 8 s poll clears.
+  const [actionError, setActionError] = useState("")
   const [query, setQuery] = useState("")
   const [needsOnly, setNeedsOnly] = useState(false)
   const [sessions, setSessions] = useState<Session[]>([])
@@ -144,9 +146,9 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     try {
       const match = (await api.sessions(h)).find((s) => s.id === session)
       if (match) navigation.navigate("Thread", { host: h, label, path: match.path })
-      else Alert.alert(label, "That chat is not on this server right now. It will keep waiting here.")
+      else setActionError(`${label} isn't on this server right now. Its messages keep waiting here.`)
     } catch (e) {
-      Alert.alert("Could not open the chat", userError(e, "open the chat"))
+      setActionError(userError(e, "the chat", "open"))
     }
   }, [navigation, session, title, labels, host, path])
 
@@ -192,6 +194,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     const lastTheirs = [...messages].filter((m) => m.sender_type !== "user").sort((a, b) => b.created_at - a.created_at)[0]
     const pending = pendingMessage(session, body, lastTheirs?.id ?? 0)
     setDraft("")
+    setActionError("")
     setMessages((all) => [...all, pending])
     try {
       const row = await api.inboxSend({ to: `session:${session}`, body, in_reply_to: lastTheirs?.id })
@@ -199,7 +202,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     } catch (e) {
       setMessages((all) => all.filter((m) => m.id !== pending.id))
       setDraft((d) => (d ? `${body}\n${d}` : body))
-      Alert.alert("Not sent", userError(e, "send the message"))
+      setActionError(`Not sent: ${userError(e, "your message", "send")}`)
     }
   }, [draft, session, messages])
 
@@ -211,13 +214,17 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       await api.inboxSnooze(id, hours)
       await load()
     } catch (e) {
-      Alert.alert("Could not snooze", userError(e, "snooze this"))
+      setActionError(userError(e, "this message", "snooze"))
     }
   }
 
   const errorBar = error ? (
     <TouchableOpacity testID="inbox-error" onPress={() => void load()} style={styles.ibRetry}>
       <Text style={styles.ibRetryText}>{error} · Tap to try again</Text>
+    </TouchableOpacity>
+  ) : actionError ? (
+    <TouchableOpacity testID="inbox-action-error" accessibilityLiveRegion="polite" onPress={() => setActionError("")} style={styles.ibRetry}>
+      <Text style={styles.ibRetryText}>{actionError} · Tap to dismiss</Text>
     </TouchableOpacity>
   ) : null
 

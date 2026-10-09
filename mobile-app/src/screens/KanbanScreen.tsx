@@ -17,6 +17,7 @@ import { userError } from "../lib/errors"
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
 const COL_W = 260 // column width; horizontal strip scrolls
+const LANE_GAP = 10 // st.kbLanes gap; the strip snaps one column (COL_W + gap) per swipe
 
 type Scope = {
   key: string
@@ -42,8 +43,8 @@ const emptySnapshot = (scope: Scope): Snapshot => ({ scope, columns: [], cards: 
  * project row on the company screen → that project's board.
  * Horizontal columns; cards are draggable (react-native-gesture-handler Pan +
  * reanimated — the one place drag-and-drop is justified, kept local to this screen)
- * with a tap→card-detail fallback (its chips move the card; the move menu lived
- * there). Moves compute a fractional position via the pure
+ * with a tap→card-detail fallback whose chips move the card.
+ * Moves compute a fractional position via the pure
  * lib (lib/board.nextPosition, identical to the server) then POST card_move.
  * A top band (DecisionBand) lists the system-wide queue of open decisions —
  * questions, plans, tool approvals across ALL sessions — with the count; it
@@ -215,6 +216,8 @@ export default function KanbanScreen({ route, navigation }: Props) {
       </View>
       <ScrollView
         horizontal
+        snapToInterval={COL_W + LANE_GAP}
+        decelerationRate="fast"
         style={{ flex: 1 }}
         contentContainerStyle={st.kbLanes}
         showsHorizontalScrollIndicator={false}

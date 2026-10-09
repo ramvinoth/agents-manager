@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react"
-import { ActivityIndicator, Alert, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import DateTimePicker from "@react-native-community/datetimepicker"
@@ -91,7 +91,7 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
       undo: () => { load() },
       commit: async () => {
         try { await api.calendarDelete(id, conn) }
-        catch (e) { Alert.alert("Couldn't delete", userError(e, "this event")); load() }
+        catch (e) { await load(); setError(userError(e, "this event", "delete")) } // after the reload, which clears errors
       },
     })
   }

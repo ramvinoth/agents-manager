@@ -21,6 +21,7 @@ import LocationPicker, { LocationHeaderButton } from "../components/LocationPick
 import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
+import { showActions } from "../lib/actionSheet"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
@@ -166,10 +167,9 @@ export default function FilesScreen({ navigation }: Props) {
   }
 
   function promptUpload() {
-    Alert.alert("Upload to " + baseName(path), undefined, [
+    showActions("Upload to " + baseName(path), [
       { text: "Photo", onPress: doUploadPhoto },
       { text: "File", onPress: doUploadFile },
-      { text: "Cancel", style: "cancel" },
     ])
   }
 
