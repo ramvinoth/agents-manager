@@ -135,7 +135,7 @@ export default function ProvidersScreen(_: Props) {
   const errorText = error ? <Text testID="provider-error" accessibilityRole="alert" style={[styles.sheetHint, { color: t.danger }]}>{error}</Text> : null
 
   if (!editing) return (
-    <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView style={styles.page} contentContainerStyle={styles.pvScroll}>
       <Text style={styles.sheetHint}>
         A provider is a connection to a model server. It can serve many models, and each model has its own
         context window. Chats pick a provider and model in their AI settings.
@@ -144,27 +144,27 @@ export default function ProvidersScreen(_: Props) {
       <Text style={styles.sheetSection}>BUILT-IN</Text>
       <View style={[styles.profileInfoRow, { justifyContent: "flex-start" }]}>
         <Icon name="sparkle" size={18} color={t.accent} />
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: t.text, fontWeight: "600" }}>Built-in (Claude)</Text>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }}>Your Claude login. Always available.</Text>
+        <View style={styles.flex1}>
+          <Text style={styles.pvName}>Built-in (Claude)</Text>
+          <Text style={styles.pvMeta}>Your Claude login. Always available.</Text>
         </View>
       </View>
       <Text style={styles.sheetSection}>CONNECTIONS</Text>
       {providers.length ? providers.map(p => (
         <TouchableOpacity key={p.id} testID={`provider-edit-${p.id}`} style={[styles.profileInfoRow, { justifyContent: "flex-start" }]} onPress={() => openEditor(p)}>
           <Icon name="server" size={18} color={t.accent} />
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={{ color: t.text, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>{p.name}</Text>
-              {p.isDefault ? <Text style={{ color: t.accent, fontSize: 11, fontWeight: "600" }}>NEW-CHAT DEFAULT</Text> : null}
+          <View style={styles.flex1}>
+            <View style={[styles.rowCenter, styles.pvNameRow]}>
+              <Text style={[styles.pvName, styles.pvShrink]} numberOfLines={1}>{p.name}</Text>
+              {p.isDefault ? <Text style={styles.pvBadge}>NEW-CHAT DEFAULT</Text> : null}
             </View>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1, fontFamily: "Menlo" }} numberOfLines={1}>{p.baseUrl}</Text>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 1 }} numberOfLines={1}>{summary(p)}</Text>
+            <Text style={[styles.pvMeta, styles.pvMono]} numberOfLines={1}>{p.baseUrl}</Text>
+            <Text style={styles.pvMeta} numberOfLines={1}>{summary(p)}</Text>
           </View>
           <Icon name="chevronRight" size={18} color={t.textMuted} />
         </TouchableOpacity>
       )) : <Text style={[styles.sheetHint, { fontStyle: "italic" }]}>No connections yet.</Text>}
-      <View style={{ marginHorizontal: 18, marginTop: 14 }}>
+      <View style={styles.pvAddWrap}>
         <TouchableOpacity testID="provider-add" style={styles.ssAddBtn} onPress={() => openEditor()}>
           <Text style={styles.ssAddBtnText}>+ Add connection</Text>
         </TouchableOpacity>
@@ -174,7 +174,7 @@ export default function ProvidersScreen(_: Props) {
 
   const rows = sortRows(editing.rows, editing.model)
   return (
-    <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
+    <ScrollView style={styles.page} contentContainerStyle={styles.pvScroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
       {errorText}
       <Text style={styles.sheetSection}>{editing.id ? "CONNECTION" : "NEW CONNECTION"}</Text>
       <TextInput testID="provider-name" style={styles.ssInput} value={editing.name}
@@ -184,14 +184,14 @@ export default function ProvidersScreen(_: Props) {
         onChangeText={baseUrl => patchConnection({ baseUrl })}
         placeholder="Endpoint URL (https://inference.example.com)" placeholderTextColor={t.textMuted}
         autoCapitalize="none" autoCorrect={false} keyboardType="url" />
-      <View style={{ flexDirection: "row", marginHorizontal: 18, marginTop: 8, borderRadius: 10, borderWidth: 1, borderColor: t.border, overflow: "hidden" }} accessibilityRole="radiogroup">
+      <View style={styles.pvSegment} accessibilityRole="radiogroup">
         {(["keep", "replace", "remove"] as KeyAction[]).filter(a => editing.id || a !== "keep").map(a => {
           const on = editing.apiKeyAction === a
           return (
             <TouchableOpacity key={a} testID={`provider-key-${a}`} accessibilityRole="radio" accessibilityState={{ selected: on }}
               onPress={() => patchConnection({ apiKeyAction: a })}
-              style={{ flex: 1, paddingVertical: 9, alignItems: "center", backgroundColor: on ? t.accent : "transparent" }}>
-              <Text style={{ fontSize: 13, fontWeight: "600", color: on ? "#fff" : t.textMuted }}>{KEY_LABEL[a]}</Text>
+              style={[styles.pvSeg, on && styles.pvSegOn]}>
+              <Text style={[styles.pvSegText, on && styles.pvSegTextOn]}>{KEY_LABEL[a]}</Text>
             </TouchableOpacity>
           )
         })}
@@ -203,11 +203,11 @@ export default function ProvidersScreen(_: Props) {
       ) : null}
       <Text style={[styles.sheetHint, keyProblem ? { color: t.danger } : null]}>{keyProblem || "Stored on the server; never shown again."}</Text>
 
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16, paddingRight: 18 }}>
+      <View style={styles.pvModelsHead}>
         <Text style={[styles.sheetSection, { marginTop: 0 }]}>MODELS</Text>
         <TouchableOpacity testID="provider-load-models" disabled={!editing.baseUrl.trim() || !!keyProblem || discovering} onPress={discover}
-          style={{ opacity: editing.baseUrl.trim() && !keyProblem ? 1 : 0.5 }}>
-          <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>
+          style={(!editing.baseUrl.trim() || !!keyProblem) && styles.pvOff}>
+          <Text style={styles.pvLink}>
             {discovering ? "Discovering…" : editing.rows.some(r => r.discovered) ? "Refresh from endpoint" : "Discover models"}
           </Text>
         </TouchableOpacity>
@@ -217,19 +217,19 @@ export default function ProvidersScreen(_: Props) {
       </Text>
       {discoveryNote ? <Text testID="provider-discovery-status" accessibilityRole="text" style={styles.sheetHint}>{discoveryNote}</Text> : null}
 
-      <View style={{ marginHorizontal: 18, marginTop: 8, borderRadius: 10, borderWidth: rows.length ? 1 : 0, borderColor: t.border }}>
+      <View style={[styles.pvModels, !rows.length && styles.pvModelsEmpty]}>
         {rows.map((r, i) => {
           const isDefault = r.id === editing.model
           const eff = effectiveWindow(r)
           const bad = overrideError(r.override)
           return (
-            <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, paddingVertical: 8, borderTopWidth: i ? 1 : 0, borderTopColor: t.border }}>
+            <View key={r.id} style={[styles.pvModelRow, i > 0 && styles.pvModelRowSep]}>
               <TouchableOpacity testID={`provider-model-${r.id}`} accessibilityRole="radio" accessibilityState={{ selected: isDefault }}
-                onPress={() => setEditing(e => e ? { ...e, model: r.id } : e)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }} hitSlop={4}>
+                onPress={() => setEditing(e => e ? { ...e, model: r.id } : e)} style={styles.pvModelPick} hitSlop={4}>
                 <Icon name={isDefault ? "radioOn" : "radioOff"} size={18} color={isDefault ? t.accent : t.textMuted} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: t.text, fontSize: 13, fontFamily: "Menlo" }} numberOfLines={1}>{r.id}</Text>
-                  <Text style={{ fontSize: 11, marginTop: 1, color: eff.source ? t.textMuted : t.warning }}>
+                <View style={styles.flex1}>
+                  <Text style={styles.pvModelId} numberOfLines={1}>{r.id}</Text>
+                  <Text style={[styles.pvModelMeta, !eff.source && styles.pvWarn]}>
                     {formatTokens(eff.tokens)} · {SOURCE_LABEL[eff.source]}{isDefault ? " · default" : ""}
                   </Text>
                 </View>
@@ -237,7 +237,7 @@ export default function ProvidersScreen(_: Props) {
               <TextInput testID={`provider-override-${r.id}`} value={r.override} onChangeText={override => setRow(r.id, { override })}
                 placeholder={r.discovered ? formatTokens(r.discovered) : "e.g. 128k"} placeholderTextColor={t.textMuted}
                 autoCapitalize="none" autoCorrect={false} accessibilityLabel={`Context override for ${r.id}`}
-                style={{ width: 78, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: bad ? t.danger : t.border, backgroundColor: t.inputBg, color: t.text, fontSize: 13, textAlign: "right" }} />
+                style={[styles.pvOverride, !!bad && styles.pvOverrideBad]} />
               {!r.discovered ? (
                 <TouchableOpacity testID={`provider-remove-${r.id}`} onPress={() => removeRow(r.id)} hitSlop={8} accessibilityLabel={`Remove ${r.id}`}>
                   <Icon name="close" size={16} color={t.textMuted} />
@@ -248,27 +248,27 @@ export default function ProvidersScreen(_: Props) {
         })}
       </View>
       {badOverride ? <Text style={[styles.sheetHint, { color: t.danger }]}>Use a token count like 128000, 128k or 1m.</Text> : null}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginRight: 18 }}>
-        <TextInput testID="provider-model-input" style={[styles.ssInput, { flex: 1 }]} value={newModel} onChangeText={setNewModel}
+      <View style={styles.pvAddModel}>
+        <TextInput testID="provider-model-input" style={[styles.ssInput, styles.flex1]} value={newModel} onChangeText={setNewModel}
           onSubmitEditing={addModel} returnKeyType="done" placeholder="Add a model by ID" placeholderTextColor={t.textMuted}
           autoCapitalize="none" autoCorrect={false} />
-        <TouchableOpacity testID="provider-model-add" onPress={addModel} disabled={!newModel.trim()} style={{ marginTop: 8, opacity: newModel.trim() ? 1 : 0.5 }}>
-          <Text style={{ color: t.accent, fontSize: 14, fontWeight: "600" }}>Add</Text>
+        <TouchableOpacity testID="provider-model-add" onPress={addModel} disabled={!newModel.trim()} style={[styles.pvAddBtn, !newModel.trim() && styles.pvOff]}>
+          <Text style={styles.pvAction}>Add</Text>
         </TouchableOpacity>
       </View>
       {!editing.model ? <Text style={styles.sheetHint}>Discover models or add one by ID; the default is what new chats on this connection use.</Text> : null}
 
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 18, marginTop: 18 }}>
+      <View style={styles.pvActions}>
         <TouchableOpacity testID="provider-save" style={[styles.ssAddBtn, { opacity: canSave ? 1 : 0.5 }]} disabled={!canSave} onPress={save}>
           <Text style={styles.ssAddBtnText}>{saving ? "Saving…" : "Save"}</Text>
         </TouchableOpacity>
         <TouchableOpacity testID="provider-cancel" onPress={cancel} disabled={saving}>
-          <Text style={{ color: t.textMuted, fontSize: 14, fontWeight: "600" }}>Cancel</Text>
+          <Text style={[styles.pvAction, styles.pvMuted]}>Cancel</Text>
         </TouchableOpacity>
-        <View style={{ flex: 1 }} />
+        <View style={styles.flex1} />
         {editing.id ? (
           <TouchableOpacity testID={`provider-delete-${editing.id}`} onPress={deleteConnection} disabled={saving}>
-            <Text style={{ color: t.danger, fontSize: 14, fontWeight: "600" }}>Delete</Text>
+            <Text style={[styles.pvAction, styles.pvDanger]}>Delete</Text>
           </TouchableOpacity>
         ) : null}
       </View>
