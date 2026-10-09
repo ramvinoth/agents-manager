@@ -247,7 +247,7 @@ export default function DecisionCockpit({
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaView testID="decision-cockpit" style={{ flex: 1, backgroundColor: t.bg }}>
+      <SafeAreaView testID="decision-cockpit" style={styles.page}>
         {/* Header: who is asking, what kind, how long they've waited, close. */}
         <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 10, borderBottomWidth: 1, borderBottomColor: t.border }}>
           <Icon name={KIND_ICON[d.kind] || "help"} size={18} color={t.accent} />

@@ -55,7 +55,7 @@ export default function MarketplaceSheet({ kind, cwd, onClose, onInstalled }: {
   const title = kind === "mcp" ? "MCP tools" : "Skills"
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={pick ? () => setPick(null) : onClose}>
-      <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <View style={styles.page}>
         <View style={{ flexDirection: "row", alignItems: "center", padding: 16, paddingBottom: 8, gap: 8 }}>
           {pick ? (
             <TouchableOpacity testID="market-back" onPress={() => setPick(null)} hitSlop={10}><Icon name="chevronLeft" size={22} color={t.accent} /></TouchableOpacity>

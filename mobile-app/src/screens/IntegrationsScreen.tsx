@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState, type SetupStep } from "../api/client"
 import { useNavigation } from "@react-navigation/native"
@@ -14,10 +14,6 @@ import { useStyles } from "../lib/styles"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 type TokenDraft = { provider: string; connection?: string; token: string; fields: Record<string, string> }
-
-/** iOS 26 draws a Switch ~12pt wider than the frame RN lays out, so it spills
- *  past the row's padding; this margin keeps it inside the card. */
-const SWITCH_OVERHANG = Platform.OS === "ios" && Number(Platform.Version) >= 26 ? 12 : 0
 
 /** A service row's icon by kind, so a card reads at a glance; unknown kinds fall back to a cloud. */
 const KIND_ICON: Record<string, IconName> = { files: "folder", mail: "mail", calendar: "calendar", api: "server" }
@@ -190,15 +186,14 @@ export default function IntegrationsScreen() {
   }
 
   const link = { color: t.accent, fontSize: 13, fontWeight: "600" as const }
-  const divider = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }
 
   if (view === null) {
     return (
-      <View style={{ flex: 1, backgroundColor: t.bg, padding: 18 }}>
+      <View style={[styles.page, styles.igPad]}>
         {error ? (
           <>
             <Text testID="integrations-error" style={styles.error}>{error}</Text>
-            <TouchableOpacity onPress={() => { setError(""); load().catch((e) => setError(userError(e, "integrations"))) }} style={{ marginTop: 12 }}>
+            <TouchableOpacity onPress={() => { setError(""); load().catch((e) => setError(userError(e, "integrations"))) }} style={styles.igRetry}>
               <Text style={link}>Try again</Text>
             </TouchableOpacity>
           </>
@@ -213,40 +208,40 @@ export default function IntegrationsScreen() {
   const groups = byCategory(view.providers, view.categories)
 
   return (
-    <ScrollView testID="integrations-screen" style={styles.page} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
-      <Text style={[styles.sheetHint, { marginTop: 12 }]}>
+    <ScrollView testID="integrations-screen" style={styles.page} contentContainerStyle={styles.pvScroll} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets>
+      <Text style={[styles.sheetHint, styles.igRetry]}>
         Connect once; every agent chat can use it, within your limits.
       </Text>
       {/* Up here, not at the end: the owner acts on a row near the top and would never see a note below the fold. */}
       {consenting ? (
-        <Text style={[styles.sheetHint, { color: t.accent }]}>
+        <Text style={[styles.sheetHint, styles.igAccent]}>
           Finish signing in in the browser, then come back — this screen updates on its own.
         </Text>
       ) : null}
-      {error ? <Text testID="integrations-error" style={[styles.error, { paddingHorizontal: 18, marginTop: 6 }]}>{error}</Text> : null}
+      {error ? <Text testID="integrations-error" style={[styles.error, styles.igError]}>{error}</Text> : null}
 
       {/* No accounts: no empty "Accounts" heading over a "none yet" line — the add section IS the page. */}
       {accounts.length ? <Text style={styles.sheetSection}>ACCOUNTS</Text> : null}
       {accounts.map(({ p, c }) => (
         <View key={c.id} testID={`integration-conn-${c.id}`} style={styles.spCard}>
           <View style={styles.spCardHead}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.flex1}>
               <Text numberOfLines={1} style={styles.spCardTitle}>{c.account || `${p.label} account`}</Text>
               <Text style={styles.spCardSummary}>{p.label}</Text>
             </View>
-            <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={{ padding: 4 }}
+            <TouchableOpacity testID={`integration-disconnect-${c.id}`} onPress={() => disconnect(p, c)} disabled={!!busy} hitSlop={8} style={styles.igIconBtn}
               accessibilityLabel={`Disconnect ${c.account || p.label}`}>
               <Icon name="trash" size={16} color={t.textMuted} />
             </TouchableOpacity>
           </View>
           {c.expired && isToken(p) ? (
-            <View testID={`expired-${c.id}`} style={{ gap: 10, marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
+            <View testID={`expired-${c.id}`} style={styles.igExpired}>
+              <View style={styles.igRow10}>
+                <Text style={styles.igExpiredText}>
                   {p.label} no longer accepts this token (revoked or expired), so agents can't use it. Paste a new one.
                 </Text>
                 <TouchableOpacity testID={`integration-newtoken-${c.id}`} disabled={!!busy} onPress={() => openToken(p, c.id)} hitSlop={8}>
-                  <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>New token</Text>
+                  <Text style={[styles.igExpiredAction, !!busy && styles.faded]}>New token</Text>
                 </TouchableOpacity>
               </View>
               {token?.provider === p.id && token.connection === c.id ? (
@@ -254,12 +249,12 @@ export default function IntegrationsScreen() {
               ) : null}
             </View>
           ) : c.expired ? (
-            <View testID={`expired-${c.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 14, marginBottom: 10, padding: 10, borderRadius: 8, backgroundColor: t.danger + "1A" }}>
-              <Text style={{ flex: 1, color: t.danger, fontSize: 13 }}>
+            <View testID={`expired-${c.id}`} style={[styles.igExpired, styles.igRow10]}>
+              <Text style={styles.igExpiredText}>
                 {p.label} ended this sign-in, so agents can't use it. Sign in again to restore it.
               </Text>
               <TouchableOpacity testID={`integration-reconnect-${c.id}`} disabled={!!busy} onPress={() => connect(reconnectService(p, c), c.id)} hitSlop={8}>
-                <Text style={{ color: t.danger, fontSize: 13, fontWeight: "700", opacity: busy ? 0.5 : 1 }}>Reconnect</Text>
+                <Text style={[styles.igExpiredAction, !!busy && styles.faded]}>Reconnect</Text>
               </TouchableOpacity>
             </View>
           ) : null}
@@ -298,10 +293,10 @@ export default function IntegrationsScreen() {
                     onPress={() => tryInChat(s, c)}
                     disabled={!!busy}
                     hitSlop={8}
-                    style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4, opacity: busy ? 0.5 : 1 }}
+                    style={[styles.igTry, !!busy && styles.faded]}
                   >
                     {busy === `${key}:try` ? <ActivityIndicator size="small" /> : <Icon name="chat" size={14} color={t.accent} />}
-                    <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Try it in a chat</Text>
+                    <Text style={styles.igLink}>Try it in a chat</Text>
                   </TouchableOpacity>
                 ) : null}
               </ServiceRow>
@@ -317,15 +312,15 @@ export default function IntegrationsScreen() {
           <View key={g.id} testID={`integration-category-${g.id}`} style={styles.spCard}>
             <TouchableOpacity testID={`integration-category-open-${g.id}`} accessibilityRole="button" accessibilityState={{ expanded: shown }}
               onPress={() => setCats((c) => toggled(c ?? new Set(groups.slice(0, 1).map((x) => x.id)), g.id))}
-              style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }}>
-              <View style={{ flex: 1 }}>
+              style={styles.igProviderHead}>
+              <View style={styles.flex1}>
                 <Text style={styles.ssRowLabel}>{g.label}</Text>
-                {!shown ? <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }]}>{categorySummary(g.providers)}</Text> : null}
+                {!shown ? <Text numberOfLines={1} style={styles.igHint}>{categorySummary(g.providers)}</Text> : null}
               </View>
               <Icon name={shown ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
             </TouchableOpacity>
             {shown ? (
-              <View style={divider}>
+              <View style={styles.igHairTop}>
                 {g.providers.filter((p) => showFolded || !folded.includes(p)).map((p, i) => {
                   if (isToken(p) || comingLater(p)) return (
                     <TokenRow key={p.id} p={p} first={i === 0} open={token?.provider === p.id && !token.connection} busy={busy} onOpen={() => openToken(p)}>
@@ -336,12 +331,12 @@ export default function IntegrationsScreen() {
                   )
                   const isOpen = providerOpen(p, adding, accounts.length > 0)
                   return (
-                <View key={p.id} testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, i > 0 && divider]}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <TouchableOpacity testID={`integration-open-${p.id}`} style={{ flex: 1 }} disabled={!p.client.configured}
+                <View key={p.id} testID={`integration-${p.id}`} style={[styles.igProvider, i > 0 && styles.igHairTop]}>
+                  <View style={styles.igRow10}>
+                    <TouchableOpacity testID={`integration-open-${p.id}`} style={styles.flex1} disabled={!p.client.configured}
                       onPress={() => setAdding(adding === p.id ? null : p.id)} accessibilityRole="button" accessibilityState={{ expanded: isOpen }}>
                       <Text style={styles.ssRowLabel}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
-                      <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, isOpen)}</Text>
+                      <Text style={styles.igHint}>{providerHint(p, isOpen)}</Text>
                     </TouchableOpacity>
                     {p.client.configured && !isOpen ? (
                       <TouchableOpacity onPress={() => setAdding(p.id)} hitSlop={8} accessibilityLabel={`Add a ${p.label} account`}>
@@ -361,12 +356,12 @@ export default function IntegrationsScreen() {
                     </TouchableOpacity> : null}
                   </View>
                   {isOpen ? (
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    <View style={styles.igWrap8}>
                       {p.services.filter((s) => s.available).map((s) => (
                         <TouchableOpacity
                           key={s.id}
                           testID={`integration-new-${s.id}`}
-                          style={[styles.filterChip, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }]}
+                          style={[styles.filterChip, styles.igChip, !!busy && styles.faded]}
                           disabled={!!busy}
                           onPress={() => connect(s.id)}
                         >
@@ -376,7 +371,7 @@ export default function IntegrationsScreen() {
                       ))}
                     </View>
                   ) : null}
-                  {isOpen && unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{unavailableNote(p)}</Text> : null}
+                  {isOpen && unavailableNote(p) ? <Text testID={`integration-unavailable-${p.id}`} style={[styles.igHint, styles.igHintTight]}>{unavailableNote(p)}</Text> : null}
                   {editing?.provider === p.id ? (
                     <ClientForm
                       p={p}
@@ -396,10 +391,10 @@ export default function IntegrationsScreen() {
                   })}
               {folded.length && !showFolded && folded.some((p) => g.providers.includes(p)) ? (
                 <TouchableOpacity testID="integrations-more" onPress={() => setMore(true)} accessibilityRole="button"
-                  style={[{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 12 }, g.providers.length > folded.length && divider]}>
-                  <View style={{ flex: 1 }}>
+                  style={[styles.igProviderHead, g.providers.length > folded.length && styles.igHairTop]}>
+                  <View style={styles.flex1}>
                     <Text style={styles.ssRowLabel}>More services</Text>
-                    <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{folded.map((p) => p.label).join(", ")} · one-time setup</Text>
+                    <Text style={styles.igHint}>{folded.map((p) => p.label).join(", ")} · one-time setup</Text>
                   </View>
                   <Icon name="chevronRight" size={14} color={t.textMuted} />
                 </TouchableOpacity>
@@ -436,14 +431,14 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
   const t = useTheme()
   const action = serviceAction(state)
   return (
-    <View testID={`service-${s.id}`} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, gap: 10 }}>
-        <TouchableOpacity testID={`service-expand-${s.id}`} onPress={() => onExpand(!expanded)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}
+    <View testID={`service-${s.id}`} style={styles.igHairTop}>
+      <View style={styles.igServiceRow}>
+        <TouchableOpacity testID={`service-expand-${s.id}`} onPress={() => onExpand(!expanded)} style={styles.pvModelPick}
           accessibilityRole="button" accessibilityState={{ expanded }} accessibilityHint={expanded ? "Hides the details" : "Shows what agents may do"}>
           <Icon name={KIND_ICON[s.kind] || "cloud"} size={16} color={state === "on" ? t.accent : t.textMuted} />
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex1}>
             <Text style={styles.ssRowLabel}>{s.label}</Text>
-            <Text numberOfLines={1} style={[styles.ssRowHint, { maxWidth: undefined }, state === "on" && { color: t.text }]}>{summary}</Text>
+            <Text numberOfLines={1} style={[styles.igHint, state === "on" && styles.igHintOn]}>{summary}</Text>
           </View>
           {/* Says the row opens — the switch alone reads as the only control. */}
           <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} color={t.textMuted} />
@@ -452,16 +447,16 @@ function ServiceRow({ s, state, summary, expanded, onExpand, busy, disabled, onT
           <ActivityIndicator />
         ) : action === "toggle" ? (
           <Switch testID={`service-switch-${s.id}`} value={state === "on"} disabled={disabled} onValueChange={onToggle} trackColor={{ true: t.accent, false: t.border }}
-            style={{ marginRight: SWITCH_OVERHANG }} />
+            style={styles.igSwitch} />
         ) : action === "grant" ? (
           <TouchableOpacity testID={`service-grant-${s.id}`} onPress={onGrant} disabled={disabled} hitSlop={8}>
-            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600", opacity: disabled ? 0.5 : 1 }}>Connect</Text>
+            <Text style={[styles.igLink, disabled && styles.faded]}>Connect</Text>
           </TouchableOpacity>
         ) : null}
       </View>
       {expanded ? (
-        <View style={{ paddingLeft: 40, paddingRight: 14, paddingBottom: 12, gap: 8 }}>
-          <Text style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>{s.available ? s.agent : s.unavailable}</Text>
+        <View style={styles.igServiceBody}>
+          <Text style={[styles.igHint, styles.igHintTight]}>{s.available ? s.agent : s.unavailable}</Text>
           {children}
         </View>
       ) : null}
@@ -484,8 +479,8 @@ function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
   const styles = useStyles()
   const t = useTheme()
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-      <Text style={[styles.ssRowHint, { maxWidth: undefined, marginTop: 0 }]}>Agents may</Text>
+    <View style={styles.igChips}>
+      <Text style={[styles.igHint, styles.igHintTight]}>Agents may</Text>
       {ops.map((o) => {
         const action = serviceAction(o.state)
         if (action === "none") return null
@@ -499,7 +494,7 @@ function OpChips({ testPrefix, ops, busy, busyPrefix, onToggle, onGrant }: {
             accessibilityLabel={action === "grant" ? `${o.label}: needs access` : o.label}
             disabled={!!busy}
             onPress={() => (action === "grant" ? onGrant?.(o.id) : onToggle(o.id, !on))}
-            style={[styles.filterChip, on && styles.filterChipActive, { flexDirection: "row", alignItems: "center", gap: 4, opacity: busy && busy !== busyPrefix + o.id ? 0.5 : 1 }]}
+            style={[styles.filterChip, on && styles.filterChipActive, styles.igChip, !!busy && busy !== busyPrefix + o.id && styles.faded]}
           >
             {busy === busyPrefix + o.id ? <ActivityIndicator size="small" />
               : action === "grant" || on ? <Icon name={on ? "check" : "plus"} size={12} color={on ? t.onAccent : t.textMuted} /> : null}
@@ -523,14 +518,14 @@ function RootRow({ conn, busy, disabled, onSave }: {
   const [draft, setDraft] = useState<string | null>(null)
   if (draft === null) {
     return (
-      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 4 }}>
+      <View style={styles.igRootRow}>
         <Icon name="folder" size={14} color={t.textMuted} />
-        <Text testID={`root-${conn.id}`} numberOfLines={1} style={[styles.ssRowHint, { flex: 1, marginLeft: 6, maxWidth: undefined }]}>
+        <Text testID={`root-${conn.id}`} numberOfLines={1} style={[styles.igHint, styles.igRootText]}>
           {conn.root === "/" ? "Whole account" : `Only ${conn.root}`}
         </Text>
         {busy ? <ActivityIndicator /> : (
           <TouchableOpacity testID={`root-edit-${conn.id}`} disabled={disabled} hitSlop={8} onPress={() => setDraft(conn.root === "/" ? "" : conn.root)}>
-            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Limit to a folder</Text>
+            <Text style={styles.igLink}>Limit to a folder</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -538,7 +533,7 @@ function RootRow({ conn, busy, disabled, onSave }: {
   }
   const save = () => { onSave(draft.trim() || "/"); setDraft(null) }
   return (
-    <View style={{ gap: 6 }}>
+    <View style={styles.igGap6}>
       <TextInput
         testID={`root-input-${conn.id}`}
         style={styles.ssInput}
@@ -552,12 +547,12 @@ function RootRow({ conn, busy, disabled, onSave }: {
         returnKeyType="done"
         onSubmitEditing={save}
       />
-      <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
+      <View style={styles.igActions}>
         <TouchableOpacity testID={`root-save-${conn.id}`} style={styles.ssAddBtn} onPress={save}>
           <Text style={styles.ssAddBtnText}>Save</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setDraft(null)}>
-          <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+          <Text style={[styles.igLink, styles.pvMuted]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -589,10 +584,10 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
       </Text>
       <View style={styles.spCard}>
       {local.roots.map((r, i) => (
-        <View key={r} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: i ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
+        <View key={r} style={[styles.igFolderRow, i > 0 && styles.igHairTop]}>
           <Icon name="folder" size={16} color={t.textMuted} />
-          <Text testID={`local-root-${i}`} numberOfLines={1} style={{ flex: 1, color: t.text, fontSize: 15 }}>{folderLabel(r)}</Text>
-          <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={{ padding: 4 }}
+          <Text testID={`local-root-${i}`} numberOfLines={1} style={styles.igFolderText}>{folderLabel(r)}</Text>
+          <TouchableOpacity testID={`local-remove-${i}`} disabled={disabled} hitSlop={8} style={styles.igIconBtn}
             onPress={() => Alert.alert(`Stop agents using ${folderLabel(r)}?`, "Nothing on disk is deleted; agents just can't reach it until you add it again.", [
               { text: "Cancel", style: "cancel" },
               { text: "Remove", style: "destructive", onPress: () => onSave(local.roots.filter((x) => x !== r), ops) },
@@ -603,16 +598,16 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
       ))}
       {adding === null ? (
         <TouchableOpacity testID="local-add-open" disabled={disabled} onPress={() => setAdding("")}
-          style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: local.roots.length ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
+          style={[styles.igFolderRow, styles.igFolderAdd, local.roots.length > 0 && styles.igHairTop]}>
           {busy ? <ActivityIndicator size="small" /> : <Icon name="plus" size={16} color={t.accent} />}
-          <Text style={{ color: t.accent, fontSize: 15, fontWeight: "600" }}>Add a folder</Text>
+          <Text style={[styles.igLink, styles.igLinkLarge]}>Add a folder</Text>
         </TouchableOpacity>
       ) : (
-      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", borderTopWidth: local.roots.length ? StyleSheet.hairlineWidth : 0, borderTopColor: t.border }}>
+      <View style={[styles.igFolderRow, local.roots.length > 0 && styles.igHairTop]}>
         <TextInput
           testID="local-add-input"
           autoFocus
-          style={[styles.ssInput, { flex: 1, marginHorizontal: 0, marginTop: 0 }]}
+          style={[styles.ssInput, styles.igInline]}
           value={adding}
           onChangeText={setAdding}
           placeholder="e.g. ~/Projects"
@@ -623,12 +618,12 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
           onSubmitEditing={add}
           onBlur={() => { if (!adding.trim()) setAdding(null) }}
         />
-        <TouchableOpacity testID="local-add" style={[styles.ssAddBtn, { opacity: adding.trim() && !disabled ? 1 : 0.5 }]} disabled={!adding.trim() || disabled} onPress={add}>
+        <TouchableOpacity testID="local-add" style={[styles.ssAddBtn, (!adding.trim() || disabled) && styles.faded]} disabled={!adding.trim() || disabled} onPress={add}>
           <Text style={styles.ssAddBtnText}>Add</Text>
         </TouchableOpacity>
       </View>
       )}
-      <View style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }}>
+      <View style={[styles.igSection, styles.igHairTop]}>
         <OpChips
           testPrefix="local-op"
           ops={local.ops.map((o) => ({ id: o.id, label: o.label, state: o.on ? "on" : "off" }))}
@@ -659,13 +654,13 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
   const secret = useRef<TextInput>(null)
   const canSave = !!draft.client_id.trim() && !busy
   return (
-    <View style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: t.bg }}>
+    <View style={styles.igForm}>
       <SetupSteps p={p} redirect={
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Text testID="integrations-redirect-uri" selectable style={{ color: t.text, flex: 1, fontFamily: "Menlo", fontSize: 12 }}>
+        <View style={styles.rowCenter}>
+          <Text testID="integrations-redirect-uri" selectable style={styles.igRedirect}>
             {redirectUri || "…"}
           </Text>
-          <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={{ padding: 6 }}>
+          <TouchableOpacity testID="integrations-copy-uri" onPress={onCopy} disabled={!redirectUri} hitSlop={8} style={styles.igCopyBtn}>
             <Icon name={copied ? "check" : "copy"} size={18} color={t.accent} />
           </TouchableOpacity>
         </View>
@@ -700,19 +695,19 @@ function ClientForm({ p, draft, redirectUri, copied, busy, onCopy, onChange, onC
           onSubmitEditing={() => canSave && onSave()}
         />
       ) : null}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
+      <View style={styles.igFormActions}>
         <TouchableOpacity
           testID="integrations-save"
-          style={[styles.ssAddBtn, { opacity: canSave ? 1 : 0.5 }]}
+          style={[styles.ssAddBtn, !canSave && styles.faded]}
           disabled={!canSave}
           onPress={onSave}
         >
           <Text style={styles.ssAddBtnText}>{busy ? "Saving…" : "Save"}</Text>
         </TouchableOpacity>
         <TouchableOpacity testID="integrations-cancel" onPress={onCancel} disabled={busy}>
-          <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+          <Text style={[styles.igLink, styles.pvMuted]}>Cancel</Text>
         </TouchableOpacity>
-        <View style={{ flex: 1 }} />
+        <View style={styles.flex1} />
         {p.client.client_id ? (
           <TouchableOpacity testID={`integrations-forget-${p.id}`} onPress={onForget} disabled={busy} hitSlop={8}>
             <Icon name="trash" size={18} color={t.danger} />
@@ -733,26 +728,26 @@ function TokenRow({ p, first, open, busy, onOpen, children }: {
   const t = useTheme()
   const later = comingLater(p)
   return (
-    <View testID={`integration-${p.id}`} style={[{ paddingHorizontal: 14, paddingVertical: 12, gap: 8 }, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border }]}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <View style={{ flex: 1, gap: 2 }}>
+    <View testID={`integration-${p.id}`} style={[styles.igProvider, !first && styles.igHairTop]}>
+      <View style={styles.igRow10}>
+        <View style={styles.igTokenText}>
           <Text style={[styles.ssRowLabel, later && { color: t.textMuted }]}>{p.connections.length ? `Another ${p.label} account` : p.label}</Text>
-          <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{providerHint(p, false)}</Text>
+          <Text style={styles.igHint}>{providerHint(p, false)}</Text>
           {later && p.setup[0]?.links.length ? (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+            <View style={styles.igLinks}>
               {p.setup[0].links.map((l) => (
                 <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
-                  <Text style={{ color: t.accent, fontSize: 12, fontWeight: "600" }}>{l.label}</Text>
+                  <Text style={[styles.igLink, styles.igLinkSmall]}>{l.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           ) : null}
         </View>
-        {later ? <Text style={[styles.ssRowHint, { marginTop: 0 }]}>Coming later</Text> : !open ? (
+        {later ? <Text style={[styles.ssRowHint, styles.igHintTight]}>Coming later</Text> : !open ? (
           <TouchableOpacity testID={`integration-token-${p.id}`} onPress={onOpen} disabled={!!busy} hitSlop={8}
-            style={{ flexDirection: "row", alignItems: "center", gap: 4, opacity: busy ? 0.5 : 1 }} accessibilityLabel={`Connect ${p.label}`}>
+            style={[styles.igConnect, !!busy && styles.faded]} accessibilityLabel={`Connect ${p.label}`}>
             <Icon name="plus" size={16} color={t.accent} />
-            <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Connect</Text>
+            <Text style={styles.igLink}>Connect</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -773,7 +768,7 @@ function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
   const fields = (p.fields || []).filter((f) => !draft.connection || f.id !== "name")
   const ready = !!draft.token.trim() && fields.every((f) => !f.required || draft.fields[f.id]?.trim()) && !busy
   return (
-    <View testID={`token-form-${p.id}`} style={{ gap: 10, padding: 12, borderRadius: 10, backgroundColor: t.bg }}>
+    <View testID={`token-form-${p.id}`} style={styles.igForm}>
       <SetupSteps p={p} />
       {fields.map((f) => (
         <TextInput key={f.id} testID={`token-field-${f.id}`} style={styles.ssInput} value={draft.fields[f.id] || ""}
@@ -783,12 +778,12 @@ function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
       <TextInput testID={`token-input-${p.id}`} style={styles.ssInput} value={draft.token}
         onChangeText={(token) => onChange({ ...draft, token })} placeholder="API token" placeholderTextColor={t.textMuted}
         autoCapitalize="none" autoCorrect={false} secureTextEntry returnKeyType="done" onSubmitEditing={() => ready && onSave()} />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 4 }}>
-        <TouchableOpacity testID={`token-save-${p.id}`} style={[styles.ssAddBtn, { opacity: ready ? 1 : 0.5 }]} disabled={!ready} onPress={onSave}>
+      <View style={styles.igFormActions}>
+        <TouchableOpacity testID={`token-save-${p.id}`} style={[styles.ssAddBtn, !ready && styles.faded]} disabled={!ready} onPress={onSave}>
           <Text style={styles.ssAddBtnText}>{busy ? "Checking…" : "Check and save"}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onCancel} disabled={busy}>
-          <Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+          <Text style={[styles.igLink, styles.pvMuted]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -801,17 +796,17 @@ function SetupSteps({ p, steps = p.setup, redirect }: { p: IntegrationProvider; 
   const styles = useStyles()
   const t = useTheme()
   return (
-    <View testID={`setup-${p.id}`} style={{ gap: 8 }}>
+    <View testID={`setup-${p.id}`} style={styles.igGap8}>
       {steps.map((st, i) => (
-        <View key={i} style={{ flexDirection: "row", gap: 6 }}>
-          <Text style={[styles.ssRowHint, { width: 16 }]}>{i + 1}.</Text>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>{st.text}</Text>
+        <View key={i} style={styles.igStep}>
+          <Text style={[styles.ssRowHint, styles.igStepNum]}>{i + 1}.</Text>
+          <View style={styles.igStepBody}>
+            <Text style={styles.igHint}>{st.text}</Text>
             {st.links.length ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+              <View style={styles.igLinks}>
                 {st.links.map((l) => (
                   <TouchableOpacity key={l.url} onPress={() => Linking.openURL(l.url)} hitSlop={6}>
-                    <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>{l.label}</Text>
+                    <Text style={styles.igLink}>{l.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

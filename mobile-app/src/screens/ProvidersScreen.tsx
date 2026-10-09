@@ -206,7 +206,7 @@ export default function ProvidersScreen(_: Props) {
       <View style={styles.pvModelsHead}>
         <Text style={[styles.sheetSection, { marginTop: 0 }]}>MODELS</Text>
         <TouchableOpacity testID="provider-load-models" disabled={!editing.baseUrl.trim() || !!keyProblem || discovering} onPress={discover}
-          style={(!editing.baseUrl.trim() || !!keyProblem) && styles.pvOff}>
+          style={(!editing.baseUrl.trim() || !!keyProblem) && styles.faded}>
           <Text style={styles.pvLink}>
             {discovering ? "Discovering…" : editing.rows.some(r => r.discovered) ? "Refresh from endpoint" : "Discover models"}
           </Text>
@@ -252,7 +252,7 @@ export default function ProvidersScreen(_: Props) {
         <TextInput testID="provider-model-input" style={[styles.ssInput, styles.flex1]} value={newModel} onChangeText={setNewModel}
           onSubmitEditing={addModel} returnKeyType="done" placeholder="Add a model by ID" placeholderTextColor={t.textMuted}
           autoCapitalize="none" autoCorrect={false} />
-        <TouchableOpacity testID="provider-model-add" onPress={addModel} disabled={!newModel.trim()} style={[styles.pvAddBtn, !newModel.trim() && styles.pvOff]}>
+        <TouchableOpacity testID="provider-model-add" onPress={addModel} disabled={!newModel.trim()} style={[styles.pvAddBtn, !newModel.trim() && styles.faded]}>
           <Text style={styles.pvAction}>Add</Text>
         </TouchableOpacity>
       </View>

@@ -103,7 +103,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
   )
   const rows = [{id: "", name: "Built-in (runner default)"}, ...providers].filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
   return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
-    <SafeAreaView testID="ai-editor" style={{flex: 1, backgroundColor: t.bg}}>
+    <SafeAreaView testID="ai-editor" style={styles.page}>
       <View style={{flexDirection: "row", alignItems: "center", padding: 12, gap: 12}}>
         <TouchableOpacity testID="ai-cancel" onPress={close} disabled={busy} style={{padding: 8}}><Text style={{color: t.accent}}>Cancel</Text></TouchableOpacity>
         <Text accessibilityRole="header" style={{flex: 1, color: t.text, fontWeight: "700"}}>{title}</Text>

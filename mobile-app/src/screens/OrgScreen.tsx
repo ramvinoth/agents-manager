@@ -75,7 +75,7 @@ export default function OrgScreen({ navigation }: Props) {
   }
 
   if (loading) {
-    return <View style={{ flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center" }}><ActivityIndicator /></View>
+    return <View style={styles.center}><ActivityIndicator /></View>
   }
 
   const Section = ({ title, onAdd, children }: { title: string; onAdd?: () => void; children: React.ReactNode }) => (
