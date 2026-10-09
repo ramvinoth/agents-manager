@@ -117,6 +117,18 @@ const INTEGRATIONS = {
 const NO_INTEGRATIONS = { providers: [], redirect_uri: "", local: { roots: [], ops: [] } }
 
 // The marketplace browse shape (viewer/marketplace.mcp_entry).
+// A small machine for the folder picker: home holds two projects and a file.
+const FS_HOME = "/Users/fixture"
+const FS_TREE = {
+  "/": [["Users", true]],
+  "/Users": [["fixture", true]],
+  [FS_HOME]: [["notes.txt", false], ["projects", true], ["Desktop", true]],
+  [`${FS_HOME}/Desktop`]: [],
+  [`${FS_HOME}/projects`]: [["harman", true], ["empire", true], ["README.md", false]],
+  [`${FS_HOME}/projects/harman`]: [],
+  [`${FS_HOME}/projects/empire`]: [],
+}
+
 const MARKET_MCP = [
   { id: "io.github.acme/notes-mcp", title: "notes-mcp", description: "Search and write your notes", version: "1.2.0", publisher: "io.github.acme",
     repo: "https://github.com/acme/notes-mcp", install: "npm", inputs: [{ name: "NOTES_KEY", description: "Your notes API key", secret: true, required: true, default: "" }] },
@@ -465,7 +477,15 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     }
     // Files tab: an empty home folder and no cloud drives, so the tab renders its
     // real empty state instead of the fixture's catch-all 404.
-    if (route === "GET /api/fs") return send({ path: url.searchParams.get("path") || "~", entries: [] })
+    if (route === "GET /api/fs") {
+      // Mirrors viewer LocalHost.fs_list: "~" resolves to the absolute home, the
+      // root has no parent, entries mix files and folders.
+      const p = url.searchParams.get("path") || "~"
+      const abs = p === "~" ? FS_HOME : p
+      if (!(abs in FS_TREE)) return send({ error: `No such folder: ${abs}` }, 404)
+      const parent = abs === "/" ? null : abs.slice(0, abs.lastIndexOf("/")) || "/"
+      return send({ path: abs, parent, home: FS_HOME, entries: FS_TREE[abs].map(([name, dir]) => ({ name, dir, size: dir ? 0 : 12, mtime: 1 })) })
+    }
     if (route === "GET /api/drives") return send({ drives: [], vendors: [] })
     return send({ error: `Unhandled fixture route: ${route}` }, 404)
   })

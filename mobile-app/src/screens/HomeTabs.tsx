@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
-import { Text, View } from "react-native"
+import { Animated, Text, View, useWindowDimensions } from "react-native"
 import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import { createMaterialTopTabNavigator } from "@react-navigation/material-top-tabs"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -8,11 +8,11 @@ import type { RootStackParamList } from "../../App"
 import ChatsScreen from "./ChatsScreen"
 import ProfileScreen from "./ProfileScreen"
 import InboxScreen from "./InboxScreen"
-import SideMenu, { SideMenuProvider } from "../components/SideMenu"
+import SideMenu, { SideMenuProvider, menuPanelWidth } from "../components/SideMenu"
 import Icon, { type IconName } from "../components/Icon"
 import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
-import { completesMenuSwipe } from "../lib/boardSwipe"
+import { menuDragProgress, menuSettlesOpen } from "../lib/gestures"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -55,6 +55,11 @@ export default function HomeTabs({ navigation }: Props) {
   // read; a failure just leaves the last count (no error surface on a badge).
   const [inboxUnread, setInboxUnread] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuDragging, setMenuDragging] = useState(false)
+  const menuProgress = useRef(new Animated.Value(0)).current
+  const panelW = menuPanelWidth(useWindowDimensions().width)
+  const panelWRef = useRef(panelW)
+  panelWRef.current = panelW
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -69,15 +74,20 @@ export default function HomeTabs({ navigation }: Props) {
   }, [])
 
   // Chats is the leftmost page: a rightward drag there has no page to reach, so
-  // it opens the side menu. Only rightward horizontal drags activate; leftward
-  // ones fail at once so the pager still pages to Inbox, vertical ones fail so
-  // the list scrolls.
+  // it pulls out the side menu, which follows the finger and settles open or
+  // shut on release (a completed swipe or a quick flick opens it). Only
+  // rightward horizontal drags activate; leftward ones fail at once so the
+  // pager still pages to Inbox, vertical ones fail so the list scrolls.
   const menuSwipe = useMemo(() => Gesture.Pan()
     .runOnJS(true)
     .activeOffsetX(14)
     .failOffsetX(-14)
     .failOffsetY([-12, 12])
-    .onEnd((e) => { if (completesMenuSwipe({ dx: e.translationX, dy: e.translationY })) setMenuOpen(true) }), [])
+    .onStart(() => setMenuDragging(true))
+    .onUpdate((e) => menuProgress.setValue(menuDragProgress(e.translationX, panelWRef.current)))
+    .onEnd((e) => setMenuOpen(menuSettlesOpen({ dx: e.translationX, dy: e.translationY, vx: e.velocityX })))
+    // Ended or cancelled, the drag is over; the menu settles from where it is.
+    .onFinalize(() => setMenuDragging(false)), [menuProgress])
 
   return (
     <SideMenuProvider value={() => setMenuOpen(true)}>
@@ -153,7 +163,7 @@ export default function HomeTabs({ navigation }: Props) {
       <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
-    <SideMenu visible={menuOpen} onClose={() => setMenuOpen(false)} navigation={navigation} />
+    <SideMenu visible={menuOpen} dragging={menuDragging} progress={menuProgress} onClose={() => setMenuOpen(false)} navigation={navigation} />
     </SideMenuProvider>
   )
 }

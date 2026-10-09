@@ -30,6 +30,7 @@ import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
 import { agentScheduleHint, loopModeFor, roleLabel, scheduleFlags, scheduleSummary } from "../lib/schedules"
+import { useTapGuard } from "../lib/useTapGuard"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
@@ -49,6 +50,8 @@ export default function ProfileScreen({ navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
   const pref = useThemePref()
+  // Profile is the pager's rightmost page: a leftward swipe there is not a tap.
+  const rowTap = useTapGuard()
   const [notify, setNotify] = useState(notifyEveryReply())
   const [feedback, setFeedback] = useState("")
   const [feedbackSent, setFeedbackSent] = useState(false)
@@ -266,7 +269,7 @@ export default function ProfileScreen({ navigation }: Props) {
           </View>
         </View>
         <View style={styles.spCardBody}>
-          <TouchableOpacity testID="open-server-picker" style={styles.profileInfoRow} onPress={() => setServerOpen(true)}>
+          <TouchableOpacity testID="open-server-picker" style={styles.profileInfoRow} onPressIn={rowTap.onPressIn} onPress={rowTap.tap(() => setServerOpen(true))}>
             <Text style={styles.profileInfoLabel}>Server</Text>
             <Text style={[styles.profileInfoValue, { color: t.text }]} numberOfLines={1}>
               {active ? displayAddress(active) : "—"}
@@ -275,7 +278,7 @@ export default function ProfileScreen({ navigation }: Props) {
           </TouchableOpacity>
           {/* The machine chats/files/terminal work on. A setting you rarely change,
               so it lives here — not as a permanent label eating every tab header. */}
-          <TouchableOpacity testID="open-host-picker" style={styles.profileInfoRow} onPress={() => setHostOpen(true)}>
+          <TouchableOpacity testID="open-host-picker" style={styles.profileInfoRow} onPressIn={rowTap.onPressIn} onPress={rowTap.tap(() => setHostOpen(true))}>
             <Text style={styles.profileInfoLabel}>Machine</Text>
             <Text style={[styles.profileInfoValue, { color: t.text }]} numberOfLines={1}>{hostLabel}</Text>
             <Icon name="chevronRight" size={18} color={t.textMuted} />
@@ -347,7 +350,7 @@ export default function ProfileScreen({ navigation }: Props) {
       </Card>
 
       <Card icon="sparkle" title="AI for new chats">
-        <TouchableOpacity testID="profile-ai-defaults" style={styles.profileInfoRow} disabled={!aiConfig?.capabilities.editable} onPress={() => setAIOpen(true)}>
+        <TouchableOpacity testID="profile-ai-defaults" style={styles.profileInfoRow} disabled={!aiConfig?.capabilities.editable} onPressIn={rowTap.onPressIn} onPress={rowTap.tap(() => setAIOpen(true))}>
           <View style={{ flex: 1 }}>
             <Text style={styles.ssRowLabel}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErr || "Loading…"}</Text>
             <Text style={[styles.ssRowHint, { maxWidth: undefined }, aiConfig?.issue ? { color: t.danger } : null]}>
@@ -356,7 +359,7 @@ export default function ProfileScreen({ navigation }: Props) {
           </View>
           <Icon name="chevronRight" size={18} color={t.textMuted} />
         </TouchableOpacity>
-        <TouchableOpacity testID="open-providers" style={styles.profileInfoRow} onPress={() => navigation.navigate("Providers")}>
+        <TouchableOpacity testID="open-providers" style={styles.profileInfoRow} onPressIn={rowTap.onPressIn} onPress={rowTap.tap(() => navigation.navigate("Providers"))}>
           <View style={{ flex: 1 }}>
             <Text style={styles.ssRowLabel}>Model providers</Text>
             <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>Add or edit the endpoints and keys chats can use.</Text>

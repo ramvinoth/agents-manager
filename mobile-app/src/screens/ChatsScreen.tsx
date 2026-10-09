@@ -19,6 +19,7 @@ import { useHost } from "../lib/useHost"
 import { isTransportError, userError } from "../lib/errors"
 import { offerUndo } from "../lib/undo"
 import { useMenuButton } from "../components/SideMenu"
+import { useTapGuard } from "../lib/useTapGuard"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "../lib/styles"
 
@@ -117,6 +118,8 @@ export default function ChatsScreen({ navigation }: Props) {
   // the server delete runs when the Undo window closes. `deleting` keeps the 4s
   // poll from bringing them back meanwhile.
   const deleting = useRef(new Set<string>())
+  // A swipe that starts on a row is not a tap on it (one finger, one guard).
+  const rowTap = useTapGuard()
   function remove(paths: string[]) {
     paths.forEach((p) => deleting.current.add(p))
     setSessions((all) => all.filter((x) => !deleting.current.has(x.path))) // path is unique, id is not
@@ -448,14 +451,15 @@ export default function ChatsScreen({ navigation }: Props) {
                 // element; the content column and the button are exposed separately.
                 accessible={false}
                 style={[styles.chatRow, { borderBottomColor: t.border }]}
-                onPress={() => {
+                onPressIn={rowTap.onPressIn}
+                onPress={rowTap.tap(() => {
                   if (selecting) {
                     toggleSelected(item.path)
                     return
                   }
                   markSeen(item.path)
                   navigation.navigate("Thread", { host, label: name, path: item.path })
-                }}
+                })}
                 onLongPress={selecting ? undefined : () => setActionFor(item)}
                 delayLongPress={350}
               >

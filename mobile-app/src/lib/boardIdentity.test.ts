@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path"
 import { test } from "node:test"
 import { CommonActions, StackRouter } from "@react-navigation/routers"
 import ts from "typescript"
-import * as boardSwipe from "./boardSwipe.ts"
+import * as boardSwipe from "./gestures.ts"
 import * as errors from "./errors.ts"
 
 // Run the actual Thread component, not a copy of its identity expression. The
@@ -95,7 +95,7 @@ function screen(initial: Route) {
     "../lib/useReachability": { useReachability: () => ({ online: true, since: 0 }) },
     "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
-    "../lib/boardSwipe": boardSwipe,
+    "../lib/gestures": boardSwipe,
     ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", WorkingBubble: "WorkingBubble" },
   }

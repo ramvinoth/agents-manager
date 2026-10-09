@@ -30,7 +30,9 @@ export default function Dropdown({
         <Icon name="chevronDown" size={13} color={t.textMuted} />
       </TouchableOpacity>
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.ddScrim} onPress={() => setOpen(false)}>
+        {/* accessible={false}: an accessible Pressable folds its subtree into one
+            element, hiding every option from VoiceOver and XCUITest. */}
+        <Pressable accessible={false} style={styles.ddScrim} onPress={() => setOpen(false)}>
           <View style={styles.ddSheet}>
             {options.map((o) => (
               <TouchableOpacity

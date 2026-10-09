@@ -16,6 +16,7 @@ import type { RootStackParamList } from "../../App"
 import { api, type Project, type Provider } from "../api/client"
 import { composerPrefs, currentHost, setComposerPrefs } from "../state/config"
 import Dropdown from "../components/Dropdown"
+import FolderPicker from "../components/FolderPicker"
 import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import ProviderPicker from "../components/ProviderPicker"
@@ -28,6 +29,9 @@ import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
+
+// The folder menu's "Browse folders…" entry: a value no folder path starts with.
+const BROWSE = ":browse"
 
 // Name, then message: both are required, in that order — the name is how the
 // owner tells this chat apart in every list, push and decision card later, so
@@ -48,6 +52,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [projectsError, setProjectsError] = useState("")
   const [cwd, setCwd] = useState("")
   const [customCwd, setCustomCwd] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const [message, setMessage] = useState("")
   const messageRef = useRef<TextInput>(null)
   const [title, setTitle] = useState(template?.name ?? "")
@@ -234,24 +239,32 @@ export default function NewChatScreen({ navigation, route }: Props) {
               <Dropdown
                 testIDPrefix="newchat-project"
                 value={typing ? "" : cwd}
-                options={[...projectOptions(projects), { v: "", label: "Other folder…" }]}
-                onChange={(v) => { setCustomCwd(!v); if (v) setCwd(v) }}
+                options={[...projectOptions(projects), { v: BROWSE, label: "Browse folders…" }, { v: "", label: "Type a path…" }]}
+                onChange={(v) => {
+                  if (v === BROWSE) { setBrowsing(true); return }
+                  setCustomCwd(!v); if (v) setCwd(v)
+                }}
               />
             ) : null}
             {typing ? (
-              <TextInput
-                testID="newchat-cwd"
-                style={[styles.input, { fontSize: 14, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", marginTop: projects.length ? 8 : 0 }]}
-                placeholder="~/path/to/project"
-                placeholderTextColor={t.textMuted + "80"}
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={cwd}
-                onChangeText={setCwd}
-              />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: projects.length ? 8 : 0 }}>
+                <TextInput
+                  testID="newchat-cwd"
+                  style={[styles.input, { flex: 1, fontSize: 14, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                  placeholder="~/path/to/project"
+                  placeholderTextColor={t.textMuted + "80"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={cwd}
+                  onChangeText={setCwd}
+                />
+                <TouchableOpacity testID="newchat-browse" accessibilityLabel="Browse folders" hitSlop={8} onPress={() => setBrowsing(true)}>
+                  <Icon name="folder" size={22} color={t.accent} />
+                </TouchableOpacity>
+              </View>
             ) : null}
             {!typing && cwd ? <Text style={styles.ncSmallHint} numberOfLines={1}>{cwd}</Text> : null}
-            {projectsError ? <Text style={styles.ncSmallHint}>{projectsError} Type a path instead.</Text> : null}
+            {projectsError ? <Text style={styles.ncSmallHint}>{projectsError} Browse or type a path instead.</Text> : null}
           </View>
           {divider}
           <View style={styles.ncRow}>
@@ -270,6 +283,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
           </TouchableOpacity>
           {aiErrorText ? <Text testID="newchat-ai-error" style={styles.sheetHint}>{aiErrorText}</Text> : null}
           {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for this chat" localOnly onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
+          <FolderPicker visible={browsing} host={host} start={cwd.trim() || "~"} onClose={() => setBrowsing(false)}
+            onPick={(path) => { setBrowsing(false); setCustomCwd(false); setCwd(path) }} />
         </View>
 
         {/* Everything optional, collapsed until wanted; the summary says what is set. */}

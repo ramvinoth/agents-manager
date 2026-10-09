@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from "react"
+import React, { createContext, useContext, useEffect, useState } from "react"
 import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -31,27 +31,38 @@ export function useMenuButton(): () => React.ReactNode {
  * lib/menu (one list, tested); a tap closes the menu and pushes the screen on
  * the root stack, so Back returns to the tab the owner came from.
  */
-export default function SideMenu({ visible, onClose, navigation }: {
+/** The panel's width on a screen this wide — the drag maps a finger's travel onto it. */
+export function menuPanelWidth(screenWidth: number): number {
+  return Math.min(320, Math.round(screenWidth * 0.82))
+}
+
+export default function SideMenu({ visible, dragging, progress, onClose, navigation }: {
   visible: boolean
+  /** A finger is pulling the menu out: the panel tracks `progress` and does not animate. */
+  dragging: boolean
+  /** 0 shut … 1 open. Owned by the caller so a drag can set it frame by frame without a render. */
+  progress: Animated.Value
   onClose: () => void
   navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList>
 }) {
   const t = useTheme()
   const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
-  const panelW = Math.min(320, Math.round(width * 0.82))
-  const anim = useRef(new Animated.Value(0)).current
+  const panelW = menuPanelWidth(width)
+  const anim = progress
   // The Modal must OUTLIVE the close animation: binding its `visible` straight
   // to the prop unmounts it in the same commit the panel starts sliding out, so
   // the exit never renders (it pops). `mounted` keeps the Modal up until the
   // slide-out finishes, then unmounts.
-  const [mounted, setMounted] = useState(visible)
+  // A drag mounts it too, and on release it settles from wherever the finger left it.
+  const [mounted, setMounted] = useState(visible || dragging)
 
   useEffect(() => {
+    if (dragging) { setMounted(true); return }
     if (visible) setMounted(true)
     Animated.timing(anim, { toValue: visible ? 1 : 0, duration: visible ? 220 : 160, useNativeDriver: true })
       .start(({ finished }) => { if (finished && !visible) setMounted(false) })
-  }, [visible, anim])
+  }, [visible, dragging, anim])
 
   const go = (item: MenuItem) => {
     onClose()
