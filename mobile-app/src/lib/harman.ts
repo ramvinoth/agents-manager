@@ -36,5 +36,5 @@ export async function createHarman(host: string): Promise<{ path?: string; start
     title: HARMAN_TITLE,
     systemPrompt: DEFAULT_CHARACTER,
   })
-  return { path: res.path, starting: { session: res.session, message: BOOTSTRAP, title: HARMAN_TITLE } }
+  return { path: res.path, starting: { session: res.session, message: BOOTSTRAP } }
 }

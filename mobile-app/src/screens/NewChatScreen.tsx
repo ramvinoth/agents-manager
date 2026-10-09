@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
@@ -29,9 +29,10 @@ import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
 
-// Chat-first: the message is the one required thing, so it comes first and
-// takes focus; where/how/which-AI sit in one compact card under it; everything
-// optional hides behind "More options". Start lives in a bar pinned above the
+// Name, then message: both are required, in that order — the name is how the
+// owner tells this chat apart in every list, push and decision card later, so
+// it comes first and takes focus. Where/how/which-AI sit in one compact card
+// under them; everything optional hides behind "More options". Start lives in a bar pinned above the
 // keyboard and says why it is disabled. The chat opens the moment the server
 // accepts it (ThreadScreen's `starting`), and its jobs ride on that same
 // request so none is lost if the owner leaves.
@@ -48,6 +49,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [cwd, setCwd] = useState("")
   const [customCwd, setCustomCwd] = useState(false)
   const [message, setMessage] = useState("")
+  const messageRef = useRef<TextInput>(null)
   const [title, setTitle] = useState(template?.name ?? "")
   const [systemPrompt, setSystemPrompt] = useState(template?.system_prompt ?? "")
   const [goal, setGoal] = useState(template?.goal ?? "")
@@ -98,7 +100,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
   }, [host])
 
   const aiReady = !!ai && !!aiConfig?.capabilities.editable
-  const blocker = startBlocker({ message, aiReady, aiError: aiErrorText, busy })
+  const blocker = startBlocker({ title, message, aiReady, aiError: aiErrorText, busy })
   // Type a path when asked to, or when the folder isn't one of the recent ones
   // (e.g. typed before the list loaded) — the picker must never show a folder
   // other than the one the chat will start in.
@@ -106,12 +108,16 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   async function start() {
     const msg = message.trim()
-    if (!msg || busy || !ai || !aiConfig?.capabilities.editable) return
+    const name = title.trim()
+    if (!name || !msg || busy || !ai || !aiConfig?.capabilities.editable) return
     setError("")
     setBusy(true)
     try {
       const res = await api.newSession({
         message: msg,
+        // Sent with the create so the name rides on the run (claude --name)
+        // instead of depending on the rename after the chat appears.
+        title: name,
         cwd: cwd.trim() || "~",
         mode,
         ai,
@@ -130,13 +136,13 @@ export default function NewChatScreen({ navigation, route }: Props) {
         Alert.alert("Chat started without its jobs", "This server didn't save the scheduled jobs. Add them from the chat's profile (tap its name).")
       }
       // Open it now: the thread shows the message and the working bubble,
-      // resolves the transcript once the CLI writes it, then saves the name.
-      const name = title.trim()
+      // resolves the transcript once the CLI writes it, then saves the name
+      // (the rename still covers a remote host, whose run gets no --name).
       navigation.replace("Thread", {
         host,
         label: chatLabel(name, cwd, res.session),
         path: res.path,
-        starting: { session: res.session, message: msg, title: name || undefined },
+        starting: { session: res.session, message: msg },
       })
     } catch (e) {
       setError(userError(e, "the chat", "start"))
@@ -155,7 +161,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   const catColor = template ? (TEMPLATE_CATEGORIES[template.category]?.color ?? t.accent) : t.accent
   const iconName = (template?.icon || "sparkle") as IconName
-  const extras = [title.trim() && "name", sendJobs.length && `${sendJobs.length} job${sendJobs.length > 1 ? "s" : ""}`,
+  const extras = [sendJobs.length && `${sendJobs.length} job${sendJobs.length > 1 ? "s" : ""}`,
     systemPrompt.trim() && "instructions", goal.trim() && "goal"].filter(Boolean).join(" · ")
 
   const divider = <View style={styles.ncDivider} />
@@ -192,11 +198,25 @@ export default function NewChatScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
-        {/* The one required field. */}
+        {/* The two required fields, name first. */}
         <View style={styles.ncCard}>
           <TextInput
-            testID="newchat-message"
+            testID="newchat-title"
             autoFocus
+            style={styles.ncName}
+            placeholder="Chat name — e.g. Refactor auth"
+            placeholderTextColor={t.textMuted + "80"}
+            value={title}
+            onChangeText={setTitle}
+            returnKeyType="next"
+            blurOnSubmit={false}
+            onSubmitEditing={() => messageRef.current?.focus()}
+            maxLength={200}
+          />
+          {divider}
+          <TextInput
+            testID="newchat-message"
+            ref={messageRef}
             style={styles.ncMessage}
             placeholder={template ? `What should ${template.name} do?` : "What should the agent do?"}
             placeholderTextColor={t.textMuted + "80"}
@@ -258,17 +278,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
             <Icon name={showMore ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
             <Text style={styles.ncMoreTitle}>More options</Text>
             <Text style={styles.ncMoreSummary} numberOfLines={1}>
-              {extras || "Name, jobs, instructions, goal"}
+              {extras || "Jobs, instructions, goal"}
             </Text>
           </TouchableOpacity>
           {showMore ? (
             <>
-              {divider}
-              <View style={styles.ncRow}>
-                {rowLabel("Chat name")}
-                <TextInput testID="newchat-title" style={[styles.input, { fontSize: 14 }]} placeholder="Optional — e.g. Refactor auth"
-                  placeholderTextColor={t.textMuted + "80"} value={title} onChangeText={setTitle} />
-              </View>
               {divider}
               <View style={styles.ncRow}>
                 <View style={styles.ncSpread}>

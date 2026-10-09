@@ -34,7 +34,10 @@ async function selected(id) {
   assert(label.includes("✓") || (await row.getAttribute("value")) === "1", `${id} must visibly preserve its selected state`)
 }
 
-describe("Native AI settings — isolated transactional API", () => {
+describe("Native AI settings — isolated transactional API", function () {
+  // Taps on the save/model rows take ~21s each here (XCUITest idle wait,
+  // measured 2026-10-09), so these walks outlast mocha's 120s default.
+  this.timeout(300000)
   let fixture
   const writes = () => fixture.requests.filter(r => /^POST \/api\/(ai\/defaults|session\/ai|new-session|session-meta)$/.test(r.route))
   async function profileEditor() {
@@ -185,7 +188,8 @@ describe("Native AI settings — isolated transactional API", () => {
     await readySave()
     await $("~ai-editor").waitForDisplayed({ reverse: true })
     assert.equal(writes().length, before, "Use for this chat is local draft only")
-    await reveal("newchat-message", "down")
+    await reveal("newchat-title", "down")
+    await $("~newchat-title").setValue("Fixture chat")
     await $("~newchat-message").setValue("Fixture first message; never launches a real agent")
     await reveal("newchat-start")
     await tap("newchat-start")

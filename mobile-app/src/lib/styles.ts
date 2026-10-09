@@ -692,6 +692,7 @@ function buildStyles(t: Theme) {
     ncTemplateName: { fontSize: 15, fontWeight: "700", color: t.text },
     ncTemplateDesc: { fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 16 },
     ncClose: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: t.chipBg },
+    ncName: { fontSize: 17, fontWeight: "600", color: t.text, paddingHorizontal: 14, paddingVertical: 12 },
     ncMessage: { fontSize: 16, color: t.text, padding: 14, minHeight: 110, maxHeight: 260, textAlignVertical: "top" },
     ncSmallHint: { fontSize: 11, color: t.textMuted, marginTop: 4 },
     ncDanger: { color: t.danger },

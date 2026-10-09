@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef } from "react"
+import React, { createContext, useContext, useEffect, useRef, useState } from "react"
 import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -41,9 +41,16 @@ export default function SideMenu({ visible, onClose, navigation }: {
   const { width } = useWindowDimensions()
   const panelW = Math.min(320, Math.round(width * 0.82))
   const anim = useRef(new Animated.Value(0)).current
+  // The Modal must OUTLIVE the close animation: binding its `visible` straight
+  // to the prop unmounts it in the same commit the panel starts sliding out, so
+  // the exit never renders (it pops). `mounted` keeps the Modal up until the
+  // slide-out finishes, then unmounts.
+  const [mounted, setMounted] = useState(visible)
 
   useEffect(() => {
-    Animated.timing(anim, { toValue: visible ? 1 : 0, duration: visible ? 220 : 160, useNativeDriver: true }).start()
+    if (visible) setMounted(true)
+    Animated.timing(anim, { toValue: visible ? 1 : 0, duration: visible ? 220 : 160, useNativeDriver: true })
+      .start(({ finished }) => { if (finished && !visible) setMounted(false) })
   }, [visible, anim])
 
   const go = (item: MenuItem) => {
@@ -54,7 +61,7 @@ export default function SideMenu({ visible, onClose, navigation }: {
   }
 
   return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
+    <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose}>
       {/* accessible={false}: an accessible Pressable folds its subtree into one
           element, hiding every menu row from VoiceOver and XCUITest. */}
       <Pressable testID="menu-scrim" accessible={false} style={{ flex: 1 }} onPress={onClose}>

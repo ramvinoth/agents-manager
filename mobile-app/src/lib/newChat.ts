@@ -52,9 +52,12 @@ export function chatLabel(title: string, cwd: string, session: string): string {
 }
 
 /** Why Start is disabled, or "" when it can run — shown, never left implicit. */
-export function startBlocker(o: { message: string; aiReady: boolean; aiError: string; busy: boolean }): string {
+export function startBlocker(o: { title: string; message: string; aiReady: boolean; aiError: string; busy: boolean }): string {
   if (o.busy) return ""
   if (!o.aiReady) return o.aiError ? "AI settings didn't load" : "Loading AI settings…"
+  // Named first: a nameless chat shows as a raw id in every list, push and
+  // decision card, which is exactly where the owner needs to tell chats apart.
+  if (!o.title.trim()) return "Name the chat to start"
   if (!o.message.trim()) return "Write the first message to start"
   return ""
 }

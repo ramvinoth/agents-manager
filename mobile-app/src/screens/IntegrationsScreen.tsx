@@ -126,7 +126,7 @@ export default function IntegrationsScreen() {
       const res = await api.newSession({ message, cwd: "~", host, agent: "claude", title })
       // Open it now — the agent takes a while to start and answer; the thread
       // shows it working and picks up the transcript once it's written.
-      if (!left.current) navigation.navigate("Thread", { host, label: title, path: res.path, starting: { session: res.session, message, title } })
+      if (!left.current) navigation.navigate("Thread", { host, label: title, path: res.path, starting: { session: res.session, message } })
     })
   }
 

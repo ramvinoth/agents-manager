@@ -185,7 +185,7 @@ export const createSessionSlice: Slice<SessionSlice> = (set, get, rt) => {
         })
         const d = await res.json()
         if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-        watchNewSession(d.session, title, d.path)
+        watchNewSession(d.session, d.path)
       } catch (e: any) {
         set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to start: " + (e?.message || e) } })
       }

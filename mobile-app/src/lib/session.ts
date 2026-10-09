@@ -1,7 +1,7 @@
 /** A chat that was just started but whose transcript may not exist yet: the
  *  Thread opens on it at once and resolves the path itself, so the owner
  *  watches it start instead of waiting on a spinner elsewhere. */
-export type StartingChat = { session: string; message: string; title?: string }
+export type StartingChat = { session: string; message: string }
 
 /** One /api/resolve read for the new session (bound by the caller, so this stays pure). */
 type Lookup = () => Promise<{ found: boolean; path?: string; running?: boolean }>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from "react-native"
 import { useStyles } from "../lib/styles"
 
@@ -26,19 +26,25 @@ export default function SheetModal({
 }) {
   const styles = useStyles()
   const anim = useRef(new Animated.Value(0)).current // 0 = hidden, 1 = shown
+  // Keep the Modal mounted through the slide-out: binding its `visible` straight
+  // to the prop unmounts it the same commit the sheet starts dropping, so the
+  // exit animation never renders (it pops shut). `mounted` outlives the close
+  // animation and unmounts only when it finishes.
+  const [mounted, setMounted] = useState(visible)
 
   useEffect(() => {
+    if (visible) setMounted(true)
     Animated.timing(anim, {
       toValue: visible ? 1 : 0,
       duration: visible ? 220 : 160,
       useNativeDriver: true,
-    }).start()
+    }).start(({ finished }) => { if (finished && !visible) setMounted(false) })
   }, [visible, anim])
 
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [600, 0] })
 
   return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
+    <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         {/* accessible={false} on both Pressables: an accessible Pressable folds its
             subtree into one element, hiding every row of the sheet from

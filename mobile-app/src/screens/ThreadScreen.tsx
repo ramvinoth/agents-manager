@@ -413,10 +413,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
     setBusy(true)
     pendingSteers.current = [{ kind: "user", id: "local-start", text: starting.message }]
     setItems([...pendingSteers.current])
-    // Not stopped when the owner leaves: the title must still be saved.
+    // The name was stored by the server at creation — nothing to save here.
     resolveSessionPath(() => api.resolve(starting.session, host))
       .then((found) => {
-        if (found && starting.title) api.renameSession({ session: found, title: starting.title, host }).catch(() => {})
         if (!isCurrentThread()) return
         if (!found) {
           setBusy(false)
@@ -627,9 +626,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   /**
    * The composer's action. Idle → start a new turn. Busy → the caller passes an
-   * explicit `mode`: "interrupt" steers the running turn now, "queue" runs it
-   * after. Two distinct buttons in the working pill call this, so there's never
-   * a mode to guess — each button does exactly what it says.
+   * explicit `mode`: "steer" injects the text into the running turn now (the CLI
+   * reads it from stdin mid-turn), "queue" runs it after this turn ends. Two
+   * distinct buttons in the working pill call this, so there's never a mode to
+   * guess — each button does exactly what it says.
    */
   async function primary(mode: "queue" | "steer" = "queue") {
     const raw = input.trim()
@@ -894,7 +894,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
   return (
     <>
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      // The run pill floats in the strip between the message list and the composer
+      // slab; the KAV's only uncovered region IS that strip. Painting it with the
+      // thread wallpaper (not the lighter screen bg) makes the pill float on the
+      // chat background like the day-pill and jump button do — no white seam behind
+      // its rounded corners. The composer below stays its own bordered surface slab.
+      style={{ flex: 1, backgroundColor: t.thread }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
       // While the capabilities drawer (and its editor modal) is open, THIS
@@ -1095,9 +1100,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
             {queued ? `${queued} queued` : "Working…"}
           </Text>
           {/* Two explicit actions inside the working pill (not a toggle): while
-              text is drafted, Queue runs it after this turn and Interrupt steers
-              it in now. Each button does exactly what it says — no mode to guess.
-              Stop stays pinned at the right end. */}
+              text is drafted, Queue runs it after this turn and Steer injects
+              it into the running turn now (mid-turn, no need to Stop first).
+              Each button does exactly what it says — no mode to guess. Stop
+              stays pinned at the right end. */}
           {input.trim() ? (
             <>
               <TouchableOpacity
@@ -1111,12 +1117,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
               </TouchableOpacity>
               <TouchableOpacity
                 testID="run-interrupt"
-                accessibilityLabel="Interrupt and send now"
+                accessibilityLabel="Steer the running turn now"
                 style={styles.runModeToggle}
                 onPress={() => primary("steer")}
               >
                 <Icon name="flash" size={13} color={t.textMuted} />
-                <Text style={styles.runModeText}>Interrupt</Text>
+                <Text style={styles.runModeText}>Steer</Text>
               </TouchableOpacity>
             </>
           ) : null}

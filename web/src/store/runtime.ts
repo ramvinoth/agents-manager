@@ -54,9 +54,9 @@ export function createRuntime(set: SetState, get: GetState) {
     }
   }
 
-  function watchNewSession(sid: string, title?: string, immediatePath?: string) {
+  // The session's name is stored by the server at creation; no rename here.
+  function watchNewSession(sid: string, immediatePath?: string) {
     const open = async (path: string) => {
-      if (title) await api.renameSession({ session: path, title }).catch(() => {})
       await get().loadSession(path)
       api.sessions().then((s: any) => Array.isArray(s) && set({ sessions: s })).catch(() => {})
       set({ chatRunning: true, chatStatus: null })
