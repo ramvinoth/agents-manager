@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
-from viewer import db, orglogic
+from viewer import db, discussion, orglogic
 from viewer.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, read_back,
     split_lines,
@@ -613,7 +613,7 @@ class SessionsMixin:
                 self.send_json({"error": str(e)}, status=500)
                 return
             db.session_meta_delete(full.stem)
-            db.notes_delete_for_session(full.stem)
+            discussion.purge_session_notes(full.stem)
             db.inbox_delete_for_session(full.stem)
             from viewer import questions
             questions.clear(full.stem)
@@ -628,7 +628,7 @@ class SessionsMixin:
             if not r.get("error"):
                 db.loop_delete_for_session(sid)
                 db.session_meta_delete(sid)
-                db.notes_delete_for_session(sid)
+                discussion.purge_session_notes(sid)
                 db.inbox_delete_for_session(sid)
             self.send_json(r)
             return
@@ -650,7 +650,7 @@ class SessionsMixin:
         # session_busy guard above 409s while a run is in progress.
         db.loop_delete_for_session(sid)
         db.session_meta_delete(sid)
-        db.notes_delete_for_session(sid)
+        discussion.purge_session_notes(sid)
         db.inbox_delete_for_session(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 

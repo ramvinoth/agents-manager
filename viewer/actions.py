@@ -161,7 +161,14 @@ def _relink(before, new_title):
 
 
 def _note_delete(a):
-    return {"deleted": bool(db.note_delete(a.get("note_id")))}
+    deleted = bool(db.note_delete(a.get("note_id")))
+    if deleted:
+        # Mirror _card_delete: a note's discussion wakes (nd<id>:<sid>) are loose
+        # loop rows with no FK to the note, so DELETE can't cascade. Clear them
+        # or they fire later against a note that is gone. discussion owns the id.
+        from viewer import discussion
+        discussion.cancel_wakes(a.get("note_id"))
+    return {"deleted": deleted}
 
 
 def _note_comment(a):

@@ -80,6 +80,26 @@ def wake_id(note_id, session_id):
     return f"nd{note_id}:{session_id}"
 
 
+def cancel_wakes(note_id):
+    """Drop every pending discussion wake for a note (one per recipient session,
+    nd<note>:<sid>) — called when the note is deleted, so no orphaned one-shot
+    fires later against a note that is gone. Returns how many were removed. The
+    `:` terminator keeps nd12: from also matching nd123:."""
+    return db.loop_delete_prefix(f"nd{note_id}:")
+
+
+def purge_session_notes(session_id):
+    """Delete a chat's notes AND clear each one's discussion wakes — the member
+    of the session-delete cleanup bundle that loop_delete_for_session cannot
+    cover. A note's wakes are addressed to the RECIPIENT sessions (the repliers),
+    not the note's owner, so dropping the owner's loops leaves nd<note>:<other>
+    rows behind to fire against a note that is gone. Returns how many notes went."""
+    ids = db.notes_delete_for_session(session_id)
+    for nid in ids:
+        cancel_wakes(nid)
+    return len(ids)
+
+
 def followup(comment, actor, by_agent):
     """After a comment commits: wake the sessions it concerns and, when an
     agent answers the owner, push the owner. Never raises — the comment is

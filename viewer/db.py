@@ -1586,13 +1586,16 @@ def notes_archive_for_session(session_id, archived):
 def notes_delete_for_session(session_id):
     """A deleted chat takes its notes with it (same lifecycle as its loops and
     meta), and its comments on OTHER notes stop being a wake address (their
-    text stays — it is part of someone else's thread). Returns how many notes
-    were removed."""
+    text stays — it is part of someone else's thread). Returns the ids of the
+    notes removed, so the caller can clear each note's discussion wakes — those
+    are addressed to the RECIPIENT sessions, not this one, so a plain
+    loop_delete_for_session(session_id) would miss them (see
+    discussion.purge_session_notes)."""
     with _db() as cur:
         cur.execute("UPDATE note_comments SET session_id = '' WHERE session_id = %s",
                     (session_id,))
-        cur.execute("DELETE FROM notes WHERE session_id = %s", (session_id,))
-        return cur.rowcount
+        cur.execute("DELETE FROM notes WHERE session_id = %s RETURNING id", (session_id,))
+        return [r["id"] for r in cur.fetchall()]
 
 
 # Note discussions (the message board under every note) ----------------------
@@ -2281,6 +2284,18 @@ def loop_delete_for_session(session):
     Returns how many were removed."""
     with _db() as cur:
         cur.execute("DELETE FROM loops WHERE session = %s RETURNING id", (session,))
+        return len(cur.fetchall())
+
+
+def loop_delete_prefix(prefix):
+    """Drop every loop whose id starts with `prefix` (the % and _ wildcards in
+    it are escaped, so it is a literal prefix). For a target whose wakes share
+    an id stem but span several rows — a note discussion wakes one row per
+    recipient session (nd<note>:<sid>) — so deleting the note must clear them
+    all. Returns how many were removed."""
+    like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE id LIKE %s RETURNING id", (like,))
         return len(cur.fetchall())
 
 

@@ -44,6 +44,22 @@ def test_recipients_skip_the_commenter_and_dedupe():
     assert discussion.recipients({"session_id": None}, None, "") == []
 
 
+def test_deleting_a_session_clears_its_notes_recipient_wakes(monkeypatch):
+    """A note's discussion wakes are addressed to the REPLIERS (nd<note>:<other>),
+    not the note's owner — so deleting the owner's session and its loops
+    (loop_delete_for_session) would leave those wakes to fire against a note that
+    is gone. purge_session_notes closes that leak: delete the notes AND clear
+    each one's wakes, and touch no other note's."""
+    f = FakeDB()                                  # note 1 → s1, note 2 → s9
+    monkeypatch.setattr(discussion, "db", f)
+    f.loops = {"nd1:s2": {}, "nd1:s5": {},        # note 1's wakes, addressed to repliers
+               "nd2:s3": {}}                       # a different note's wake — must survive
+    removed = discussion.purge_session_notes("s1")
+    assert removed == 1 and 1 not in f.notes
+    assert "nd1:s2" not in f.loops and "nd1:s5" not in f.loops, "the owner's note's wakes must go"
+    assert "nd2:s3" in f.loops, "another note's wake must be untouched"
+
+
 # ── actions + follow-up through the gate ─────────────────────────────────────
 
 class FakeDB:
@@ -79,6 +95,20 @@ class FakeDB:
         else:
             self.votes.pop((cid, voter), None)
         return sum(v for (c, _), v in self.votes.items() if c == cid)
+
+    # -- session-delete cleanup surface ------------------------------------
+    def notes_delete_for_session(self, session_id):
+        gone = [nid for nid, n in self.notes.items() if n.get("session_id") == session_id]
+        for nid in gone:
+            del self.notes[nid]
+        return gone
+
+    def loop_delete_prefix(self, prefix):
+        self.loops = getattr(self, "loops", {})
+        gone = [lid for lid in self.loops if lid.startswith(prefix)]
+        for lid in gone:
+            del self.loops[lid]
+        return len(gone)
 
 
 @pytest.fixture

@@ -42,6 +42,11 @@ class FakeDB:
     def note_delete(self, nid):
         return bool(self.notes.pop(nid, None))
 
+    def loop_delete_prefix(self, prefix):
+        # No discussion wakes are seeded here; _note_delete still calls it on the
+        # owner path, so the fake must answer instead of reaching the live DB.
+        return 0
+
     def note_get(self, nid):
         row = self.notes.get(nid)
         return dict(row) if row else None   # a fresh row, like Postgres
@@ -65,6 +70,10 @@ def fdb(monkeypatch):
     monkeypatch.setattr(actions, "db", f)
     import viewer.routes.orchestrator as orch
     monkeypatch.setattr(orch, "db", f)
+    # _note_delete clears a note's discussion wakes via discussion.cancel_wakes,
+    # which reads discussion.db (its own singleton ref) — point it at the fake.
+    from viewer import discussion
+    monkeypatch.setattr(discussion, "db", f)
     return f
 
 

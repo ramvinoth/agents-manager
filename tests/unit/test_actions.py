@@ -39,6 +39,10 @@ class FakeDB:
         self.cards_moved.append(("delete", card_id))
         return True
 
+    def note_delete(self, note_id):
+        self.cards_moved.append(("note_delete", note_id))
+        return True
+
     def card_move(self, card_id, column_id, position=1.0):
         self.cards_moved.append(("move", card_id, column_id, position))
         return {"id": card_id, "column_id": column_id, "position": position}
@@ -79,6 +83,14 @@ class FakeDB:
     def loop_delete(self, lid):
         return bool(self.loops.pop(lid, None))
 
+    def loop_delete_prefix(self, prefix):
+        # Literal-prefix match (production escapes the LIKE wildcards to the same
+        # effect). Drops every seeded wake whose id starts with `prefix`.
+        gone = [lid for lid in self.loops if lid.startswith(prefix)]
+        for lid in gone:
+            del self.loops[lid]
+        return len(gone)
+
     # -- settings (singleton KV) handler surface -------------------------------
     def setting_set(self, key, value):
         self.settings[key] = value
@@ -92,10 +104,12 @@ class FakeDB:
 def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(actions, "db", f)
-    # boardwatch holds its own db reference (one singleton in production); point
-    # it at the same fake so _card_delete's wake-cancel stays in-memory here.
-    from viewer import boardwatch
+    # boardwatch and discussion each hold their own db reference (one singleton
+    # in production); point them at the same fake so _card_delete's and
+    # _note_delete's wake-cancel stay in-memory here.
+    from viewer import boardwatch, discussion
     monkeypatch.setattr(boardwatch, "db", f)
+    monkeypatch.setattr(discussion, "db", f)
     return f
 
 
@@ -189,6 +203,23 @@ def test_deleting_a_card_cancels_its_pending_board_watch_wake(fdb):
         actions.intent("card_delete", {"card_id": 9}, "user:ram"), "owner", "")
     assert status == 200 and resp == {"deleted": True}
     assert boardwatch.wake_id(9) not in fdb.loops, "the pending wake must be gone"
+
+
+def test_deleting_a_note_cancels_all_its_discussion_wakes_only(fdb):
+    """A note fans a discussion wake out to every recipient session (nd<id>:<sid>),
+    so one note can leave several loose loop rows — none with an FK to the note.
+    Delete must clear all of the note's wakes and nothing else: the `:` terminator
+    keeps note 12's prefix from also matching note 123's (nd12: vs nd123:)."""
+    from viewer import discussion
+    fdb.loop_upsert(discussion.wake_id(12, "s1"), {"session": "s1", "prompt": "[note]"})
+    fdb.loop_upsert(discussion.wake_id(12, "s2"), {"session": "s2", "prompt": "[note]"})
+    fdb.loop_upsert(discussion.wake_id(123, "s3"), {"session": "s3", "prompt": "[note]"})
+    resp, status = actions.execute(
+        actions.intent("note_delete", {"note_id": 12}, "user:ram"), "owner", "")
+    assert status == 200 and resp == {"deleted": True}
+    assert discussion.wake_id(12, "s1") not in fdb.loops
+    assert discussion.wake_id(12, "s2") not in fdb.loops, "every recipient's wake must go"
+    assert discussion.wake_id(123, "s3") in fdb.loops, "note 123's wake must survive note 12's delete"
 
 
 def test_green_action_runs_immediately(fdb):
