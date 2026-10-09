@@ -14,6 +14,7 @@ import { waitForConsent } from "@/lib/integrations"
 import { IntegrationsDialog } from "@/components/IntegrationsDialog"
 import { HOST_LOCATION, describeLocation, vendorLabel, type Location } from "@/lib/location"
 import type { Drive } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 /**
  * LocationPicker — the file browser's "where am I looking" chip. One menu:
@@ -79,7 +80,7 @@ export function LocationPicker({
       await refresh()
       onChange(drive.id)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      setError(userError(e, "this drive", "connect"))
       // A new account whose consent failed is removed server-side — drop it here too.
       await refresh().catch(() => {})
     }
@@ -94,7 +95,7 @@ export function LocationPicker({
       onDrivesChange([...drives, created])
       await connect(created)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      setError(userError(e, "the drive", "add"))
     }
   }
 
@@ -108,7 +109,7 @@ export function LocationPicker({
       onDrivesChange(rest)
       if (value === drive.id) onChange(HOST_LOCATION)
     } catch (e: any) {
-      setError(e?.message || String(e))
+      setError(userError(e, "the drive", "remove"))
     }
   }
 

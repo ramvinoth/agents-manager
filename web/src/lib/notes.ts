@@ -46,7 +46,7 @@ export function orderNotes(notes: Note[]): Note[] {
  *  with markdown markers stripped, else "Untitled". */
 export function displayTitle(n: Pick<Note, "title" | "body">): string {
   if (n.title.trim()) return n.title.trim()
-  const line = n.body.split("\n").map((l) => l.replace(/^[#>\-*\s\[\]x]+/i, "").trim()).find(Boolean)
+  const line = n.body.split("\n").map((l) => l.replace(/^[#>\-*\s[\]x]+/i, "").trim()).find(Boolean)
   return line || "Untitled"
 }
 
@@ -55,7 +55,7 @@ export function displayTitle(n: Pick<Note, "title" | "body">): string {
 export function previewLine(n: Pick<Note, "title" | "body">, max = 90): string {
   const title = displayTitle(n)
   const line = n.body.split("\n")
-    .map((l) => l.replace(/^[#>\-*\s\[\]x]+/i, "").trim())
+    .map((l) => l.replace(/^[#>\-*\s[\]x]+/i, "").trim())
     .find((l) => l && l !== title) || ""
   return line.length > max ? line.slice(0, max - 1) + "…" : line
 }

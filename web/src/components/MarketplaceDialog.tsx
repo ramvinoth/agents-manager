@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { api } from "@/lib/api"
 import { filledValues, installNote, missingInput, type MarketKind } from "@/lib/marketplace"
 import type { MarketItem } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 const SOURCE: Record<MarketKind, string> = {
   mcp: "Official MCP Registry · registry.modelcontextprotocol.io",
@@ -37,7 +38,7 @@ export function MarketplaceDialog({ kind, session, onClose, onInstalled }: {
     if (!after) setItems(null)
     ;(kind === "mcp" ? api.marketMcp(text, after) : api.marketSkills(text))
       .then(p => { setItems(prev => (after && prev ? [...prev, ...p.items] : p.items)); setCursor(p.cursor || undefined) })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(userError(e, "the marketplace", "search")))
   }
   // Debounced: the registry is a public service, one call per pause in typing.
   useEffect(() => {
@@ -114,7 +115,7 @@ function Install({ kind, item, session, onDone }: { kind: MarketKind; item: Mark
       else await api.marketSkillInstall({ id: item.id, scope: project ? "project" : "user", ...where })
       onDone()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, item.title, "install"))
     } finally {
       setBusy(false)
     }

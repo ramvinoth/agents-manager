@@ -17,6 +17,7 @@ import { byCategory, categorySummary, comingLater, folderLabel, isToken, provide
 import { useStore } from "@/store"
 import { IntakeSection } from "@/components/IntakeSection"
 import type { IntegrationConnection, IntegrationProvider, IntegrationService, IntegrationsView, LocalDisk, ServiceState, SetupStep } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 /** A token being pasted: for a new account, or (connection) replacing an expired one. */
@@ -69,7 +70,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
   async function load() {
     setView(await api.integrations())
   }
-  useEffect(() => { load().catch((e) => setError(e?.message || String(e))) }, [])
+  useEffect(() => { load().catch((e) => setError(userError(e, "your integrations"))) }, [])
 
   /** Run one request under a busy key; reload + notify the owner of the
    *  dialog on success, show the reason on failure. */
@@ -81,7 +82,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
       await load()
       onChanged?.()
     } catch (e: any) {
-      if (!closed.current) setError(e?.message || String(e))
+      if (!closed.current) setError(userError(e, "that change", "apply"))
     }
     if (!closed.current) setBusy(null)
   }

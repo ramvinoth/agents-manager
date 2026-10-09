@@ -10,6 +10,7 @@ import { fmtDuration } from "@/lib/format"
 import { firstOpen, stepDecision } from "@/lib/decisions"
 import { SNOOZE_OPTIONS } from "@/lib/inbox"
 import type { OpenDecision, ToolUseBlock } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 const KIND = {
   question: { icon: HelpCircle, label: "Question" },
@@ -77,7 +78,7 @@ export function DecisionCockpit({
     setStatus(null)
     api.chatStatus(d.session)
       .then((s: Pending) => { if (alive) setStatus(s) })
-      .catch((e: Error) => { if (alive) setError(e.message || "Could not load this item.") })
+      .catch((e: Error) => { if (alive) setError(userError(e, "this item")) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [d, needsStatus])
@@ -100,7 +101,7 @@ export function DecisionCockpit({
       await act()
       resolvedHere()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "your answer", "send"))
     } finally {
       setBusy(false)
     }

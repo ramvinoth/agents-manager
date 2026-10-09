@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { isQueued, type IntakeChannel, type OrgProject } from "@/lib/types"
 import { useStore } from "@/store"
+import { userError } from "@/lib/errors"
 
 const SELECT = "h-7 rounded-md border border-border bg-background px-1 text-xs"
 
@@ -42,7 +43,7 @@ export function IntakeSection() {
     setChannels(c.channels || [])
     setProjects(p.projects || [])
   }
-  useEffect(() => { load().catch((e) => setError(String(e?.message || e))) }, [])
+  useEffect(() => { load().catch((e) => setError(userError(e, "intake channels"))) }, [])
 
   async function run(key: string, fn: () => Promise<unknown>) {
     setBusy(key); setError("")
@@ -56,7 +57,7 @@ export function IntakeSection() {
       }
       await load()
     } catch (e) {
-      setError(String((e as Error)?.message || e))
+      setError(userError(e, "the intake channel", "update"))
     } finally {
       setBusy("")
     }

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { crumbs, drillTarget } from "@/lib/codeMap"
 import type { MapLevel, MapNode, MapView, OrgProject } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 const POLL_MS = 5000
 
@@ -31,7 +32,7 @@ export function MapDialog({ host, cwd, name, onClose }: {
   const dark = document.documentElement.classList.contains("dark")
 
   useEffect(() => {
-    api.orgProjectForCwd({ host, cwd, name }).then(setProject, (e) => setErr(String(e?.message || e)))
+    api.orgProjectForCwd({ host, cwd, name }).then(setProject, (e) => setErr(userError(e, "this project")))
   }, [host, cwd, name])
 
   const load = useCallback(async () => {
@@ -40,7 +41,7 @@ export function MapDialog({ host, cwd, name, onClose }: {
       setView(await api.orgMap(project.id, at.level, at.path))
       setErr("")
     } catch (e) {
-      setErr((e as Error).message)
+      setErr(userError(e, "the code map"))
     }
   }, [project, at])
 

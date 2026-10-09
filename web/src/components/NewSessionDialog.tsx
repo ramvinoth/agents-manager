@@ -15,6 +15,7 @@ import { api } from "@/lib/api"
 import { describeHost } from "@/lib/host"
 import type { GitRepo } from "@/lib/types"
 import { useStore, useAgentLabel } from "@/store"
+import { userError } from "@/lib/errors"
 
 export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const projects = useStore((s) => s.projects)
@@ -84,7 +85,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
       setToken("")
       await loadRepos()
     } catch (e: any) {
-      setTokenErr(e?.message || String(e))
+      setTokenErr(userError(e, "the GitHub token", "save"))
     } finally {
       setSavingToken(false)
     }
@@ -122,7 +123,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
           }
         }
       } catch (e: any) {
-        setCloneErr(e?.message || String(e))
+        setCloneErr(userError(e, "the repository", "clone"))
         return
       } finally {
         setCloning(false)

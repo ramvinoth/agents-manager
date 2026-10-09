@@ -13,6 +13,7 @@ import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { TONE_CLASS } from "@/lib/tone"
 import { useStore } from "@/store"
+import { userError } from "@/lib/errors"
 
 interface Tab {
   id: string
@@ -39,7 +40,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
     try {
       return await (await api.browserOp(op, body)).json()
     } catch (e: any) {
-      return { error: e.message }
+      return { error: userError(e, "the browser", "reach") }
     }
   }, [])
 
@@ -48,7 +49,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
     try {
       d = await api.browserStatus()
     } catch (e: any) {
-      d = { running: false, reasons: ["Status check failed: " + e.message] }
+      d = { running: false, reasons: [userError(e, "the browser status", "check")] }
     }
     setStatus(d)
     onState?.(d.running ? (d.browser || "running") : "not running")
@@ -190,7 +191,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
         loadCapabilities()
       }
     } catch (e: any) {
-      setMcpNote("MCP save failed: " + e.message)
+      setMcpNote(userError(e, "the browser MCP setting", "save"))
     }
   }
 

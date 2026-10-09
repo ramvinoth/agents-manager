@@ -35,6 +35,7 @@ import { LocationPicker } from "@/components/LocationPicker"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import type { Drive, FileEntry, FileListResponse } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 // ---- file-type → icon + accent color ---------------------------------------
 const EXT: Record<string, { Icon: typeof FileIcon; color: string }> = {}
@@ -115,7 +116,7 @@ export function FileBrowser() {
         setData(d)
         setPath(d.path)
       } catch (e: any) {
-        setError(e?.message || String(e))
+        setError(userError(e, "this folder"))
       }
       setLoading(false)
     },
@@ -175,7 +176,7 @@ export function FileBrowser() {
    *  good, so it stays on screen; the message lives in the status bar until
    *  dismissed or the next action. `error` is only for a listing failure. */
   function fail(e: any) {
-    setActionError(e?.message || String(e))
+    setActionError(userError(e, "that action", "finish"))
   }
 
   /** Fetch first, then save: a bare anchor download would write the server's
@@ -304,7 +305,8 @@ export function FileBrowser() {
     if (e.metaKey || e.ctrlKey) {
       setSelected((prev) => {
         const n = new Set(prev)
-        n.has(entry.name) ? n.delete(entry.name) : n.add(entry.name)
+        if (n.has(entry.name)) n.delete(entry.name)
+        else n.add(entry.name)
         return n
       })
       lastIdx.current = idx

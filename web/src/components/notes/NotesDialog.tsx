@@ -15,6 +15,7 @@ import { NoteGraphView } from "./NoteGraphView"
 import { NoteThread } from "./NoteThread"
 import { isQueued } from "@/lib/types"
 import type { Note, NoteKind, OrgProject } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 const SAVE_DEBOUNCE_MS = 700
 
@@ -68,7 +69,7 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
         await Promise.all([load(proj, archived), refreshGraph(proj)])
         setErr("")
       } catch (ex: any) {
-        if (alive) setErr(String(ex?.message || ex))
+        if (alive) setErr(userError(ex, "your notes"))
       } finally {
         if (alive) setLoading(false)
       }
@@ -134,7 +135,7 @@ export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: s
       setOpenId(n.id)
       void refreshGraph(project)
     } catch (ex: any) {
-      setErr(String(ex?.message || ex))
+      setErr(userError(ex, "the note", "create"))
     }
   }
 

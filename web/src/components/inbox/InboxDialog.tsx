@@ -16,6 +16,7 @@ import { useStore } from "@/store"
 import type { OpenDecision, OrgProject } from "@/lib/types"
 import { queueFrom } from "@/lib/decisions"
 import { DecisionCockpit } from "@/components/kanban/DecisionCockpit"
+import { userError } from "@/lib/errors"
 
 const POLL_MS = 10000
 
@@ -92,7 +93,7 @@ export function InboxDialog({
     } catch (ex: any) {
       if (request < reads.current.applied) return
       reads.current.applied = request
-      setErr(String(ex?.message || ex))
+      setErr(userError(ex, "your inbox"))
     } finally {
       if (request === reads.current.applied) setLoading(false)
     }
@@ -110,7 +111,7 @@ export function InboxDialog({
         }
         setErr("")
       } catch (ex: any) {
-        if (alive) setErr(String(ex?.message || ex))
+        if (alive) setErr(userError(ex, "this project"))
       } finally {
         if (alive) setLoading(false)
       }
@@ -367,7 +368,7 @@ function RowDetail({
       await api.inboxSend({ to, body, in_reply_to: msg.id })
     } catch (e) {
       setReply((d) => (d ? `${body}\n${d}` : body))
-      setSendError(`Not sent: ${(e as Error).message || "try again"}`)
+      setSendError(`Not sent. ${userError(e, "your reply", "send")}`)
     }
   }
 
@@ -482,7 +483,7 @@ function Composer({
       onSent(await api.inboxSend({ to: `session:${dest}`, body }))
     } catch (e) {
       setText((d) => (d ? `${body}\n${d}` : body))
-      setError(`Not sent: ${(e as Error).message || "try again"}`)
+      setError(`Not sent. ${userError(e, "your message", "send")}`)
     }
   }
 

@@ -7,6 +7,7 @@ import { fmtDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { OpenDecision } from "@/lib/types"
 import { DecisionCockpit } from "./DecisionCockpit"
+import { userError } from "@/lib/errors"
 
 const KIND_META = {
   question: { icon: HelpCircle, label: "Question" },
@@ -58,7 +59,7 @@ export function DecisionsBand({
         setErr("")
         return
       }
-      setErr(String(ex?.message || ex))
+      setErr(userError(ex, "the decisions waiting on you"))
     } finally {
       setBusy(false)
     }

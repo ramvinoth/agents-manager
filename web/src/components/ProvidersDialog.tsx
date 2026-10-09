@@ -26,6 +26,7 @@ import {
   type EditRow,
   type KeyAction,
 } from "@/lib/providerModels"
+import { userError } from "@/lib/errors"
 
 type Draft = {
   id: string
@@ -131,7 +132,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
         )
       }
     } catch (e: any) {
-      if (request === generation.current) setDiscoveryNote(String(e?.message || e))
+      if (request === generation.current) setDiscoveryNote(userError(e, "the endpoint's models", "list"))
     } finally {
       if (request === generation.current) setDiscovering(false)
     }
@@ -168,7 +169,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
       await loadProviders()
       setEditing(null)
     } catch (e: any) {
-      setErr(String(e?.message || e))
+      setErr(userError(e, "the provider", "save"))
     } finally {
       setSaving(false)
     }

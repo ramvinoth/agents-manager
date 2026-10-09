@@ -32,6 +32,7 @@ import { DecisionsBand } from "./DecisionsBand"
 import { AuditDialog } from "../AuditDialog"
 import { isQueued } from "@/lib/types"
 import type { BoardColumn, Card, OpenDecision, OrgProject } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 /**
  * KanbanDialog — the project's task board in a big modal. Resolves which org
@@ -97,7 +98,7 @@ export function KanbanDialog({
         setColumns(b.columns || [])
         setCards(c.cards || [])
       } catch (ex: any) {
-        if (alive) setErr(String(ex?.message || ex))
+        if (alive) setErr(userError(ex, "the board"))
       } finally {
         if (alive) setLoading(false)
       }

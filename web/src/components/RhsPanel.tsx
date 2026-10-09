@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { userError } from "@/lib/errors"
 import { Plus, Loader2, Store } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -60,15 +61,20 @@ function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => v
       loadCapabilities()
       onClose()
     } catch (e: any) {
-      setErr(e.message)
+      setErr(userError(e, "the skill", "save"))
     }
   }
   async function del() {
     if (!skill) return
     setConfirmDel(false)
-    await api.skillDelete({ path: skill.path })
-    loadCapabilities()
-    onClose()
+    try {
+      const d = await (await api.skillDelete({ path: skill.path })).json()
+      if (d.error) throw new Error(d.error)
+      loadCapabilities()
+      onClose()
+    } catch (e) {
+      setErr(userError(e, "the skill", "delete"))
+    }
   }
 
   return (
@@ -160,15 +166,20 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
       loadCapabilities()
       onClose()
     } catch (e: any) {
-      setErr(e.message)
+      setErr(userError(e, "the MCP server", "save"))
     }
   }
   async function del() {
     if (!server) return
     setConfirmDel(false)
-    await api.mcpDelete({ name: server.name, scope: server.scope === "global" ? "global" : "project", session })
-    loadCapabilities()
-    onClose()
+    try {
+      const d = await (await api.mcpDelete({ name: server.name, scope: server.scope === "global" ? "global" : "project", session })).json()
+      if (d.error) throw new Error(d.error)
+      loadCapabilities()
+      onClose()
+    } catch (e) {
+      setErr(userError(e, "the MCP server", "remove"))
+    }
   }
 
   return (

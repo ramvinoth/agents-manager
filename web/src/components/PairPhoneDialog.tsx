@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { buildPairLink, type RelayOffer, type RelayStatus, unreachableReason } from "@/lib/pairLink"
 import { useStore } from "@/store"
+import { userError } from "@/lib/errors"
 
 // The address a phone uses can differ from the one this tab is on (localhost on
 // the box itself). Precedence: what the user typed here (remembered per browser)
@@ -50,7 +51,7 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
         setPublicUrl(r.publicUrl || "")
         setRelay(r.relay || null)
       },
-      (e: Error) => setError(e.message)
+      (e: Error) => setError(userError(e, "a pairing code", "create"))
     )
   }, [])
   useEffect(mint, [mint])
@@ -74,7 +75,7 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
       setRelayState(await api.setRelay(!relayState.enabled))
       mint()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the relay setting", "change"))
     } finally {
       setRelayBusy(false)
     }

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import type { HostInfo } from "@/lib/types"
+import { userError } from "@/lib/errors"
 
 /** Add / edit a remote SSH host (BYOH). `host` null = add, a HostInfo = edit. */
 export function HostDialog({ host, onClose }: { host: HostInfo | null; onClose: () => void }) {
@@ -52,7 +53,7 @@ export function HostDialog({ host, onClose }: { host: HostInfo | null; onClose: 
       const d = await api.hostsTest(cfg())
       setNote({ ok: !!d.ok, text: (d.ok ? "✓ " : "✗ ") + d.message })
     } catch (e: any) {
-      setNote({ ok: false, text: e?.message || String(e) })
+      setNote({ ok: false, text: userError(e, "the connection", "test") })
     } finally {
       setBusy("")
     }
@@ -72,7 +73,7 @@ export function HostDialog({ host, onClose }: { host: HostInfo | null; onClose: 
       onClose()
       if (d.saved) setHost(d.saved) // switch to the newly saved host
     } catch (e: any) {
-      setNote({ ok: false, text: e?.message || String(e) })
+      setNote({ ok: false, text: userError(e, "this machine", "save") })
       setBusy("")
     }
   }
@@ -86,7 +87,7 @@ export function HostDialog({ host, onClose }: { host: HostInfo | null; onClose: 
       onClose()
       if (currentHost === host.id) setHost("local")
     } catch (e: any) {
-      setNote({ ok: false, text: e?.message || String(e) })
+      setNote({ ok: false, text: userError(e, "this machine", "remove") })
       setBusy("")
     }
   }
