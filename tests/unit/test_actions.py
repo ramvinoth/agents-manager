@@ -92,6 +92,10 @@ class FakeDB:
 def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(actions, "db", f)
+    # boardwatch holds its own db reference (one singleton in production); point
+    # it at the same fake so _card_delete's wake-cancel stays in-memory here.
+    from viewer import boardwatch
+    monkeypatch.setattr(boardwatch, "db", f)
     return f
 
 
@@ -172,6 +176,19 @@ def test_red_action_by_the_owner_at_the_ui_runs_without_ceremony(fdb):
     assert fdb.cards_moved == [("delete", 9)]
     assert fdb.approvals == []
     assert fdb.outcomes == ["done"]
+
+
+def test_deleting_a_card_cancels_its_pending_board_watch_wake(fdb):
+    """A card's wake (bw<id>) is a loose loop row with no FK to the card, so the
+    DELETE can't cascade to it. If delete doesn't cancel it, the one-shot fires
+    later and burns an agent turn on a card that is gone."""
+    from viewer import boardwatch
+    fdb.loop_upsert(boardwatch.wake_id(9), {"session": "s1", "prompt": "[board-watch]"})
+    assert boardwatch.wake_id(9) in fdb.loops
+    resp, status = actions.execute(
+        actions.intent("card_delete", {"card_id": 9}, "user:ram"), "owner", "")
+    assert status == 200 and resp == {"deleted": True}
+    assert boardwatch.wake_id(9) not in fdb.loops, "the pending wake must be gone"
 
 
 def test_green_action_runs_immediately(fdb):

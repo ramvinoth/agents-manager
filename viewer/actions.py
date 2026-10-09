@@ -102,7 +102,15 @@ def _card_move(a, *, by_agent=False):
 
 
 def _card_delete(a):
-    return {"deleted": bool(db.card_delete(a.get("card_id")))}
+    deleted = bool(db.card_delete(a.get("card_id")))
+    if deleted:
+        # The card's pending board-watch wake (bw<id>) is a generic loop row
+        # with no FK to the card, so the DELETE above can't cascade to it.
+        # Left behind, it fires later and burns an agent turn on a card that
+        # is gone. boardwatch owns the id scheme, so it owns the cleanup.
+        from viewer import boardwatch
+        boardwatch.cancel_wake(a.get("card_id"))
+    return {"deleted": deleted}
 
 
 # Notes: the knowledge ledger next to the work ledger (cards). Every write runs
