@@ -223,7 +223,7 @@ def red_subject(intent):
         if action == "session_level_set":
             from viewer import orglogic
             lv = str(args.get("level") or "")
-            return f"{_label(str(args.get('session') or ''))} → {orglogic.LEVEL_NAMES.get(lv, lv) or 'its agent role default'}"
+            return f"{_label(str(args.get('session') or ''))} → {orglogic.LEVEL_NAMES.get(lv, lv) or 'the agent it was started from'}"
         if action == "intake_create":
             p = db.project_get(int(args.get("project_id"))) if args.get("project_id") else None
             return f"\"{args.get('name') or ''}\" onto {p['name'] if p else 'a board'}"

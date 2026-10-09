@@ -34,9 +34,9 @@ const MODES: { v: PermissionMode; label: string }[] = [
   { v: "plan", label: "Plan" },
   { v: "bypass", label: "Bypass" },
 ]
-// "" = no per-chat override: the level of the agent role the chat started from.
+// "" = no per-chat override: the level of the agent the chat was started from.
 const LEVELS: { v: HarmanLevel | ""; label: string }[] = [
-  { v: "", label: "Role default" },
+  { v: "", label: "Agent default" },
   ...HARMAN_LEVELS.map((v) => ({ v, label: LEVEL_NAME[v] })),
 ]
 export default function SessionProfileScreen({ route, navigation }: Props) {
@@ -58,7 +58,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [modeError, setModeError] = useState("")
   const [modeReload, setModeReload] = useState(0)
   // Harman level: the override stored on the session ("" = none) and the level
-  // that actually applies (override → agent role → Worker), both from sessionDetail.
+  // that actually applies (override → the agent it was started from → Own work), both from sessionDetail.
   const [level, setLevel] = useState<HarmanLevel | "">("")
   const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
   const [levelSaving, setLevelSaving] = useState(false)
@@ -467,10 +467,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
             <Text style={{ color: t.accent }}>Reload policy</Text>
           </TouchableOpacity>
         </> : null}
-        <Text style={[styles.sheetSection, { marginTop: 16 }]}>HARMAN LEVEL · BOARD AUTHORITY</Text>
-        <Text style={styles.sheetHint}>What this chat may do on the board and in the org (cards, projects, loops, settings), enforced by the Harman server for any harness. Worker works its own cards, notes and messages; Lead also creates projects, columns and scheduled loops; Manager also changes org-wide settings. Asks above its level wait for your approval instead of failing. Risky actions always ask you, whatever the level.</Text>
-        {renderPill(LEVELS, level, pickLevel, "sp-level", "Harman level", levelSaving)}
-        {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting as {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from its agent role)"}. Applies from the next run.</Text> : null}
+        <Text style={[styles.sheetSection, { marginTop: 16 }]}>BOARD AUTHORITY · HOW FAR IT ACTS ALONE</Text>
+        <Text style={styles.sheetHint}>How far this chat may reach with no approval from you, enforced by the Harman server for any harness. Own work — its own cards, notes and messages. Workspace — also projects, columns and scheduled loops. Organization — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</Text>
+        {renderPill(LEVELS, level, pickLevel, "sp-level", "Board authority", levelSaving)}
+        {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting at {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</Text> : null}
         {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}
         {levelNote ? <Text testID="sp-level-note" accessibilityRole="alert" style={styles.sheetHint}>{levelNote}</Text> : null}
       </>) : null}

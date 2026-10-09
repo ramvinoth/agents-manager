@@ -186,10 +186,14 @@ def is_red(action):
 # Levels are ordered least→most authority; each action names the MINIMUM level.
 
 LEVELS = ("ic", "lead", "manager")
-# What a person reads for each level. "ic" is an internal key (individual
-# contributor), never shown: Worker = its own cards, notes and messages; Lead
-# also projects, loops and columns; Manager also org-wide settings.
-LEVEL_NAMES = {"ic": "Worker", "lead": "Lead", "manager": "Manager"}
+# What a person reads for each level — named by REACH (how far a session may
+# act unsupervised), never by job title, so it can't be confused with an agent
+# (e.g. the "Product Manager" agent). The keys ic/lead/manager stay on the wire;
+# these are display only. "Own work" = its own cards, notes and messages;
+# "Workspace" = also projects, columns and scheduled loops; "Organization" =
+# also org-wide settings. A second gate (Red) still sends anything destructive
+# or paid to the owner regardless of level.
+LEVEL_NAMES = {"ic": "Own work", "lead": "Workspace", "manager": "Organization"}
 
 # ── Human authority: the account's role, independent of any session ───────────
 # The OTHER principal. A request has up to two: the human who owns the viewer

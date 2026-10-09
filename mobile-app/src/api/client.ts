@@ -563,7 +563,7 @@ export const api = {
     req<{ session?: string; permission_mode?: PermissionMode; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
       "POST", "/api/session/mode", { for_session: session, mode }
     ),
-  /** Set the session's Harman level ("" clears it back to its agent role's level).
+  /** Set the session's Harman level ("" clears it back to the level of the agent it was started from).
    *  Red: from the app the owner's tap applies; anyone else's queues. */
   sessionLevelSet: (session: string, level: HarmanLevel | "") =>
     req<{ session?: string; level?: string; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(

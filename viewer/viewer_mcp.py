@@ -458,12 +458,12 @@ _TOOL_LIST = [
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan", "bypass"],
                  "description": "The permission mode for that session's runs."}}}},
     {"name": "session_level_set",
-     "description": "Set the Harman authority level another session acts at on the board: ic = Worker (its own cards, notes, messages), lead = Lead (also schedule loops, delete cards, shape columns and projects), manager = Manager (also org settings). To the owner, say Worker/Lead/Manager, never the key ic. Empty clears it back to the level of the agent role the chat was started from. This is Harman's org authority, separate from session_mode_set (which gates the harness's own Bash/Edit tools). Red: queues for the owner's approval; never your OWN session. For a single action above your level you do not need this — just call the tool; the server queues that one ask for the owner.",
+     "description": "Set the Harman authority level another session acts at on the board: ic = Own work (its own cards, notes, messages), lead = Workspace (also schedule loops, delete cards, shape columns and projects), manager = Organization (also org settings). To the owner, say Own work/Workspace/Organization, never the key ic. Empty clears it back to the level of the agent the chat was started from. This is Harman's org authority, separate from session_mode_set (which gates the harness's own Bash/Edit tools). Red: queues for the owner's approval; never your OWN session. For a single action above your level you do not need this — just call the tool; the server queues that one ask for the owner.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "level", "reason"], "properties": {
          "reason": _REASON_ARG,
          "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},
          "level": {"type": "string", "enum": ["", "ic", "lead", "manager"],
-                   "description": "The authority level, or empty to use the agent role's level."}}}},
+                   "description": "The authority level, or empty to use the level of the agent the chat was started from."}}}},
 ]
 
 

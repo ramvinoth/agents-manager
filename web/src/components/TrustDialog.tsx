@@ -66,11 +66,11 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
             {!mode && target ? <p className="text-muted-foreground">No saved policy: each run uses the mode it was started with.</p> : null}
           </section>
           <section className="space-y-1.5">
-            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground">HARMAN LEVEL · BOARD AUTHORITY</h3>
-            <p className="text-muted-foreground">What this chat may do on the board, enforced by the server for any harness. Worker works its own cards, notes and messages; Lead also creates projects, columns and scheduled loops; Manager also changes org-wide settings. Asks above its level wait for your approval instead of failing.</p>
-            {pick([{ v: "" as HarmanLevel | "", label: "Role default" }, ...HARMAN_LEVELS.map((v) => ({ v: v as HarmanLevel | "", label: LEVEL_NAME[v] }))],
-              level, (v) => write(() => api.sessionLevelSet(target, v), "level", v), "Harman level")}
-            {effective ? <p className="text-muted-foreground">Acting as {LEVEL_NAME[effective]}{level ? " (set for this chat)" : " (from its agent role)"}. Applies from the next run.</p> : null}
+            <h3 className="text-xs font-semibold tracking-wide text-muted-foreground">BOARD AUTHORITY · HOW FAR IT ACTS ALONE</h3>
+            <p className="text-muted-foreground">How far this chat may reach with no approval from you, enforced by the server for any harness. <b>Own work</b> — its own cards, notes and messages. <b>Workspace</b> — also projects, columns and scheduled loops. <b>Organization</b> — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</p>
+            {pick([{ v: "" as HarmanLevel | "", label: "Agent default" }, ...HARMAN_LEVELS.map((v) => ({ v: v as HarmanLevel | "", label: LEVEL_NAME[v] }))],
+              level, (v) => write(() => api.sessionLevelSet(target, v), "level", v), "Board authority")}
+            {effective ? <p className="text-muted-foreground">Acting at {LEVEL_NAME[effective]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</p> : null}
           </section>
           {busy ? <p className="text-muted-foreground">{target ? "Saving…" : "Loading…"}</p> : null}
           {note ? <p role="alert" className="text-destructive">{note}</p> : null}

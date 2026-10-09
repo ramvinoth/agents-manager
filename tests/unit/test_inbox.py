@@ -295,6 +295,6 @@ def test_red_subject_names_a_level_in_words_not_its_key(monkeypatch):
     monkeypatch.setattr(inbox, "_label", lambda s: s)
     ask = lambda lv: inbox.red_subject({"action": "session_level_set",
                                         "args": {"session": "s1", "level": lv}})
-    assert ask("ic") == "s1 → Worker", "the internal key never reaches the owner"
-    assert ask("lead") == "s1 → Lead"
-    assert ask("") == "s1 → its agent role default"
+    assert ask("ic") == "s1 → Own work", "the internal key never reaches the owner"
+    assert ask("lead") == "s1 → Workspace"
+    assert ask("") == "s1 → the agent it was started from"

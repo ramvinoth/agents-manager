@@ -450,7 +450,7 @@ class ApiClient {
   sessionModeSet(session: string, mode: PermissionPolicy) {
     return this.postJSON<TrustWrite>("/api/session/mode", { for_session: session, mode })
   }
-  /** "" clears the chat's override back to its agent role's level. */
+  /** "" clears the chat's override back to the level of the agent it was started from. */
   sessionLevelSet(session: string, level: HarmanLevel | "") {
     return this.postJSON<TrustWrite>("/api/session/level", { for_session: session, level })
   }

@@ -177,7 +177,7 @@ export interface SessionDetail {
     archived?: boolean
     favorite?: boolean
   }
-  /** The Harman level this chat acts at now (override → agent role → Worker). */
+  /** The Harman level this chat acts at now (override → the agent it was started from → Own work). */
   effective_level?: string
   capabilities: Capabilities
   summary: SessionSummary & { error?: string }

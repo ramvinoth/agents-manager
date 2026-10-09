@@ -236,8 +236,8 @@ export default function AgentsScreen({ navigation }: Props) {
                   </Text>
                 ) : null}
                 {/* Level + model + schedule badges. The level is what a chat
-                    started from this role may do on the board ("from its
-                    agent role" in the chat's Trust settings). */}
+                    started from this agent may do on the board ("from the agent
+                    it was started from" in the chat's Trust settings). */}
                 {(tmpl.level || tmpl.model || tmpl.cron) ? (
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
                     {tmpl.level ? (
