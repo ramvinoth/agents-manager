@@ -177,8 +177,8 @@ test("attachment blocks repeated callbacks, reports failure safely and permits r
   pending.reject(Object.assign(new Error("PRIVATE_SERVER_DETAIL"), { status: 403 }))
   await attaching
   assert.equal(view.node("card-detail-project-2").props.disabled, false)
-  assert.match(JSON.stringify(view.alerts), /Could not attach card/)
-  assert.doesNotMatch(JSON.stringify(view.alerts), /PRIVATE_SERVER_DETAIL/)
+  assert.match(JSON.stringify(view.render()), /Could not attach the card/)
+  assert.doesNotMatch(JSON.stringify(view.render()), /PRIVATE_SERVER_DETAIL/)
   view.respond({ ...movable, card: { ...movable.card, project_id: 2 } })
   await view.node("card-detail-project-2").props.onPress()
   assert.deepEqual(view.attachments, [{ card_id: 44, project_id: 1 }, { card_id: 44, project_id: 2 }])
@@ -293,8 +293,8 @@ test("move serializes submissions, rolls back its own failure and permits retry"
   await moving
   assert.equal(view.node("card-detail-col-101").props.accessibilityState.selected, true)
   assert.equal(view.node("card-detail-col-103").props.disabled, false)
-  assert.match(JSON.stringify(view.alerts), /Could not move card/)
-  assert.doesNotMatch(JSON.stringify(view.alerts), /PRIVATE_SERVER_DETAIL/)
+  assert.match(JSON.stringify(view.render()), /Could not move the card/)
+  assert.doesNotMatch(JSON.stringify(view.render()), /PRIVATE_SERVER_DETAIL/)
   await view.node("card-detail-col-103").props.onPress()
   assert.equal(view.moves.length, 2)
   assert.equal(view.node("card-detail-col-103").props.accessibilityState.selected, true)
@@ -418,8 +418,8 @@ for (const status of [403, 500]) {
     assert.equal(view.deletes.length, 0, "Opening confirmation must not delete")
     await view.alerts[0].buttons!.find(b => b.text === "Delete")!.onPress!()
     assert.equal(view.navigation().backs, 0)
-    assert.match(JSON.stringify(view.alerts), /Could not delete/)
-    assert.doesNotMatch(JSON.stringify(view.alerts), /PRIVATE_SERVER_DETAIL/)
+    assert.match(JSON.stringify(view.render()), /Could not delete the card/)
+    assert.doesNotMatch(JSON.stringify(view.render()), /PRIVATE_SERVER_DETAIL/)
     assert.match(JSON.stringify(view.render()), /Visible card/)
     view.deletion({ deleted: true })
     view.node("card-detail-delete").props.onPress()
@@ -445,7 +445,7 @@ test("queued deletion reports approval and leaves the card available", async () 
   view.node("card-detail-delete").props.onPress()
   await view.alerts[0].buttons!.find(b => b.text === "Delete")!.onPress!()
   assert.equal(view.navigation().backs, 0)
-  assert.equal(view.alerts.at(-1)!.title, "Queued")
+  assert.match(JSON.stringify(view.render()), /waiting for the owner's approval/)
 })
 
 test("unconfirmed deletion stays on card, and cancel never calls the API", async () => {
@@ -460,7 +460,7 @@ test("unconfirmed deletion stays on card, and cancel never calls the API", async
   view.node("card-detail-delete").props.onPress()
   await view.alerts.at(-1)!.buttons!.find(b => b.text === "Delete")!.onPress!()
   assert.equal(view.navigation().backs, 0)
-  assert.equal(view.alerts.at(-1)!.title, "Deletion not confirmed")
+  assert.match(JSON.stringify(view.render()), /Deletion was not confirmed/)
 })
 
 for (const edit of ["New draft", ""]) {

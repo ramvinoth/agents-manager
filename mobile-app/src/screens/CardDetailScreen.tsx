@@ -45,6 +45,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [projects, setProjects] = useState<OrgProject[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  // Outcome of the owner's last action (move/attach/delete), shown inline —
+  // kept apart from `error` so the 4s silent refresh never wipes it.
+  const [notice, setNotice] = useState<{ text: string; tone: "error" | "info" } | null>(null)
   const [newComment, setNewComment] = useState("")
   const [posting, setPosting] = useState(false)
   const postPending = useRef(false)
@@ -125,6 +128,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       if (!card || toColumn === card.column_id || movePending.current) return
       movePending.current = true
       setMoving(true)
+      setNotice(null)
       const prev = card
       const preview = { ...card, column_id: toColumn }
       setCard(preview)
@@ -138,7 +142,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           navigation.replace("Login")
           return
         }
-        Alert.alert("Could not move card", "The move could not be confirmed. Refresh the card to check its current column before trying again.")
+        setNotice({ tone: "error", text: "Could not move the card. Check its column above before trying again." })
       } finally {
         movePending.current = false
         setMoving(false)
@@ -161,6 +165,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       if (!card || attachPending.current) return
       attachPending.current = true
       setAttaching(true)
+      setNotice(null)
       try {
         try {
           await api.orgUpdateCard({ card_id: card.id, project_id: projectId })
@@ -170,7 +175,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             navigation.replace("Login")
             return
           }
-          Alert.alert("Could not attach card", "The attachment could not be confirmed. Refresh the card to check its project before trying again.")
+          setNotice({ tone: "error", text: "Could not attach the card to that project. Please try again." })
           return
         }
         // Fetch the authoritative card AND board together; there is no local
@@ -194,21 +199,22 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         onPress: async () => {
           // card_delete is Red: an approval back means the card stays until the
           // owner says so — say that out loud instead of pretending it vanished.
+          setNotice(null)
           try {
             const r = await api.orgDeleteCard({ card_id: card.id })
             if (isQueued(r)) {
-              Alert.alert("Queued", "Deletion is queued for the owner's approval.")
+              setNotice({ tone: "info", text: "Deletion is waiting for the owner's approval. The card stays until then." })
               return
             }
             if (r.deleted) navigation.goBack()
-            else Alert.alert("Deletion not confirmed", "The card may already have been removed. Refresh it to check its status.")
+            else setNotice({ tone: "error", text: "Deletion was not confirmed. The card may already be gone; pull back to the board to check." })
           } catch (e) {
             if ((e as { status?: number })?.status === 401) {
               setToken(null)
               navigation.replace("Login")
               return
             }
-            Alert.alert("Could not delete card", "Deletion could not be confirmed. Please try again.")
+            setNotice({ tone: "error", text: "Could not delete the card. Please try again." })
           }
         },
       },
@@ -275,6 +281,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       keyboardVerticalOffset={headerHeight}
     >
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {notice ? (
+        <Text testID="card-detail-notice" accessibilityLiveRegion="polite"
+          style={notice.tone === "error" ? styles.errorBanner : styles.infoBanner}>{notice.text}</Text>
+      ) : null}
 
       <ScrollView
         ref={sheet}
