@@ -120,6 +120,28 @@ def test_resume_one_counts_and_stops_at_the_cap(store):
     assert len(launched) == resume.MAX_RESUMES
     assert not resume.resume_one(dict(rows["d"]), lambda r: pytest.fail("must not launch"))
     assert "d" not in rows and told[0][0][4].startswith("Should I keep retrying")
+    assert "server restart" in told[0][0][4]
+
+
+def test_the_cap_ask_quotes_the_last_error(store):
+    rows, told = store
+    rows["e"] = dict(_row("e"), resumes=resume.MAX_RESUMES)
+    assert resume.capped(rows["e"])
+    assert not resume.resume_one(dict(rows["e"]), lambda r: pytest.fail("must not launch"),
+                                 reason="BrokenPipeError: [Errno 32] Broken pipe")
+    assert "The last error was: BrokenPipeError" in told[0][0][4]
+
+
+def test_a_capped_run_does_not_also_push_a_generic_error(monkeypatch):
+    """At the cap the owner is asked in the inbox; the finalizer must know, so
+    it skips the vaguer 'The run ended with an error.' push."""
+    from viewer import engine
+    monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
+    monkeypatch.setattr(resume, "resume_one", lambda row, reason="": False)
+    monkeypatch.setattr(db, "inflight_run_get",
+                        lambda sid, started: dict(_row(sid), resumes=resume.MAX_RESUMES))
+    job = {"started": 5.0, "returncode": -1, "stderr": "x"}
+    assert engine._resume_cut_turn("s", job, []) is False and job["owner_told"]
 
 
 def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
@@ -128,7 +150,7 @@ def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
     from viewer import engine
     monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
     got = []
-    monkeypatch.setattr(resume, "resume_one", lambda row: got.append(row) or True)
+    monkeypatch.setattr(resume, "resume_one", lambda row, reason="": got.append(row) or True)
     job = {"started": 5.0, "returncode": -15}
     monkeypatch.setattr(db, "inflight_run_get",
                         lambda sid, started: _row(sid) if started == 5.0 else None)

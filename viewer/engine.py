@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 from viewer.config import (
     CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, agent_plugin_dir, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
@@ -1811,7 +1812,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             job["returncode"] = proc.returncode
         except Exception as e:
             job["returncode"] = -1
-            job["stderr"] = str(e)[:500]
+            job["stderr"] = f"{type(e).__name__}: {e}"[:500]
+            # The job is reaped after CHAT_JOB_TTL; without this line the cause
+            # of an rc=-1 run is gone for good.
+            print(f"  ⚠ run {session_id[:8]} failed: {type(e).__name__}: {e}")
+            traceback.print_exc()
             if proc:
                 try:
                     proc.kill()
@@ -1888,7 +1893,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # Background push: tell the app the turn finished (best-effort, async).
             # Skip when a follow-up resumed run is still carrying queued work, and
             # when the user interrupted (they're already looking).
-            if not leftovers and not interrupted and not resumed:
+            # A run that hit the resume cap already asked the owner, in the
+            # inbox, whether to keep retrying — a second, vaguer push is noise.
+            if not leftovers and not interrupted and not resumed and not job.get("owner_told"):
                 try:
                     from viewer.push import notify_all, push_preview
                     label = _push_label(session_id, cwd)
@@ -1934,8 +1941,10 @@ def _resume_cut_turn(session_id, job, leftovers):
     if not row:
         return False  # a newer run of this session already replaced the row
     row["queue"] = leftovers
+    if resume.capped(row):
+        job["owner_told"] = True
     print(f"  ↻ turn {session_id[:8]} was cut off mid-way (rc={job.get('returncode')}); resuming it")
-    return resume.resume_one(row)
+    return resume.resume_one(row, reason=job.get("stderr", ""))
 
 
 def _watch_endpoint(job, proc, base_url, model):

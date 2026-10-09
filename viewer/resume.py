@@ -55,22 +55,30 @@ def was_cut_off(turn_open, interrupted, explained):
     return bool(turn_open and not interrupted and not explained)
 
 
-def resume_one(row, start=None):
+def capped(row):
+    """Has this turn used up its automatic resumes (the owner gets asked instead)?"""
+    return row["resumes"] >= MAX_RESUMES
+
+
+def resume_one(row, start=None, reason=""):
     """Resume one cut-off turn from its in-flight row, within MAX_RESUMES.
     Returns True if a resumed run started; otherwise the row is cleared.
-    `start(row) -> bool` launches it (injected in tests)."""
+    `start(row) -> bool` launches it (injected in tests). `reason` is the last
+    run's error, quoted to the owner when the cap is hit."""
     start = start or _start
     sid = row["session_id"]
     if _waiting_on_owner(sid):
         db.inflight_run_clear(sid, row["started_at"])
         return False
-    if row["resumes"] >= MAX_RESUMES:
+    if capped(row):
         db.inflight_run_clear(sid, row["started_at"])
+        cause = (f"The last error was: {reason.strip()[-300:]}" if reason.strip()
+                 else "The cause was a server restart or the agent process stopping.")
         _tell_owner(sid, (
             "Should I keep retrying my last task? It was cut off "
-            f"{row['resumes'] + 1} times in a row before it finished (a server restart, "
-            "or the agent process stopping), so I stopped resuming it automatically in "
-            "case something about it keeps causing that. Reply in this chat to continue."))
+            f"{row['resumes'] + 1} times in a row before it finished, so I stopped "
+            f"resuming it automatically in case something about it keeps causing that. "
+            f"{cause} Reply in this chat to continue."))
         return False
     db.inflight_run_bump_resumes(sid)
     if start(row):
