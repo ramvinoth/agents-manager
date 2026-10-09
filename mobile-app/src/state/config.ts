@@ -35,7 +35,6 @@ const TOKEN_KEY = "token" // legacy — migration source only
 const HOST_KEY = "currentHost"
 const PREFS_KEY = "composerPrefs"
 const THEME_KEY = "themePref"
-const DRAWER_KEY = "drawerSections"
 const NOTIFY_KEY = "notifyEveryReply"
 const DRAFTS_KEY = "composerDrafts"
 
@@ -51,7 +50,6 @@ let _host = "local"
 let _drafts: Record<string, string> = {}
 let _prefs: { mode: string; model: string } = { mode: "default", model: "default" }
 let _theme: ThemePref = "system"
-let _drawer: Record<string, boolean> = {}
 let _notify = true
 
 // Tiny pub-sub so a theme change repaints the whole tree without prop-drilling.
@@ -109,11 +107,6 @@ export async function loadConfig(): Promise<void> {
     }
     const tp = (await SecureStore.getItemAsync(THEME_KEY)) as ThemePref | null
     _theme = tp === "light" || tp === "dark" ? tp : "system"
-    try {
-      _drawer = JSON.parse((await SecureStore.getItemAsync(DRAWER_KEY)) || "{}")
-    } catch {
-      _drawer = {}
-    }
     _notify = (await SecureStore.getItemAsync(NOTIFY_KEY)) !== "0"
     try {
       _drafts = JSON.parse((await SecureStore.getItemAsync(DRAFTS_KEY)) || "{}")
@@ -299,20 +292,6 @@ export async function setThemePref(v: ThemePref): Promise<void> {
     await SecureStore.setItemAsync(THEME_KEY, v)
   } catch {
     /* best-effort; in-memory value still drives this session */
-  }
-}
-
-/** Which drawer sections are collapsed (by key). Missing key = expanded. */
-export function drawerSections(): Record<string, boolean> {
-  return _drawer
-}
-
-export async function setDrawerSection(key: string, open: boolean): Promise<void> {
-  _drawer = { ..._drawer, [key]: open }
-  try {
-    await SecureStore.setItemAsync(DRAWER_KEY, JSON.stringify(_drawer))
-  } catch {
-    /* best-effort */
   }
 }
 

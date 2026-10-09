@@ -1,4 +1,4 @@
-import { renderMarkdown, renderMarkdownSegments } from "./markdown.ts"
+import { renderMarkdownSegments } from "./markdown.ts"
 
 let pass = 0, fail = 0
 function ok(label: string, cond: boolean, got?: unknown) {
@@ -8,7 +8,6 @@ function ok(label: string, cond: boolean, got?: unknown) {
 const html = (t: string, known: string[] = ["plan", "tom's plan"]) =>
   renderMarkdownSegments(t, { resolves: (x) => known.includes(x.toLowerCase()) }).map((s) => s.type === "html" ? s.html : "").join("")
 
-ok("chat text has no note syntax", !renderMarkdown("see [[Plan]] #tag").includes("wikilink"))
 let h = html("see [[Plan]] and [[Nope]]")
 ok("resolved link", h.includes('class="wikilink" data-note="Plan"'), h)
 ok("ghost link", h.includes('class="wikilink ghost" data-note="Nope"'), h)

@@ -208,32 +208,6 @@ function renderInline(text: string, syntax?: NoteSyntax): string {
   return h
 }
 
-export function renderMarkdown(text: string): string {
-  if (!text || typeof text !== "string") return ""
-  const parts: Array<{ type: "text" | "code"; content: string; lang?: string }> = []
-  const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
-  let lastIdx = 0
-  let match: RegExpExecArray | null
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    if (match.index > lastIdx)
-      parts.push({ type: "text", content: text.slice(lastIdx, match.index) })
-    parts.push({ type: "code", lang: match[1], content: match[2].trim() })
-    lastIdx = match.index + match[0].length
-  }
-  if (lastIdx < text.length) parts.push({ type: "text", content: text.slice(lastIdx) })
-  return parts
-    .map((part) => {
-      if (part.type === "code") {
-        return `<pre><code class="language-${part.lang}">${highlightCode(
-          esc(part.content),
-          part.lang || ""
-        )}</code></pre>`
-      }
-      return renderInline(part.content)
-    })
-    .join("")
-}
-
 /** A rendered markdown segment: either an HTML blob (injected via
  *  dangerouslySetInnerHTML) or a mermaid diagram (rendered by a React component
  *  that OWNS its SVG, so React re-renders never wipe it). */

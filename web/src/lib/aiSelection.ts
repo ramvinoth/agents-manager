@@ -55,11 +55,6 @@ export function switchAIProvider(current: AISelection, provider: string, previou
   return { provider, model: { kind: "default" }, convMode: "agent", effort: "" }
 }
 
-export function modelLabel(model: AIModel): string {
-  if (model === null) return "Model from the request"
-  return model.kind === "default" ? "Provider default model" : model.id
-}
-
 export function providerLabel(provider: string, providers: { id: string; name: string }[]): string {
   if (!provider) return "Claude (your login)"
   return providers.find((p) => p.id === provider)?.name || `Unavailable connection (${provider})`

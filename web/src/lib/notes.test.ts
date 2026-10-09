@@ -1,4 +1,4 @@
-import { noteTemplates, notesScopeFilter, orderNotes, displayTitle, previewLine, searchNotes, type Note } from "./notes.ts"
+import { noteTemplates, orderNotes, displayTitle, previewLine, searchNotes, type Note } from "./notes.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -18,11 +18,6 @@ eq("journal dated", tpl[1].body.startsWith("# 2026-09-26"), true)
 eq("blank note", tpl[0].body, "")
 
 // scope
-eq("scope unscoped = every note", notesScopeFilter({}), { session: undefined, project: undefined, archived: false })
-eq("scope blank session refused", notesScopeFilter({ session: " " }), null)
-eq("scope bad project refused", notesScopeFilter({ project: 0 }), null)
-eq("scope session ok", notesScopeFilter({ session: "s1" }), { session: "s1", project: undefined, archived: false })
-eq("scope project archived", notesScopeFilter({ project: 3, archived: true }), { session: undefined, project: 3, archived: true })
 
 // order: pinned first, then newest edit, then id
 const ordered = orderNotes([

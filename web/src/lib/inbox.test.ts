@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, inboxScopeFilter, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, rowActor, searchInbox, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, rowActor, searchInbox, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -50,12 +50,6 @@ eq("peer row — reply to the recipient's mailbox", replyTo(M({ id: 3, session_i
 eq("no session party — nothing to reply to", replyTo(M({ id: 4, session_id: "", sender_type: "user", recipient_type: "user" })), null)
 
 // scope validation: unscoped is legitimate (the tab); malformed is refused
-eq("unscoped ok", inboxScopeFilter() && inboxScopeFilter()!.project === undefined, true)
-eq("session scoped ok", inboxScopeFilter({ session: "abc" })?.session, "abc")
-eq("empty session refused", inboxScopeFilter({ session: "  " }), null)
-eq("bad project refused", inboxScopeFilter({ project: -3 }), null)
-eq("bad kind refused", inboxScopeFilter({ kind: "bogus" as never }), null)
-eq("kind kept", inboxScopeFilter({ kind: "question" })?.kind, "question")
 
 console.log(`\ninbox: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

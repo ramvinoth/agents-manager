@@ -2,7 +2,6 @@ import {
   aiSummary,
   discoveryHint,
   modelChoices,
-  modelLabel,
   providerLabel,
   sameAI,
   selectionProblem,
@@ -31,9 +30,6 @@ eq("switching provider resets model/mode/effort", switchAIProvider(custom, ""), 
 eq("switching back restores the earlier draft", switchAIProvider(claude, "p1", custom), custom)
 eq("same provider is a no-op", switchAIProvider(custom, "p1"), custom)
 
-eq("model label: null", modelLabel(null), "Model from the request")
-eq("model label: default", modelLabel({ kind: "default" }), "Provider default model")
-eq("model label: id", modelLabel({ kind: "id", id: "m" }), "m")
 eq("provider label: built-in", providerLabel("", providers), "Claude (your login)")
 eq("provider label: missing preset", providerLabel("gone", providers), "Unavailable connection (gone)")
 

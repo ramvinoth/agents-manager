@@ -165,17 +165,3 @@ export function onNotificationTap(handler: (data: Record<string, unknown>) => vo
   }
 }
 
-/** First line of a reply, trimmed of markdown noise — a usable notification body. */
-export function replyPreview(text: string, max = 140): string {
-  const line =
-    (text || "")
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l && !/^[#>*\-|`]+$/.test(l)) || ""
-  const clean = line
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/^#+\s*/, "")
-    .trim()
-  return clean.length > max ? clean.slice(0, max - 1) + "…" : clean
-}

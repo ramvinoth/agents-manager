@@ -1,4 +1,4 @@
-import { filterCards, orderColumn, groupByColumn, nextPosition, decisionActions, formatActor, matchesQuery, findCardSession, type Card, type BoardColumn } from "./board.ts"
+import { orderColumn, groupByColumn, nextPosition, decisionActions, formatActor, matchesQuery, findCardSession, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -23,12 +23,6 @@ const cards: Card[] = [
 ]
 const ids = (cs: Card[]) => cs.map((c) => c.id)
 
-// filterCards
-eq("no filter", ids(filterCards(cards)), [1, 2, 3, 4])
-eq("by session", ids(filterCards(cards, { session: "s1" })), [1, 2])
-eq("by project", ids(filterCards(cards, { project: 10 })), [1, 2, 4])
-eq("combined AND", ids(filterCards(cards, { session: "s2", project: 10 })), [4])
-eq("no match", filterCards(cards, { session: "nobody" }), [])
 
 // orderColumn
 eq("order by position", ids(orderColumn([C({ id: 1, position: 3 }), C({ id: 2, position: 1 }), C({ id: 3, position: 2 })])), [2, 3, 1])

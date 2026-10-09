@@ -15,15 +15,6 @@ function pos(c: { position?: number | null }): number {
   return typeof v === "number" && isFinite(v) ? v : 0
 }
 
-/** Cards matching every provided filter (AND). One board → a session/project view. */
-export function filterCards(cards: Card[], f: CardFilter = {}): Card[] {
-  return cards.filter((c) => {
-    if (f.session !== undefined && c.session_id !== f.session) return false
-    if (f.project !== undefined && c.project_id !== f.project) return false
-    return true
-  })
-}
-
 /**
  * matchesQuery — the board's find box. "#107" or "107" matches that card number
  * exactly; anything else is a case-insensitive substring of the title or body.

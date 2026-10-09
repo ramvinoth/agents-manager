@@ -35,16 +35,6 @@ export function noteTemplates(now: Date = new Date()): NoteTemplate[] {
 export const KIND_LABEL: Record<NoteKind, string> =
   { note: "Note", journal: "Journal", meeting: "Meeting", idea: "Idea", checklist: "Checklist", discussion: "Discussion" }
 
-/** The scope of a notes VIEW: a chat's notes, a project's, or (the Notes tab)
- *  every note — unlike the board, notes need no columns, so an unscoped view is
- *  legitimate. A malformed scope is refused, never silently widened. */
-export function notesScopeFilter(input: NoteFilter = {}): NoteFilter | null {
-  const { session, project, archived } = input
-  if (session !== undefined && (typeof session !== "string" || !session.trim())) return null
-  if (project !== undefined && (!Number.isSafeInteger(project) || project <= 0)) return null
-  return { session, project, archived: !!archived }
-}
-
 /** Pinned first, then most recently edited — the server's order, re-applied
  *  after an optimistic local edit so the list never jumps out of order. */
 export function orderNotes(notes: Note[]): Note[] {

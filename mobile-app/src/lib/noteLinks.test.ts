@@ -1,4 +1,4 @@
-import { norm, resolveLink, openLinkQuery, suggestTitles, completeLink, filterByTags, neighbours, layoutGraph, type NoteGraph } from "./noteLinks.ts"
+import { norm, resolveLink, openLinkQuery, suggestTitles, completeLink, filterByTags, neighbours, type NoteGraph } from "./noteLinks.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -44,13 +44,6 @@ eq("backlinks skip self", nb.backlinks.map((e) => [e.source, e.title]), [[2, "Id
 eq("links skip self", nb.links.length, 0)
 eq("ghosts of 2", neighbours(g, 2).ghosts, ["Later"])
 
-const lay = layoutGraph(["n1", "n2", "n3", "g:x"], [["n1", "n2"], ["n2", "g:x"], ["n1", "missing"]])
-eq("layout keys", lay.map((p) => p.key), ["n1", "n2", "n3", "g:x"])
-eq("layout degree ignores dangling", lay.map((p) => p.degree), [1, 2, 0, 1])
-eq("layout bounded", lay.every((p) => Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1 && Number.isFinite(p.x)), true)
-eq("layout deterministic", JSON.stringify(layoutGraph(["a", "b"], [["a", "b"]])), JSON.stringify(layoutGraph(["a", "b"], [["a", "b"]])))
-eq("layout empty", layoutGraph([], []), [])
-eq("layout single", layoutGraph(["a"], []).length, 1)
 
 console.log(`noteLinks: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

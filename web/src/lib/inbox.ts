@@ -97,14 +97,3 @@ export function replyTo(m: InboxMessage): string | null {
   return null
 }
 
-/** The scope of an inbox VIEW: one chat's mailbox, a project's, or (the
- *  mobile tab) everything. Unlike notes, an UNscoped view is legitimate — the
- *  inbox is a channel, not a project artifact. A malformed scope is refused,
- *  never silently widened. */
-export function inboxScopeFilter(input: InboxFilter = {}): InboxFilter | null {
-  const { session, project, kind, unread_only, archived } = input
-  if (session !== undefined && (typeof session !== "string" || !session.trim())) return null
-  if (project !== undefined && (!Number.isSafeInteger(project) || project <= 0)) return null
-  if (kind !== undefined && !((INBOX_FILTERS as string[]).includes(kind))) return null
-  return { session, project, kind, unread_only: !!unread_only, archived: !!archived }
-}
