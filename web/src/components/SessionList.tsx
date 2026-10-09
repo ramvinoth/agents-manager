@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network } from "lucide-react"
+import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
@@ -89,16 +89,13 @@ export function SessionList() {
                 // groups. Only when automation is on; otherwise it doesn't exist here.
                 ...(automationOn && (!filter || "harman".includes(filter))
                   ? [
-                      <button
+                      <PinnedRow
                         key="harman"
-                        onClick={openHarman}
+                        icon={Sparkles}
+                        label="Harman"
                         title="Harman — Harness Manager orchestrator"
-                        className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                      >
-                        <Sparkles className="size-4 shrink-0 text-primary" />
-                        <span className="flex-1 font-medium">Harman</span>
-                        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                      </button>,
+                        onClick={openHarman}
+                      />,
                     ]
                   : []),
                 ...groups
@@ -145,54 +142,12 @@ export function SessionList() {
                 >
                   <ArrowLeft className="size-4" /> All projects
                 </button>,
-                // Fixed "Tasks" row — always first under a project. Opens the
-                // project's Kanban board, shared by every session in this dir.
-                <button
-                  key="tasks"
-                  onClick={() => setTasksFor(active)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                >
-                  <ClipboardList className="size-4 shrink-0 text-primary" />
-                  <span className="flex-1 font-medium">Tasks</span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>,
-                // Fixed "Notes" row — the project's notes ledger, the same one
-                // agents in these sessions write through their note_* tools.
-                <button
-                  key="notes"
-                  onClick={() => setNotesFor(active)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                >
-                  <NotebookPen className="size-4 shrink-0 text-primary" />
-                  <span className="flex-1 font-medium">Notes</span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>,
-                // Fixed "Inbox" row — the project's message ledger: every
-                // message between the owner and its sessions, and the decisions
-                // waiting on the owner, in one place (like the board, shared by
-                // every session in this dir; per-chat mailboxes open from a
-                // session's details).
-                <button
-                  key="inbox"
-                  onClick={() => setInboxFor(active)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                >
-                  <Mail className="size-4 shrink-0 text-primary" />
-                  <span className="flex-1 font-medium">Inbox</span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>,
-                // Fixed "Map" row — the project's code as a drill-down graph
-                // (folders → files → classes/functions), live-highlighting the
-                // files agents are writing right now.
-                <button
-                  key="map"
-                  onClick={() => setMapFor(active)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
-                >
-                  <Network className="size-4 shrink-0 text-primary" />
-                  <span className="flex-1 font-medium">Map</span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>,
+                // Fixed rows, always first under a project: its board, notes ledger,
+                // message ledger and code map — each shared by every session in this dir.
+                <PinnedRow key="tasks" icon={ClipboardList} label="Tasks" onClick={() => setTasksFor(active)} />,
+                <PinnedRow key="notes" icon={NotebookPen} label="Notes" onClick={() => setNotesFor(active)} />,
+                <PinnedRow key="inbox" icon={Mail} label="Inbox" onClick={() => setInboxFor(active)} />,
+                <PinnedRow key="map" icon={Network} label="Map" onClick={() => setMapFor(active)} />,
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -243,7 +198,7 @@ export function SessionList() {
       {inboxSession && (
         <InboxDialog
           host={currentHost}
-          cwd={inboxFor?.project || inboxFor?.dir || ""}
+          cwd={active?.project || active?.dir || ""}
           name={inboxSession.title}
           session={inboxSession.id}
           sessionTitle={inboxSession.title}
@@ -252,6 +207,31 @@ export function SessionList() {
       )}
       <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
+  )
+}
+
+/** A fixed, bordered entry above the list (Harman, or a project's Tasks/Notes/Inbox/Map). */
+function PinnedRow({
+  icon: Icon,
+  label,
+  title,
+  onClick,
+}: {
+  icon: LucideIcon
+  label: string
+  title?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+    >
+      <Icon className="size-4 shrink-0 text-primary" />
+      <span className="flex-1 font-medium">{label}</span>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+    </button>
   )
 }
 
@@ -360,9 +340,9 @@ function SessionRow({
                 <span className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70">
                   {detail.capabilities.mcp.length} MCP
                 </span>
-                {onOpenInbox && (s as { id?: string }).id && (
+                {onOpenInbox && s.id && (
                   <button
-                    onClick={() => onOpenInbox((s as unknown as { id: string }).id, s.title || (s as unknown as { id: string }).id.slice(0, 8))}
+                    onClick={() => onOpenInbox(s.id!, s.title || s.id!.slice(0, 8))}
                     className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-px font-medium text-primary hover:bg-primary/20"
                   >
                     <Mail className="size-3" /> Inbox

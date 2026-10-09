@@ -2,6 +2,8 @@ import type { ModelRow } from "./providerModels"
 // Domain types shared across the app — ported from the vanilla SessionParser.
 
 export interface SessionListItem {
+  /** Harness session id (the transcript stem; Copilot's dir name). */
+  id?: string
   path: string
   title: string
   project: string
