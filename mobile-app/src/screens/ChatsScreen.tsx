@@ -12,6 +12,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
+import { activity, groupByProject } from "../lib/chatList"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
@@ -27,8 +28,6 @@ import { useStyles } from "../lib/styles"
 // root stack — so navigation can still push Thread/NewChat on the parent stack.
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
-/** When the chat last had a message; `modified` from a server that predates it. */
-const activity = (s: Session) => s.last_message ?? s.modified ?? 0
 
 function relTime(sec?: number): string {
   if (!sec) return ""
@@ -89,17 +88,11 @@ export default function ChatsScreen({ navigation }: Props) {
     if (filter === "unread") return pool.filter((s) => s.unread).map((s) => ({ kind: "chat", s }))
     if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
     if (filter === "projects") {
-      // Group by project (chats without one fall under "No project"), each group a
-      // collapsible header. Groups + chats keep the newest-message-first order from `load`.
-      const groups = new Map<string, Session[]>()
-      for (const s of pool) {
-        const key = s.project || "No project"
-        ;(groups.get(key) || groups.set(key, []).get(key)!).push(s)
-      }
+      // Collapsible project headers, the newest-message project first (lib/chatList).
       const out: Row[] = []
-      for (const [proj, list] of Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        out.push({ kind: "header", project: proj, count: list.length })
-        if (!collapsed.has(proj)) for (const s of list) out.push({ kind: "chat", s })
+      for (const { project, chats } of groupByProject(pool)) {
+        out.push({ kind: "header", project, count: chats.length })
+        if (!collapsed.has(project)) for (const s of chats) out.push({ kind: "chat", s })
       }
       return out
     }
