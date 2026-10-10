@@ -1806,16 +1806,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 if isinstance(res_text, str) and res_text.strip():
                     job["last_result"] = res_text.strip()
                 # Turn finished: feed the next queued message, or shut down.
-                with CHAT_LOCK:
-                    nxt = job["queue"].pop(0) if job["queue"] else None
-                    if nxt is None:
-                        job["stdin_open"] = False
-                    else:
-                        job["turn_open"] = True
-                    backlog = list(job["queue"])
-                if nxt is not None:
-                    _persist_queue(session_id, backlog)
-                    stream_user_message(proc, nxt)
+                if feed_next_queued(session_id, job, proc):
                     if watch_url:
                         job["model_wait"].turn_sent(time.time())
                 else:
@@ -1985,6 +1976,33 @@ def _watch_endpoint(job, proc, base_url, model):
             except OSError:
                 pass
             return
+
+
+def feed_next_queued(session_id, job, proc):
+    """At a turn's end, write the next queued message into the run's stdin.
+    Returns True if one was sent. Never loses a message: once stdin is closed
+    (the CLI can still emit more turns after that, e.g. on a background-task
+    notification), the queue is left intact for the finalizer's follow-up run,
+    and a write that fails puts the message back at the front."""
+    with CHAT_LOCK:
+        nxt = job["queue"].pop(0) if job["queue"] and job["stdin_open"] else None
+        if nxt is None:
+            job["stdin_open"] = False
+            return False
+        job["turn_open"] = True
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
+    try:
+        stream_user_message(proc, nxt)
+        return True
+    except (OSError, ValueError):
+        with CHAT_LOCK:
+            job["queue"].insert(0, nxt)
+            job["stdin_open"] = False
+            job["turn_open"] = False
+            backlog = list(job["queue"])
+        _persist_queue(session_id, backlog)
+        return False
 
 
 def _persist_queue(session_id, backlog):
