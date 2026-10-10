@@ -1233,13 +1233,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 if isinstance(res_text, str) and res_text.strip():
                     job["last_result"] = res_text.strip()
                 # Turn finished: feed the next queued message, or shut down.
-                with CHAT_LOCK:
-                    nxt = job["queue"].pop(0) if job["queue"] else None
-                    if nxt is None:
-                        job["stdin_open"] = False
-                if nxt is not None:
-                    stream_user_message(proc, nxt)
-                else:
+                if not feed_next_queued(job, proc):
                     try:
                         proc.stdin.close()
                     except OSError:
@@ -1276,6 +1270,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 interrupted = job.get("interrupted")
                 last_result = job.get("last_result", "")
                 version_gate = job.get("version_gate", "")
+                requeued = job.pop("requeued", False)
             # Self-heal the stale half of the 2.1.84 incident: the provider
             # rejected this run for a too-old CLI, so force the next run to
             # re-resolve the binary from disk — if the user has since run
@@ -1284,8 +1279,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # bare `claude` on the host and never consult this cache.
             if version_gate and job.get("host", "local") == "local":
                 invalidate_claude_bin_cache()
-            # Messages queued in the closing race get a fresh resumed run.
-            if leftovers and job["returncode"] == 0:
+            # Messages queued in the closing race get a fresh resumed run — and
+            # so does one put back after its stdin write failed (the run likely
+            # died, so rc is nonzero, but the owner's message must not be lost).
+            if leftovers and (job["returncode"] == 0 or requeued):
                 first, rest = leftovers[0], leftovers[1:]
                 if start_claude_run(session_id, ["--resume", session_id], first,
                                     job["mode"], job["cwd"], job["model"], job.get("host", "local")):
@@ -1318,6 +1315,28 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
 
     threading.Thread(target=run, daemon=True).start()
     return True
+
+
+def feed_next_queued(job, proc):
+    """At a turn's end, write the next queued message into the run's stdin.
+    Returns True if one was sent. Never loses a message: once stdin is closed
+    (the CLI can still emit more turns after that, e.g. on a background-task
+    notification), the queue is left intact for the finalizer's follow-up run,
+    and a write that fails puts the message back at the front for it."""
+    with CHAT_LOCK:
+        nxt = job["queue"].pop(0) if job["queue"] and job["stdin_open"] else None
+        if nxt is None:
+            job["stdin_open"] = False
+            return False
+    try:
+        stream_user_message(proc, nxt)
+        return True
+    except (OSError, ValueError):
+        with CHAT_LOCK:
+            job["queue"].insert(0, nxt)
+            job["stdin_open"] = False
+            job["requeued"] = True
+        return False
 
 
 def interrupt_chat(session_id):
