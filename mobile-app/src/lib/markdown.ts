@@ -99,7 +99,8 @@ const isDivider = (line: string) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line)
  */
 export function blockGap(prev: MdBlock | undefined, next: MdBlock): number {
   if (!prev) return 0
-  if (next.t === "h") return 18
+  // A heading under a heading stays with it; otherwise sections open wide, wider for h1/h2.
+  if (next.t === "h") return prev.t === "h" ? 8 : next.level <= 2 ? 24 : 18
   if (prev.t === "h") return 6
   if (prev.t === "li" && next.t === "li") return 4
   return 12

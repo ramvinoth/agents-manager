@@ -11,11 +11,16 @@
  * opens the OS share sheet. A failed diagram shows "Diagram error" in the WebView;
  * the user can still switch to Code and copy it.
  *
+ * Expand opens the same diagram full screen in a second, zoomable WebView: the
+ * viewport allows pinch-zoom (WKWebView redraws the SVG sharp at every scale) and
+ * scrolling pans. Tapping the inline diagram opens it too.
+ *
  * The mermaid source is injected as a JSON string (not interpolated into markup) so
  * diagram text can't break out of the template or inject script.
  */
 import React, { useMemo, useRef, useState } from "react"
-import { Pressable, Text, View } from "react-native"
+import { Modal, Pressable, Text, View } from "react-native"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { WebView } from "react-native-webview"
 import * as Clipboard from "expo-clipboard"
 import * as FileSystem from "expo-file-system"
@@ -25,15 +30,19 @@ import { showActions } from "../lib/actionSheet"
 
 const MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
 
-function buildHtml(src: string, dark: boolean, textColor: string): string {
+// zoomable: the full-screen variant — pinch-zoom allowed, page scrolls, the
+// diagram is centred in the viewport. Inline it is fixed-scale and auto-sized.
+function buildHtml(src: string, dark: boolean, textColor: string, zoomable = false): string {
   const srcLiteral = JSON.stringify(src)
   const theme = dark ? "dark" : "default"
+  const viewport = zoomable ? "maximum-scale=8, user-scalable=yes" : "maximum-scale=1"
+  const page = zoomable ? "min-height:100vh;align-items:center;padding:12px;box-sizing:border-box;" : "padding:4px 0;"
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, ${viewport}"/>
 <style>
   html,body{margin:0;padding:0;background:transparent;color:${textColor};
-    font-family:-apple-system,system-ui,sans-serif;overflow:hidden;}
-  #d{display:flex;justify-content:center;padding:4px 0;}
+    font-family:-apple-system,system-ui,sans-serif;${zoomable ? "" : "overflow:hidden;"}}
+  #d{display:flex;justify-content:center;${page}}
   #d svg{max-width:100%;height:auto;}
   .err{color:#c0392b;font-size:12px;white-space:pre-wrap;padding:8px;}
 </style></head><body>
@@ -136,6 +145,7 @@ export default function MermaidView({
   const [showCode, setShowCode] = useState(false)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const html = useMemo(() => buildHtml(source, dark, textColor), [source, dark, textColor])
 
   const onCopy = async () => {
@@ -232,8 +242,13 @@ export default function MermaidView({
 
   return (
     <View>
-      {/* Toolbar: Diagram/Code toggle + Copy + Download. */}
+      {/* Toolbar: Expand + Diagram/Code toggle + Copy + Download. */}
       <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 6, marginBottom: 4 }}>
+        {showCode ? null : (
+          <Pressable testID="mermaid-expand" onPress={() => setExpanded(true)} style={btn}>
+            <Text style={btnLabel}>Expand</Text>
+          </Pressable>
+        )}
         <Pressable testID="mermaid-toggle" onPress={() => setShowCode((v) => !v)} style={btn}>
           <Text style={btnLabel}>{showCode ? "Diagram" : "Code"}</Text>
         </Pressable>
@@ -249,6 +264,14 @@ export default function MermaidView({
           view), but collapsed to zero height when showing code — this avoids the
           "empty overlay" that a horizontally-scrolled multiline Text produced. */}
       <View style={showCode ? { height: 0, overflow: "hidden" } : { height, width: "100%" }}>
+        {/* A transparent tap layer over the fixed-scale diagram: one tap opens the
+            zoomable full-screen view (the inline WebView has nothing to scroll). */}
+        <Pressable
+          testID="mermaid-tap"
+          accessibilityLabel="Open diagram full screen"
+          onPress={() => setExpanded(true)}
+          style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}
+        />
         <WebView
           ref={webRef}
           originWhitelist={["*"]}
@@ -267,6 +290,47 @@ export default function MermaidView({
           </Text>
         </View>
       ) : null}
+
+      {expanded ? (
+        <DiagramModal source={source} dark={dark} textColor={textColor} onClose={() => setExpanded(false)} />
+      ) : null}
     </View>
+  )
+}
+
+/** Full-screen, pinch-zoomable diagram. Mounted only while open. */
+function DiagramModal({
+  source,
+  dark,
+  textColor,
+  onClose,
+}: {
+  source: string
+  dark: boolean
+  textColor: string
+  onClose: () => void
+}) {
+  const t = useTheme()
+  const insets = useSafeAreaInsets()
+  const html = useMemo(() => buildHtml(source, dark, textColor, true), [source, dark, textColor])
+  return (
+    <Modal visible animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait", "landscape"]}>
+      <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Text style={{ flex: 1, fontSize: 13, color: t.textMuted }}>Pinch to zoom · drag to move</Text>
+          <Pressable testID="mermaid-close" onPress={onClose} hitSlop={12}>
+            <Text style={{ fontSize: 16, fontWeight: "600", color: t.accent }}>Done</Text>
+          </Pressable>
+        </View>
+        <WebView
+          testID="mermaid-zoom"
+          originWhitelist={["*"]}
+          source={{ html }}
+          style={{ flex: 1, backgroundColor: "transparent" }}
+          scrollEnabled
+          bounces={false}
+        />
+      </View>
+    </Modal>
   )
 }

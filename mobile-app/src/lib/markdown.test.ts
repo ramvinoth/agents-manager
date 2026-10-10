@@ -124,9 +124,9 @@ test("plain text passes through unchanged", () => {
 })
 
 test("block gaps: sections open wide, lists stay tight, paragraphs separate", () => {
-  const b = parseMarkdown("intro\n\n## Plan\nfirst para\n\nsecond para\n\n- a\n- b\n\nafter")
+  const b = parseMarkdown("intro\n\n## Plan\n### Step\nfirst para\n\nsecond para\n\n- a\n- b\n\nafter\n\n### Next")
   assert.deepEqual(b.map((x, i) => [x.t, blockGap(b[i - 1], x)]), [
-    ["p", 0], ["h", 18], ["p", 6], ["p", 12], ["li", 12], ["li", 4], ["p", 12],
+    ["p", 0], ["h", 24], ["h", 8], ["p", 6], ["p", 12], ["li", 12], ["li", 4], ["p", 12], ["h", 18],
   ])
 })
 

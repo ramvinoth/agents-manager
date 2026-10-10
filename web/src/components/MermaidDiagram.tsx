@@ -5,6 +5,7 @@ import {
   downloadMermaidPng,
   downloadMermaidSvg,
 } from "@/lib/mermaid"
+import { DiagramViewer } from "@/components/DiagramViewer"
 
 /**
  * MermaidDiagram — renders a ```mermaid fence as a React-owned diagram.
@@ -21,6 +22,7 @@ export function MermaidDiagram({ source, dark }: { source: string; dark: boolean
   const [showCode, setShowCode] = useState(false)
   const [copied, setCopied] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const svgHostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -59,6 +61,11 @@ export function MermaidDiagram({ source, dark }: { source: string; dark: boolean
           {copied ? "Copied" : "Copy"}
         </button>
         {showDiagram && (
+          <button type="button" onClick={() => setExpanded(true)} title="Full screen — zoom and pan">
+            Expand
+          </button>
+        )}
+        {showDiagram && (
           <div className="mermaid-dl-wrap">
             <button type="button" onClick={() => setMenuOpen((v) => !v)} title="Download diagram">
               Download
@@ -77,6 +84,11 @@ export function MermaidDiagram({ source, dark }: { source: string; dark: boolean
         <div
           ref={svgHostRef}
           className="mermaid-svg"
+          role="button"
+          tabIndex={0}
+          title="Open full screen to zoom"
+          onClick={() => setExpanded(true)}
+          onKeyDown={(e) => { if (e.key === "Enter") setExpanded(true) }}
           // The SVG string comes from mermaid with securityLevel:"strict" (no
           // scripts/handlers), and is React-owned — set once from state, never
           // fought over by a re-render.
@@ -85,6 +97,7 @@ export function MermaidDiagram({ source, dark }: { source: string; dark: boolean
       ) : (
         <pre className="mermaid-src"><code className="language-mermaid">{source}</code></pre>
       )}
+      {svg && <DiagramViewer svg={svg} open={expanded} onOpenChange={setExpanded} />}
     </div>
   )
 }
