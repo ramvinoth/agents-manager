@@ -44,6 +44,14 @@
     "plugins": [
       "expo-secure-store",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Harman uses the camera to scan the pairing QR code from your computer.",
+          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "@config-plugins/react-native-callkeep",
         {
           "appName": "Harman"

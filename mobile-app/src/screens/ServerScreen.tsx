@@ -9,6 +9,7 @@ import { pairFromLink } from "../state/signin"
 import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 import { userError } from "../lib/errors"
+import PairScanner from "../components/PairScanner"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Server">
 
@@ -27,6 +28,12 @@ export default function ServerScreen({ navigation }: Props) {
   const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [scanning, setScanning] = useState(false)
+
+  async function paired(link: string) {
+    setScanning(false)
+    if (await pairFromLink(link)) navigation.reset({ index: 0, routes: [{ name: "Home" }] })
+  }
 
   async function connect() {
     setError("")
@@ -60,6 +67,11 @@ export default function ServerScreen({ navigation }: Props) {
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets
     >
+      <TouchableOpacity testID="server-scan" accessibilityLabel="Scan pairing QR" style={[styles.button, { marginTop: 4 }]} onPress={() => setScanning(true)}>
+        <Text style={styles.buttonText}>Scan pairing QR</Text>
+      </TouchableOpacity>
+      <Text style={styles.hint}>On your computer open Harman → Profile → Pair a phone. Signs you in, no password.</Text>
+      <Text style={[styles.hint, { marginTop: 20 }]}>Or enter the server address:</Text>
       <Text style={styles.label}>Name (optional)</Text>
       <TextInput
         testID="server-name"
@@ -84,13 +96,14 @@ export default function ServerScreen({ navigation }: Props) {
         onChangeText={setUrl}
       />
       <Text style={styles.hint}>
-        Reach your self-hosted server over Tailscale — its tailnet IP or MagicDNS name, port 8091. Or scan the
-        QR from Profile → Pair a phone on your computer with the iPhone Camera.
+        Reach your self-hosted server over Tailscale — its tailnet IP or MagicDNS name, port 8091. A pasted
+        pairing link works here too.
       </Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <TouchableOpacity testID="server-connect" accessibilityLabel="server-connect" style={styles.button} onPress={connect} disabled={busy || !url}>
         {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Connect</Text>}
       </TouchableOpacity>
+      <PairScanner visible={scanning} onClose={() => setScanning(false)} onScan={paired} />
     </ScrollView>
   )
 }
