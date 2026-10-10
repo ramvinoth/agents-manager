@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 from viewer.config import (
     CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, agent_plugin_dir, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
@@ -43,6 +44,20 @@ from viewer import codemap, db, inference_health, orglogic, resume
 # sites read/write per row through db.loop_* / db.session_meta_* instead of mutating
 # a shared in-memory dict and rewriting a whole JSON file. Postgres gives the
 # atomicity the old module-level locks used to provide.
+
+
+def _newer(latest, obj):
+    """The later of `latest` and a user/assistant record's ISO `timestamp` (epoch
+    seconds). Bookkeeping records (cost-state, last-prompt, …) carry no timestamp
+    and so never count as activity."""
+    ts = obj.get("timestamp")
+    if obj.get("type") not in ("user", "assistant") or not isinstance(ts, str):
+        return latest
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return latest
+    return t if latest is None or t > latest else latest
 
 
 def _session_title(session_id):
@@ -2597,26 +2612,30 @@ class LocalHost(Host):
             if "subagents" in str(jsonl_file):
                 continue
             stat = jsonl_file.stat()
-            title, session_id, preview = "", jsonl_file.stem, ""
+            title, session_id, preview, last_message = "", jsonl_file.stem, "", None
             try:
-                if stat.st_size > 50000:
-                    # The tail scan already runs for titles — the last-message
-                    # preview rides along in the same pass at no extra I/O.
-                    with open(jsonl_file, "r") as f:
-                        f.seek(max(0, stat.st_size - 50000)); f.readline()
-                        for line in f:
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if obj.get("type") == "custom-title":
-                                title = obj.get("customTitle", "")
-                            if obj.get("type") == "agent-name" and not title:
-                                title = obj.get("agentName", "")
-                            p = self._preview_from(obj)
-                            if p:
-                                preview = p
-                if not title or not preview:
+                # The last 50KB (the whole file when smaller) holds the newest
+                # title, preview and message time in one pass.
+                with open(jsonl_file, "r") as f:
+                    if stat.st_size > 50000:
+                        f.seek(stat.st_size - 50000); f.readline()
+                    for line in f:
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if obj.get("type") == "custom-title":
+                            title = obj.get("customTitle", "")
+                        if obj.get("type") == "agent-name" and not title:
+                            title = obj.get("agentName", "")
+                        p = self._preview_from(obj)
+                        if p:
+                            preview = p
+                        last_message = _newer(last_message, obj)
+                # A long chat's title may sit only near its start: the head
+                # fills it, never replacing the tail's newer preview.
+                tail_preview = preview
+                if stat.st_size > 50000 and (not title or not preview):
                     with open(jsonl_file, "r") as f:
                         for i, line in enumerate(f):
                             if i > 200:
@@ -2630,8 +2649,9 @@ class LocalHost(Host):
                             if obj.get("type") == "agent-name" and not title:
                                 title = obj.get("agentName", "")
                             p = self._preview_from(obj)
-                            if p:
+                            if p and not tail_preview:
                                 preview = p
+                            last_message = _newer(last_message, obj)
             except Exception:
                 pass
             pdir = str(jsonl_file.parent.name)
@@ -2641,6 +2661,12 @@ class LocalHost(Host):
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,
+                             # When the last message was written. The
+                             # file's mtime also moves when Claude appends
+                             # bookkeeping on resume/exit (cost-state,
+                             # last-prompt, permission-mode), so unread and the
+                             # list's time read this, not `modified`.
+                             "last_message": last_message or stat.st_mtime,
                              "preview": preview})
         sessions.sort(key=lambda s: s["modified"], reverse=True)
         return sessions

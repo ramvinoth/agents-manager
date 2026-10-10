@@ -323,6 +323,10 @@ export type Session = {
   path: string
   project?: string
   modified?: number
+  /** When the last visible message was written (epoch s). The file's mtime
+   *  (`modified`) also moves when Claude Code appends bookkeeping on resume or
+   *  exit, so lists sort and show this instead; older servers omit it. */
+  last_message?: number
   size?: number
   /** Emoji avatar chosen on the Session profile page (overlaid server-side). */
   avatar?: string
@@ -332,7 +336,7 @@ export type Session = {
   /** Last visible message, "You: …"-prefixed for user turns (chat-list preview). */
   preview?: string
   /** Server-authoritative unread bit for THIS reader (principal), not per-device:
-   *  true when the transcript changed since this reader last opened it. */
+   *  true when a message arrived since this reader last opened it. */
   unread?: boolean
   /** Live run flag: a run is in flight for this session. Per-viewer-process truth
    *  (the jobs THIS viewer started), not a cross-host guarantee. */

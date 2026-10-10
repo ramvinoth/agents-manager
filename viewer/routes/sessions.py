@@ -1180,10 +1180,17 @@ class SessionsMixin:
         joined in memory — not a query per session. `running` reflects THIS
         viewer process's CHAT_JOBS (jobs it started); it is not a cross-host
         truth, which is why it is honestly named per-process rather than global.
-        `unread` is empty when `reader` is unknown, so a listing with no
-        principal is silent rather than lying that everything is unread."""
+        `unread` compares the last visible message (not the file mtime) with the
+        reader's cursor. It is false when `reader` is unknown or has never opened
+        anything, so a listing with no principal is silent rather than lying that
+        everything is unread."""
         all_meta = db.session_meta_all()
         seen = db.session_seen_get(reader) if reader else {}
+        # The reader's first cursor marks when unread tracking began for them. A
+        # chat they never opened is unread if it had a message since then (an
+        # agent started it for them); older never-opened chats stay quiet rather
+        # than lighting up the whole backlog.
+        tracked_since = min(seen.values()) if seen else None
         for s in sessions:
             meta = all_meta.get(s.get("id"), {})
             if meta.get("avatar"):
@@ -1197,8 +1204,12 @@ class SessionsMixin:
                 s["title"] = meta["title"]
             s["running"] = self.session_busy(s.get("id"))
             s["harness"] = harness
-            last = seen.get(s.get("id"))
-            s["unread"] = bool(last and s.get("modified") and s["modified"] > last)
+            # Remote listings carry no last_message; their mtime is the best
+            # signal. Every listing leaves here with one, so clients sort and
+            # show the same time unread is judged by.
+            s["last_message"] = s.get("last_message") or s.get("modified")
+            last = seen.get(s.get("id")) or tracked_since
+            s["unread"] = bool(last and s["last_message"] and s["last_message"] > last)
 
     def apply_code_restore(self, sid, state):
         """Overwrite each tracked file with its checkpoint content, backing up

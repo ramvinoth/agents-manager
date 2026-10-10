@@ -19,6 +19,9 @@ interface Group {
   running: number
 }
 
+/** When the chat last had a message; `modified` from a server that predates it. */
+const activity = (s: SessionListItem) => s.last_message ?? s.modified
+
 function groupSessions(sessions: SessionListItem[]): Group[] {
   const groups: Record<string, Group> = {}
   for (const s of sessions) {
@@ -27,12 +30,12 @@ function groupSessions(sessions: SessionListItem[]): Group[] {
     const key = s.project || s.path.split("/").slice(0, -1).join("/")
     if (!groups[key]) groups[key] = { dir: key, project: s.project, sessions: [], modified: 0, unread: false, running: 0 }
     groups[key].sessions.push(s)
-    if (s.modified > groups[key].modified) groups[key].modified = s.modified
+    if (activity(s) > groups[key].modified) groups[key].modified = activity(s)
     if (s.unread) groups[key].unread = true
     if (s.running) groups[key].running += 1
   }
   const list = Object.values(groups).sort((a, b) => b.modified - a.modified)
-  for (const g of list) g.sessions.sort((a, b) => b.modified - a.modified)
+  for (const g of list) g.sessions.sort((a, b) => activity(b) - activity(a))
   return list
 }
 
@@ -298,7 +301,7 @@ function SessionRow({
             <span className="truncate font-medium">{s.title}</span>
           </span>
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{fmtAgo(s.modified)}</span>
+            <span>{fmtAgo(activity(s))}</span>
             {providerName(s.provider) && (
               <span className="rounded bg-muted px-1 py-px text-[10px] font-medium text-foreground/70">
                 {providerName(s.provider)}

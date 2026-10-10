@@ -8,9 +8,13 @@ export interface SessionListItem {
   title: string
   project: string
   modified: number
+  /** When the last visible message was written (epoch s). The file's mtime
+   *  (`modified`) also moves when Claude Code appends bookkeeping on resume or
+   *  exit, so lists sort and show this instead; older servers omit it. */
+  last_message?: number
   size: number
   /** Server-authoritative unread bit for THIS reader (principal), not per-device:
-   *  true when the transcript changed since this reader last opened it. */
+   *  true when a message arrived since this reader last opened it. */
   unread?: boolean
   /** Live run flag from _overlay_meta. NOTE: per-viewer-process truth — reflects
    *  jobs THIS viewer started, not a cross-host guarantee. */

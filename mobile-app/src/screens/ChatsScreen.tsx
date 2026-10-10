@@ -27,6 +27,9 @@ import { useStyles } from "../lib/styles"
 // root stack — so navigation can still push Thread/NewChat on the parent stack.
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
+/** When the chat last had a message; `modified` from a server that predates it. */
+const activity = (s: Session) => s.last_message ?? s.modified ?? 0
+
 function relTime(sec?: number): string {
   if (!sec) return ""
   const d = Date.now() / 1000 - sec
@@ -87,7 +90,7 @@ export default function ChatsScreen({ navigation }: Props) {
     if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
     if (filter === "projects") {
       // Group by project (chats without one fall under "No project"), each group a
-      // collapsible header. Groups + chats keep the modified-desc order from `load`.
+      // collapsible header. Groups + chats keep the newest-message-first order from `load`.
       const groups = new Map<string, Session[]>()
       for (const s of pool) {
         const key = s.project || "No project"
@@ -256,7 +259,7 @@ export default function ChatsScreen({ navigation }: Props) {
       if (!silent) setError("")
       try {
         const s = (await api.sessions(host)).filter((x) => !deleting.current.has(x.path))
-        s.sort((a, b) => (b.modified || 0) - (a.modified || 0))
+        s.sort((a, b) => activity(b) - activity(a))
         fresh.current = true
         setFromCache(false)
         // The 4s poll mostly returns the same list: skip the re-render and the
@@ -497,7 +500,7 @@ export default function ChatsScreen({ navigation }: Props) {
                   </Text>
                 </View>
                 <View style={styles.chatMetaCol}>
-                  <Text style={[styles.chatTime, unread ? styles.chatTimeUnread : null]}>{relTime(item.modified)}</Text>
+                  <Text style={[styles.chatTime, unread ? styles.chatTimeUnread : null]}>{relTime(activity(item))}</Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     {item.favorite ? <Icon name="star" size={13} color={t.accent} /> : null}
                     {unread ? <View style={styles.unreadDot} /> : null}
