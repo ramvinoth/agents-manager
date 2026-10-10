@@ -37,7 +37,7 @@ import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
 import QuestionCard from "../components/QuestionCard"
 import PlanCard from "../components/PlanCard"
-import { ItemView, WorkingBubble } from "../components/ThreadItems"
+import { ItemView, PinnedBanner, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
@@ -972,37 +972,17 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }}
         {...boardPan.panHandlers}
       >
-      {/* Pinned banner: shows the current pin; tap jumps to it, tap again cycles
-          (WhatsApp style). The count shows position; the pin icon unpins it. */}
+      {/* Pinned banner: tap jumps to the current pin, tap again cycles (WhatsApp style). */}
       {pinnedItems.length ? (
-        (() => {
-          const i = Math.min(bannerIdx, pinnedItems.length - 1)
-          const cur = pinnedItems[i]
-          return (
-            <TouchableOpacity
-              testID="pinned-banner"
-              style={[styles.pinnedBanner, { backgroundColor: t.chipBg, borderBottomColor: t.border }]}
-              activeOpacity={0.8}
-              onPress={() => {
-                jumpToUuid(cur.uuid)
-                if (pinnedItems.length > 1) setBannerIdx((n) => (n + 1) % pinnedItems.length)
-              }}
-            >
-              <Icon name="pin" size={15} color={t.accent} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.pinnedBannerLabel, { color: t.accent }]}>
-                  Pinned{pinnedItems.length > 1 ? ` · ${i + 1}/${pinnedItems.length}` : ""}
-                </Text>
-                <Text style={[styles.pinnedBannerText, { color: t.text }]} numberOfLines={1}>
-                  {cur.text || "(no text)"}
-                </Text>
-              </View>
-              <TouchableOpacity testID="pinned-banner-unpin" onPress={() => togglePin(cur.uuid)} hitSlop={8}>
-                <Icon name="close" size={16} color={t.textMuted} />
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )
-        })()
+        <PinnedBanner
+          items={pinnedItems}
+          index={Math.min(bannerIdx, pinnedItems.length - 1)}
+          onPress={(cur) => {
+            jumpToUuid(cur.uuid)
+            if (pinnedItems.length > 1) setBannerIdx((n) => (n + 1) % pinnedItems.length)
+          }}
+          onUnpin={(cur) => togglePin(cur.uuid)}
+        />
       ) : null}
       <FlatList
         ref={listRef}

@@ -32,6 +32,38 @@ export function WorkingBubble({ activity }: { activity: string }) {
   )
 }
 
+// The pinned-message banner above the transcript. The screen decides what a tap
+// does (jump, then cycle); the count shows position, the close icon unpins.
+type Pin = { uuid: string; text: string }
+export function PinnedBanner({ items, index, onPress, onUnpin }: {
+  items: Pin[]; index: number; onPress: (pin: Pin) => void; onUnpin: (pin: Pin) => void
+}) {
+  const t = useTheme()
+  const styles = useStyles()
+  const cur = items[index]
+  return (
+    <TouchableOpacity
+      testID="pinned-banner"
+      style={[styles.pinnedBanner, { backgroundColor: t.chipBg, borderBottomColor: t.border }]}
+      activeOpacity={0.8}
+      onPress={() => onPress(cur)}
+    >
+      <Icon name="pin" size={15} color={t.accent} />
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.pinnedBannerLabel, { color: t.accent }]}>
+          Pinned{items.length > 1 ? ` · ${index + 1}/${items.length}` : ""}
+        </Text>
+        <Text style={[styles.pinnedBannerText, { color: t.text }]} numberOfLines={1}>
+          {cur.text || "(no text)"}
+        </Text>
+      </View>
+      <TouchableOpacity testID="pinned-banner-unpin" onPress={() => onUnpin(cur)} hitSlop={8}>
+        <Icon name="close" size={16} color={t.textMuted} />
+      </TouchableOpacity>
+    </TouchableOpacity>
+  )
+}
+
 export function ItemView({
   item,
   isLatest,
