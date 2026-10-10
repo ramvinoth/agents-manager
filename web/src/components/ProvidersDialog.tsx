@@ -322,7 +322,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
                   onClick={discover}
                 >
                   {discovering ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                  {editing.rows.length ? "Refresh from endpoint" : "Discover models"}
+                  {editing.rows.some((r) => r.discovered) ? "Refresh from endpoint" : "Discover models"}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
