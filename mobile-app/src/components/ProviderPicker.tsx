@@ -30,6 +30,10 @@ export default function ProviderPicker({ config, scope, providers, title, localO
   const [busy, setBusy] = useState(false)
   const [providerSearch, setProviderSearch] = useState("")
   const [search, setSearch] = useState("")
+  // The typed ID is its own state: deriving it from the draft would blank the
+  // box the moment the typed text happens to equal a listed model.
+  const idOf = (sel: AISelection) => sel.model?.kind === "id" ? sel.model.id : ""
+  const [manual, setManual] = useState(idOf(config.selection))
   const history = useRef(new Map<string, AISelection>())
   const dirty = !sameAI(config.selection, draft)
   const needsFirstSave = !scope.id && !localOnly && config.configured === false
@@ -64,7 +68,8 @@ export default function ProviderPicker({ config, scope, providers, title, localO
     if (id === draft.provider) return
     setCapBusy(true)
     history.current.set(draft.provider, draft)
-    setDraft(switchAIProvider(draft, id, history.current.get(id))); setSearch(""); setError("")
+    const next = switchAIProvider(draft, id, history.current.get(id))
+    setDraft(next); setManual(idOf(next)); setSearch(""); setError("")
   }
   const missing = !!draft.provider && !providers.some(p => p.id === draft.provider)
   const incompatible = !caps?.editable || (!!draft.provider && !caps.customProviders) || !caps.conversationModes.includes(draft.convMode) || !caps.efforts.includes(draft.effort)
@@ -78,16 +83,24 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       onSave(result); onClose()
     } catch (e) { setError(aiError(e)) } finally { setBusy(false) }
   }
-  const row = (id: string, label: string, selected: boolean, action: () => void, disabled = false) => (
-    <TouchableOpacity key={id} testID={id} accessibilityRole="radio" accessibilityState={{selected, disabled: disabled || busy}} disabled={disabled || busy}
-      onPress={action} style={{minHeight: 48, paddingHorizontal: 18, paddingVertical: 12, backgroundColor: selected ? t.chipBg : t.surface, opacity: disabled ? .5 : 1}}>
-      <Text style={{color: selected ? t.accent : t.text}}>{selected ? "✓ " : ""}{label}</Text>
+  // One grouped-list row (iOS Settings idiom): title, optional muted subtitle,
+  // checkmark trailing. The "✓" is a real Text so VoiceOver and the e2e
+  // `selected()` contract read the state from the row's label.
+  const row = (id: string, title: string, sub: string, selected: boolean, action: () => void, opts: {disabled?: boolean; first?: boolean; style?: object} = {}) => (
+    <TouchableOpacity key={id} testID={id} accessibilityRole="radio" accessibilityState={{selected, disabled: opts.disabled || busy}} disabled={opts.disabled || busy}
+      onPress={action} style={[styles.aiRow, !opts.first && styles.aiRowSep, opts.style, opts.disabled && styles.faded]}>
+      <View style={styles.flex1}>
+        <Text style={[styles.aiRowTitle, selected && {color: t.accent}]} numberOfLines={2}>{title}</Text>
+        {sub ? <Text style={styles.aiRowSub} numberOfLines={2}>{sub}</Text> : null}
+      </View>
+      {selected ? <Text style={styles.aiCheck}>✓</Text> : null}
     </TouchableOpacity>
   )
   // A fixed small enum (conversation mode, effort) reads as ONE control the eye
   // scans left-to-right — a segmented row — not a stack of radio rows. Same
   // idiom as the theme/loop pickers (styles.seg*), so the whole app picks small
   // sets the one way. Each segment keeps its per-value testID for the e2e specs.
+  // A set with one value is not a choice, so callers render nothing for it.
   const segGroup = (testID: string, items: {key: string; id: string; label: string}[], selected: string, onPick: (key: string) => void) => (
     <View style={styles.segRow} testID={testID}>
       {items.map(it => {
@@ -101,41 +114,83 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       })}
     </View>
   )
-  const rows = [{id: "", name: "Built-in (default)"}, ...providers].filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
+  const section = (title: string, hint?: string) => <>
+    <Text accessibilityRole="header" style={styles.aiSection}>{title}</Text>
+    {hint ? <Text style={styles.aiSectionHint}>{hint}</Text> : null}
+  </>
+  const allProviders = [{id: "", name: "Built-in", baseUrl: "", model: ""}, ...providers]
+  const rows = allProviders.filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
+  const providerSub = (p: {id: string; baseUrl?: string}) => !p.id ? "Claude on this Harman server — full agent tools"
+    : !caps?.customProviders ? "Needs a newer Harman server" : (p.baseUrl || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+  const current = providers.find(p => p.id === draft.provider)
+  // A typed ID lives in its own row, so the list must not echo it back as an
+  // extra "(current; not in discovered list)" entry on every keystroke.
+  const typed = !!manual && idOf(draft) === manual
+  const known = modelChoices(discovery, typed ? null : draft.model, "")
+  const models = modelChoices(discovery, typed ? null : draft.model, search)
+  const manualSelected = typed && !known.some(c => c.id === manual)
+  const pick = (id: string) => { setDraft({...draft, model: {kind: "id", id}}); setManual("") }
+  // Built-in runs through the Claude CLI, which has no list endpoint: that is
+  // normal, not a problem to report. Only a real failure offers Try again.
+  const discoveryNote = loading ? "Loading models…"
+    : discovery?.status === "error" ? discovery.error || "Couldn't load the model list."
+    : discovery?.status === "unsupported" ? (draft.provider ? "This connection doesn't publish a model list. Use its default, or type a model ID." : "Built-in uses this server's Claude default. Type a model ID to pin a specific one.")
+    : discovery?.status === "empty" ? "This connection listed no models. Use its default, or type a model ID."
+    : known.length ? "Some listed models may need access enabled on your provider account." : ""
   return <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={close}>
     <SafeAreaView testID="ai-editor" style={styles.page}>
-      <View style={{flexDirection: "row", alignItems: "center", padding: 12, gap: 12}}>
-        <TouchableOpacity testID="ai-cancel" onPress={close} disabled={busy} style={{padding: 8}}><Text style={{color: t.accent}}>Cancel</Text></TouchableOpacity>
-        <Text accessibilityRole="header" style={{flex: 1, color: t.text, fontWeight: "700"}}>{title}</Text>
-        <TouchableOpacity testID="ai-save" onPress={save} disabled={(!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || !!capError} style={{padding: 8, opacity: (!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || capError ? .4 : 1}}><Text style={{color: t.accent}}>{busy ? "Saving…" : localOnly ? "Use for this chat" : "Save"}</Text></TouchableOpacity>
+      <View style={{flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 6}}>
+        <TouchableOpacity testID="ai-cancel" onPress={close} disabled={busy} style={{minWidth: 72, minHeight: 44, justifyContent: "center", paddingHorizontal: 8}}><Text style={{color: t.accent, fontSize: 16}}>Cancel</Text></TouchableOpacity>
+        <Text accessibilityRole="header" numberOfLines={1} style={{flex: 1, textAlign: "center", color: t.text, fontSize: 16, fontWeight: "600"}}>{title}</Text>
+        <TouchableOpacity testID="ai-save" onPress={save} disabled={(!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || !!capError} style={{minWidth: 72, minHeight: 44, alignItems: "flex-end", justifyContent: "center", paddingHorizontal: 8, opacity: (!dirty && !needsFirstSave) || busy || incompatible || invalid || missing || capBusy || !!capError ? .4 : 1}}><Text style={{color: t.accent, fontSize: 16, fontWeight: "700"}}>{busy ? "Saving…" : localOnly ? "Use" : "Save"}</Text></TouchableOpacity>
       </View>
       {confirming ? <View testID="ai-discard-confirm" style={{flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingBottom: 10}}>
         <Text style={{flex: 1, color: t.text}}>Discard changes? Your saved settings are unchanged.</Text>
         <TouchableOpacity testID="ai-keep-editing" accessibilityLabel="Keep editing" onPress={() => setConfirming(false)} style={{padding: 8}}><Text style={{color: t.accent}}>Keep editing</Text></TouchableOpacity>
         <TouchableOpacity testID="ai-discard" accessibilityLabel="Discard changes" onPress={onClose} style={{padding: 8}}><Text style={{color: t.danger, fontWeight: "600"}}>Discard</Text></TouchableOpacity>
       </View> : null}
-      <FlatList data={modelChoices(discovery, draft.model, search)} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
+      <FlatList data={models} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
-          <Text style={styles.sheetHint}>{localOnly ? "Only this unsent chat. Defaults are unchanged." : scope.id ? "Changes apply to future runs, not a response already in progress." : "For new chats on this Harman server. Existing chats are unchanged."}</Text>
-          {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This machine can't run that combination. Pick a different provider or model.")}</Text> : null}
-          {config.issue ? <Text style={styles.sheetHint}>{config.issue}</Text> : null}
-          <Text style={styles.sheetSection}>PROVIDER</Text>
-          <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={styles.ssInput} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch}/>
-          {rows.map(p => row(`ai-provider-${p.id || "default"}`, p.name, draft.provider === p.id, () => provider(p.id), !!p.id && !caps?.customProviders))}
-          <Text style={styles.sheetSection}>CONVERSATION MODE</Text>
-          {caps?.conversationModes.length ? segGroup("ai-convmode", caps.conversationModes.map(m => ({key: m, id: `ai-convmode-${m}`, label: CONVMODE_LABEL[m] || m})), draft.convMode, m => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""})) : null}
-          <Text style={styles.sheetSection}>EFFORT</Text>
-          {caps?.efforts.length ? segGroup("ai-effort", caps.efforts.map(e => ({key: e, id: `ai-effort-${e || "default"}`, label: EFFORT_LABEL[e] ?? (e || "Auto")})), draft.effort, e => setDraft({...draft, effort: e})) : null}
-          <Text style={styles.sheetSection}>MODEL</Text>
-          {row("ai-model-default", "Default model", draft.model?.kind === "default", () => setDraft({...draft, model: {kind: "default"}}))}
-          {scope.id ? row("ai-model-legacy", "No override — use what this chat started with", draft.model === null, () => setDraft({...draft, model: null})) : null}
-          {caps?.manualModelId ? <TextInput testID="ai-model-manual" accessibilityLabel="Explicit model ID" style={styles.ssInput} placeholder="Enter full model ID" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} editable={!busy} value={draft.model?.kind === "id" ? draft.model.id : ""} onChangeText={id => setDraft({...draft, model: {kind: "id", id}})}/> : null}
-          <Text testID="ai-discovery-status" style={styles.sheetHint}>{loading ? "Loading models…" : discovery?.status === "error" ? discovery.error || "Couldn't load the model list." : discovery?.status === "unsupported" ? "This provider doesn't list its models. Use the default, or type a model ID." : discovery?.status === "empty" ? "This provider listed no models. Use the default, or type a model ID." : "Listed models may still need access on your provider account."}</Text>
-          {loading ? <ActivityIndicator color={t.accent}/> : null}
-          {discovery && discovery.status !== "ok" && !loading ? <TouchableOpacity testID="ai-discovery-retry" onPress={() => setRetry(r => r+1)} style={{padding: 16}}><Text style={{color: t.accent}}>Try again</Text></TouchableOpacity> : null}
-          <TextInput testID="ai-model-search" accessibilityLabel="Search models" style={styles.ssInput} placeholder="Search model IDs" placeholderTextColor={t.textMuted} value={search} onChangeText={setSearch}/>
+          <Text style={styles.aiSectionHint}>{localOnly ? "Only this unsent chat. Your defaults are unchanged." : scope.id ? "Applies from this chat's next reply; a reply already running keeps its settings." : "What every new chat on this Harman server starts with. Existing chats keep their own."}</Text>
+          {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.aiSectionHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This machine can't run that combination. Pick a different provider or model.")}</Text> : null}
+          {config.issue ? <Text style={[styles.aiSectionHint, {color: t.danger}]}>{config.issue}</Text> : null}
+
+          {section("Provider", "Who runs the model. Add connections under Profile → Model providers.")}
+          {allProviders.length > 6 ? <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={styles.ssInput} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch} clearButtonMode="while-editing"/> : null}
+          <View style={styles.aiGroup}>
+            {rows.map((p, i) => row(`ai-provider-${p.id || "default"}`, p.name, providerSub(p), draft.provider === p.id, () => provider(p.id), {disabled: !!p.id && !caps?.customProviders, first: i === 0}))}
+          </View>
+
+          {caps && caps.conversationModes.length > 1 ? <>
+            {section("Tools", "Agent reads files, runs commands and uses tools. Chat only talks — faster, but can't act.")}
+            {segGroup("ai-convmode", caps.conversationModes.map(m => ({key: m, id: `ai-convmode-${m}`, label: CONVMODE_LABEL[m] || m})), draft.convMode, m => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""}))}
+          </> : null}
+          {caps && caps.efforts.length > 1 ? <>
+            {section("Thinking effort", "How hard it thinks before answering. Higher is slower and uses more tokens; Auto lets the model decide.")}
+            {segGroup("ai-effort", caps.efforts.map(e => ({key: e, id: `ai-effort-${e || "default"}`, label: EFFORT_LABEL[e] ?? (e || "Auto")})), draft.effort, e => setDraft({...draft, effort: e}))}
+          </> : null}
+
+          {section("Model")}
+          {discoveryNote ? <Text testID="ai-discovery-status" style={styles.aiSectionHint}>{discoveryNote}</Text> : null}
+          {discovery?.status === "error" && !loading ? <TouchableOpacity testID="ai-discovery-retry" onPress={() => setRetry(r => r+1)} style={{minHeight: 44, justifyContent: "center", paddingHorizontal: 30}}><Text style={{color: t.accent}}>Try again</Text></TouchableOpacity> : null}
+          <View style={styles.aiGroup}>
+            {row("ai-model-default", "Default", current?.model ? `Connection default · ${current.model}` : draft.provider ? "The connection's default model" : "This server's Claude default", draft.model?.kind === "default", () => { setDraft({...draft, model: {kind: "default"}}); setManual("") }, {first: true})}
+            {scope.id ? row("ai-model-legacy", "Keep this chat's original model", "No override", draft.model === null, () => { setDraft({...draft, model: null}); setManual("") }) : null}
+            {caps?.manualModelId ? <View style={[styles.aiRow, styles.aiRowSep]}>
+              <View style={styles.flex1}>
+                <Text style={styles.aiRowSub}>Model ID</Text>
+                <TextInput testID="ai-model-manual" accessibilityLabel="Model ID" style={[styles.aiRowTitle, {paddingVertical: 4}, manualSelected && {color: t.accent}]} placeholder={draft.provider ? "Any model ID this connection serves" : "e.g. claude-opus-4-1"} placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" editable={!busy} value={manual} onChangeText={id => { setManual(id); setDraft({...draft, model: id ? {kind: "id", id} : {kind: "default"}}) }}/>
+              </View>
+              {manualSelected ? <Text style={styles.aiCheck}>✓</Text> : null}
+            </View> : null}
+          </View>
+          {loading ? <ActivityIndicator style={{marginTop: 16}} color={t.accent}/> : null}
+          {known.length ? section(`Available models · ${known.length}`) : null}
+          {known.length > 8 ? <TextInput testID="ai-model-search" accessibilityLabel="Search models" style={styles.ssInput} placeholder="Search models" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" value={search} onChangeText={setSearch}/> : null}
         </>}
-        renderItem={({item}) => row(`ai-model-${item.id}`, item.label === item.id ? item.id : `${item.label}\n${item.id}`, draft.model?.kind === "id" && draft.model.id === item.id, () => setDraft({...draft, model: {kind: "id", id: item.id}}))}
+        renderItem={({item, index}) => row(`ai-model-${item.id}`, item.label, item.label === item.id ? "" : item.id, draft.model?.kind === "id" && draft.model.id === item.id, () => pick(item.id),
+          {first: index === 0, style: [styles.aiListRow, index === 0 && styles.aiListFirst, index === models.length - 1 && styles.aiListLast]})}
+        ListEmptyComponent={search && known.length ? <Text style={styles.aiSectionHint}>No model matches “{search}”.</Text> : null}
         ListFooterComponent={<View style={{height: 40}}/>}/>
     </SafeAreaView>
   </Modal>

@@ -476,6 +476,19 @@ function buildStyles(t: Theme) {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: t.border,
     },
+    // AI picker (ProviderPicker): iOS grouped-inset settings list — rounded
+    // groups, hairline separators, title + muted subtitle, checkmark trailing.
+    aiGroup: { marginHorizontal: 14, marginTop: 8, borderRadius: 12, backgroundColor: t.surface, overflow: "hidden" },
+    aiRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 48, paddingHorizontal: 16, paddingVertical: 11, backgroundColor: t.surface },
+    aiRowSep: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.border },
+    aiRowTitle: { fontSize: 16, color: t.text },
+    aiRowSub: { fontSize: 12, color: t.textMuted, marginTop: 2 },
+    aiCheck: { fontSize: 17, fontWeight: "700", color: t.accent },
+    aiSection: { fontSize: 13, fontWeight: "600", color: t.textMuted, paddingHorizontal: 30, marginTop: 22 },
+    aiSectionHint: { fontSize: 12, color: t.textMuted, paddingHorizontal: 30, marginTop: 3, lineHeight: 16 },
+    aiListRow: { marginHorizontal: 14 },
+    aiListFirst: { borderTopLeftRadius: 12, borderTopRightRadius: 12, marginTop: 8 },
+    aiListLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
     // Capabilities screen (skills + MCP CRUD).
     capAddRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 14 },
     capAddText: { fontSize: 14, fontWeight: "600" },

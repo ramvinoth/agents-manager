@@ -51,7 +51,7 @@ export default function HostPicker({
   return (
     <SheetModal visible={visible} onClose={onClose}>
       <View style={styles.sheetGrabber} />
-      <Text style={styles.actionSheetTitle}>Switch host</Text>
+      <Text style={styles.actionSheetTitle}>Choose machine</Text>
 
       {hosts.map((h) => {
         const on = active === h.id

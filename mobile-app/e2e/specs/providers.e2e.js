@@ -49,7 +49,7 @@ describe("Providers — one connection, a context window per model", function ()
     assert.match(await label("provider-discovery-status"), /3 models found; the endpoint reports a context window for 2/)
     // A window reported by the endpoint is shown with its source; an unknown one says so.
     assert.match(await label("provider-model-fixture-alpha-large"), /262K/)
-    assert.match(await label("provider-model-fixture-alpha-large"), /From endpoint/)
+    assert.match(await label("provider-model-fixture-alpha-large"), /reported by the endpoint/)
 
     await reveal("provider-override-fixture-alpha-mystery")
     await $("~provider-override-fixture-alpha-mystery").setValue("64k")

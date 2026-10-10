@@ -85,9 +85,9 @@ export function formatTokens(n: number): string {
   return String(n)
 }
 
-export const SOURCE_LABEL: Record<ModelRow["source"], string> = {
-  override: "Set by you",
-  discovered: "From endpoint",
-  "": "Unknown",
+/** One plain sentence about a model's context window for its row. */
+export function windowLabel(eff: { tokens: number; source: ModelRow["source"] }): string {
+  if (!eff.tokens) return "Context window unknown — type it if you know it"
+  return `${formatTokens(eff.tokens)} context · ${eff.source === "override" ? "set by you" : "reported by the endpoint"}`
 }
 

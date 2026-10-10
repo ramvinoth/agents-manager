@@ -7,7 +7,7 @@ import { aiError, connectionPayload, type KeyAction } from "../lib/aiSelection"
 import { offerUndo } from "../lib/undo"
 import {
   editRows, effectiveWindow, formatTokens, mergeDiscovered, overrideError, overridesPayload, sortRows,
-  SOURCE_LABEL, type EditRow,
+  windowLabel, type EditRow,
 } from "../lib/providerModels"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -231,7 +231,7 @@ export default function ProvidersScreen(_: Props) {
                 <View style={styles.flex1}>
                   <Text style={styles.pvModelId} numberOfLines={1}>{r.id}</Text>
                   <Text style={[styles.pvModelMeta, !eff.source && styles.pvWarn]}>
-                    {formatTokens(eff.tokens)} · {SOURCE_LABEL[eff.source]}{isDefault ? " · default" : ""}
+                    {isDefault ? "Default · " : ""}{windowLabel(eff)}
                   </Text>
                 </View>
               </TouchableOpacity>

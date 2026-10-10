@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { editRows, effectiveWindow, formatTokens, mergeDiscovered, overrideError, overridesPayload, parseTokens, sortRows } from "./providerModels.ts"
+import { editRows, effectiveWindow, formatTokens, windowLabel, mergeDiscovered, overrideError, overridesPayload, parseTokens, sortRows } from "./providerModels.ts"
 
 assert.equal(parseTokens("242000"), 242000)
 assert.equal(parseTokens("242k"), 242000)
@@ -13,6 +13,8 @@ assert.equal(formatTokens(242000), "242K")
 assert.equal(formatTokens(1000000), "1M")
 assert.equal(formatTokens(1048576), "1M")
 assert.equal(formatTokens(0), "—")
+assert.match(windowLabel({ tokens: 0, source: "" }), /unknown/)
+assert.equal(windowLabel({ tokens: 242000, source: "override" }), "242K context · set by you")
 
 const saved = editRows([
   { id: "a", contextWindow: 100000, source: "override", discovered: 200000, override: 100000, maxOutput: 0 },
