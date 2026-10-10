@@ -3,7 +3,7 @@ stdin is already closed (the CLI can still start another turn after that, on a
 background-task notification), and not when the write itself fails."""
 import io
 
-from viewer import engine
+from viewer import engine, resume
 from viewer.engine import feed_next_queued
 
 
@@ -43,8 +43,17 @@ def test_closed_stdin_keeps_queue_for_follow_up_run():
     assert job["queue"] == ["mine", "also mine"]
 
 
-def test_failed_write_puts_message_back_first():
+def test_failed_write_puts_message_back_and_routes_to_resume():
+    # A write fails only because the pipe broke (the child is dying → this run
+    # ends rc!=0). The finalizer's rc==0 leftovers follow-up would skip it, so
+    # the message must ride the cut-off resume path instead: it goes back to the
+    # front AND turn_open stays True so resume.was_cut_off fires on it.
     job = _job(["mine", "next"])
     assert feed_next_queued("s", job, _Proc(closed=True)) is False
     assert job["queue"] == ["mine", "next"]
-    assert job["stdin_open"] is False and job["turn_open"] is False
+    assert job["stdin_open"] is False
+    assert job["turn_open"] is True
+    # The state feed_next_queued leaves behind must make the finalizer treat
+    # this as a cut-off turn (not interrupted, not explained), so the restored
+    # message is resumed rather than dropped.
+    assert resume.was_cut_off(job["turn_open"], interrupted=False, explained=False) is True

@@ -1982,8 +1982,12 @@ def feed_next_queued(session_id, job, proc):
     """At a turn's end, write the next queued message into the run's stdin.
     Returns True if one was sent. Never loses a message: once stdin is closed
     (the CLI can still emit more turns after that, e.g. on a background-task
-    notification), the queue is left intact for the finalizer's follow-up run,
-    and a write that fails puts the message back at the front."""
+    notification), the queue is left intact for the finalizer's follow-up run.
+    A write that fails means the pipe is broken (the child is dying, so this
+    run ends rc!=0, which the finalizer's rc==0 follow-up would skip): put the
+    message back at the front and leave turn_open set, so the restored message
+    rides the proven cut-off resume path (_resume_cut_turn carries leftovers
+    regardless of rc) instead of being stranded."""
     with CHAT_LOCK:
         nxt = job["queue"].pop(0) if job["queue"] and job["stdin_open"] else None
         if nxt is None:
@@ -1999,7 +2003,6 @@ def feed_next_queued(session_id, job, proc):
         with CHAT_LOCK:
             job["queue"].insert(0, nxt)
             job["stdin_open"] = False
-            job["turn_open"] = False
             backlog = list(job["queue"])
         _persist_queue(session_id, backlog)
         return False
