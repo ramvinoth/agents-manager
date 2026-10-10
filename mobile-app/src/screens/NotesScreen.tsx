@@ -1,10 +1,10 @@
 import React, { useCallback, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Note, type NoteFilter } from "../api/client"
+import { api, isQueued, type Note, type NoteFilter } from "../api/client"
 import { KIND_LABEL, displayTitle, noteTemplates, notesScopeFilter, orderNotes, previewLine, searchNotes } from "../lib/notes"
 import { formatActor } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
@@ -18,6 +18,9 @@ import SheetModal from "../components/SheetModal"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
+import { offerUndo } from "../lib/undo"
+import { showActions } from "../lib/actionSheet"
+import { exportNote } from "../lib/noteExportNative"
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList>
@@ -128,6 +131,44 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
     }
   }
 
+  // Long press on a row: the same Export / Archive / Delete the note's ⋯ menu offers.
+  function noteActions(n: Note) {
+    setActionError("")
+    showActions(displayTitle(n), [
+      { text: "Export…", onPress: () => exportNote({ id: n.id, title: n.title || displayTitle(n) }, setActionError) },
+      { text: n.archived ? "Unarchive" : "Archive", onPress: () => archiveNote(n) },
+      { text: "Delete", destructive: true, onPress: () => deleteNote(n) },
+    ])
+  }
+
+  // Archive flips this view's shelf, so the row leaves the list at once with an Undo.
+  async function archiveNote(n: Note) {
+    const to = !n.archived
+    setNotes((ns) => ns.filter((x) => x.id !== n.id))
+    try {
+      await api.orgUpdateNote({ note_id: n.id, archived: to })
+      offerUndo({ label: to ? "Note archived" : "Note unarchived", undo: () => { api.orgUpdateNote({ note_id: n.id, archived: !to }).then(load, load) } })
+    } catch (e) {
+      setActionError(userError(e, "the note", to ? "archive" : "unarchive"))
+      load()
+    }
+  }
+
+  // A delete may queue for the owner's approval, so it confirms instead of offering Undo (lib/undo.ts).
+  function deleteNote(n: Note) {
+    Alert.alert(`Delete "${displayTitle(n)}"?`, "This cannot be undone. Archiving keeps it on the shelf instead.", [
+      { text: "Cancel", style: "cancel" },
+      ...(n.archived ? [] : [{ text: "Archive instead", onPress: () => { archiveNote(n) } }]),
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try {
+          const r = await api.orgDeleteNote({ note_id: n.id })
+          if (isQueued(r)) { setActionError("Deletion is waiting for the owner's approval. The note stays until then."); return }
+          setNotes((ns) => ns.filter((x) => x.id !== n.id))
+        } catch (e) { setActionError(userError(e, "the note", "delete")) }
+      } },
+    ])
+  }
+
   async function create(kind: Note["kind"], body: string) {
     if (creating.current) return
     creating.current = true
@@ -223,6 +264,8 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
               <TouchableOpacity
                 testID={`note-${n.id}`}
                 onPress={() => navigation.navigate("NoteEditor", { id: n.id })}
+                onLongPress={() => noteActions(n)}
+                accessibilityHint="Long press for export, archive and delete"
                 style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: t.border }}
               >
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>

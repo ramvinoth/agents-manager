@@ -16,6 +16,7 @@ import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
 import { offerUndo } from "../lib/undo"
 import { showActions } from "../lib/actionSheet"
+import { exportNote } from "../lib/noteExportNative"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">
 
@@ -202,13 +203,14 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             onPress={() => patchNote({ pinned: !note?.pinned })} />
           <HeaderButton testID="note-more" label="Note actions" icon="more" color={t.accent}
             onPress={() => showActions(note?.title || "This note", [
+              { text: "Export…", onPress: () => exportNote({ id, title: note?.title || "" }, setFlash) },
               { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
               { text: "Delete", destructive: true, onPress: remove },
             ])} />
         </View>
       ),
     })
-  }, [navigation, note, preview, t.accent, t.textMuted, patchNote, remove, archive])
+  }, [navigation, id, note, preview, t.accent, t.textMuted, patchNote, remove, archive])
 
   if (loading) return <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
   if (!note) return <Text style={styles.neMissing}>{error || "This note is unavailable."}</Text>

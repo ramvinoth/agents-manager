@@ -897,6 +897,8 @@ export const api = {
   /** The notes as an Obsidian vault (.zip of markdown) saved to `dest`; returns the HTTP status. */
   orgNotesExport: (project: number | null | undefined, dest: string) =>
     serverDownload(`/api/org/notes/export${project ? `?project=${project}` : ""}`, dest),
+  orgNoteExport: (id: number, format: "md" | "docx" | "pdf", dest: string) =>
+    serverDownload(`/api/org/note/export?id=${id}&format=${format}`, dest),
   // `note_delete` is Red: an agent's delete queues; the owner's runs.
   orgDeleteNote: (body: { note_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/notes/delete", body),

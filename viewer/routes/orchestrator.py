@@ -27,7 +27,7 @@ import threading
 import time
 import zipfile
 
-from viewer import actions, codemap, db, discussion, inbox, notelinks, orglogic
+from viewer import actions, codemap, db, discussion, inbox, noteexport, notelinks, orglogic
 
 # One re-index at a time per project: two viewers polling the same map must not
 # both parse every changed file.
@@ -231,6 +231,29 @@ class OrchestratorMixin:
         project = (req.query.get("project") or [None])[0]
         label = names.get(int(project)) if project else None
         self._send_attachment(buf.getvalue(), f"{label or 'Harman'} notes.zip", "application/zip")
+
+    def _g_org_note_export(self, req):
+        """GET /api/org/note/export?id=&format=md|docx|pdf — one note as a file
+        to send someone (viewer/noteexport.py). 503 when this box cannot make
+        the format (PDF without Chrome), so the client can say so plainly."""
+        q = lambda k, d="": (req.query.get(k) or [d])[0]
+        nid, fmt = q("id"), q("format", "md")
+        if not nid.isdigit():
+            self.send_json({"error": "id required"}, status=400); return
+        note = db.note_get(int(nid))
+        if not note:
+            self.send_json({"error": "not found"}, status=404); return
+        proj = db.project_get(note["project_id"]) if note.get("project_id") else None
+        when = time.strftime("%-d %b %Y", time.localtime(note.get("updated_at") or time.time()))
+        meta = " · ".join(x for x in ((note.get("kind") or "note").capitalize(), (proj or {}).get("name"),
+                                      f"updated {when}") if x)
+        try:
+            data, ctype, name = noteexport.export(note, fmt, meta)
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=400); return
+        except noteexport.ExportUnavailable as e:
+            self.send_json({"error": str(e)}, status=503); return
+        self._send_attachment(data, name, ctype)
 
     # ── the Map lens (a project's code as a drill-down graph) ─────────────────
     def _g_org_map(self, req):
