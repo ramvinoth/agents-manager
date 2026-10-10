@@ -487,6 +487,12 @@ function buildStyles(t: Theme) {
     aiSection: { fontSize: 13, fontWeight: "600", color: t.textMuted, paddingHorizontal: 30, marginTop: 22 },
     aiSectionHint: { fontSize: 12, color: t.textMuted, paddingHorizontal: 30, marginTop: 3, lineHeight: 16 },
     aiListRow: { marginHorizontal: 14 },
+    aiSearch: { marginHorizontal: 14 },
+    // iOS segmented control, inset exactly like aiGroup so its edges line up
+    // with the grouped rows and section headings above and below it.
+    aiSeg: { flexDirection: "row", marginHorizontal: 14, marginTop: 8, padding: 2, borderRadius: 9, backgroundColor: t.surface },
+    aiSegItem: { flex: 1, minHeight: 32, alignItems: "center", justifyContent: "center", borderRadius: 7 },
+    aiSegItemActive: { backgroundColor: t.accent },
     aiListFirst: { borderTopLeftRadius: 12, borderTopRightRadius: 12, marginTop: 8 },
     aiListLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
     // Capabilities screen (skills + MCP CRUD).

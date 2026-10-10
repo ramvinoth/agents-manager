@@ -11,6 +11,7 @@ import { useStyles } from "../lib/styles"
 // presentation concern. Keyed by the raw value; an unknown future value falls
 // back to its raw string, so a new server effort/mode still renders.
 const CONVMODE_LABEL: Record<string, string> = { agent: "Agent", chat: "Chat" }
+const CONVMODE_SUB: Record<string, string> = { agent: "Reads files, runs commands and uses tools", chat: "Only talks — faster, but can't act" }
 const EFFORT_LABEL: Record<string, string> = { "": "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" }
 
 /** One staged transaction for all three scopes. Mounted afresh on each open. */
@@ -96,19 +97,17 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       {selected ? <Text style={styles.aiCheck}>✓</Text> : null}
     </TouchableOpacity>
   )
-  // A fixed small enum (conversation mode, effort) reads as ONE control the eye
-  // scans left-to-right — a segmented row — not a stack of radio rows. Same
-  // idiom as the theme/loop pickers (styles.seg*), so the whole app picks small
-  // sets the one way. Each segment keeps its per-value testID for the e2e specs.
-  // A set with one value is not a choice, so callers render nothing for it.
+  // Effort is an ordered scale (Auto…Max): an iOS segmented control the eye
+  // scans left-to-right, inset like the grouped rows so the edges line up.
+  // Each segment keeps its per-value testID for the e2e specs.
   const segGroup = (testID: string, items: {key: string; id: string; label: string}[], selected: string, onPick: (key: string) => void) => (
-    <View style={styles.segRow} testID={testID}>
+    <View style={styles.aiSeg} testID={testID}>
       {items.map(it => {
         const active = it.key === selected
         return (
           <TouchableOpacity key={it.id} testID={it.id} accessibilityRole="radio" accessibilityState={{selected: active, disabled: busy}}
-            disabled={busy} onPress={() => onPick(it.key)} style={[styles.seg, active ? styles.segActive : null]}>
-            <Text style={[styles.segText, active ? styles.segTextActive : null]} numberOfLines={1}>{it.label}</Text>
+            disabled={busy} onPress={() => onPick(it.key)} style={[styles.aiSegItem, active && styles.aiSegItemActive]}>
+            <Text style={[styles.segText, active && styles.segTextActive]} numberOfLines={1}>{it.label}</Text>
           </TouchableOpacity>
         )
       })}
@@ -156,14 +155,18 @@ export default function ProviderPicker({ config, scope, providers, title, localO
           {config.issue ? <Text style={[styles.aiSectionHint, {color: t.danger}]}>{config.issue}</Text> : null}
 
           {section("Provider", "Who runs the model. Add connections under Profile → Model providers.")}
-          {allProviders.length > 6 ? <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={styles.ssInput} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch} clearButtonMode="while-editing"/> : null}
+          {allProviders.length > 6 ? <TextInput testID="ai-provider-search" accessibilityLabel="Search providers" style={[styles.ssInput, styles.aiSearch]} placeholder="Search providers" placeholderTextColor={t.textMuted} value={providerSearch} onChangeText={setProviderSearch} clearButtonMode="while-editing"/> : null}
           <View style={styles.aiGroup}>
             {rows.map((p, i) => row(`ai-provider-${p.id || "default"}`, p.name, providerSub(p), draft.provider === p.id, () => provider(p.id), {disabled: !!p.id && !caps?.customProviders, first: i === 0}))}
           </View>
 
           {caps && caps.conversationModes.length > 1 ? <>
-            {section("Tools", "Agent reads files, runs commands and uses tools. Chat only talks — faster, but can't act.")}
-            {segGroup("ai-convmode", caps.conversationModes.map(m => ({key: m, id: `ai-convmode-${m}`, label: CONVMODE_LABEL[m] || m})), draft.convMode, m => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""}))}
+            {section("Tools")}
+            {/* Two options that each need a sentence of meaning: grouped rows, not a segmented control. */}
+            <View style={styles.aiGroup} testID="ai-convmode">
+              {caps.conversationModes.map((m, i) => row(`ai-convmode-${m}`, CONVMODE_LABEL[m] || m, CONVMODE_SUB[m] || "", draft.convMode === m,
+                () => setDraft({...draft, convMode: m as AISelection["convMode"], effort: ""}), {first: i === 0}))}
+            </View>
           </> : null}
           {caps && caps.efforts.length > 1 ? <>
             {section("Thinking effort", "How hard it thinks before answering. Higher is slower and uses more tokens; Auto lets the model decide.")}
@@ -186,7 +189,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
           </View>
           {loading ? <ActivityIndicator style={{marginTop: 16}} color={t.accent}/> : null}
           {known.length ? section(`Available models · ${known.length}`) : null}
-          {known.length > 8 ? <TextInput testID="ai-model-search" accessibilityLabel="Search models" style={styles.ssInput} placeholder="Search models" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" value={search} onChangeText={setSearch}/> : null}
+          {known.length > 8 ? <TextInput testID="ai-model-search" accessibilityLabel="Search models" style={[styles.ssInput, styles.aiSearch]} placeholder="Search models" placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" value={search} onChangeText={setSearch}/> : null}
         </>}
         renderItem={({item, index}) => row(`ai-model-${item.id}`, item.label, item.label === item.id ? "" : item.id, draft.model?.kind === "id" && draft.model.id === item.id, () => pick(item.id),
           {first: index === 0, style: [styles.aiListRow, index === 0 && styles.aiListFirst, index === models.length - 1 && styles.aiListLast]})}
