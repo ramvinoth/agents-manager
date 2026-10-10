@@ -66,3 +66,18 @@ export function searchNotes(notes: Note[], q: string): Note[] {
   if (!needle) return notes
   return notes.filter((n) => (n.title + "\n" + n.body).toLowerCase().includes(needle))
 }
+
+/** Exporting ONE note as a file (server: viewer/noteexport.py). Mirrors the mobile
+ *  lib/noteExport.ts table, file name rule and error text. */
+export type NoteExportFormat = "md" | "docx" | "pdf"
+export const NOTE_EXPORT_FORMATS: { format: NoteExportFormat; label: string }[] = [
+  { format: "md", label: "Markdown" },
+  { format: "docx", label: "Word (.docx)" },
+  { format: "pdf", label: "PDF" },
+]
+
+/** The same safe name the server puts in Content-Disposition (noteexport.file_name). */
+export function noteFileName(title: string, format: NoteExportFormat): string {
+  const stem = (title || "").replace(/[\\/:*?"<>#%|\x00-\x1f\s]+/g, " ").replace(/^[ .]+|[ .]+$/g, "").slice(0, 80).trim() || "Note"
+  return `${stem}.${format}`
+}

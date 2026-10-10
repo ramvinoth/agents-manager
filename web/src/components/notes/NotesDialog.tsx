@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Archive, ArchiveRestore, ArrowLeft, Download, Eye, Loader2, MessageSquare, Network, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, ArrowLeft, Download, Eye, FileDown, Loader2, MessageSquare, Network, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { fmtAgo } from "@/lib/format"
-import { KIND_LABEL, displayTitle, noteTemplates, orderNotes, previewLine, searchNotes } from "@/lib/notes"
+import { KIND_LABEL, NOTE_EXPORT_FORMATS, displayTitle, noteFileName, noteTemplates, orderNotes, previewLine, searchNotes, type NoteExportFormat } from "@/lib/notes"
 import { Markdown, type NoteLinkHandlers } from "@/components/Markdown"
 import { completeLink, filterByTags, neighbours, openLinkQuery, resolveLink, suggestTitles, type NoteGraph } from "@/lib/noteLinks"
 import { NoteGraphView } from "./NoteGraphView"
@@ -16,6 +16,8 @@ import { NoteThread } from "./NoteThread"
 import { isQueued } from "@/lib/types"
 import type { Note, NoteKind, OrgProject } from "@/lib/types"
 import { userError } from "@/lib/errors"
+import { fetchAndSave } from "@/lib/download"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 const SAVE_DEBOUNCE_MS = 700
 
@@ -346,6 +348,8 @@ function NoteEditor({
   const [title, setTitle] = useState(note.title)
   const [body, setBody] = useState(note.body)
   const [status, setStatus] = useState<"" | "saving" | "failed">("")
+  const [exporting, setExporting] = useState("")   // "Preparing PDF…" while the server renders
+  const [exportErr, setExportErr] = useState("")
   const [suggest, setSuggest] = useState<{ start: number; caret: number; items: string[]; sel: number } | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const draft = useRef<{ title?: string; body?: string }>({})
@@ -408,6 +412,22 @@ function NoteEditor({
     }
   }
 
+  /** Save pending typing, then fetch and save the file — the export is what's on screen. */
+  async function exportAs(format: NoteExportFormat, label: string) {
+    setExportErr("")
+    setExporting(`Preparing ${label.replace(/ \(.*\)$/, "")}…`)
+    try {
+      await flush()
+      await fetchAndSave(api.orgNoteExportUrl(note.id, format), noteFileName(title || displayTitle(note), format), (h) => api.getRes(h))
+    } catch (e: any) {
+      setExportErr(e?.status === 503 && format === "pdf"
+        ? "This server can't make PDFs (it needs Google Chrome installed). Try Word or Markdown."
+        : userError(e, "the note", "export"))
+    } finally {
+      setExporting("")
+    }
+  }
+
   const kinds = Object.keys(KIND_LABEL) as NoteKind[]
   const { backlinks, links: outgoing, ghosts } = neighbourhood
   return (
@@ -430,6 +450,19 @@ function NoteEditor({
         <Button size="icon" variant="ghost" title={note.pinned ? "Unpin" : "Pin"} onClick={() => onChange({ pinned: !note.pinned })}>
           <Pin className={cn("size-4", note.pinned && "text-primary")} />
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" variant="ghost" title="Export this note" disabled={!!exporting}>
+              {exporting ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Export as</DropdownMenuLabel>
+            {NOTE_EXPORT_FORMATS.map((f) => (
+              <DropdownMenuItem key={f.format} onSelect={() => { void exportAs(f.format, f.label) }}>{f.label}</DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button size="icon" variant="ghost" title={note.archived ? "Unarchive" : "Archive"} onClick={() => onChange({ archived: !note.archived })}>
           {note.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
         </Button>
@@ -448,8 +481,8 @@ function NoteEditor({
             {KIND_LABEL[k]}
           </Badge>
         ))}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {status === "saving" ? "saving…" : status === "failed" ? "not saved yet — retries as you type" : `edited ${fmtAgo(note.updated_at)}`}
+        <span className={cn("ml-auto text-xs", exportErr && !exporting ? "text-destructive" : "text-muted-foreground")}>
+          {exporting || exportErr || (status === "saving" ? "saving…" : status === "failed" ? "not saved yet — retries as you type" : `edited ${fmtAgo(note.updated_at)}`)}
         </span>
       </div>
       {reading ? (

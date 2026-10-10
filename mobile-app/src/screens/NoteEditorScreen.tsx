@@ -55,6 +55,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   const [caret, setCaret] = useState(0)
   const [selection, setSelection] = useState<{ start: number; end: number } | undefined>(undefined)
   const [flash, setFlash] = useState("")
+  const [exporting, setExporting] = useState("")   // "Preparing PDF…" while the server renders
   const draft = useRef<{ title?: string; body?: string }>({})
   const projectId = note?.project_id ?? null
   const hasNote = !!note
@@ -203,14 +204,14 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             onPress={() => patchNote({ pinned: !note?.pinned })} />
           <HeaderButton testID="note-more" label="Note actions" icon="more" color={t.accent}
             onPress={() => showActions(note?.title || "This note", [
-              { text: "Export…", onPress: () => exportNote({ id, title: note?.title || "" }, setFlash) },
+              { text: "Export…", onPress: () => { if (!exporting) exportNote({ id, title: note?.title || "" }, setFlash, setExporting, flush) } },
               { text: note?.archived ? "Unarchive" : "Archive", onPress: archive },
               { text: "Delete", destructive: true, onPress: remove },
             ])} />
         </View>
       ),
     })
-  }, [navigation, id, note, preview, t.accent, t.textMuted, patchNote, remove, archive])
+  }, [navigation, id, note, preview, exporting, t.accent, t.textMuted, patchNote, remove, archive, flush])
 
   if (loading) return <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
   if (!note) return <Text style={styles.neMissing}>{error || "This note is unavailable."}</Text>
@@ -242,7 +243,12 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           {who.kind === "you" ? "You" : who.kind === "agent" ? `Agent ${who.name}` : who.name} · {note.archived ? "archived · " : ""}
           {saving ? "saving…" : error ? error : `edited ${new Date(note.updated_at * 1000).toLocaleString()}`}
         </Text>
-        {flash ? <Text style={styles.neFlash}>{flash}</Text> : null}
+        {exporting ? (
+          <View testID="note-exporting" style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <ActivityIndicator size="small" color={t.accent} />
+            <Text style={[styles.neFlash, { marginBottom: 0 }]}>{exporting}</Text>
+          </View>
+        ) : flash ? <Text style={styles.neFlash}>{flash}</Text> : null}
         {suggestions.length ? (
           <ScrollView horizontal keyboardShouldPersistTaps="always" showsHorizontalScrollIndicator={false}
             style={styles.neSuggestRow} contentContainerStyle={styles.cdChips}>

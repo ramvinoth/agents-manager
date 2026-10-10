@@ -33,6 +33,7 @@ import { describeHost } from "@/lib/host"
 import { HOST_LOCATION, START_PATH, isLiveLocation, type Location } from "@/lib/location"
 import { LocationPicker } from "@/components/LocationPicker"
 import { api } from "@/lib/api"
+import { fetchAndSave } from "@/lib/download"
 import { useStore } from "@/store"
 import type { Drive, FileEntry, FileListResponse } from "@/lib/types"
 import { userError } from "@/lib/errors"
@@ -179,25 +180,13 @@ export function FileBrowser() {
     setActionError(userError(e, "that action", "finish"))
   }
 
-  /** Fetch first, then save: a bare anchor download would write the server's
-   *  JSON error (404, 413 "over 256 MB") to disk under the archive's name. */
+  /** Fetch first, then save (lib/download): never writes a server error (404,
+   *  413 "over 256 MB") to disk under the archive's name. */
   async function triggerDownload(href: string, filename: string) {
     setActionError(null)
     setBusy("Preparing download…")
     try {
-      const res = await api.getRes(href)
-      if (!res.ok) {
-        const d = await res.json().catch(() => null)
-        throw new Error(d?.error || `Download failed (HTTP ${res.status})`)
-      }
-      const url = URL.createObjectURL(await res.blob())
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
+      await fetchAndSave(href, filename, (h) => api.getRes(h))
     } catch (e: any) {
       fail(e)
     }

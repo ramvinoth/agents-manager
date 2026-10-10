@@ -1,4 +1,4 @@
-import { noteTemplates, orderNotes, displayTitle, previewLine, searchNotes, type Note } from "./notes.ts"
+import { noteTemplates, orderNotes, displayTitle, previewLine, searchNotes, noteFileName, type Note } from "./notes.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -38,6 +38,11 @@ const notes = [N({ id: 1, title: "Budget", body: "Q4 numbers" }), N({ id: 2, bod
 eq("search title", searchNotes(notes, "bud").map((n) => n.id), [1])
 eq("search body", searchNotes(notes, "GROCERY").map((n) => n.id), [2])
 eq("search blank", searchNotes(notes, "  ").length, 2)
+
+// export file name: the server's noteexport.file_name rule
+eq("file name unsafe chars", noteFileName('a/b  \t c:"d"', "md"), "a b c d.md")
+eq("file name trims dots", noteFileName("  .Plan. ", "pdf"), "Plan.pdf")
+eq("file name fallback", noteFileName("   ", "docx"), "Note.docx")
 
 console.log(`notes: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

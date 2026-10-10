@@ -7,6 +7,8 @@
  * re-renders/polls never wipe it (no observers, no innerHTML races). The
  * download helpers are used by that component's toolbar.
  */
+import { saveBlob } from "./download"
+
 let _mermaidPromise: Promise<typeof import("mermaid").default> | null = null
 let _seq = 0
 /** Cache of rendered SVG keyed by `${theme}:${source}`, so a given diagram is only
@@ -130,15 +132,4 @@ export async function downloadMermaidPng(source: string): Promise<void> {
     }
     img.src = url
   })
-}
-
-function saveBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

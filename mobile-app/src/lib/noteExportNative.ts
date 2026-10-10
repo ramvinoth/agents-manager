@@ -6,9 +6,16 @@ import { api } from "../api/client"
 import { showActions } from "./actionSheet"
 import { NOTE_EXPORT_FORMATS, noteExportError, noteFileName, type NoteExportFormat } from "./noteExport"
 
-/** Asks Markdown / Word / PDF, then shares the file. `onError` gets plain text. */
-export function exportNote(note: { id: number; title: string }, onError: (msg: string) => void) {
-  showActions("Export as", NOTE_EXPORT_FORMATS.map((f) => ({ text: f.label, onPress: () => { shareNote(note, f.format).catch((e) => onError(noteExportError(e, f.format))) } })))
+/** Asks Markdown / Word / PDF, then shares the file. `onBusy` gets "Preparing PDF…" while the
+ *  server renders (a PDF takes seconds) and "" when done, so the screen can show it; `onError`
+ *  gets plain text. `beforeExport` saves pending typing first (the open editor), so the file
+ *  is what's on screen, not the last autosave. */
+export function exportNote(note: { id: number; title: string }, onError: (msg: string) => void, onBusy: (label: string) => void,
+  beforeExport: () => Promise<void> = async () => {}) {
+  showActions("Export as", NOTE_EXPORT_FORMATS.map((f) => ({ text: f.label, onPress: () => {
+    onBusy(`Preparing ${f.label.replace(/ \(.*\)$/, "")}…`)
+    beforeExport().then(() => shareNote(note, f.format)).catch((e) => onError(noteExportError(e, f.format))).finally(() => onBusy(""))
+  } })))
 }
 
 async function shareNote(note: { id: number; title: string }, format: NoteExportFormat) {

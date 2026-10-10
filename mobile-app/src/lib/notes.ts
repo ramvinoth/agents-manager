@@ -76,3 +76,27 @@ export function searchNotes(notes: Note[], q: string): Note[] {
   if (!needle) return notes
   return notes.filter((n) => (n.title + "\n" + n.body).toLowerCase().includes(needle))
 }
+
+/** A notes list split into project groups, like the chat list's Projects view. */
+export type NoteGroup = { key: string; name: string; notes: Note[]; pinned: boolean }
+export const OTHERS_GROUP = "Others"
+
+/** Group notes by project for a view that spans projects (the side menu's Notes).
+ *  Groups holding a pinned note come first, then the group edited most recently;
+ *  notes with no project go last under "Others". Inside a group: orderNotes.
+ *  `names` maps project id → name; an unknown id still gets its own group. */
+export function groupNotesByProject(notes: Note[], names: Map<number, string>): NoteGroup[] {
+  const groups = new Map<string, NoteGroup & { latest: number }>()
+  for (const n of orderNotes(notes)) {
+    const key = n.project_id == null ? OTHERS_GROUP : String(n.project_id)
+    const name = n.project_id == null ? OTHERS_GROUP : names.get(n.project_id) || `Project ${n.project_id}`
+    const g = groups.get(key) || groups.set(key, { key, name, notes: [], pinned: false, latest: 0 }).get(key)!
+    g.notes.push(n)
+    g.pinned ||= n.pinned
+    g.latest = Math.max(g.latest, n.updated_at)
+  }
+  return [...groups.values()]
+    .sort((a, b) => Number(a.key === OTHERS_GROUP) - Number(b.key === OTHERS_GROUP)
+      || Number(b.pinned) - Number(a.pinned) || b.latest - a.latest || a.name.localeCompare(b.name))
+    .map(({ latest: _, ...g }) => g)
+}

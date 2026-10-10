@@ -1,4 +1,4 @@
-import { noteTemplates, notesScopeFilter, orderNotes, displayTitle, previewLine, searchNotes, type Note } from "./notes.ts"
+import { noteTemplates, notesScopeFilter, orderNotes, displayTitle, previewLine, searchNotes, groupNotesByProject, type Note } from "./notes.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -43,6 +43,19 @@ const notes = [N({ id: 1, title: "Budget", body: "Q4 numbers" }), N({ id: 2, bod
 eq("search title", searchNotes(notes, "bud").map((n) => n.id), [1])
 eq("search body", searchNotes(notes, "GROCERY").map((n) => n.id), [2])
 eq("search blank", searchNotes(notes, "  ").length, 2)
+
+// group by project: pinned-holding groups first, then most recent edit; no project → "Others" last
+const grouped = groupNotesByProject([
+  N({ id: 1, project_id: null, updated_at: 99, pinned: true }),
+  N({ id: 2, project_id: 5, updated_at: 50 }),
+  N({ id: 3, project_id: 7, updated_at: 10 }),
+  N({ id: 4, project_id: 7, updated_at: 5, pinned: true }),
+  N({ id: 5, project_id: 9, updated_at: 60 }),
+], new Map([[5, "Alpha"], [7, "Beta"]]))
+eq("groups order", grouped.map((g) => g.name), ["Beta", "Project 9", "Alpha", "Others"])
+eq("pinned first inside group", grouped[0].notes.map((n) => n.id), [4, 3])
+eq("group pinned flag", grouped.map((g) => g.pinned), [true, false, false, true])
+eq("no notes no groups", groupNotesByProject([], new Map()), [])
 
 console.log(`notes: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

@@ -3,6 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
+import type { NoteExportFormat } from "./notes"
 import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
@@ -263,6 +264,10 @@ class ApiClient {
   /** URL of the project's notes as an Obsidian vault (.zip of .md files). */
   orgNotesExportUrl(project: number): string {
     return `/api/org/notes/export?project=${project}`
+  }
+  /** URL of ONE note as a file (viewer/noteexport.py): Markdown, Word or PDF. */
+  orgNoteExportUrl(id: number, format: NoteExportFormat): string {
+    return `/api/org/note/export?id=${id}&format=${format}`
   }
   /** A note's discussion thread, nested and sorted server-side. */
   orgNoteComments(noteId: number, sort: NoteCommentSort = "best") {

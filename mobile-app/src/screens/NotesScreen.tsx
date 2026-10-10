@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useRef, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, isQueued, type Note, type NoteFilter } from "../api/client"
-import { KIND_LABEL, displayTitle, noteTemplates, notesScopeFilter, orderNotes, previewLine, searchNotes } from "../lib/notes"
+import { KIND_LABEL, displayTitle, groupNotesByProject, noteTemplates, notesScopeFilter, orderNotes, previewLine, searchNotes } from "../lib/notes"
 import { formatActor } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken, username } from "../state/config"
@@ -63,8 +63,14 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   const [graph, setGraph] = useState<NoteGraph | null>(null)
   const [tags, setTags] = useState<string[]>(tag ? [tag] : [])
   const [exporting, setExporting] = useState(false)
+  const [exportingNote, setExportingNote] = useState("")   // "Preparing PDF…" for a long-press export
+  // The unscoped view (side menu) spans projects: grouped like the chat list's Projects view.
+  const [projectNames, setProjectNames] = useState<Map<number, string>>(new Map())
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const creating = useRef(false)
   const reads = useRef({ issued: 0, applied: 0 })
+
+  const spansProjects = !!scope && scope.project === undefined && scope.session === undefined
 
   const load = useCallback(async () => {
     if (!scope) { setError("This notes view isn't linked to a chat or project. Go back and open Notes again."); setLoading(false); return }
@@ -90,6 +96,12 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
     }
   }, [scope, showArchived, navigation])
 
+  // Group headers need project names; they change rarely, so read them once (an id stands in on failure).
+  useEffect(() => {
+    if (!spansProjects) return
+    api.orgProjects().then((p) => setProjectNames(new Map(p.projects.map((x) => [x.id, x.name])))).catch(() => {})
+  }, [spansProjects])
+
   useFocusEffect(useCallback(() => {
     load()
     const id = setInterval(load, 8000)
@@ -105,6 +117,17 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   }), [title, t.accent])
 
   const shown = useMemo(() => orderNotes(filterByTags(searchNotes(notes, query), graph, tags)), [notes, query, graph, tags])
+  // Rows for the list: flat inside one project or chat; grouped by project when the view spans them.
+  type Row = { kind: "note"; n: Note } | { kind: "header"; key: string; name: string; count: number; pinned: boolean }
+  const rows = useMemo<Row[]>(() => {
+    if (!spansProjects) return shown.map((n) => ({ kind: "note", n }))
+    const out: Row[] = []
+    for (const g of groupNotesByProject(shown, projectNames)) {
+      out.push({ kind: "header", key: g.key, name: g.name, count: g.notes.length, pinned: g.pinned })
+      if (!collapsed.has(g.key)) for (const n of g.notes) out.push({ kind: "note", n })
+    }
+    return out
+  }, [shown, spansProjects, projectNames, collapsed])
   // Only the tags on notes this view can show (a chat's view, not the whole org's).
   const tagChips = useMemo(() => {
     const here = new Set(notes.map((n) => n.id))
@@ -135,7 +158,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
   function noteActions(n: Note) {
     setActionError("")
     showActions(displayTitle(n), [
-      { text: "Export…", onPress: () => exportNote({ id: n.id, title: n.title || displayTitle(n) }, setActionError) },
+      { text: "Export…", onPress: () => { if (!exportingNote) exportNote({ id: n.id, title: n.title || displayTitle(n) }, setActionError, setExportingNote) } },
       { text: n.archived ? "Unarchive" : "Archive", onPress: () => archiveNote(n) },
       { text: "Delete", destructive: true, onPress: () => deleteNote(n) },
     ])
@@ -234,6 +257,12 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
         />
       ) : null}
 
+      {exportingNote ? (
+        <View testID="notes-exporting" style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 16, paddingBottom: 8 }}>
+          <ActivityIndicator size="small" color={t.accent} />
+          <Text style={{ color: t.textMuted, fontSize: 13 }}>{exportingNote}</Text>
+        </View>
+      ) : null}
       {error || actionError ? <Text testID="notes-error" accessibilityLiveRegion="polite" style={styles.errorBanner}>{error || actionError}</Text> : null}
 
       {loading && !notes.length ? (
@@ -241,8 +270,8 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
       ) : (
         <FlatList
           testID="notes-list"
-          data={shown}
-          keyExtractor={(n) => String(n.id)}
+          data={rows}
+          keyExtractor={(r) => (r.kind === "note" ? String(r.n.id) : `group-${r.key}`)}
           refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
           contentContainerStyle={{ paddingBottom: 24 }}
           ListEmptyComponent={
@@ -258,7 +287,29 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
               ) : null}
             </View>
           }
-          renderItem={({ item: n }) => {
+          renderItem={({ item: row }) => {
+            if (row.kind === "header") {
+              const open = !collapsed.has(row.key)
+              return (
+                <TouchableOpacity
+                  testID={`notes-group-${row.key}`}
+                  style={styles.projectHeader}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: open }}
+                  onPress={() => setCollapsed((prev) => {
+                    const next = new Set(prev)
+                    next.has(row.key) ? next.delete(row.key) : next.add(row.key)
+                    return next
+                  })}
+                >
+                  <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
+                  {row.pinned ? <Icon name="pin" size={12} color={t.accent} /> : null}
+                  <Text style={styles.projectHeaderText} numberOfLines={1}>{row.name}</Text>
+                  <Text style={styles.projectHeaderCount}>{row.count}</Text>
+                </TouchableOpacity>
+              )
+            }
+            const n = row.n
             const who = formatActor(n.created_by, username())
             return (
               <TouchableOpacity
