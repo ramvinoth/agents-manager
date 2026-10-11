@@ -414,6 +414,10 @@ def init_db():
             -- chat (chatplugins.save_to_template). NULL = just `plugin`. Never
             -- seeded, so the owner's saved setup survives a builtin re-seed.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugins JSONB;
+            -- A personal agent belongs to the account that made it: only that
+            -- account sees, edits or deletes it. NULL = shared with every account
+            -- (the builtins, and agents made before agents had owners).
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS owner_user_id INTEGER;
             -- Lenses are views over a PROJECT (two engineer chats share one Map).
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
             -- Map lens cache: one row per parsed file; re-parsed only when its stamp
@@ -865,6 +869,15 @@ def user_for_session(token):
             _session_cache.pop(next(iter(_session_cache)), None)
         _session_cache[token] = (user, now)
     return user
+
+
+def owner_user_id():
+    """The install owner's account id — whose personal agents an unattended
+    agent session (no logged-in human) acts for. None before an owner exists."""
+    with _db() as cur:
+        cur.execute("SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1")
+        row = cur.fetchone()
+    return row["id"] if row else None
 
 
 def owner_role():
@@ -2192,28 +2205,47 @@ def agent_template_get(template_id):
     return dict(row) if row else None
 
 
-def agent_templates_list():
-    """Return all templates (builtins + user-created), newest first."""
+def agent_templates_list(user_id):
+    """The agents `user_id` can see: every shared one plus its own personal ones."""
     with _db() as cur:
-        cur.execute("SELECT * FROM agent_templates ORDER BY is_builtin DESC, category, name")
+        cur.execute("SELECT * FROM agent_templates WHERE owner_user_id IS NULL OR owner_user_id = %s"
+                    " ORDER BY is_builtin DESC, category, name", (user_id,))
         return cur.fetchall()
 
 
-def agent_template_create(name, description, category, icon, system_prompt, goal, model="",
-                          jobs=(), plugin="", lens="", level="ic", created_by="user"):
-    """Create a user-defined template. `jobs` is a validated [{prompt, cron|interval}].
-    Returns the new row."""
+# The fields an agent's owner edits; every write goes through these names only.
+TEMPLATE_FIELDS = ("name", "description", "category", "icon", "system_prompt", "goal",
+                   "model", "jobs", "plugin", "lens", "level")
+
+
+def _template_values(fields):
+    return [Json(list(fields[c])) if c == "jobs" else fields[c] for c in TEMPLATE_FIELDS]
+
+
+def agent_template_create(fields, owner_user_id, created_by="user", plugins=None):
+    """Create a personal agent from validated TEMPLATE_FIELDS (`jobs` is a
+    [{prompt, cron|interval}]). `plugins` carries a kept plugin list over (a
+    duplicate). Returns the new row."""
     with _db() as cur:
         cur.execute(
-            """INSERT INTO agent_templates
-               (name, description, category, icon, system_prompt, goal, model, jobs,
-                plugin, lens, level, is_builtin, created_by, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
-               RETURNING *""",
-            (name, description, category, icon, system_prompt, goal, model, Json(list(jobs)),
-             plugin, lens, level, created_by)
-        )
-        return cur.fetchone()
+            "INSERT INTO agent_templates (" + ", ".join(TEMPLATE_FIELDS)
+            + ", plugins, owner_user_id, is_builtin, created_by, created_at) VALUES ("
+            + ", ".join(["%s"] * len(TEMPLATE_FIELDS))
+            + ", %s, %s, FALSE, %s, extract(epoch from now())) RETURNING *",
+            (*_template_values(fields), Json(list(plugins)) if plugins is not None else None,
+             owner_user_id, created_by))
+        return dict(cur.fetchone())
+
+
+def agent_template_update(template_id, fields):
+    """Replace a user agent's TEMPLATE_FIELDS (builtins are never edited).
+    Returns the updated row, or None when there is no such user agent."""
+    with _db() as cur:
+        cur.execute("UPDATE agent_templates SET " + ", ".join(c + "=%s" for c in TEMPLATE_FIELDS)
+                    + " WHERE id = %s AND is_builtin = FALSE RETURNING *",
+                    (*_template_values(fields), template_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def agent_template_set_plugins(template_id, plugins):

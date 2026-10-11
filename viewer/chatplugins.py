@@ -3,9 +3,10 @@
 Two layers, both standard Claude Code plugins loaded with --plugin-dir (the
 engine reads config.session_plugin_dirs), so there is one loading mechanism:
 
-  - Harman plugins (viewer/agent_plugins/<name>): a chat starts with its agent
-    template's plugin ("included"); the owner may add or remove any shipped
-    one. A plugin is added or removed whole — editing one would change it for
+  - Harman plugins (the catalog, config.plugin_sources): the shipped ones in
+    viewer/agent_plugins and the owner's own, saved from a chat's extras
+    (save_as_plugin). A chat starts with its agent template's plugin
+    ("included"); the owner may add or remove any catalog plugin. A plugin is added or removed whole — editing one would change it for
     every chat that uses it. The list lives in session_meta.agentPlugins.
   - The chat's extras (config.chat_plugin_dir): skills and MCP servers added to
     THIS chat only, in a generated plugin named "chat" — so they show as
@@ -18,12 +19,13 @@ which every new chat from that agent starts with (start_from_template).
 Applies to local Claude runs only; a remote, Codex or Copilot run gets neither.
 """
 import json
+import re
 import shutil
 
 from viewer import db, skills
 from viewer.config import (
-    CHAT_PLUGIN_NAME, agent_plugin_dir, agent_plugin_names, chat_plugin_dir, session_plugins,
-    template_plugin_dir,
+    CHAT_PLUGIN_NAME, PLUGIN_NAME_RE, agent_plugin_dir, agent_plugin_names, chat_plugin_dir, plugin_source,
+    plugin_sources, session_plugins, template_plugin_dir,
 )
 from viewer.engine import frontmatter_description, plugin_description, plugin_mcp_servers
 
@@ -79,10 +81,12 @@ def merge_into(caps, sid):
     for name in active:
         root = agent_plugin_dir(name)
         add_parts(root, f"plugin:{name}", False)
-    # Every shipped plugin is listed — on or off, ahead of the machine's — so the
-    # owner can add one; "included" marks the one the chat's agent came with.
+    # Every catalog plugin is listed — on or off, ahead of the machine's — so the
+    # owner can add one; "included" marks the one the chat's agent came with,
+    # `kind` whether it shipped with Harman or the owner saved it (deletable).
     plugin_rows[:0] = [{"name": name, "description": plugin_description(agent_plugin_dir(name)),
-                        "source": "agent", "included": name in included, "active": name in active}
+                        "source": "agent", "kind": plugin_source(name).kind,
+                        "included": name in included, "active": name in active}
                        for name in agent_plugin_names()]
     extras = chat_plugin_dir(sid)
     if extras:
@@ -191,6 +195,53 @@ def save_to_template(sid):
     dst = template_plugin_dir(tid, create=True)
     _replace(src, dst)
     return {"saved": True, "template": tid, "plugins": plugins}
+
+
+def copy_template_extras(src_id, dst_id):
+    """A duplicated agent starts with a copy of its source's saved extras."""
+    src = template_plugin_dir(src_id)
+    if src:
+        _replace(src, template_plugin_dir(dst_id, create=True))
+
+
+def _user_source():
+    return next(s for s in plugin_sources() if s.writable)
+
+
+def save_as_plugin(sid, name, description=""):
+    """Package this chat's extras (its own skills and MCP servers) as a new
+    plugin in the owner's catalog, so any chat or agent can add it whole.
+
+    A new name only — an existing plugin is never overwritten, since chats
+    already running with it would change under them. The chat keeps its
+    extras; turning the plugin on as well would load every skill twice."""
+    name = (name or "").strip().lower()
+    if not re.fullmatch(PLUGIN_NAME_RE, name) or name == CHAT_PLUGIN_NAME:
+        raise ChatPluginError("Name it with lowercase letters, digits and dashes, e.g. sales-research")
+    if plugin_source(name):
+        raise ChatPluginError(f"A plugin named {name} already exists", 409)
+    src = chat_plugin_dir(sid)
+    if not src or not (any((src / "skills").glob("*/SKILL.md")) or plugin_mcp_servers(src)):
+        raise ChatPluginError("This chat has no skills or MCP tools of its own to save")
+    dst = _user_source().root / name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst)
+    (dst / ".claude-plugin" / "plugin.json").write_text(json.dumps(
+        {"name": name, "description": (description or "").strip() or "Saved from a chat."}, indent=2))
+    return {"saved": True, "name": name}
+
+
+def delete_user_plugin(name):
+    """Remove one of the owner's saved plugins from the catalog. Shipped ones
+    are read-only. A chat or agent still naming it simply stops loading it
+    (session_plugins drops unknown names)."""
+    src = plugin_source(name or "")
+    if not src:
+        raise ChatPluginError("Plugin not found", 404)
+    if not src.writable:
+        raise ChatPluginError("Plugins that ship with Harman can't be deleted", 403)
+    shutil.rmtree(src.dir(name))
+    return {"deleted": True, "name": name}
 
 
 def purge(sid):

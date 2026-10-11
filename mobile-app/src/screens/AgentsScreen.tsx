@@ -8,10 +8,13 @@
  *
  * Layout: compact category filter chips → SectionList grouped by category
  * with rich cards showing per-template icons, descriptions, and a start arrow.
+ * "+" makes a personal agent (only its owner sees it); long-press a card to
+ * edit or delete your own, or duplicate any agent — a built-in is never edited.
  */
 import React, { useCallback, useMemo, useState } from "react"
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   SectionList,
@@ -29,6 +32,8 @@ import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { useScreenHeader } from "../lib/useScreenHeader"
+import { showActions } from "../lib/actionSheet"
+import HeaderButton from "../components/HeaderButton"
 import Icon, { type IconName } from "../components/Icon"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
@@ -55,7 +60,13 @@ export default function AgentsScreen({ navigation }: Props) {
       .finally(() => setRefreshing(false))
   }, [])
 
-  useScreenHeader(navigation, () => ({ title: "Agents", headerLeft: undefined, headerRight: () => null }), [])
+  useScreenHeader(navigation, () => ({
+    title: "Agents", headerLeft: undefined,
+    headerRight: () => (
+      <HeaderButton testID="agents-new" label="New agent" icon="add" size={24} color={t.accent} style={{ marginRight: 4 }}
+        onPress={() => navigation.navigate("AgentEdit")} />
+    ),
+  }), [t])
   useFocusEffect(useCallback(() => { load() }, [load]))
 
   const all = templates ?? []
@@ -77,6 +88,33 @@ export default function AgentsScreen({ navigation }: Props) {
 
   function pickTemplate(tmpl: AgentTemplate) {
     navigation.navigate("NewChat", { template: tmpl } as never)
+  }
+
+  async function duplicate(tmpl: AgentTemplate) {
+    try {
+      const { template } = await api.agentTemplateDuplicate(tmpl.id)
+      load()
+      navigation.navigate("AgentEdit", { template })
+    } catch (e) {
+      Alert.alert("Couldn't duplicate", userError(e, tmpl.name, "duplicate"))
+    }
+  }
+
+  function confirmDelete(tmpl: AgentTemplate) {
+    Alert.alert(`Delete ${tmpl.name}?`, "Chats already started from it keep running; new chats can't start from it.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => {
+        api.agentTemplateDelete(tmpl.id).then(() => load()).catch((e) => Alert.alert("Couldn't delete", userError(e, tmpl.name, "delete")))
+      } },
+    ])
+  }
+
+  function agentActions(tmpl: AgentTemplate) {
+    showActions(tmpl.name, [
+      ...(tmpl.editable ? [{ text: "Edit", onPress: () => navigation.navigate("AgentEdit", { template: tmpl }) }] : []),
+      { text: "Duplicate", onPress: () => duplicate(tmpl) },
+      ...(tmpl.editable ? [{ text: "Delete", destructive: true, onPress: () => confirmDelete(tmpl) }] : []),
+    ])
   }
 
   return (
@@ -148,6 +186,8 @@ export default function AgentsScreen({ navigation }: Props) {
               style={styles.agCard}
               activeOpacity={0.65}
               onPress={() => pickTemplate(tmpl)}
+              onLongPress={() => agentActions(tmpl)}
+              accessibilityHint="Long-press for edit, duplicate and delete"
             >
               {/* Icon */}
               <View style={[styles.agIcon, { backgroundColor: catColor + "18" }]}>
@@ -173,8 +213,13 @@ export default function AgentsScreen({ navigation }: Props) {
                 {/* Level + model + schedule badges. The level is what a chat
                     started from this agent may do on the board ("from the agent
                     it was started from" in the chat's Trust settings). */}
-                {(tmpl.level || tmpl.model || tmpl.jobs?.length) ? (
+                {(tmpl.owner_user_id != null || tmpl.level || tmpl.model || tmpl.jobs?.length) ? (
                   <View style={styles.agBadges}>
+                    {tmpl.owner_user_id != null ? (
+                      <View testID={`agent-yours-${tmpl.id}`} style={[styles.agBadge, { backgroundColor: t.accent + "22" }]}>
+                        <Text style={[styles.agBadgeText, { color: t.accent }]}>Yours</Text>
+                      </View>
+                    ) : null}
                     {tmpl.level ? (
                       <View testID={`agent-level-${tmpl.id}`} style={styles.agBadge}>
                         <Text style={styles.agBadgeText}>

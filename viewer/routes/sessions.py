@@ -7,9 +7,9 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
-from viewer import chatplugins, db, discussion, orglogic
+from viewer import agenttemplates, chatplugins, db, discussion
 from viewer.config import (
-    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, read_back,
+    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, read_back,
     split_lines,
 )
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
@@ -19,6 +19,7 @@ from viewer.engine import (
     start_copilot_new,
 )
 from viewer.loops import USER_ORIGIN, build_schedule
+from viewer.routes import require_human
 from viewer.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
 )
@@ -197,59 +198,86 @@ class SessionsMixin:
         loops = [dict(lp, id=lid) for lid, lp in db.loop_list(sid or None).items()]
         self.send_json(sorted(loops, key=lambda l: l.get("created", 0)))
 
+    # ----- Agents (agent templates): shared + the caller's personal ones -----
+
+    def _template_viewer(self, req):
+        """The account whose agents this caller sees: the human at the app, or
+        for an agent session (no human) the install owner it acts for."""
+        user = req.principal.get("user")
+        return user["id"] if user else db.owner_user_id()
+
     def _g_agent_templates(self, req):
-        templates = db.agent_templates_list()
-        self.send_json([dict(t) for t in templates])
+        """Shared agents + the caller's own, each marked `editable` for this
+        human (never for an agent session) so a client never re-derives it."""
+        user = req.principal.get("user")
+        self.send_json([{**t, "editable": bool(user) and agenttemplates.editable(t, user)}
+                        for t in db.agent_templates_list(self._template_viewer(req))])
 
     def _p_agent_templates(self, req):
-        body = self.read_body()
-        if body is None:
-            self.send_json({"error": "Invalid JSON body"}, status=400)
+        """Create a personal agent, owned by the human making it."""
+        if not require_human(self, req):
             return
-        name = (body.get("name") or "").strip()
-        if not name:
-            self.send_json({"error": "Name required"}, status=400)
-            return
-        plugin = (body.get("plugin") or "").strip()
-        lens = (body.get("lens") or "").strip()
-        if plugin and not agent_plugin_dir(plugin):
-            self.send_json({"error": f"Unknown plugin: {plugin}"}, status=400)
-            return
-        if lens and lens not in db.LENSES:
-            self.send_json({"error": f"Unknown lens: {lens}"}, status=400)
-            return
-        level = (body.get("level") or "ic").strip()
-        if level not in orglogic.LEVELS:
-            self.send_json({"error": f"Unknown level: {level}"}, status=400)
-            return
-        jobs, err = _template_jobs(body.get("jobs"))
+        fields, err = agenttemplates.fields_from(self.read_body() or {})
         if err:
             self.send_json({"error": err}, status=400)
             return
-        row = db.agent_template_create(
-            name=name,
-            description=(body.get("description") or "").strip(),
-            category=(body.get("category") or "general").strip(),
-            icon=(body.get("icon") or "sparkle").strip(),
-            system_prompt=(body.get("system_prompt") or "").strip(),
-            goal=(body.get("goal") or "").strip(),
-            model=(body.get("model") or "").strip(),
-            jobs=jobs,
-            plugin=plugin,
-            lens=lens,
-            level=level,
-        )
-        self.send_json({"id": row["id"]} if row else {"error": "Failed"})
+        user = req.principal["user"]
+        row = db.agent_template_create(fields, user["id"], created_by=user["username"])
+        self.send_json({"id": row["id"], "template": row})
+
+    def _owned_template(self, req, body):
+        """The agent the body's id names, when this human may change it; else
+        answers 404/403 itself and returns None."""
+        tid = body.get("id")
+        template = db.agent_template_get(int(tid)) if str(tid or "").isdigit() else None
+        user = req.principal["user"]
+        if not template or not agenttemplates.visible(template, user["id"]):
+            self.send_json({"error": "Agent not found"}, status=404)
+            return None
+        if not agenttemplates.editable(template, user):
+            self.send_json({"error": "Built-in agents can't be changed; duplicate it to make your own"
+                            if template["is_builtin"] else "Only its owner can change this agent"}, status=403)
+            return None
+        return template
+
+    def _p_agent_templates_update(self, req):
+        if not require_human(self, req):
+            return
+        body = self.read_body() or {}
+        if not self._owned_template(req, body):
+            return
+        fields, err = agenttemplates.fields_from(body)
+        if err:
+            self.send_json({"error": err}, status=400)
+            return
+        self.send_json({"template": db.agent_template_update(int(body["id"]), fields)})
+
+    def _p_agent_templates_duplicate(self, req):
+        """A personal, editable copy of any agent this human can see — the way
+        to change a builtin. Carries its kept plugins and saved skills/MCP."""
+        if not require_human(self, req):
+            return
+        body = self.read_body() or {}
+        tid = body.get("id")
+        source = db.agent_template_get(int(tid)) if str(tid or "").isdigit() else None
+        user = req.principal["user"]
+        if not source or not agenttemplates.visible(source, user["id"]):
+            self.send_json({"error": "Agent not found"}, status=404)
+            return
+        row = db.agent_template_create(agenttemplates.copy_fields(source), user["id"],
+                                       created_by=user["username"], plugins=source.get("plugins"))
+        chatplugins.copy_template_extras(source["id"], row["id"])
+        self.send_json({"id": row["id"], "template": row})
 
     def _p_agent_templates_delete(self, req):
-        body = self.read_body()
-        tid = (body or {}).get("id")
-        if not tid:
-            self.send_json({"error": "id required"}, status=400)
+        if not require_human(self, req):
             return
-        deleted = db.agent_template_delete(int(tid))
+        body = self.read_body() or {}
+        if not self._owned_template(req, body):
+            return
+        deleted = db.agent_template_delete(int(body["id"]))
         if deleted:
-            chatplugins.purge_template(int(tid))
+            chatplugins.purge_template(int(body["id"]))
         self.send_json({"deleted": deleted})
 
     def _g_default(self, req):
@@ -984,6 +1012,11 @@ class SessionsMixin:
             self.send_json({"error": "Empty message"}, status=400)
             return
         principal = req.principal
+        tid = str(body.get("template") or "")
+        template = db.agent_template_get(int(tid)) if tid.isdigit() else None
+        if template and not agenttemplates.visible(template, self._template_viewer(req)):
+            self.send_json({"error": "Agent not found"}, status=404)   # someone else's personal agent
+            return
         if principal["kind"] != "mcp":
             payload, status = start_new_session(body)
             self.send_json(payload, status=status)
@@ -1266,28 +1299,6 @@ def _new_session_jobs(raw, host, agent):
         if err:
             return None, f"Job {i}: {err}"
         jobs.append((prompt, sched))
-    return jobs, None
-
-
-def _template_jobs(raw):
-    """Validate an agent template's jobs → ([{prompt, cron|interval}], error).
-
-    Same schedule rules as a chat's jobs (build_schedule), but stored as the
-    owner typed them: the next run is computed when a chat is started from it."""
-    if not raw:
-        return [], None
-    if not isinstance(raw, list):
-        return None, "jobs must be a list"
-    jobs = []
-    for i, j in enumerate(raw, 1):
-        prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
-        if not prompt:
-            return None, f"Job {i} has no prompt"
-        sched, err = build_schedule(j.get("cron"), j.get("interval"))
-        if err:
-            return None, f"Job {i}: {err}"
-        jobs.append({"prompt": prompt, "cron": sched["cron"]} if sched["cron"]
-                    else {"prompt": prompt, "interval": sched["interval"]})
     return jobs, None
 
 

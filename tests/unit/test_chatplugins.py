@@ -26,6 +26,7 @@ class TestChatPlugins(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         patch.object(config, "CHAT_PLUGINS_DIR", Path(tmp.name) / "chats").start()
         patch.object(config, "TEMPLATE_PLUGINS_DIR", Path(tmp.name) / "templates").start()
+        patch.object(config, "USER_PLUGINS_DIR", Path(tmp.name) / "user").start()
         self.templates = {7: {"id": 7, "plugin": "privacy-guard", "plugins": None}}
         patch("viewer.db.agent_template_get", side_effect=lambda tid: self.templates.get(tid)).start()
         patch("viewer.db.agent_template_set_plugins",
@@ -119,3 +120,54 @@ class TestChatPlugins(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSaveAsPlugin(TestChatPlugins):
+    """A chat's extras become a catalog plugin any chat can add whole."""
+
+    def test_save_lists_runs_and_deletes(self):
+        with self.assertRaises(chatplugins.ChatPluginError):   # nothing of its own yet
+            chatplugins.save_as_plugin(SID, "sales-research")
+        chatplugins.save_skill(SID, "prospect", "---\ndescription: d\n---\n")
+        chatplugins.save_mcp(SID, "crm", {"command": "echo"})
+        self.assertEqual(chatplugins.save_as_plugin(SID, "Sales-Research", "Find leads")["name"], "sales-research")
+        manifest = json.loads((config.USER_PLUGINS_DIR / "sales-research" / ".claude-plugin" / "plugin.json").read_text())
+        self.assertEqual(manifest, {"name": "sales-research", "description": "Find leads"})
+        rows = {p["name"]: p for p in chatplugins.merge_into({"skills": [], "mcp": [], "plugins": []}, SID)["plugins"]}
+        self.assertEqual(rows["sales-research"]["kind"], "user")
+        self.assertEqual(rows["cyber-security"]["kind"], "shipped")
+        # Another chat can turn it on; its parts ride the run under the plugin's name.
+        other = "9f8e7d6c-1111-2222-3333-444455556666"
+        chatplugins.set_plugin(other, "sales-research", True)
+        self.assertIn(config.USER_PLUGINS_DIR / "sales-research", session_plugin_dirs(other, self.store[other]))
+        skills = chatplugins.merge_into({"skills": [], "mcp": [], "plugins": []}, other)["skills"]
+        self.assertTrue(any(s["source"] == "plugin:sales-research" and not s["editable"] for s in skills))
+        # Delete: the owner's own only; a chat still naming it just stops loading it.
+        with self.assertRaises(chatplugins.ChatPluginError) as e:
+            chatplugins.delete_user_plugin("cyber-security")
+        self.assertEqual(e.exception.status, 403)
+        chatplugins.delete_user_plugin("sales-research")
+        self.assertEqual(session_plugins(self.store[other]), [])
+
+    def test_name_rules(self):
+        chatplugins.save_skill(SID, "s", "x")
+        for bad, status in (("../x", 400), ("chat", 400), ("", 400), ("cyber-security", 409)):
+            with self.assertRaises(chatplugins.ChatPluginError) as e:
+                chatplugins.save_as_plugin(SID, bad)
+            self.assertEqual(e.exception.status, status, bad)
+        chatplugins.save_as_plugin(SID, "mine")
+        with self.assertRaises(chatplugins.ChatPluginError) as e:   # never overwrite
+            chatplugins.save_as_plugin(SID, "mine")
+        self.assertEqual(e.exception.status, 409)
+        with self.assertRaises(chatplugins.ChatPluginError) as e:
+            chatplugins.delete_user_plugin("nope")
+        self.assertEqual(e.exception.status, 404)
+
+    def test_duplicate_copies_template_extras(self):
+        self.store[SID] = {"agentTemplate": 7}
+        chatplugins.save_skill(SID, "kept", "x")
+        chatplugins.save_to_template(SID)
+        chatplugins.copy_template_extras(7, 8)
+        self.assertTrue((config.template_plugin_dir(8) / "skills" / "kept" / "SKILL.md").is_file())
+        chatplugins.copy_template_extras(99, 100)   # nothing saved → nothing made
+        self.assertIsNone(config.template_plugin_dir(100))

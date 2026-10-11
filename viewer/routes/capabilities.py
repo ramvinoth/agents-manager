@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from viewer import chatplugins
 from viewer.config import (
-    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, VIEWER_HANDLED, load_system_commands,
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, USER_PLUGINS_DIR, VIEWER_HANDLED,
+    load_system_commands,
 )
 from viewer.routes import require_human
 from viewer.adapters import resolve_agent_session
@@ -30,7 +31,7 @@ class CapabilitiesMixin:
             self.send_json({"error": "Skill not found"}, status=404)
             return
         if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR),
-                              str(TEMPLATE_PLUGINS_DIR))):
+                              str(USER_PLUGINS_DIR), str(TEMPLATE_PLUGINS_DIR))):
             self.send_json({"error": "Plugin skills are read-only"}, status=403)
             return
         trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
@@ -254,15 +255,29 @@ class CapabilitiesMixin:
         body = self.read_body() or {}
         self._chat_write(req, chatplugins.save_to_template, body)
 
+    def _p_chat_save_as_plugin(self, req):
+        """Package this chat's own skills and MCP as a new catalog plugin."""
+        body = self.read_body() or {}
+        self._chat_write(req, lambda sid: chatplugins.save_as_plugin(sid, body.get("name"), body.get("description")), body)
+
+    def _p_plugins_delete(self, req):
+        """Delete one of the owner's saved plugins (never a shipped one)."""
+        if not require_human(self, req):
+            return
+        try:
+            self.send_json(chatplugins.delete_user_plugin((self.read_body() or {}).get("name")))
+        except chatplugins.ChatPluginError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+
     def resolve_skill_path(self, raw):
-        """Only allow paths inside the three known skill roots."""
+        """Only allow paths inside the known skill roots."""
         try:
             p = Path(raw).resolve()
         except Exception:
             return None
         roots = [Path.home() / ".claude" / "skills",
                  Path.home() / ".claude" / "plugins" / "cache",
-                 AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR]
+                 AGENT_PLUGINS_DIR, USER_PLUGINS_DIR, CHAT_PLUGINS_DIR, TEMPLATE_PLUGINS_DIR]
         if p.is_file() and p.name == "SKILL.md":
             # project skills can live anywhere under a project's .claude/skills
             if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):

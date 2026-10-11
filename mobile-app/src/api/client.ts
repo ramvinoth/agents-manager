@@ -152,9 +152,10 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
-/** A chat's plugin. `agent` = ships with Harman, added/removed per chat (`included` =
- *  the chat's agent brings it by default); `machine` = enabled in Claude Code on the Mac. */
-export type Plugin = { name: string; description?: string; source: "agent" | "machine"; included: boolean; active: boolean }
+/** A chat's plugin. `agent` = in Harman's catalog, added/removed per chat (`included` =
+ *  the chat's agent brings it by default); `machine` = enabled in Claude Code on the Mac.
+ *  A catalog plugin's `kind`: `shipped` with Harman, or `user` = saved from a chat (deletable). */
+export type Plugin = { name: string; description?: string; source: "agent" | "machine"; kind?: "shipped" | "user"; included: boolean; active: boolean }
 /** `agent`: the agent this chat was started from — where "Keep on agent" saves its setup. */
 export type Capabilities = { skills: Skill[]; mcp: McpServer[]; plugins?: Plugin[]; agent?: { id: number; name: string } }
 /** A marketplace entry (GET /api/market/mcp | /api/market/skills). MCP entries
@@ -185,7 +186,15 @@ export type AgentTemplate = {
   /** Harman authority a chat started from this role acts at on the board. */
   level?: HarmanLevel
   is_builtin: boolean; created_by: string; created_at: number
+  /** Set = a personal agent only that user sees; null = shared/built-in. */
+  owner_user_id?: number | null
+  /** Catalog plugins a chat started from it gets ("Keep on agent"). */
+  plugins?: string[] | null
+  /** The server's answer to "may this caller edit/delete it". */
+  editable?: boolean
 }
+/** What a person sets on an agent (viewer/db.TEMPLATE_FIELDS). */
+export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "model" | "jobs" | "plugin" | "lens" | "level">
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
@@ -642,6 +651,11 @@ export const api = {
   /** Keep this chat's plugins, skills and MCP on the agent it was started from. */
   chatSaveToAgent: (session: string) =>
     req<{ saved: boolean; plugins: string[] }>("POST", "/api/chat/save-to-agent", { session }),
+  /** Package this chat's own skills and MCP as a new catalog plugin (the chat keeps them). */
+  chatSaveAsPlugin: (session: string, name: string, description: string) =>
+    req<{ saved: boolean; name: string }>("POST", "/api/chat/save-as-plugin", { session, name, description }),
+  /** Delete a plugin the owner saved; shipped plugins are refused. */
+  pluginDelete: (name: string) => req<{ deleted: boolean; name: string }>("POST", "/api/plugins/delete", { name }),
   // Marketplace: the server rebuilds every install from the source's own record;
   // the app names an entry id, never a command. Installs land on this machine.
   marketMcp: (q: string, cursor?: string) =>
@@ -663,9 +677,14 @@ export const api = {
 
   // ---- agent templates (curated session presets) ----
   agentTemplates: () => req<AgentTemplate[]>("GET", "/api/agent-templates"),
-  agentTemplateCreate: (body: Omit<AgentTemplate, "id" | "is_builtin" | "created_by" | "created_at">) =>
-    req<{ id?: number }>("POST", "/api/agent-templates", body),
-  agentTemplateDelete: (id: number) => req("POST", "/api/agent-templates/delete", { id }),
+  // Personal agents: the server checks ownership (built-ins are never edited — duplicate one).
+  agentTemplateCreate: (body: AgentTemplateFields) =>
+    req<{ id: number; template: AgentTemplate }>("POST", "/api/agent-templates", body),
+  agentTemplateUpdate: (id: number, body: AgentTemplateFields) =>
+    req<{ template: AgentTemplate }>("POST", "/api/agent-templates/update", { id, ...body }),
+  agentTemplateDuplicate: (id: number) =>
+    req<{ id: number; template: AgentTemplate }>("POST", "/api/agent-templates/duplicate", { id }),
+  agentTemplateDelete: (id: number) => req<{ deleted: boolean }>("POST", "/api/agent-templates/delete", { id }),
 
   // ---- agents available on a host ----
   agents: (host: string) =>

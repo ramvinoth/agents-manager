@@ -20,6 +20,20 @@ plugin list into `agent_templates.plugins` and its extras into
 agent starts with both (its own copy). The builtin re-seed never touches
 `plugins`, so a kept setup survives upgrades; deleting the template purges it.
 
+**The catalog has two sources** (`config.plugin_sources`): these shipped
+plugins (read-only, versioned in git) and the owner's own under
+`~/.claude/.viewer-user-plugins/<name>/`. "Save as plugin"
+(`POST /api/chat/save-as-plugin`, human-only) copies a chat's extras there as a
+new, uniquely named plugin; any chat or agent can then add it whole. Names never
+overwrite (a shipped name wins and saving over an existing one is refused);
+`POST /api/plugins/delete` removes only the owner's own, and a chat still
+naming it just stops loading it.
+
+Agents themselves can be personal: `agent_templates.owner_user_id` is the
+account that made one (NULL = shared builtins). Create, edit, duplicate and
+delete live in `viewer/agenttemplates.py` (rules) and the agent-template routes;
+builtins are changed only by duplicating them.
+
 The engine passes one `--plugin-dir` per active plugin plus the chat's extras
 to every **local** Claude run. Plugin parts are namespaced (`<plugin>:<skill>`,
 `plugin:<plugin>:<server>`), so they never collide with user/project skills or

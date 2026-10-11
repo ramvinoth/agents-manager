@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { userError } from "@/lib/errors"
-import { Plus, Loader2, Store } from "lucide-react"
+import { Plus, Loader2, Store, Trash2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -258,8 +258,10 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
 
 /** A chat's plugins: Harman's own (add/remove per chat; "Included" = its agent
  *  brings it by default) and the Mac's enabled Claude plugins (read-only — they
- *  are turned on in Claude Code itself). A plugin is whole: add or remove, never edit. */
-function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: number; name: string } }) {
+ *  are turned on in Claude Code itself). A plugin is whole: add or remove, never edit.
+ *  "Save as plugin" packs the chat's own skills and MCP (`ownParts`) into a new
+ *  catalog plugin, badged "Yours" and deletable — a shipped plugin never is. */
+function PluginList({ plugins, agent, ownParts }: { plugins: Plugin[]; agent?: { id: number; name: string }; ownParts: number }) {
   const session = useStore((s) => s.currentSessionPath)
   const loadCapabilities = useStore((s) => s.loadCapabilities)
   const chatScope = useChatScope()
@@ -294,6 +296,35 @@ function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: numbe
     }
   }
 
+  const [saving, setSaving] = useState<{ name: string; description: string } | null>(null)
+
+  async function saveAsPlugin() {
+    if (!saving) return
+    setBusy("save-plugin"); setErr("")
+    try {
+      await api.chatSaveAsPlugin(session, saving.name.trim(), saving.description.trim())
+      setSaving(null)
+      await loadCapabilities()
+    } catch (e) {
+      setErr(userError(e, "this plugin", "save"))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  async function deletePlugin(p: Plugin) {
+    if (!window.confirm(`Delete ${p.name}? It leaves the catalog for every chat and agent. Chats already using it lose its skills and MCP tools on their next run.`)) return
+    setBusy(p.name); setErr("")
+    try {
+      await api.pluginDelete(p.name)
+      await loadCapabilities()
+    } catch (e) {
+      setErr(userError(e, p.name, "delete"))
+    } finally {
+      setBusy("")
+    }
+  }
+
   const shipped = plugins.filter((p) => p.source === "agent")
   const machine = plugins.filter((p) => p.source === "machine")
   return (
@@ -311,15 +342,42 @@ function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: numbe
             <Button size="sm" variant="outline" disabled={!!busy} data-testid="keep-on-agent" onClick={keepOnAgent}>Keep on agent</Button>
           </div>
         )}
+        {chatScope && (saving ? (
+          <div className="space-y-2 rounded-md border border-border p-2">
+            <p className="text-xs text-muted-foreground">Packs this chat's skills and MCP tools into a plugin any chat or agent can add. This chat keeps its own copy.</p>
+            <Input autoFocus value={saving.name} placeholder="research-kit (lowercase, digits, dashes)" data-testid="plugin-name"
+              onChange={(e) => setSaving({ ...saving, name: e.target.value.toLowerCase() })} />
+            <Input value={saving.description} placeholder="What it's for" data-testid="plugin-description"
+              onChange={(e) => setSaving({ ...saving, description: e.target.value })} />
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setSaving(null)}>Cancel</Button>
+              <Button size="sm" disabled={!saving.name.trim() || !!busy} data-testid="plugin-save" onClick={saveAsPlugin}>
+                {busy === "save-plugin" && <Loader2 className="size-3.5 animate-spin" />}Save plugin
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button size="sm" variant="outline" className="w-full" disabled={!!busy || !ownParts} data-testid="save-as-plugin"
+            title={ownParts ? undefined : "Add a skill or MCP tool scoped to this chat first"} onClick={() => setSaving({ name: "", description: "" })}>
+            <Plus className="size-3.5" />Save this chat's skills and MCP as a plugin
+          </Button>
+        ))}
         {shipped.map((p) => (
           <div key={p.name} className="flex items-center gap-2 rounded-md border border-border p-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-sm">
                 <span className="truncate font-medium">{p.name}</span>
                 {p.included && <Badge variant="secondary" className="px-1.5 text-[10px] font-normal">Included</Badge>}
+                {p.kind === "user" && <Badge variant="outline" className="px-1.5 text-[10px] font-normal">Yours</Badge>}
               </div>
               {p.description && <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.description}</div>}
             </div>
+            {p.kind === "user" && (
+              <Button size="icon" variant="ghost" className="size-7" disabled={!!busy} aria-label={`Delete ${p.name}`}
+                data-testid={`plugin-delete-${p.name}`} onClick={() => deletePlugin(p)}>
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
             {chatScope && (
               <Switch on={p.active} disabled={!!busy} label={`${p.active ? "Remove" : "Add"} ${p.name}`}
                 testId={`plugin-${p.name}`} onClick={() => toggle(p)} />
@@ -450,7 +508,8 @@ export function RhsPanel() {
         </TabsContent>
 
         <TabsContent value="plugins" className="min-h-0 flex-1">
-          <PluginList plugins={caps.plugins ?? []} agent={caps.agent} />
+          <PluginList plugins={caps.plugins ?? []} agent={caps.agent}
+            ownParts={caps.skills.filter((s) => s.source === "chat").length + caps.mcp.filter((m) => m.scope === "chat").length} />
         </TabsContent>
 
         <TabsContent value="analysis" className="min-h-0 flex-1">
