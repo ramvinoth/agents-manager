@@ -21,18 +21,18 @@ def test_title_is_read_once_until_the_transcript_changes(tmp_path, monkeypatch):
     real = engine._read_session_title
     monkeypatch.setattr(engine, "_read_session_title", lambda path: reads.append(path) or real(path))
 
-    assert engine._session_title("s1") == "hello there"
-    assert engine._session_title("s1") == "hello there"
+    assert engine._session_title("s1") == ("", "hello there")
+    assert engine._session_title("s1") == ("", "hello there")
     assert len(reads) == 1
 
     _write(p, [{"type": "custom-title", "customTitle": "Login fix"}])
     os.utime(p, (p.stat().st_atime, p.stat().st_mtime + 5))
-    assert engine._session_title("s1") == "Login fix"
+    assert engine._session_title("s1") == ("Login fix", "")
     assert len(reads) == 2
 
 
 def test_missing_transcript_is_empty_and_not_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "transcript_path", lambda sid: tmp_path / "nope.jsonl")
     monkeypatch.setattr(engine, "_TITLE_CACHE", {})
-    assert engine._session_title("s2") == ""
+    assert engine._session_title("s2") == ("", "")
     assert engine._TITLE_CACHE == {}

@@ -61,8 +61,10 @@ def _newer(latest, obj):
 
 
 def _session_title(session_id):
-    """The session's display name, matching the chat list: a custom title if set,
-    else the agent name, else the first user message, else ''. Best-effort.
+    """(explicit title, first user message) from the transcript head: the
+    explicit one is a custom title or agent name, as the chat list shows it.
+    Kept apart so a name the session was created with outranks a prompt's
+    opening line (the "session:Setup run. Create a note…" label). Best-effort.
 
     Cached per transcript (mtime, size): the decision feed asks for every
     open decision's session title on a 4 s poll from every open board, and a
@@ -71,7 +73,7 @@ def _session_title(session_id):
     try:
         path = transcript_path(session_id)
         if not path:
-            return ""
+            return "", ""
         st = os.stat(path)
         stamp = (st.st_mtime, st.st_size)
         hit = _TITLE_CACHE.get(session_id)
@@ -81,7 +83,7 @@ def _session_title(session_id):
         _TITLE_CACHE[session_id] = (stamp, title)
         return title
     except Exception:
-        return ""
+        return "", ""
 
 
 _TITLE_CACHE = {}
@@ -110,7 +112,7 @@ def _read_session_title(path):
                     first_user = " ".join(
                         b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
                     )
-    return " ".join((title or first_user).split())[:60]
+    return " ".join(title.split())[:60], " ".join(first_user.split())[:60]
 
 
 def _project_label(session_id):
@@ -129,13 +131,15 @@ def _project_label(session_id):
 
 
 def _push_label(session_id, cwd=""):
-    """A short human title for a push notification: the session's display name
-    (matching the chat list), else its goal, else the working-directory basename,
+    """A short human title for a push notification: the session's explicit name
+    (transcript title, else the name it was created with), else its first message,
+    else its goal, else the working-directory basename,
     else the project the transcript lives in, else a short session id. The raw-id
     fallback is the LAST resort — a bare 'Chat <id>' is useless for the owner to
     tell which session is asking (#31/#42)."""
     meta = db.session_meta_get(session_id) or {}
-    name = _session_title(session_id) or (meta.get("title") or "").strip()
+    title, first_user = _session_title(session_id)
+    name = title or (meta.get("title") or "").strip() or first_user
     if name:
         return name
     goal = (meta.get("goal") or "").strip()

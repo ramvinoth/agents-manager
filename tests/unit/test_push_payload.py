@@ -28,7 +28,7 @@ def label_env(monkeypatch):
     """Isolate the label fallback chain: no transcript title, a controllable
     goal, a controllable transcript location."""
     state = {"goal": "", "transcript": None}
-    monkeypatch.setattr(engine, "_session_title", lambda sid: "")
+    monkeypatch.setattr(engine, "_session_title", lambda sid: ("", ""))
     monkeypatch.setattr(db, "session_meta_get",
                         lambda sid: {"goal": state["goal"]} if state["goal"] else {})
     monkeypatch.setattr(engine, "transcript_path", lambda sid: state["transcript"])
@@ -36,8 +36,22 @@ def label_env(monkeypatch):
 
 
 def test_title_preferred(label_env, monkeypatch):
-    monkeypatch.setattr(engine, "_session_title", lambda sid: "Fix the login bug")
+    monkeypatch.setattr(engine, "_session_title", lambda sid: ("Fix the login bug", ""))
     assert engine._push_label(SID, "/any/cwd") == "Fix the login bug"
+
+
+def test_creation_name_beats_first_message(label_env, monkeypatch):
+    """A loop-run agent's transcript opens with its prompt; the label must be
+    the name it was created with, not "Setup run. Create a note…"."""
+    monkeypatch.setattr(engine, "_session_title", lambda sid: ("", "Setup run. Create a note titled"))
+    monkeypatch.setattr(db, "session_meta_get", lambda sid: {"title": "Cyber Security"})
+    assert engine._push_label(SID, "/any/cwd") == "Cyber Security"
+
+
+def test_first_message_beats_goal(label_env, monkeypatch):
+    monkeypatch.setattr(engine, "_session_title", lambda sid: ("", "hello there"))
+    label_env["goal"] = "a goal"
+    assert engine._push_label(SID, "") == "hello there"
 
 
 def test_creation_name_when_transcript_has_none(label_env, monkeypatch):
