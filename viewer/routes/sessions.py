@@ -7,7 +7,7 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
-from viewer import db, discussion, orglogic
+from viewer import chatplugins, db, discussion, orglogic
 from viewer.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, read_back,
     split_lines,
@@ -655,6 +655,7 @@ class SessionsMixin:
         db.session_meta_delete(sid)
         discussion.purge_session_notes(sid)
         db.inbox_delete_for_session(sid)
+        chatplugins.purge(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
     def split_at_uuid(self, full_path, cut_uuid):
@@ -838,7 +839,7 @@ class SessionsMixin:
         Without this the child silently falls back to defaults (a different model /
         provider / permission mode than the session it was forked from). The child
         gets its own title (its own identity) but inherits everything else. No-op
-        when the parent has no meta row."""
+        when the parent has no meta row. Its own skills/MCP extras come along too."""
         meta = dict(db.session_meta_get(parent_sid) or {})
         if title:
             meta["title"] = title
@@ -848,6 +849,7 @@ class SessionsMixin:
             meta.pop("title", None)
         if meta:
             db.session_meta_set(new_sid, meta)
+        chatplugins.fork(parent_sid, new_sid)
 
     def _g_sessions(self, req):
         reader = (req.principal or {}).get("actor", "")

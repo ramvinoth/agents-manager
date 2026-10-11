@@ -157,9 +157,20 @@ export interface McpServer {
   config?: unknown
   editable: boolean
 }
+/** A plugin a chat runs with. `agent` plugins ship with Harman and the owner adds or
+ *  removes them per chat (`included` = the chat's agent brings it by default);
+ *  `machine` plugins are enabled for every Claude run on this Mac (read-only here). */
+export interface Plugin {
+  name: string
+  description?: string
+  source: "agent" | "machine"
+  included: boolean
+  active: boolean
+}
 export interface Capabilities {
   skills: Skill[]
   mcp: McpServer[]
+  plugins?: Plugin[]
   models?: { v: string; label: string }[] // Copilot: dynamic per-plan model picker list
 }
 

@@ -106,19 +106,23 @@ export function SkillEditor({
   skill,
   host,
   cwd,
+  session,
   onClose,
   onSaved,
 }: {
   skill: Skill | null
   host: string
   cwd?: string
+  /** Set for an open local Claude chat: offers the "chat" scope (this chat only). */
+  session?: string
   onClose: () => void
   onSaved: () => void
 }) {
   const styles = useStyles()
   const t = useTheme()
   const [name, setName] = useState(skill?.name ?? "")
-  const [scope, setScope] = useState<"user" | "project">("user")
+  // An existing skill saves back where it lives (user, project or this chat).
+  const [scope, setScope] = useState<string>(skill?.source === "project" || skill?.source === "chat" ? skill.source : "user")
   const [content, setContent] = useState<string | null>(skill ? null : NEW_SKILL)
   const [err, setErr] = useState("")
   const readonly = !!skill && !skill.editable
@@ -137,7 +141,7 @@ export function SkillEditor({
   async function save() {
     setErr("")
     try {
-      const d = await api.skillSave({ name, scope, content: content ?? "", cwd, host })
+      const d = await api.skillSave({ name, scope, content: content ?? "", cwd, host, session })
       if (d.error) throw new Error(d.error)
       onSaved()
       onClose()
@@ -177,7 +181,7 @@ export function SkillEditor({
         {skill ? (
           <Text style={styles.capBadge}>{skill.source}</Text>
         ) : (
-          <ScopePicker value={scope} opts={["user", "project"]} onPick={(v) => setScope(v as "user" | "project")} />
+          <ScopePicker value={scope} opts={session ? ["user", "project", "chat"] : ["user", "project"]} onPick={setScope} />
         )}
       </View>
       <Text style={{ fontSize: 12, fontWeight: "600", color: t.textMuted, marginTop: 12, marginBottom: 4 }}>
@@ -202,19 +206,22 @@ export function McpEditor({
   server,
   host,
   cwd,
+  session,
   onClose,
   onSaved,
 }: {
   server: McpServer | null
   host: string
   cwd?: string
+  /** Set for an open local Claude chat: offers the "chat" scope (this chat only). */
+  session?: string
   onClose: () => void
   onSaved: () => void
 }) {
   const styles = useStyles()
   const t = useTheme()
   const [name, setName] = useState(server?.name ?? "")
-  const [scope, setScope] = useState<string>(server ? (server.scope === "global" ? "global" : "project") : "project")
+  const [scope, setScope] = useState<string>(server?.scope === "global" || server?.scope === "chat" ? server.scope : "project")
   const [cfg, setCfg] = useState(server ? JSON.stringify(server.config, null, 2) : NEW_MCP)
   const [err, setErr] = useState("")
   const readonly = !!server && !server.editable
@@ -229,7 +236,7 @@ export function McpEditor({
       return setErr("Invalid JSON: " + (e as Error).message)
     }
     try {
-      const d = await api.mcpSave({ name, scope, config: parsed, cwd, host })
+      const d = await api.mcpSave({ name, scope, config: parsed, cwd, host, session })
       if (d.error) throw new Error(d.error)
       onSaved()
       onClose()
@@ -240,7 +247,7 @@ export function McpEditor({
   async function del() {
     if (!server) return
     await api
-      .mcpDelete({ name: server.name, scope: server.scope === "global" ? "global" : "project", cwd, host })
+      .mcpDelete({ name: server.name, scope, cwd, host, session })
       .catch(() => {})
     onSaved()
     onClose()
@@ -271,7 +278,7 @@ export function McpEditor({
         {server ? (
           <Text style={styles.capBadge}>{server.scope}</Text>
         ) : (
-          <ScopePicker value={scope} opts={["project", "global"]} onPick={setScope} />
+          <ScopePicker value={scope} opts={session ? ["project", "global", "chat"] : ["project", "global"]} onPick={setScope} />
         )}
       </View>
       <Text style={{ fontSize: 12, fontWeight: "600", color: t.textMuted, marginTop: 12, marginBottom: 4 }}>

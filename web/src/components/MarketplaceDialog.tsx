@@ -20,10 +20,12 @@ const SOURCE: Record<MarketKind, string> = {
   skills: "Anthropic skills · github.com/anthropics/skills",
 }
 
-export function MarketplaceDialog({ kind, session, onClose, onInstalled }: {
+export function MarketplaceDialog({ kind, session, chatScope, onClose, onInstalled }: {
   kind: MarketKind
   /** The open session; offers "This project" (its folder) when present. */
   session?: string
+  /** The open session is a local Claude chat — offers "This chat" (its own plugin). */
+  chatScope?: boolean
   onClose: () => void
   onInstalled: () => void
 }) {
@@ -61,7 +63,7 @@ export function MarketplaceDialog({ kind, session, onClose, onInstalled }: {
           </DialogTitle>
         </DialogHeader>
         {pick ? (
-          <Install kind={kind} item={pick} session={session} onDone={() => { onInstalled(); onClose() }} />
+          <Install kind={kind} item={pick} session={session} chatScope={chatScope} onDone={() => { onInstalled(); onClose() }} />
         ) : (
           <>
             <Input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${title.toLowerCase()}`} />
@@ -97,10 +99,12 @@ export function MarketplaceDialog({ kind, session, onClose, onInstalled }: {
   )
 }
 
-function Install({ kind, item, session, onDone }: { kind: MarketKind; item: MarketItem; session?: string; onDone: () => void }) {
+type Where = "all" | "project" | "chat"
+
+function Install({ kind, item, session, chatScope, onDone }: { kind: MarketKind; item: MarketItem; session?: string; chatScope?: boolean; onDone: () => void }) {
   const inputs = item.inputs ?? []
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(inputs.map(i => [i.name, i.default || ""])))
-  const [project, setProject] = useState(!!session)
+  const [where, setWhere] = useState<Where>(session ? "project" : "all")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const installable = kind === "skills" || !!item.install
@@ -110,9 +114,9 @@ function Install({ kind, item, session, onDone }: { kind: MarketKind; item: Mark
     if (gap) return setError(`${gap.name} is required.`)
     setBusy(true); setError("")
     try {
-      const where = project ? { session } : {}
-      if (kind === "mcp") await api.marketMcpInstall({ id: item.id, values: filledValues(values), scope: project ? "project" : "global", ...where })
-      else await api.marketSkillInstall({ id: item.id, scope: project ? "project" : "user", ...where })
+      const at = where === "all" ? {} : { session }
+      if (kind === "mcp") await api.marketMcpInstall({ id: item.id, values: filledValues(values), scope: where === "all" ? "global" : where, ...at })
+      else await api.marketSkillInstall({ id: item.id, scope: where === "all" ? "user" : where, ...at })
       onDone()
     } catch (e) {
       setError(userError(e, item.title, "install"))
@@ -149,8 +153,9 @@ function Install({ kind, item, session, onDone }: { kind: MarketKind; item: Mark
           ))}
           <div className="flex items-center gap-2">
             <span className="font-medium">Available to</span>
-            <Button size="sm" variant={!project ? "default" : "outline"} onClick={() => setProject(false)}>All sessions</Button>
-            {session && <Button size="sm" variant={project ? "default" : "outline"} onClick={() => setProject(true)}>This project</Button>}
+            <Button size="sm" variant={where === "all" ? "default" : "outline"} onClick={() => setWhere("all")}>All sessions</Button>
+            {session && <Button size="sm" variant={where === "project" ? "default" : "outline"} onClick={() => setWhere("project")}>This project</Button>}
+            {session && chatScope && <Button size="sm" variant={where === "chat" ? "default" : "outline"} onClick={() => setWhere("chat")}>This chat</Button>}
           </div>
           {error && <p className="text-destructive">{error}</p>}
           <Button className="w-full" disabled={busy} onClick={install}>

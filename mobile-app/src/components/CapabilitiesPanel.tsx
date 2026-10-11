@@ -3,11 +3,14 @@
  * CapabilitiesScreen and the thread's slide-in CapabilitiesDrawer (they differ
  * only in their chrome). Lists /api/capabilities for host + cwd, edits through
  * CapabilitiesEditors, and opens the Marketplace to pull vetted entries.
+ * For a local Claude chat the server also returns its plugins: Harman's own are
+ * added/removed per chat ("Included" = the agent's default), and skills/MCP can
+ * be scoped to "this chat" only. A plugin is whole — add or remove, never edit.
  * `testPrefix` keeps the two hosts' testIDs distinct ("cap" / "drawer").
  */
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native"
-import { api, type Capabilities, type McpServer, type Skill } from "../api/client"
+import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
+import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -16,7 +19,7 @@ import { SkillEditor, McpEditor } from "./CapabilitiesEditors"
 import MarketplaceSheet from "./MarketplaceSheet"
 import Icon from "./Icon"
 
-type Tab = "skills" | "mcp"
+type Tab = "skills" | "mcp" | "plugins"
 
 export default function CapabilitiesPanel({ host, cwd, session, active = true, testPrefix }: {
   host: string
@@ -35,6 +38,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
   const [skillEdit, setSkillEdit] = useState<Skill | null | undefined>(undefined)
   const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
   const [market, setMarket] = useState<MarketKind | null>(null)
+  const [busy, setBusy] = useState("")
 
   const load = useCallback(() => {
     setError("")
@@ -44,9 +48,30 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
   useEffect(() => { if (active) load() }, [active, load])
 
   const id = (s: string) => `${testPrefix}-${s}`
-  const counts: Record<Tab, number> = { skills: caps?.skills.length ?? 0, mcp: caps?.mcp.length ?? 0 }
+  // The server lists plugins only for a local Claude chat — the one place they
+  // (and "this chat" scope) apply, since they ride --plugin-dir on its runs.
+  const plugins = caps?.plugins
+  const chat = plugins && session ? session : undefined
+  const counts: Record<Tab, number> = {
+    skills: caps?.skills.length ?? 0, mcp: caps?.mcp.length ?? 0,
+    plugins: plugins?.filter(p => p.active).length ?? 0,
+  }
+  const tabs: (readonly [Tab, string])[] = [["skills", "Skills"], ["mcp", "MCP tools"], ...(plugins ? [["plugins", "Plugins"] as const] : [])]
 
-  function AddRows({ kind }: { kind: Tab }) {
+  async function toggle(p: Plugin) {
+    if (!chat) return
+    setBusy(p.name); setError("")
+    try {
+      await api.chatPlugin({ session: chat, name: p.name, on: !p.active })
+      load()
+    } catch (e) {
+      setError(userError(e, p.name, p.active ? "remove" : "add"))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  function AddRows({ kind }: { kind: MarketKind }) {
     const isSkill = kind === "skills"
     return (
       <View style={{ flexDirection: "row" }}>
@@ -70,7 +95,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.segRow}>
-        {([["skills", "Skills"], ["mcp", "MCP tools"]] as const).map(([v, label]) => {
+        {tabs.map(([v, label]) => {
           const on = tab === v
           return (
             <TouchableOpacity key={v} testID={id(`tab-${v}`)} style={[styles.seg, on ? styles.segActive : null]} onPress={() => setTab(v)}>
@@ -92,8 +117,23 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
         <ActivityIndicator size="small" color={t.textMuted} style={{ marginTop: 24 }} />
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }} keyboardShouldPersistTaps="handled">
-          <AddRows kind={tab} />
-          {tab === "skills" ? (
+          {tab !== "plugins" ? <AddRows kind={tab} /> : null}
+          {tab === "plugins" ? (
+            (plugins ?? []).map(p => (
+              <View key={`${p.source}:${p.name}`} testID={id(`plugin-${p.name}`)} style={styles.capRow}>
+                <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{p.name}</Text>
+                  {p.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{p.description}</Text> : null}
+                </View>
+                {p.included ? <Text style={styles.capBadge}>Included</Text> : null}
+                {p.source === "agent" ? (
+                  <Switch testID={id(`plugin-toggle-${p.name}`)} value={p.active} disabled={!!busy}
+                    accessibilityLabel={`${p.active ? "Remove" : "Add"} ${p.name}`} onValueChange={() => toggle(p)} />
+                ) : <Text style={styles.capBadge}>on this Mac</Text>}
+              </View>
+            ))
+          ) : tab === "skills" ? (
             caps.skills.length ? caps.skills.map(s => (
               <TouchableOpacity key={s.path} testID={id(`skill-${s.name}`)} style={styles.capRow} onPress={() => setSkillEdit(s)}>
                 <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
@@ -119,9 +159,9 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
         </ScrollView>
       )}
 
-      {skillEdit !== undefined && <SkillEditor skill={skillEdit} host={host} cwd={cwd} onClose={() => setSkillEdit(undefined)} onSaved={load} />}
-      {mcpEdit !== undefined && <McpEditor server={mcpEdit} host={host} cwd={cwd} onClose={() => setMcpEdit(undefined)} onSaved={load} />}
-      {market ? <MarketplaceSheet kind={market} cwd={cwd} onClose={() => setMarket(null)} onInstalled={load} /> : null}
+      {skillEdit !== undefined && <SkillEditor skill={skillEdit} host={host} cwd={cwd} session={chat} onClose={() => setSkillEdit(undefined)} onSaved={load} />}
+      {mcpEdit !== undefined && <McpEditor server={mcpEdit} host={host} cwd={cwd} session={chat} onClose={() => setMcpEdit(undefined)} onSaved={load} />}
+      {market ? <MarketplaceSheet kind={market} cwd={cwd} session={chat} onClose={() => setMarket(null)} onInstalled={load} /> : null}
     </View>
   )
 }

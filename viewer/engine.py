@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, agent_plugin_dir, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, session_plugin_dirs, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -1656,11 +1656,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         extra.append("Active goal (keep working toward this; check it before stopping): " + meta["goal"])
     if extra:
         cmd += ["--append-system-prompt", "\n\n".join(extra)]
-    # The agent's plugin (skills, MCP, hooks) — set from its template when the
-    # session started. Local runs only: the folder lives on this machine.
-    plugin_dir = None if remote else agent_plugin_dir(meta.get("agentPlugin", ""))
-    if plugin_dir:
-        cmd += ["--plugin-dir", str(plugin_dir)]
+    # The chat's plugins (its agent's, any the owner added) and its own extras
+    # folder — skills, MCP, hooks. Local runs only: the folders live here.
+    if not remote:
+        for plugin_dir in session_plugin_dirs(session_id, meta):
+            cmd += ["--plugin-dir", str(plugin_dir)]
 
     def run():
         proc = None
@@ -2474,6 +2474,56 @@ class Host:
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
 
 
+def machine_plugins(cwd=None):
+    """[(name, install dir)] of the Claude Code plugins this Mac turns on for a
+    run in `cwd`: installed (installed_plugins.json — user scope, or project
+    scope for this folder) AND enabled in user or project settings. The cache
+    keeps every old version and other projects' plugins, so globbing it would
+    list things no run of this session ever loads."""
+    home = Path.home() / ".claude"
+    try:
+        installed = json.loads((home / "plugins" / "installed_plugins.json").read_text()).get("plugins") or {}
+    except Exception:
+        return []
+    enabled = {}
+    settings = [home / "settings.json"]
+    if cwd:
+        settings += [Path(cwd) / ".claude" / "settings.json", Path(cwd) / ".claude" / "settings.local.json"]
+    for f in settings:
+        try:
+            enabled.update(json.loads(f.read_text()).get("enabledPlugins") or {})
+        except Exception:
+            continue
+    out = []
+    for key, entries in installed.items():
+        if not enabled.get(key):
+            continue
+        for e in entries if isinstance(entries, list) else []:
+            if e.get("scope") == "user" or (cwd and e.get("projectPath") == str(cwd)):
+                root = Path(e.get("installPath") or "")
+                if root.is_dir():
+                    out.append((key.split("@", 1)[0], root))
+                break
+    return sorted(out)
+
+
+def plugin_mcp_servers(root):
+    """{name: config} a plugin folder declares in its .mcp.json ({} when none)."""
+    try:
+        data = json.loads((Path(root) / ".mcp.json").read_text())
+    except Exception:
+        return {}
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def plugin_description(root):
+    try:
+        return json.loads((Path(root) / ".claude-plugin" / "plugin.json").read_text()).get("description") or ""
+    except Exception:
+        return ""
+
+
 class LocalHost(Host):
     hid = "local"
     is_local = True
@@ -2536,10 +2586,10 @@ class LocalHost(Host):
                 add_skill(f, "project", True)
         for f in sorted((Path.home() / ".claude" / "skills").glob("*/SKILL.md")):
             add_skill(f, "user", True)
-        plugins_root = Path.home() / ".claude" / "plugins" / "cache"
-        if plugins_root.is_dir():
-            for f in sorted(plugins_root.glob("*/*/*/skills/*/SKILL.md")):
-                add_skill(f, f"plugin:{f.parents[2].parent.name}", False)
+        machine = machine_plugins(cwd)
+        for name, root in machine:
+            for f in sorted((root / "skills").glob("*/SKILL.md")):
+                add_skill(f, f"plugin:{name}", False)
 
         mcp = []
 
@@ -2566,15 +2616,12 @@ class LocalHost(Host):
                     add_mcp(name, cfg, "project", True)
             except Exception:
                 pass
-        if plugins_root.is_dir():
-            for pm_file in plugins_root.glob("*/*/*/.mcp.json"):
-                try:
-                    pd = json.loads(pm_file.read_text())
-                except Exception:
-                    continue
-                for name, cfg in (pd.get("mcpServers") or {}).items():
-                    add_mcp(name, cfg, f"plugin:{pm_file.parents[1].name}", False)
-        return {"skills": skills, "mcp": mcp}
+        for pname, root in machine:
+            for name, cfg in plugin_mcp_servers(root).items():
+                add_mcp(name, cfg, f"plugin:{pname}", False)
+        plugins = [{"name": name, "description": plugin_description(root), "source": "machine",
+                    "included": False, "active": True} for name, root in machine]
+        return {"skills": skills, "mcp": mcp, "plugins": plugins}
 
     def _resolve_full(self, rel):
         try:

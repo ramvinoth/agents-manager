@@ -1,8 +1,4 @@
 {
   "name": "product-manager",
-  "version": "1.0.0",
-  "description": "Harman Product Manager: PRDs, specs and spec-to-cards, written into the project's notes and board.",
-  "author": {
-    "name": "Harman"
-  }
+  "description": "PRDs, functional specs, and breaking a spec into board cards."
 }

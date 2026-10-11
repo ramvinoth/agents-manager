@@ -4,9 +4,11 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
+from viewer import chatplugins
 from viewer.config import (
-    AGENT_PLUGINS_DIR, HEADLESS_OK, VIEWER_HANDLED, agent_plugin_dir, load_system_commands,
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, VIEWER_HANDLED, load_system_commands,
 )
+from viewer.routes import require_human
 from viewer.adapters import resolve_agent_session
 from viewer.browser import (
     MCP_CDP_CACHE,
@@ -18,7 +20,7 @@ from viewer.engine import (
 
 
 class CapabilitiesMixin:
-    def handle_skill_delete(self):
+    def handle_skill_delete(self, req):
         body = self.read_body() or {}
         if body.get("agent", "claude") == "codex":
             self.send_host_result(codex_skill_delete(body.get("path", "")))
@@ -27,7 +29,7 @@ class CapabilitiesMixin:
         if not p or not p.exists():
             self.send_json({"error": "Skill not found"}, status=404)
             return
-        if str(p).startswith(str(Path.home() / ".claude" / "plugins")):
+        if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR))):
             self.send_json({"error": "Plugin skills are read-only"}, status=403)
             return
         trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
@@ -40,7 +42,7 @@ class CapabilitiesMixin:
             return
         self.send_json({"deleted": True, "trash": str(dest)})
 
-    def handle_mcp_save(self, delete=False):
+    def handle_mcp_save(self, req, delete=False):
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -55,6 +57,11 @@ class CapabilitiesMixin:
             self.send_json({"error": "config must be a JSON object"}, status=400)
             return
         host = body.get("host", "local")
+        if scope == "chat":
+            MCP_CDP_CACHE.pop("local", None)
+            self._chat_write(req, lambda sid: (chatplugins.delete_mcp(sid, name) if delete
+                                          else chatplugins.save_mcp(sid, name, cfg)) or {"saved": True}, body)
+            return
         if body.get("agent", "claude") == "codex" and host == "local":
             MCP_CDP_CACHE.pop(host, None)
             self.send_host_result(codex_mcp_save(name, cfg, delete))
@@ -79,16 +86,16 @@ class CapabilitiesMixin:
     # ----- Full-session summary -----
 
     def _p_skill_save(self, req):
-        self.handle_skill_save()
+        self.handle_skill_save(req)
 
     def _p_skill_delete(self, req):
-        self.handle_skill_delete()
+        self.handle_skill_delete(req)
 
     def _g_commands(self, req):
         self.serve_commands(req.raw_query)
 
     def _p_mcp_delete(self, req):
-        self.handle_mcp_save(delete=True)
+        self.handle_mcp_save(req, delete=True)
 
     def serve_commands(self, query):
         """List available slash commands from every source: project, user,
@@ -132,7 +139,7 @@ class CapabilitiesMixin:
 
         self.send_json(sorted(cmds.values(), key=lambda c: c["name"]))
 
-    def handle_skill_save(self):
+    def handle_skill_save(self, req):
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -145,6 +152,9 @@ class CapabilitiesMixin:
             return
         if not re.fullmatch(r"[\w-]+", name):
             self.send_json({"error": "Skill name must be letters/digits/dashes/underscores"}, status=400)
+            return
+        if scope == "chat":
+            self._chat_write(req, lambda sid: {"saved": True, "path": str(chatplugins.save_skill(sid, name, content))}, body)
             return
         cwd = None
         if scope == "project":
@@ -165,7 +175,7 @@ class CapabilitiesMixin:
         return Path(extract_cwd(full)) if full else None
 
     def _p_mcp_save(self, req):
-        self.handle_mcp_save(delete=False)
+        self.handle_mcp_save(req, delete=False)
 
     def serve_capabilities(self, query):
         q = parse_qs(query)
@@ -177,7 +187,7 @@ class CapabilitiesMixin:
         self.send_json(data, status=status or 200)
 
     def compute_capabilities(self, host, agent, rel, cwd=""):
-        """Resolve one session's skills + MCP servers -> ({skills, mcp}, status).
+        """Resolve one session's skills, MCP servers and plugins -> ({skills, mcp, plugins}, status).
 
         The single source of truth for per-session capabilities: the /api/capabilities
         route serves this directly, and session_detail composes it in. `status` is None
@@ -211,38 +221,32 @@ class CapabilitiesMixin:
             caps = h.capabilities(cwd)
         except Exception as e:
             return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
-        # An agent template's plugin is attached at launch (session_meta.agentPlugin)
-        # and applied to local claude runs via --plugin-dir (engine: plugin_dir is
-        # None for remote). Its skills are therefore live and invocable, yet they
-        # live under viewer/agent_plugins/<plugin>, not ~/.claude/plugins/cache that
-        # the host scanner reads — so they are invisible here. Merge them for the
-        # one case where they actually run (local claude), scoped by the SESSION's
-        # own plugin, so this stays the true source of per-session capabilities.
+        # The chat's Harman plugins and its own extras ride --plugin-dir on local
+        # claude runs only (engine), from folders the host scanner never reads —
+        # merge them for exactly that case so this stays the true per-session view.
         if host == "local" and rel:
-            self._merge_agent_plugin_skills(caps, rel)
+            chatplugins.merge_into(caps, self.sid_from_path(rel))
         return caps, None
 
-    def _merge_agent_plugin_skills(self, caps, rel):
-        """Append the session's attached-template plugin skills to caps['skills'],
-        read-only, deduped against what the scanner already found. A no-op when the
-        session has no plugin, so it never widens an ordinary session's view."""
-        from viewer import db
-        sid = self.sid_from_path(rel) or rel.rsplit("/", 1)[-1].replace(".jsonl", "")
-        plugin = (db.session_meta_get(sid) or {}).get("agentPlugin", "")
-        pdir = agent_plugin_dir(plugin)
-        if not pdir:
+    def _chat_write(self, req, fn, body):
+        """Run a write against the body's chat (its extras or plugin list).
+        Human-only: a chat's MCP server is code that runs on this machine."""
+        if not require_human(self, req):
             return
-        skills = caps.setdefault("skills", [])
-        source = f"plugin:{plugin}"
-        seen = {f"{s.get('source')}:{s.get('name')}" for s in skills}
-        for md in sorted((pdir / "skills").glob("*/SKILL.md")):
-            name = md.parent.name
-            key = f"{source}:{name}"
-            if key in seen:
-                continue
-            seen.add(key)
-            skills.append({"name": name, "description": frontmatter_description(md),
-                           "source": source, "path": str(md), "editable": False})
+        sid = self.sid_from_path(body.get("session") or "")
+        if not sid or not self.resolve_session_quiet(body.get("session") or ""):
+            self.send_json({"error": "Pick a local chat for chat scope"}, status=404)
+            return
+        try:
+            self.send_json(fn(sid))
+        except chatplugins.ChatPluginError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+
+    def _p_chat_plugin(self, req):
+        """Add (on=true) or remove one Harman plugin for a chat."""
+        body = self.read_body() or {}
+        name = (body.get("name") or "").strip()
+        self._chat_write(req, lambda sid: {"plugins": chatplugins.set_plugin(sid, name, bool(body.get("on")))}, body)
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""
@@ -252,7 +256,7 @@ class CapabilitiesMixin:
             return None
         roots = [Path.home() / ".claude" / "skills",
                  Path.home() / ".claude" / "plugins" / "cache",
-                 AGENT_PLUGINS_DIR]
+                 AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR]
         if p.is_file() and p.name == "SKILL.md":
             # project skills can live anywhere under a project's .claude/skills
             if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):

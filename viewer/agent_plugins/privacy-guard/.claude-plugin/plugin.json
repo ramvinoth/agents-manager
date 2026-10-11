@@ -1,8 +1,4 @@
 {
   "name": "privacy-guard",
-  "version": "1.0.0",
-  "description": "Harman Privacy Guard: attributes an event before alerting, and runs the data-broker opt-out playbook without ever submitting without the owner's yes.",
-  "author": {
-    "name": "Harman"
-  }
+  "description": "Breach, data-broker and sign-in monitoring that attributes each event before alerting."
 }

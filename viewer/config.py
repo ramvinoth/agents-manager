@@ -88,6 +88,54 @@ def agent_plugin_dir(name):
     return path if path.is_dir() else None
 
 
+def agent_plugin_names():
+    """Every plugin Harman ships, by folder name — the catalog a chat picks from."""
+    if not AGENT_PLUGINS_DIR.is_dir():
+        return []
+    return sorted(p.name for p in AGENT_PLUGINS_DIR.iterdir() if agent_plugin_dir(p.name))
+
+
+# A chat's own extras (skills / MCP the owner added to ONE chat) live in a
+# plugin folder generated per session, so they ride the same --plugin-dir path
+# as an agent's plugin instead of a second loading mechanism.
+CHAT_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-chat-plugins"
+CHAT_PLUGIN_NAME = "chat"   # its namespace: skills show as chat:<skill>
+
+
+def chat_plugin_dir(session_id, create=False):
+    """The session's extras plugin folder, or None when the id is not a plain
+    session id or (create=False) it has never been written. create=True makes
+    it a valid plugin (manifest) so a first skill or MCP server can land in it."""
+    if not session_id or not re.fullmatch(r"[0-9A-Za-z-]{8,64}", session_id):
+        return None
+    path = CHAT_PLUGINS_DIR / session_id
+    if create:
+        (path / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        manifest = path / ".claude-plugin" / "plugin.json"
+        if not manifest.exists():
+            manifest.write_text(json.dumps({"name": CHAT_PLUGIN_NAME,
+                                            "description": "Skills and MCP servers added to this chat only."}))
+    return path if path.is_dir() else None
+
+
+def session_plugins(meta):
+    """The Harman plugins a session runs with. `agentPlugins` (the owner's
+    per-chat choice) wins; a session that never chose keeps its template's
+    `agentPlugin`. Unknown names are dropped, never passed to the CLI."""
+    names = meta.get("agentPlugins")
+    if not isinstance(names, list):
+        names = [meta.get("agentPlugin") or ""]
+    return [n for n in dict.fromkeys(names) if isinstance(n, str) and agent_plugin_dir(n)]
+
+
+def session_plugin_dirs(session_id, meta):
+    """Every --plugin-dir a local Claude run of this session gets: its Harman
+    plugins, then its own extras folder when it has one."""
+    dirs = [agent_plugin_dir(n) for n in session_plugins(meta)]
+    chat = chat_plugin_dir(session_id)
+    return dirs + ([chat] if chat else [])
+
+
 # Harman's own release version. Read from the top-level VERSION file relative to
 # STATIC_DIR (NOT an absolute path) so that when the server is launched from a
 # release symlink (e.g. /opt/harman/current -> releases/v1.2.0), this reports the

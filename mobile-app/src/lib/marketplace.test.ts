@@ -27,3 +27,8 @@ test("a project install is offered only when the session's folder is known", () 
   assert.deepEqual(scopes(), ["global"])
   assert.deepEqual(scopes("/repo"), ["global", "project"])
 })
+
+test("a this-chat install is offered only for an open local Claude chat", () => {
+  assert.deepEqual(scopes("/repo", true), ["global", "project", "chat"])
+  assert.deepEqual(scopes(undefined, true), ["global", "chat"])
+})

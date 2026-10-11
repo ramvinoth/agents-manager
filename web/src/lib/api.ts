@@ -555,11 +555,15 @@ class ApiClient {
   marketSkills(q: string) {
     return this.getStrict<MarketPage>(`/api/market/skills?${new URLSearchParams({ q })}`)
   }
-  marketMcpInstall(body: { id: string; values: Record<string, string>; scope: "global" | "project"; session?: string }) {
+  marketMcpInstall(body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat"; session?: string }) {
     return this.postStrict<{ installed: string; scope: string }>("/api/market/mcp/install", body)
   }
-  marketSkillInstall(body: { id: string; scope: "user" | "project"; session?: string }) {
+  marketSkillInstall(body: { id: string; scope: "user" | "project" | "chat"; session?: string }) {
     return this.postStrict<{ installed: string; scope: string }>("/api/market/skill/install", body)
+  }
+  /** Add (on) or remove one Harman plugin for a chat; returns the chat's plugin list. */
+  chatPlugin(body: { session: string; name: string; on: boolean }) {
+    return this.postStrict<{ plugins: string[] }>("/api/chat/plugin", body)
   }
   mcpSaveBrowserAllAgents(body: Body) {
     return this.postRes("/api/agents/mcp/browser", this.wh(body))

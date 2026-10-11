@@ -38,15 +38,16 @@ def write_skill(name, content, scope="user", cwd=None):
     return p
 
 
-def write_bundle(name, files, scope="user", cwd=None):
+def write_bundle(name, files, scope="user", cwd=None, base=None):
     """Install a whole skill directory ({relative path: bytes}, SKILL.md among
     them) — what a marketplace skill ships. Replaces an existing one of that
-    name so a reinstall never leaves stale scripts behind. Returns SKILL.md."""
+    name so a reinstall never leaves stale scripts behind. Returns SKILL.md.
+    `base` overrides the scope's skills folder (a chat's own plugin)."""
     if not valid_name(name):
         raise ValueError("Skill name must be letters/digits/dashes/underscores")
     if "SKILL.md" not in files:
         raise ValueError("A skill needs a SKILL.md")
-    d = (skills_base(scope, cwd) / name).resolve()
+    d = (Path(base or skills_base(scope, cwd)) / name).resolve()
     targets = {}
     for rel, data in files.items():   # validate everything before touching disk
         p = (d / rel).resolve()

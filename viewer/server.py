@@ -519,6 +519,7 @@ class SessionViewerHandler(
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
+        "/api/chat/plugin": "_p_chat_plugin",
         "/api/market/mcp/install": "_p_market_mcp_install",
         "/api/market/skill/install": "_p_market_skill_install",
         "/api/mcp/delete": "_p_mcp_delete",

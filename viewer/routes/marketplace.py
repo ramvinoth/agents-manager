@@ -5,12 +5,13 @@ Browsing is open to any principal (an agent may look for a tool it needs);
 installing is human-only — an MCP server is code that will run on this
 machine, so the owner presses Install. The install body names an entry, never
 a command: the config is rebuilt here from the registry's own record.
-Scope follows the manual editors: "user"/"global" for every session, or
-"project" for one session's folder (its cwd).
+Scope follows the manual editors: "user"/"global" for every session,
+"project" for one session's folder (its cwd), or "chat" for that one chat
+(its extras plugin, viewer.chatplugins).
 """
 import urllib.request
 
-from viewer import marketplace, skills
+from viewer import chatplugins, marketplace, skills
 from viewer.browser import MCP_CDP_CACHE
 from viewer.engine import get_host
 from viewer.routes import require_human
@@ -33,8 +34,8 @@ class MarketplaceMixin:
             self.send_json(fn())
         except marketplace.MarketError as e:
             self.send_json({"error": str(e)}, status=e.status)
-        except ValueError as e:
-            self.send_json({"error": str(e)}, status=400)
+        except ValueError as e:   # includes ChatPluginError, which carries its own status
+            self.send_json({"error": str(e)}, status=getattr(e, "status", 400))
 
     def _g_market_mcp(self, req):
         self._market(lambda: marketplace.mcp_search(_fetch, _q(req, "q"), _q(req, "cursor")))
@@ -52,6 +53,12 @@ class MarketplaceMixin:
             raise marketplace.MarketError("Pick a session or folder for a project install.", 404)
         return cwd
 
+    def _chat_sid(self, body):
+        rel = body.get("session") or ""
+        if not self.resolve_session_quiet(rel):
+            raise marketplace.MarketError("Pick a local chat for a this-chat install.", 404)
+        return self.sid_from_path(rel)
+
     def _p_market_mcp_install(self, req):
         if not require_human(self, req):
             return
@@ -60,10 +67,13 @@ class MarketplaceMixin:
         def run():
             server = marketplace.mcp_lookup(_fetch, (body.get("id") or "").strip())
             cfg = marketplace.mcp_config(server, body.get("values"))
-            scope = "project" if body.get("scope") == "project" else "global"
-            cwd = self._project_cwd(body) if scope == "project" else ""
+            scope = body.get("scope") if body.get("scope") in ("project", "chat") else "global"
             name = marketplace.config_name(server)
             MCP_CDP_CACHE.pop("local", None)
+            if scope == "chat":
+                chatplugins.save_mcp(self._chat_sid(body), name, cfg)
+                return {"installed": name, "scope": scope}
+            cwd = self._project_cwd(body) if scope == "project" else ""
             res = get_host("local").mcp_save(name, scope, cfg, cwd, False)
             if isinstance(res, dict) and res.get("error"):
                 raise marketplace.MarketError(res["error"], res.get("status") or 500)
@@ -77,8 +87,12 @@ class MarketplaceMixin:
 
         def run():
             name = (body.get("id") or "").strip()
-            scope = "project" if body.get("scope") == "project" else "user"
+            scope = body.get("scope") if body.get("scope") in ("project", "chat") else "user"
+            files = marketplace.skill_bundle(_fetch, name)
+            if scope == "chat":
+                path = chatplugins.install_skill_bundle(self._chat_sid(body), name, files)
+                return {"installed": name, "scope": scope, "path": str(path)}
             cwd = self._project_cwd(body) if scope == "project" else None
-            path = skills.write_bundle(name, marketplace.skill_bundle(_fetch, name), scope=scope, cwd=cwd)
+            path = skills.write_bundle(name, files, scope=scope, cwd=cwd)
             return {"installed": name, "scope": scope, "path": str(path)}
         self._market(run)

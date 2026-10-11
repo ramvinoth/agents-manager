@@ -1,8 +1,4 @@
 {
   "name": "cyber-security",
-  "version": "1.0.0",
-  "description": "Harman Cyber Security: ranks findings by real exploitability (not scanner noise) and runs the read-only account/device/code audit, reporting where secrets live rather than their values.",
-  "author": {
-    "name": "Harman"
-  }
+  "description": "Security triage and read-only posture audits, ranked by what an attacker could actually do."
 }

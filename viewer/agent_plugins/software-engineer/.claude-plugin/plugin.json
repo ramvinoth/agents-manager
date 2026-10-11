@@ -1,8 +1,4 @@
 {
   "name": "software-engineer",
-  "version": "1.0.0",
-  "description": "Harman Software Engineer: reads the spec before coding, keeps it true after, and navigates code through the project Map.",
-  "author": {
-    "name": "Harman"
-  }
+  "description": "Read the spec first, navigate code through the Map, keep the spec current."
 }

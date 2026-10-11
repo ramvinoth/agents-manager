@@ -152,7 +152,10 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
-export type Capabilities = { skills: Skill[]; mcp: McpServer[] }
+/** A chat's plugin. `agent` = ships with Harman, added/removed per chat (`included` =
+ *  the chat's agent brings it by default); `machine` = enabled in Claude Code on the Mac. */
+export type Plugin = { name: string; description?: string; source: "agent" | "machine"; included: boolean; active: boolean }
+export type Capabilities = { skills: Skill[]; mcp: McpServer[]; plugins?: Plugin[] }
 /** A marketplace entry (GET /api/market/mcp | /api/market/skills). MCP entries
  *  carry `install` (npm | pypi | remote, or null when only Docker/bundle exists)
  *  and the `inputs` the owner fills; skills carry `license` and a file count. */
@@ -624,22 +627,25 @@ export const api = {
       "GET",
       `/api/skill?path=${encodeURIComponent(path)}` + (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
-  skillSave: (body: { name: string; content: string; scope?: string; cwd?: string; host?: string }) =>
+  skillSave: (body: { name: string; content: string; scope?: string; cwd?: string; host?: string; session?: string }) =>
     req<{ saved?: boolean; path?: string; error?: string }>("POST", "/api/skill/save", body),
   skillDelete: (body: { path: string; host?: string }) =>
     req<{ deleted?: boolean; error?: string }>("POST", "/api/skill/delete", body),
-  mcpSave: (body: { name: string; scope?: string; config: Record<string, unknown>; cwd?: string; host?: string }) =>
+  mcpSave: (body: { name: string; scope?: string; config: Record<string, unknown>; cwd?: string; host?: string; session?: string }) =>
     req<{ saved?: boolean; error?: string }>("POST", "/api/mcp/save", body),
-  mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string }) =>
+  mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string; session?: string }) =>
     req<{ deleted?: boolean; error?: string }>("POST", "/api/mcp/delete", body),
+  /** Add (on) or remove one Harman plugin for a chat; returns the chat's plugin list. */
+  chatPlugin: (body: { session: string; name: string; on: boolean }) =>
+    req<{ plugins: string[] }>("POST", "/api/chat/plugin", body),
   // Marketplace: the server rebuilds every install from the source's own record;
   // the app names an entry id, never a command. Installs land on this machine.
   marketMcp: (q: string, cursor?: string) =>
     req<MarketPage>("GET", `/api/market/mcp?${new URLSearchParams({ q, ...(cursor ? { cursor } : {}) })}`),
   marketSkills: (q: string) => req<MarketPage>("GET", `/api/market/skills?${new URLSearchParams({ q })}`),
-  marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project"; cwd?: string }) =>
+  marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat"; cwd?: string; session?: string }) =>
     req<{ installed: string; scope: string }>("POST", "/api/market/mcp/install", body),
-  marketSkillInstall: (body: { id: string; scope: "user" | "project"; cwd?: string }) =>
+  marketSkillInstall: (body: { id: string; scope: "user" | "project" | "chat"; cwd?: string; session?: string }) =>
     req<{ installed: string; scope: string }>("POST", "/api/market/skill/install", body),
 
   // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
