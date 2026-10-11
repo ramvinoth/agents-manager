@@ -230,6 +230,12 @@ def red_subject(intent):
         if action == "intake_rotate":
             ch = db.intake_get(args.get("id"))
             return f"\"{ch['name']}\"" if ch else str(args.get("id") or "")
+        if action == "session_create":
+            goal = " ".join(str(args.get("goal") or "").split())[:160]
+            return f"\"{args.get('title') or ''}\" in {args.get('cwd') or '~'}" + (f" — goal: {goal}" if goal else "")
+        if action == "loop_create":
+            when = args.get("cron") or args.get("interval") or (f"once at {args['at']}" if args.get("at") else "")
+            return f"\"{(args.get('prompt') or '')[:80]}\" {when} in {_label(str(args.get('session') or ''))}".strip()
         if action == "skill_promote":
             return str(args.get("name") or "")
         if action == "system_preamble_set":

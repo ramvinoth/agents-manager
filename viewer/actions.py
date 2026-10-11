@@ -602,6 +602,15 @@ def _skill_write(a):
     return {"promoted": True, "path": str(path), "skill": rec["id"]}
 
 
+def _session_create(a):
+    # The route already refused what an agent may never ask for (bypass mode,
+    # human-origin jobs, a nameless worker); this only launches. Imported
+    # lazily: the route module imports this one.
+    from viewer.routes.sessions import start_new_session
+    payload, _ = start_new_session(a)
+    return payload
+
+
 # action name -> handler. An action missing here cannot be executed at all, which
 # keeps the registry and orglogic._MIN_LEVEL honest (see the invariant test).
 ACTIONS = {
@@ -627,6 +636,7 @@ ACTIONS = {
     "automation_pause": _automation_pause,
     "automation_resume": _automation_resume,
     "approval_resolve": _approval_resolve,
+    "session_create": _session_create,
     "loop_create": _loop_create,
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,

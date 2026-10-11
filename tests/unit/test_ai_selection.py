@@ -160,7 +160,8 @@ def _create(monkeypatch, tmp_path, body, principal):
     return launch, handler.send_json, audit
 
 
-_AGENT = {"kind": "mcp", "level": "lead", "actor": "session:RSI", "session": "s1"}
+_AGENT = {"kind": "mcp", "level": "lead", "actor": "session:RSI", "session": "s1",
+          "human_role": "owner", "session_level": "lead"}
 
 
 def test_new_session_title_rides_on_the_run_as_name(monkeypatch, tmp_path):
@@ -199,7 +200,6 @@ def test_list_falls_back_to_the_creation_name_only_for_untitled(monkeypatch):
 
 
 @pytest.mark.parametrize("body,principal,status", [
-    ({"title": "Trader"}, {**_AGENT, "level": "ic"}, 403),          # below Workspace
     ({}, _AGENT, 400),                                               # nameless worker
     ({"title": "T", "mode": "bypass"}, _AGENT, 403),                 # trust laundering
     ({"title": "T", "jobs": [{"prompt": "x", "interval": "1h"}]}, _AGENT, 403),  # human-origin loops
@@ -212,6 +212,19 @@ def test_agent_session_create_is_gated(monkeypatch, tmp_path, body, principal, s
 def test_agent_session_create_runs_and_is_audited(monkeypatch, tmp_path):
     launch, _, audit= _create(monkeypatch, tmp_path, {"title": "Trader"}, _AGENT)
     assert launch.called and audit.call_args.args[:2] == ("session:RSI", "session_create")
+    assert audit.call_args.args[3] == "done"
+
+
+def test_agent_session_create_below_workspace_queues_for_the_owner(monkeypatch, tmp_path):
+    """Below Workspace an agent's ask is not a wall: it waits on the owner's
+    decision card, and nothing launches until they approve."""
+    from viewer import actions
+    queued = Mock(return_value=({"queued": True, "approval": 7}, 200))
+    monkeypatch.setattr(actions, "_queue_for_owner", queued)
+    launch, send, _ = _create(monkeypatch, tmp_path, {"title": "Privacy", "reason": "r"},
+                              {**_AGENT, "level": "ic", "session_level": "ic"})
+    assert not launch.called and send.call_args.args[0] == {"queued": True, "approval": 7}
+    assert queued.call_args.args[2] == "queued:scope"
 
 
 def test_first_launch_snapshots_ai_and_ignores_stale_client_model(monkeypatch, tmp_path):

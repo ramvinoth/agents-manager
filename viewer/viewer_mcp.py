@@ -421,14 +421,15 @@ _TOOL_LIST = [
          "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
     # ── Schedule recurring work ─────────────────────────────────────────────
     {"name": "session_create",
-     "description": "Start a NEW named worker session (e.g. a dedicated 'Trader' to host loops), the way the owner's New chat does: it gets Harman's tools, its project's board, and shows by its title in every list. Never start a session with a raw `claude -p` — that one is invisible to Harman's naming, board and audit. Needs Workspace level; runs start in acceptEdits (bypass is the owner's call via session_mode_set). Returns {session}; schedule its work with loop_create.",
+     "description": "Start a NEW named worker session (e.g. a dedicated 'Trader' to host loops), the way the owner's New chat does: it gets Harman's tools, its project's board, and shows by its title in every list. Never start a session with a raw `claude -p` — that one is invisible to Harman's naming, board and audit. Needs Workspace level — below it the request queues for the owner's approval, so pass `reason`; runs start in acceptEdits (bypass is the owner's call via session_mode_set). Returns {session}; schedule its work with loop_create.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title", "message", "cwd"], "properties": {
          "title": {"type": "string", "description": "Display name, e.g. 'Trader'."},
          "message": {"type": "string", "description": "First message: the session's role and first task."},
          "cwd": {"type": "string", "description": "Working directory on this machine (~ allowed)."},
          "goal": {"type": "string", "description": "Standing goal shown on the session and kept across runs."},
          "systemPrompt": {"type": "string"},
-         "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan"]}}}},
+         "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan"]},
+         "reason": _REASON_ARG}}},
     {"name": "loop_create",
      "description": "Schedule work for ANOTHER session (a worker you manage): a RECURRING prompt (cron expression OR interval like 30s/5m/1h), or a ONE-SHOT task via `at` that fires once at that time and then retires — plan ahead by ending a run by creating its next wake. You cannot schedule your OWN session. Whether harman-scheduled loops actually FIRE is governed separately by the loop-control mode.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "prompt"], "properties": {

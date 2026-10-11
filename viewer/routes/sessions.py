@@ -958,11 +958,14 @@ class SessionsMixin:
     def handle_new_session(self, req):
         """Start a brand-new claude session in a given working directory.
 
-        An agent (MCP session_create) may start one too, gated: Workspace level,
-        a name is required (a nameless worker shows as a raw id in every list),
-        it can never start a session in bypass mode — that trust is the owner's
-        to grant through session_mode_set — and it cannot attach `jobs`, which
-        are saved as human-origin loops the automation switch would not stop."""
+        An agent (MCP session_create) may start one too, gated: a name is
+        required (a nameless worker shows as a raw id in every list), it can
+        never start a session in bypass mode — that trust is the owner's to
+        grant through session_mode_set — and it cannot attach `jobs`, which are
+        saved as human-origin loops the automation switch would not stop. Its
+        request then runs through the org gate like every other agent action:
+        at Workspace level it launches; below it, it queues for the owner's
+        approval (with the agent's `reason`) instead of hitting a wall."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -970,196 +973,31 @@ class SessionsMixin:
             self.send_json({"error": "Invalid JSON body"}, status=400)
             return
 
-        message = (body.get("message") or "").strip()
-        mode = body.get("mode", "acceptEdits")
-        model = body.get("model", "")
-        host = body.get("host", "local")
-        if not message:
+        if not (body.get("message") or "").strip():
             self.send_json({"error": "Empty message"}, status=400)
             return
         principal = req.principal
-        by_agent = principal["kind"] == "mcp"
-        if by_agent:
-            if not orglogic.allowed("session_create", principal["level"]):
-                self.send_json({"error": "Starting a session needs Workspace level"}, status=403)
-                return
-            if not (body.get("title") or "").strip():
-                self.send_json({"error": "A new session needs a title"}, status=400)
-                return
-            if mode in ("bypass", "bypassPermissions"):
-                self.send_json({"error": "An agent cannot start a session in bypass mode; "
-                                         "ask the owner with session_mode_set"}, status=403)
-                return
-            if body.get("jobs"):
-                # jobs are saved with the HUMAN origin (_started), which the
-                # automation switch never stops; an agent schedules via loop_create.
-                self.send_json({"error": "An agent schedules a new session's work with loop_create"}, status=403)
-                return
-        jobs, err = self._new_session_jobs(body.get("jobs"), host, body.get("agent", "claude"))
-        if err:
-            self.send_json({"error": err}, status=400)
+        if principal["kind"] != "mcp":
+            payload, status = start_new_session(body)
+            self.send_json(payload, status=status)
             return
-        if host != "local":
-            cwd = (body.get("cwd") or "~").strip()   # validated on the remote by claude
-        else:
-            cwd = os.path.expanduser((body.get("cwd") or "~").strip())
-            if not os.path.isdir(cwd):
-                self.send_json({"error": f"Not a directory: {cwd}"}, status=400)
-                return
-
-        from viewer import ai
-        selection = body.get("ai")
-        if "ai" not in body and body.get("agent", "claude") == "claude":
-            defaults = db.setting_get(ai.DEFAULTS_KEY) or {}
-            selection = defaults.get("selection")
-        if selection is not None:
-            try:
-                selection = ai.validate(selection, host, body.get("agent", "claude"))
-            except ValueError as exc:
-                self.send_json({"error": str(exc)}, status=400)
-                return
-        elif "ai" in body:
-            self.send_json({"error": "ai must be a selection object"}, status=400)
+        if not (body.get("title") or "").strip():
+            self.send_json({"error": "A new session needs a title"}, status=400)
             return
-
-        if body.get("agent", "claude") == "codex":
-            if host != "local":
-                self.send_json({"error": "New Codex sessions are local-only"}, status=400)
-                return
-            res = start_codex_new(message, cwd, model)
-            if not res:
-                self.send_json({"error": "Couldn't start a Codex session (no rollout appeared)"}, status=500)
-                return
-            new_id, rel = res
-            title = (body.get("title") or "").strip()[:200]
-            if title:
-                db.session_meta_patch(new_id, {"title": title})
-            self.send_json({"started": True, "session": new_id, "path": rel})
+        if body.get("mode", "acceptEdits") in ("bypass", "bypassPermissions"):
+            self.send_json({"error": "An agent cannot start a session in bypass mode; "
+                                     "ask the owner with session_mode_set"}, status=403)
             return
-
-        if body.get("agent", "claude") == "copilot":
-            res = start_copilot_new(message, cwd, host)
-            if not res:
-                self.send_json({"error": "Couldn't start a Copilot session (check that Copilot is signed in on this host)"}, status=500)
-                return
-            new_id, rel = res
-            title = (body.get("title") or "").strip()[:200]
-            if title:  # Copilot has no rename convention → store the name in the viewer's meta
-                db.session_meta_patch(new_id, {"title": title})
-            self.send_json({"started": True, "session": new_id, "path": rel})
+        if body.get("jobs"):
+            # jobs are saved with the HUMAN origin, which the automation switch
+            # never stops; an agent schedules via loop_create.
+            self.send_json({"error": "An agent schedules a new session's work with loop_create"}, status=403)
             return
-
-        session_id = str(uuid_mod.uuid4())
-        title = (body.get("title") or "").strip()[:200]
-        # Pre-store system prompt / goal so the very first run already gets them.
-        sp = (body.get("systemPrompt") or "").strip()
-        goal = (body.get("goal") or "").strip()
-        provider = (body.get("provider") or "").strip()
-        effort = (body.get("effort") or "").strip()
-        conv_mode = (body.get("convMode") or "chat").strip()
-        if conv_mode not in ("chat", "agent"):
-            conv_mode = "chat"
-        meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
-                "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
-        if title:
-            # The fallback name until the transcript carries its own custom-title
-            # (a remote run gets no --name, and the client's rename can fail).
-            meta["title"] = title
-        # Started from an agent template: its plugin rides on every Claude run
-        # (engine --plugin-dir) and its lens turns on for this project. Read
-        # from the template row, never from the body, so a client cannot name
-        # an arbitrary plugin.
-        template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
-        if template:
-            meta.update(agentTemplate=template["id"], agentPlugin=template.get("plugin") or "")
-            if template.get("lens") and host == "local":
-                try:
-                    db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))
-                except Exception as e:  # a lens is a view; never block the chat on it
-                    print(f"[new-session] lens enable failed: {e}", flush=True)
-        if selection is not None:
-            meta.update(ai.meta_fields(selection), aiRevision=1)
-        try:
-            resolved = ai.resolve(meta, model, host)
-        except ValueError as exc:
-            self.send_json({"error": str(exc)}, status=400)
-            return
-        provider, model, conv_mode, effort = (resolved[k] for k in ("provider", "model", "convMode", "effort"))
-        db.session_meta_set(session_id, meta)
-        # A new custom-provider session (local only).
-        if provider and host == "local":
-            if conv_mode == "agent":
-                # Agent mode: the full harness pointed at the custom endpoint. The
-                # claude CLI creates the transcript (as a normal Claude session).
-                from viewer import providers
-                penv = providers.anthropic_env(provider, model=model, preset=resolved["preset"])
-                if not penv:
-                    self.send_json({"error": "Provider unavailable"}, status=502)
-                    return
-                if not start_claude_run(session_id, ["--session-id", session_id], message,
-                                        mode, cwd, "", host, provider_env=penv, effort=effort):
-                    self.send_json({"error": "Busy"}, status=409)
-                    return
-                self._started(session_id, jobs)
-                return
-            # Chat mode: the viewer proxies and creates the transcript file itself.
-            from viewer.customrun import start_custom_run
-            if not start_custom_run(session_id, provider, message, cwd, host, mode, model=model, preset=resolved["preset"]):
-                self.send_json({"error": "Couldn't start the custom-provider session (provider unavailable)"}, status=502)
-                return
-            self._started(session_id, jobs)
-            return
-        # The name rides on the run itself (claude --name writes the transcript's
-        # custom-title), so it never depends on a client renaming the chat after
-        # it appears. Local only: a remote host's CLI version is not ours to assume.
-        args = ["--session-id", session_id] + (["--name", title] if title and host == "local" else [])
-        if not start_claude_run(session_id, args, message, mode, cwd, model, host, effort=effort):
-            self.send_json({"error": "Busy"}, status=409)
-            return
-        if by_agent:
-            db.audit_append(principal["actor"], "session_create",
-                            {"session": session_id, "title": title, "cwd": cwd, "host": host}, "ran")
-        self._started(session_id, jobs)
-
-    @staticmethod
-    def _new_session_jobs(raw, host, agent):
-        """Validate the scheduled jobs a new chat starts with → ([job], error).
-
-        Checked BEFORE the session starts, so a bad schedule refuses the whole
-        launch instead of leaving a chat that is missing a job its owner asked
-        for. Jobs fire through the local scheduler on Claude sessions only."""
-        if not raw:
-            return [], None
-        if not isinstance(raw, list):
-            return None, "jobs must be a list"
-        if host != "local" or agent != "claude":
-            return None, "Scheduled jobs need a Claude chat on this machine"
-        jobs = []
-        for i, j in enumerate(raw, 1):
-            prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
-            if not prompt:
-                return None, f"Job {i} has no prompt"
-            sched, err = build_schedule(j.get("cron"), j.get("interval"), j.get("at"))
-            if err:
-                return None, f"Job {i}: {err}"
-            jobs.append((prompt, sched))
-        return jobs, None
-
-    def _started(self, session_id, jobs):
-        """Reply to a launched new chat, saving its jobs in the same request.
-
-        The transcript doesn't exist yet, so each job carries the session id and
-        no path; the scheduler resolves the path by id when it fires
-        (run_loop_iteration). Saved here, not by the client after the chat
-        appears, so a job is never lost to the owner leaving the screen."""
-        ids = []
-        for prompt, sched in jobs:
-            lid = uuid_mod.uuid4().hex[:12]
-            db.loop_upsert(lid, {"session": session_id, "path": "", "prompt": prompt,
-                                 "runs": 0, "created": time.time(), "enabled": True,
-                                 "origin": USER_ORIGIN, "model": "", "provider": "", **sched})
-            ids.append(lid)
-        self.send_json({"started": True, "session": session_id, "jobs": ids})
+        from viewer import actions
+        payload, status = actions.execute(actions.intent("session_create", body, principal["actor"]),
+                                          principal["human_role"], principal["session_level"],
+                                          acting_session=principal["session"])
+        self.send_json(payload, status=400 if status == 200 and payload.get("error") else status)
 
     def serve_session_list(self, host="local", reader=""):
         """List all session JSONL files with metadata, on the selected host."""
@@ -1279,3 +1117,163 @@ class SessionsMixin:
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
+
+def start_new_session(body):
+    """Launch a new chat from a validated request body → (payload, status).
+
+    One launcher for both callers: the owner's New chat (the route) and an
+    agent's session_create (actions.ACTIONS, run or replayed after the
+    owner approves it)."""
+    message = (body.get("message") or "").strip()
+    mode = body.get("mode", "acceptEdits")
+    model = body.get("model", "")
+    host = body.get("host", "local")
+    if not message:
+        return {"error": "Empty message"}, 400
+    jobs, err = _new_session_jobs(body.get("jobs"), host, body.get("agent", "claude"))
+    if err:
+        return {"error": err}, 400
+    if host != "local":
+        cwd = (body.get("cwd") or "~").strip()   # validated on the remote by claude
+    else:
+        cwd = os.path.expanduser((body.get("cwd") or "~").strip())
+        if not os.path.isdir(cwd):
+            return {"error": f"Not a directory: {cwd}"}, 400
+
+    from viewer import ai
+    selection = body.get("ai")
+    if "ai" not in body and body.get("agent", "claude") == "claude":
+        defaults = db.setting_get(ai.DEFAULTS_KEY) or {}
+        selection = defaults.get("selection")
+    if selection is not None:
+        try:
+            selection = ai.validate(selection, host, body.get("agent", "claude"))
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
+    elif "ai" in body:
+        return {"error": "ai must be a selection object"}, 400
+
+    if body.get("agent", "claude") == "codex":
+        if host != "local":
+            return {"error": "New Codex sessions are local-only"}, 400
+        res = start_codex_new(message, cwd, model)
+        if not res:
+            return {"error": "Couldn't start a Codex session (no rollout appeared)"}, 500
+        new_id, rel = res
+        title = (body.get("title") or "").strip()[:200]
+        if title:
+            db.session_meta_patch(new_id, {"title": title})
+        return {"started": True, "session": new_id, "path": rel}, 200
+
+    if body.get("agent", "claude") == "copilot":
+        res = start_copilot_new(message, cwd, host)
+        if not res:
+            return {"error": "Couldn't start a Copilot session (check that Copilot is signed in on this host)"}, 500
+        new_id, rel = res
+        title = (body.get("title") or "").strip()[:200]
+        if title:  # Copilot has no rename convention → store the name in the viewer's meta
+            db.session_meta_patch(new_id, {"title": title})
+        return {"started": True, "session": new_id, "path": rel}, 200
+
+    session_id = str(uuid_mod.uuid4())
+    title = (body.get("title") or "").strip()[:200]
+    # Pre-store system prompt / goal so the very first run already gets them.
+    sp = (body.get("systemPrompt") or "").strip()
+    goal = (body.get("goal") or "").strip()
+    provider = (body.get("provider") or "").strip()
+    effort = (body.get("effort") or "").strip()
+    conv_mode = (body.get("convMode") or "chat").strip()
+    if conv_mode not in ("chat", "agent"):
+        conv_mode = "chat"
+    meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
+            "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+    if title:
+        # The fallback name until the transcript carries its own custom-title
+        # (a remote run gets no --name, and the client's rename can fail).
+        meta["title"] = title
+    # Started from an agent template: its plugin rides on every Claude run
+    # (engine --plugin-dir) and its lens turns on for this project. Read
+    # from the template row, never from the body, so a client cannot name
+    # an arbitrary plugin.
+    template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
+    if template:
+        meta.update(agentTemplate=template["id"], agentPlugin=template.get("plugin") or "")
+        if template.get("lens") and host == "local":
+            try:
+                db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))
+            except Exception as e:  # a lens is a view; never block the chat on it
+                print(f"[new-session] lens enable failed: {e}", flush=True)
+    if selection is not None:
+        meta.update(ai.meta_fields(selection), aiRevision=1)
+    try:
+        resolved = ai.resolve(meta, model, host)
+    except ValueError as exc:
+        return {"error": str(exc)}, 400
+    provider, model, conv_mode, effort = (resolved[k] for k in ("provider", "model", "convMode", "effort"))
+    db.session_meta_set(session_id, meta)
+    # A new custom-provider session (local only).
+    if provider and host == "local":
+        if conv_mode == "agent":
+            # Agent mode: the full harness pointed at the custom endpoint. The
+            # claude CLI creates the transcript (as a normal Claude session).
+            from viewer import providers
+            penv = providers.anthropic_env(provider, model=model, preset=resolved["preset"])
+            if not penv:
+                return {"error": "Provider unavailable"}, 502
+            if not start_claude_run(session_id, ["--session-id", session_id], message,
+                                    mode, cwd, "", host, provider_env=penv, effort=effort):
+                return {"error": "Busy"}, 409
+            return _started(session_id, jobs)
+        # Chat mode: the viewer proxies and creates the transcript file itself.
+        from viewer.customrun import start_custom_run
+        if not start_custom_run(session_id, provider, message, cwd, host, mode, model=model, preset=resolved["preset"]):
+            return {"error": "Couldn't start the custom-provider session (provider unavailable)"}, 502
+        return _started(session_id, jobs)
+    # The name rides on the run itself (claude --name writes the transcript's
+    # custom-title), so it never depends on a client renaming the chat after
+    # it appears. Local only: a remote host's CLI version is not ours to assume.
+    args = ["--session-id", session_id] + (["--name", title] if title and host == "local" else [])
+    if not start_claude_run(session_id, args, message, mode, cwd, model, host, effort=effort):
+        return {"error": "Busy"}, 409
+    return _started(session_id, jobs)
+
+
+def _new_session_jobs(raw, host, agent):
+    """Validate the scheduled jobs a new chat starts with → ([job], error).
+
+    Checked BEFORE the session starts, so a bad schedule refuses the whole
+    launch instead of leaving a chat that is missing a job its owner asked
+    for. Jobs fire through the local scheduler on Claude sessions only."""
+    if not raw:
+        return [], None
+    if not isinstance(raw, list):
+        return None, "jobs must be a list"
+    if host != "local" or agent != "claude":
+        return None, "Scheduled jobs need a Claude chat on this machine"
+    jobs = []
+    for i, j in enumerate(raw, 1):
+        prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
+        if not prompt:
+            return None, f"Job {i} has no prompt"
+        sched, err = build_schedule(j.get("cron"), j.get("interval"), j.get("at"))
+        if err:
+            return None, f"Job {i}: {err}"
+        jobs.append((prompt, sched))
+    return jobs, None
+
+
+def _started(session_id, jobs):
+    """Reply to a launched new chat, saving its jobs in the same request.
+
+    The transcript doesn't exist yet, so each job carries the session id and
+    no path; the scheduler resolves the path by id when it fires
+    (run_loop_iteration). Saved here, not by the client after the chat
+    appears, so a job is never lost to the owner leaving the screen."""
+    ids = []
+    for prompt, sched in jobs:
+        lid = uuid_mod.uuid4().hex[:12]
+        db.loop_upsert(lid, {"session": session_id, "path": "", "prompt": prompt,
+                             "runs": 0, "created": time.time(), "enabled": True,
+                             "origin": USER_ORIGIN, "model": "", "provider": "", **sched})
+        ids.append(lid)
+    return {"started": True, "session": session_id, "jobs": ids}, 200
