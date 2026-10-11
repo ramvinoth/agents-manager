@@ -43,8 +43,27 @@ def _card_create(a):
 
 
 def _card_update(a):
+    """`session_id` hands a card to another chat: its wakes and its chat board
+    follow the owner session. Changing `project_id` without a column of the new
+    board keeps the card visible: the old column id belongs to the old board, so
+    it is remapped to the same-named column there (else the first column)."""
     fields = {k: v for k, v in a.items()
-              if k in ("title", "body", "column_id", "project_id", "position")}
+              if k in ("title", "body", "column_id", "project_id", "session_id",
+                       "position")}
+    if fields.get("project_id"):
+        cols = db.board_columns_list(fields["project_id"])
+        col_id = fields.get("column_id")
+        if cols and not any(c.get("id") == col_id for c in cols):
+            card = db.card_get(a.get("card_id"))
+            if not card:
+                return {"error": "not found"}
+            old_id = col_id or card.get("column_id")
+            old = next((c for c in db.board_columns_list(card.get("project_id"))
+                        if c.get("id") == old_id), None) if card.get("project_id") else None
+            name = str((old or {}).get("name", "")).lower()
+            fields["column_id"] = next((c["id"] for c in cols
+                                        if str(c.get("name", "")).lower() == name),
+                                       cols[0]["id"])
     return db.card_update(a.get("card_id"), **fields) or {"error": "not found"}
 
 

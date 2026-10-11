@@ -404,3 +404,46 @@ def test_system_preamble_write_by_an_agent_queues_and_does_not_persist(fdb):
     assert status == 200 and resp["queued"] is True
     assert "system_preamble" not in fdb.settings
     assert fdb.approvals[0]["detail"] == dict(it, session="", queued="red")
+
+
+# -- card_update: re-homing a card to another board / chat ---------------------
+class _RehomeDB(FakeDB):
+    """Card 5 sits in 'Needs-info' (col 71) on board 7; board 8 has its own
+    copy of that column (81) — ids differ per board, names do not."""
+    boards = {7: [{"id": 70, "name": "Todo"}, {"id": 71, "name": "Needs-info"}],
+              8: [{"id": 80, "name": "Todo"}, {"id": 81, "name": "Needs-info"}],
+              9: [{"id": 90, "name": "Backlog"}]}
+
+    def card_get(self, card_id):
+        return {"id": card_id, "project_id": 7, "column_id": 71}
+
+    def board_columns_list(self, project_id):
+        return self.boards.get(project_id, [])
+
+    def card_update(self, card_id, **fields):
+        self.updated = fields
+        return {"id": card_id, **fields}
+
+
+def test_card_update_project_change_keeps_the_same_named_column(monkeypatch):
+    monkeypatch.setattr(actions, "db", _RehomeDB())
+    actions._card_update({"card_id": 5, "project_id": 8})
+    assert actions.db.updated["column_id"] == 81
+
+
+def test_card_update_project_change_falls_back_to_first_column(monkeypatch):
+    monkeypatch.setattr(actions, "db", _RehomeDB())
+    actions._card_update({"card_id": 5, "project_id": 9})
+    assert actions.db.updated["column_id"] == 90
+
+
+def test_card_update_explicit_column_on_new_board_wins(monkeypatch):
+    monkeypatch.setattr(actions, "db", _RehomeDB())
+    actions._card_update({"card_id": 5, "project_id": 8, "column_id": 80})
+    assert actions.db.updated["column_id"] == 80
+
+
+def test_card_update_hands_card_to_another_session(monkeypatch):
+    monkeypatch.setattr(actions, "db", _RehomeDB())
+    actions._card_update({"card_id": 5, "session_id": "abc"})
+    assert actions.db.updated == {"session_id": "abc"}
