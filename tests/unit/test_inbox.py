@@ -8,7 +8,6 @@
 
 No Postgres, no clock: time is injected, and the formatters take plain dicts.
 """
-import pytest
 
 from viewer import inbox
 

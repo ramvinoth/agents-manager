@@ -190,7 +190,6 @@ class _FakeGoogle:
         self.first_401 = None  # a url prefix that 401s exactly once
 
     def _match(self, q):
-        import urllib.parse as up
         parent = re.search(r"'([^']+)' in parents", q)
         name = re.search(r"name = '([^']+)'", q)
         out = []

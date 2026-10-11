@@ -19,7 +19,6 @@ already render. So:
 """
 import time
 
-import pytest
 
 from viewer import decisions
 from viewer.routes.chat import ChatMixin

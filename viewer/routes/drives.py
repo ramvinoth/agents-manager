@@ -16,7 +16,6 @@ import secrets
 
 from viewer import db, drive_oauth, integrations
 from viewer.drives import DriveError
-from viewer.routes import require_human
 
 def _public_view(d):
     """What the UI may see about a drive. The config (per-user tokens, the

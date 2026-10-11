@@ -24,8 +24,6 @@ All are normal /api routes, so the standard session gate authenticates them.
 """
 import json
 import socket
-import threading
-import time
 import urllib.request
 
 from viewer import nemotron, voice, wsclient

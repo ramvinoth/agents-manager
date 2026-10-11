@@ -1,14 +1,13 @@
 """viewer.routes.chat — ChatMixin route + business methods."""
 import json
 import os
-import time
 from pathlib import Path
 from viewer.config import (
     CHAT_JOBS, CHAT_LOCK, transcript_path,
 )
 from viewer.adapters import resolve_agent_session
 from viewer.engine import (
-    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_all_public, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
+    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
 )
 from viewer.remote import (
     remote_codex_meta, remote_extract_cwd, remote_resolve,
