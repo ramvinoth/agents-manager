@@ -19,10 +19,12 @@ interface Props {
   visible: boolean
   host: string
   cwd?: string
+  /** Session rel path — surfaces this session's attached plugin skills. */
+  session?: string
   onClose: () => void
 }
 
-export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Props) {
+export default function CapabilitiesDrawer({ visible, host, cwd, session, onClose }: Props) {
   const t = useTheme()
   const insets = useSafeAreaInsets()
 
@@ -100,7 +102,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, onClose }: Prop
           </TouchableOpacity>
         </View>
 
-        <CapabilitiesPanel host={host} cwd={cwd} active={visible} testPrefix="drawer" />
+        <CapabilitiesPanel host={host} cwd={cwd} session={session} active={visible} testPrefix="drawer" />
       </Animated.View>
     </View>
   )

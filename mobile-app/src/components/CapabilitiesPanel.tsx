@@ -18,9 +18,11 @@ import Icon from "./Icon"
 
 type Tab = "skills" | "mcp"
 
-export default function CapabilitiesPanel({ host, cwd, active = true, testPrefix }: {
+export default function CapabilitiesPanel({ host, cwd, session, active = true, testPrefix }: {
   host: string
   cwd?: string
+  /** Session rel path — lets the server include this session's attached plugin skills. */
+  session?: string
   /** Reload whenever this turns true (screen focus, drawer open). */
   active?: boolean
   testPrefix: "cap" | "drawer"
@@ -36,8 +38,8 @@ export default function CapabilitiesPanel({ host, cwd, active = true, testPrefix
 
   const load = useCallback(() => {
     setError("")
-    api.capabilities(host, cwd).then(setCaps).catch(e => { setCaps(null); setError(userError(e, "skills and tools")) })
-  }, [host, cwd])
+    api.capabilities(host, cwd, session).then(setCaps).catch(e => { setCaps(null); setError(userError(e, "skills and tools")) })
+  }, [host, cwd, session])
 
   useEffect(() => { if (active) load() }, [active, load])
 

@@ -53,7 +53,7 @@ export type RootStackParamList = {
   Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
   Call: { label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
-  Capabilities: { host?: string; cwd?: string; title?: string } | undefined
+  Capabilities: { host?: string; cwd?: string; session?: string; title?: string } | undefined
   Providers: undefined
   Integrations: undefined
   Calendar: undefined

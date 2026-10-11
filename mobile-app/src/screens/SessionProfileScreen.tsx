@@ -84,7 +84,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         setPinned(Array.isArray(meta.pinned) ? meta.pinned : [])
         if (meta.cwd) { setCwd(meta.cwd); loadGit(meta.cwd) }
         // Skills + MCP tools resolve from the working dir (host-aware).
-        api.capabilities(host, meta.cwd || undefined).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
+        api.capabilities(host, meta.cwd || undefined, path).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
         if (!claude) return
         if (!meta.session || typeof meta.permission_mode !== "string") {
           throw new Error("Server did not return the session permission policy.")
@@ -548,7 +548,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           ) : null}
           <TouchableOpacity
             testID="sp-capabilities-manage"
-            onPress={() => navigation.navigate("Capabilities", { host, cwd, title })}
+            onPress={() => navigation.navigate("Capabilities", { host, cwd, session: path, title })}
             style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12 }}
           >
             <Icon name="settings" size={15} color={t.accent} />

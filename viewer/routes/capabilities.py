@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs
 from viewer.config import (
-    HEADLESS_OK, VIEWER_HANDLED, load_system_commands,
+    AGENT_PLUGINS_DIR, HEADLESS_OK, VIEWER_HANDLED, agent_plugin_dir, load_system_commands,
 )
 from viewer.adapters import resolve_agent_session
 from viewer.browser import (
@@ -208,9 +208,41 @@ class CapabilitiesMixin:
             except Exception:
                 cwd = ""
         try:
-            return h.capabilities(cwd), None
+            caps = h.capabilities(cwd)
         except Exception as e:
             return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
+        # An agent template's plugin is attached at launch (session_meta.agentPlugin)
+        # and applied to local claude runs via --plugin-dir (engine: plugin_dir is
+        # None for remote). Its skills are therefore live and invocable, yet they
+        # live under viewer/agent_plugins/<plugin>, not ~/.claude/plugins/cache that
+        # the host scanner reads — so they are invisible here. Merge them for the
+        # one case where they actually run (local claude), scoped by the SESSION's
+        # own plugin, so this stays the true source of per-session capabilities.
+        if host == "local" and rel:
+            self._merge_agent_plugin_skills(caps, rel)
+        return caps, None
+
+    def _merge_agent_plugin_skills(self, caps, rel):
+        """Append the session's attached-template plugin skills to caps['skills'],
+        read-only, deduped against what the scanner already found. A no-op when the
+        session has no plugin, so it never widens an ordinary session's view."""
+        from viewer import db
+        sid = self.sid_from_path(rel) or rel.rsplit("/", 1)[-1].replace(".jsonl", "")
+        plugin = (db.session_meta_get(sid) or {}).get("agentPlugin", "")
+        pdir = agent_plugin_dir(plugin)
+        if not pdir:
+            return
+        skills = caps.setdefault("skills", [])
+        source = f"plugin:{plugin}"
+        seen = {f"{s.get('source')}:{s.get('name')}" for s in skills}
+        for md in sorted((pdir / "skills").glob("*/SKILL.md")):
+            name = md.parent.name
+            key = f"{source}:{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            skills.append({"name": name, "description": frontmatter_description(md),
+                           "source": source, "path": str(md), "editable": False})
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""
@@ -219,7 +251,8 @@ class CapabilitiesMixin:
         except Exception:
             return None
         roots = [Path.home() / ".claude" / "skills",
-                 Path.home() / ".claude" / "plugins" / "cache"]
+                 Path.home() / ".claude" / "plugins" / "cache",
+                 AGENT_PLUGINS_DIR]
         if p.is_file() and p.name == "SKILL.md":
             # project skills can live anywhere under a project's .claude/skills
             if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):
