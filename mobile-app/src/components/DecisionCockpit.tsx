@@ -10,6 +10,7 @@ import QuestionCard from "./QuestionCard"
 import PlanCard from "./PlanCard"
 import SheetModal from "./SheetModal"
 import { userError } from "../lib/errors"
+import { success, warning } from "../lib/haptics"
 
 const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard" | "warning"> = {
   question: "help",
@@ -165,6 +166,7 @@ export default function DecisionCockpit({
   const answerQuestion = useCallback(
     (picks: string[], note: string) => {
       if (busy || !d) return
+      success()
       setBusy(true)
       api
         .chatQuestionAnswer({ session: d.session, picks, note })
@@ -182,6 +184,7 @@ export default function DecisionCockpit({
   const decidePlan = useCallback(
     (decision: "approve" | "deny", feedback?: string) => {
       if (busy || !d) return
+      decision === "approve" ? success() : warning()
       setBusy(true)
       api
         .chatPlanDecide({ session: d.session, decision, feedback })
@@ -198,6 +201,7 @@ export default function DecisionCockpit({
   const decideApproval = useCallback(
     (decision: "allow" | "deny") => {
       if (busy || !d || !d.id) return
+      decision === "allow" ? success() : warning()
       setBusy(true)
       api
         .chatPermissionDecide({ session: d.session, id: d.id, decision })
@@ -214,6 +218,7 @@ export default function DecisionCockpit({
   const decideRed = useCallback(
     (resolution: "approved" | "denied") => {
       if (busy || !d || !d.id) return
+      resolution === "approved" ? success() : warning()
       setBusy(true)
       api
         .orgResolveApproval({ id: Number(d.id), resolution })

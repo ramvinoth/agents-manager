@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
@@ -13,6 +13,7 @@ import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
+import { tap } from "../lib/haptics"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
@@ -72,6 +73,9 @@ export default function KanbanScreen({ route, navigation }: Props) {
   // overflowing off-screen. Re-measured when the band/error banner toggles.
   const [viewportH, setViewportH] = useState(0)
   const [query, setQuery] = useState("") // find box: "#107" or words
+  // A pull-to-refresh in flight: drives the spinner on the pulled lane only, so
+  // the 4s poll's own loads never flash every lane's control.
+  const [refreshing, setRefreshing] = useState(false)
   // Draft text and measured bounds belong to the lifetime, not reusable state.
   const [, redrawDraft] = useState(0)
   const { columns, cards, decisions, loading, error } = snapshot.scope === scope ? snapshot : emptySnapshot(scope)
@@ -109,6 +113,18 @@ export default function KanbanScreen({ route, navigation }: Props) {
     }
   }, [scope, isCurrent, navigation])
 
+  // Pull-to-refresh: a lane was pulled down. load() already re-reads the whole
+  // board (every lane), so one await reloads all columns; the spinner is held
+  // until the read settles.
+  const refresh = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await load()
+    } finally {
+      if (isCurrent()) setRefreshing(false)
+    }
+  }, [load, isCurrent])
+
   useEffect(() => {
     scope.active = true
     load()
@@ -128,6 +144,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const moveCard = useCallback(
     async (card: Card, toColumn: number, indexInColumn: number) => {
       if (!isCurrent()) return
+      if (toColumn !== card.column_id) tap() // a real cross-column move landed
       const inCol = cards.filter((c) => c.column_id === toColumn && c.id !== card.id)
       const position = nextPosition(inCol, indexInColumn)
       setSnapshot(cur => cur.scope === scope ? { ...cur, cards: cur.cards.map(c => c.id === card.id ? { ...c, column_id: toColumn, position } : c) } : cur)
@@ -259,7 +276,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
               />
             ) : null}
 
-            <GHScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <GHScrollView
+              style={{ flex: 1 }}
+              showsVerticalScrollIndicator={false}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={t.textMuted} />}
+            >
               {colCards.map((card) => (
                 <DraggableCard
                   key={card.id}
