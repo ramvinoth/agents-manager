@@ -147,6 +147,12 @@ def test_first_event_creates_a_one_shot_wake(floops):
     assert "moved to 'Review' by user:ram" in row["prompt"]
 
 
+def test_a_coalesced_wake_follows_the_cards_new_owner(floops):
+    boardwatch.schedule_wake(CARD, "moved to 'Review'", "user")
+    boardwatch.schedule_wake(dict(CARD, session_id="sess-new"), "new comment", "harman")
+    assert floops.loops["bw7"]["session"] == "sess-new"
+
+
 def test_origin_is_passed_through_never_guessed(floops):
     boardwatch.schedule_wake(CARD, "updated by session:bob", "harman")
     assert floops.loops["bw7"]["origin"] == "harman"

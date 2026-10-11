@@ -75,8 +75,11 @@ def schedule_once(lid, sid, prompt, origin):
         # `origin` is patched too: the mode filter acts on the LATEST cause, so
         # a coalesced event must never keep a stale one (a human's comment
         # merged into an agent-caused wake would otherwise never fire in
-        # 'user' mode — and vice versa in 'harman' mode).
-        db.loop_update(lid, {"prompt": prompt, "nextRun": now + _WAKE_DELAY,
+        # 'user' mode — and vice versa in 'harman' mode). `session` is patched
+        # for the same reason: a card handed to another chat (card_update
+        # session_id) must wake its NEW owner, not the chat that queued the
+        # first event (card 170, 2026-10-11).
+        db.loop_update(lid, {"session": sid, "prompt": prompt, "nextRun": now + _WAKE_DELAY,
                              "kind": "once", "enabled": True, "origin": origin})
     else:
         db.loop_upsert(lid, {
