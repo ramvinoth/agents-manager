@@ -75,10 +75,10 @@ describe("Native calendar — agenda, create, edit, delete", () => {
     assert.equal(writes().at(-1).body.title, "Renamed standup")
     await tap("event-ev-0")
     await tap("event-delete")
-    const confirm = await $("-ios predicate string:type == 'XCUIElementTypeButton' AND label == 'Delete'")
-    await confirm.waitForDisplayed()
-    await confirm.click()
+    // Instant with Undo (card 153): the row leaves now, the delete is sent when the toast closes.
+    await $("~undo-toast").waitForDisplayed({ timeout: 5000 })
     await browser.waitUntil(async () => !(await $("~event-ev-0").isExisting()), { timeoutMsg: "Deleted event must leave the agenda" })
+    await browser.waitUntil(async () => writes().at(-1).route === "POST /api/calendar/delete", { timeout: 10000, timeoutMsg: "Delete is sent after the Undo window" })
     assert.deepEqual(writes().at(-1).body, { id: "ev-0", connection: "dr-fixture" })
   })
 })

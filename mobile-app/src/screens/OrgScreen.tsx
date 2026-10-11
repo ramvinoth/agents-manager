@@ -80,9 +80,9 @@ export default function OrgScreen({ navigation }: Props) {
   }
 
   const Section = ({ title, onAdd, children }: { title: string; onAdd?: () => void; children: React.ReactNode }) => (
-    <View style={{ marginBottom: 18 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <Text style={{ color: t.textMuted, fontSize: 12, fontWeight: "700", letterSpacing: 0.5 }}>{title.toUpperCase()}</Text>
+    <View style={styles.orgSection}>
+      <View style={styles.orgSectionHead}>
+        <Text style={styles.orgSectionTitle}>{title.toUpperCase()}</Text>
         {onAdd ? (
           <TouchableOpacity testID={`org-add-${title.toLowerCase()}`} onPress={onAdd} hitSlop={8}>
             <Icon name="add" size={18} color={t.accent} />
@@ -94,28 +94,28 @@ export default function OrgScreen({ navigation }: Props) {
   )
 
   const Row = ({ children }: { children: React.ReactNode }) => (
-    <View style={{ backgroundColor: t.surface, borderRadius: 10, borderWidth: 1, borderColor: t.border, padding: 12, marginBottom: 6 }}>{children}</View>
+    <View style={styles.orgRow}>{children}</View>
   )
 
   return (
     <>
-    <ScrollView style={styles.page} contentContainerStyle={{ padding: 16 }}
+    <ScrollView style={styles.page} contentContainerStyle={styles.orgContent}
       refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
-      {error ? <Text style={{ color: t.danger, marginBottom: 12 }}>{error}</Text> : null}
+      {error ? <Text style={styles.orgError}>{error}</Text> : null}
 
       {/* First-run guide: shown until the CEO has at least one project. A fresh
           install otherwise looks like empty lists with no hint of the workflow. */}
       {projects.length === 0 ? (
-        <View style={{ backgroundColor: t.surface, borderRadius: 12, borderWidth: 1, borderColor: t.border, padding: 14, marginBottom: 18 }}>
-          <Text style={{ color: t.text, fontWeight: "700", fontSize: 15, marginBottom: 8 }}>Set up your first run</Text>
+        <View style={styles.orgSetup}>
+          <Text style={styles.orgSetupTitle}>Set up your first run</Text>
           {[
             "Create a project — give it a name and the workspace directory the board should work in.",
             "Open the project board and add a card or two describing the work.",
             "Start a chat in the project's directory and ask it to work the board.",
           ].map((step, i) => (
-            <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
-              <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>{i + 1}.</Text>
-              <Text style={{ color: t.textMuted, fontSize: 13, flex: 1, lineHeight: 18 }}>{step}</Text>
+            <View key={i} style={styles.orgStep}>
+              <Text style={styles.orgStepNum}>{i + 1}.</Text>
+              <Text style={styles.orgStepText}>{step}</Text>
             </View>
           ))}
         </View>
@@ -125,8 +125,8 @@ export default function OrgScreen({ navigation }: Props) {
         {projects.length ? projects.map((p) => (
           <TouchableOpacity key={p.id} onPress={() => navigation.navigate("Kanban", { project: p.id, title: p.name })}>
             <Row>
-              <Text style={{ color: t.text, fontWeight: "600" }}>{p.name}</Text>
-              {p.description ? <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{p.description}</Text> : null}
+              <Text style={styles.orgName}>{p.name}</Text>
+              {p.description ? <Text style={styles.orgDesc} numberOfLines={1}>{p.description}</Text> : null}
               {p.host === "local" || !p.host ? (
                 <TouchableOpacity
                   testID={`org-project-map-${p.id}`}
@@ -134,14 +134,14 @@ export default function OrgScreen({ navigation }: Props) {
                   accessibilityLabel={`Code map of ${p.name}`}
                   onPress={() => navigation.navigate("Map", { project: p.id, title: p.name })}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={{ alignSelf: "flex-start", marginTop: 6 }}
+                  style={styles.orgMapBtn}
                 >
-                  <Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Code map</Text>
+                  <Text style={styles.orgMapText}>Code map</Text>
                 </TouchableOpacity>
               ) : null}
             </Row>
           </TouchableOpacity>
-        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No projects yet.</Text>}
+        )) : <Text style={styles.emptyItalic}>No projects yet.</Text>}
       </Section>
 
       <TouchableOpacity
@@ -149,26 +149,26 @@ export default function OrgScreen({ navigation }: Props) {
         accessibilityRole="button"
         accessibilityLabel="Activity, who did what and when"
         onPress={() => navigation.navigate("Audit")}
-        style={{ minHeight: 44, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, marginBottom: 18, flexDirection: "row", alignItems: "center", gap: 12 }}
+        style={styles.orgActivity}
       >
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: t.text, fontSize: 17, fontWeight: "600" }}>Activity</Text>
-          <Text style={{ color: t.textMuted, fontSize: 14, marginTop: 4 }}>Who did what, and when</Text>
+        <View style={styles.flex1}>
+          <Text style={styles.audEmptyTitle}>Activity</Text>
+          <Text style={styles.orgActivityHint}>Who did what, and when</Text>
         </View>
         <Icon name="chevronRight" size={18} color={t.textMuted} />
       </TouchableOpacity>
 
       <Section title="Skills learned">
         {learned.length ? learned.map((s) => (
-          <View key={s.name} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
+          <View key={s.name} style={styles.orgSkill}>
             <Icon name={s.status === "active" ? "sparkle" : "clock"} size={14} color={s.status === "active" ? t.accent : t.textMuted} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: t.text, fontSize: 13 }} numberOfLines={1}>{s.name}</Text>
-              {s.description ? <Text style={{ color: t.textMuted, fontSize: 11 }} numberOfLines={2}>{s.description}</Text> : null}
+            <View style={styles.flex1}>
+              <Text style={styles.orgSkillName} numberOfLines={1}>{s.name}</Text>
+              {s.description ? <Text style={styles.orgSkillMeta} numberOfLines={2}>{s.description}</Text> : null}
             </View>
-            <Text style={{ color: t.textMuted, fontSize: 11 }}>{s.status}</Text>
+            <Text style={styles.orgSkillMeta}>{s.status}</Text>
           </View>
-        )) : <Text style={{ color: t.textMuted, fontStyle: "italic" }}>Nothing learned yet.</Text>}
+        )) : <Text style={styles.emptyItalic}>Nothing learned yet.</Text>}
       </Section>
 
     </ScrollView>

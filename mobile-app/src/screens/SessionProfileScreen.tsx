@@ -392,7 +392,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           <View style={styles.spCardIcon}>
             <Icon name={icon as never} size={17} color={t.accent} />
           </View>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex1}>
             <Text style={styles.spCardTitle}>{title}</Text>
             {sub ? <Text style={styles.spCardSummary} numberOfLines={1}>{sub}</Text> : null}
           </View>
@@ -410,7 +410,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   return (
     <ScrollView
       style={styles.page}
-      contentContainerStyle={{ paddingBottom: 48 }}
+      contentContainerStyle={styles.spContent}
       keyboardShouldPersistTaps="handled"
       // Pad the scroll content by the keyboard height and scroll the focused
       // TextInput into view, so an open keyboard never overlaps the System
@@ -423,7 +423,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         <Avatar avatar={avatar} seed={seed} size={92} />
         <TextInput
           testID="sp-title"
-          style={[styles.spTitleInput, { color: t.text, borderColor: t.border }]}
+          style={styles.spTitleInput}
           value={title}
           onChangeText={setTitle}
           onBlur={saveTitle}
@@ -436,9 +436,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       </View>
 
       <TouchableOpacity testID="sp-ai-row" style={styles.spCard} onPress={() => setProviderPickerOpen(true)} disabled={!aiConfig?.capabilities.editable}>
-        <View style={{padding: 16}}>
+        <View style={styles.spAiBody}>
           <Text style={styles.spCardTitle}>AI for this chat</Text>
-          <Text style={[styles.sheetHint, {marginTop: 8}]}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErrorText || "Loading AI settings…"}</Text>
+          <Text style={[styles.sheetHint, styles.spHintGap]}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErrorText || "Loading AI settings…"}</Text>
           <Text style={styles.sheetHint}>Changes apply to future runs, not a response already in progress.</Text>
           {aiConfig?.issue ? <Text style={styles.sheetHint}>{aiConfig.issue}</Text> : null}
         </View>
@@ -454,11 +454,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {modeLoading || modeSaving ? <Text style={styles.sheetHint}>{modeSaving ? "Saving…" : "Loading policy…"}</Text> : null}
         {modeError ? <>
           <Text testID="sp-mode-error" accessibilityRole="alert" style={styles.sheetHint}>{modeError}</Text>
-          <TouchableOpacity testID="sp-mode-retry" accessibilityRole="button" disabled={modeLoading || modeSaving} onPress={() => setModeReload(n => n + 1)} style={{ minHeight: 44, justifyContent: "center" }}>
-            <Text style={{ color: t.accent }}>Reload policy</Text>
+          <TouchableOpacity testID="sp-mode-retry" accessibilityRole="button" disabled={modeLoading || modeSaving} onPress={() => setModeReload(n => n + 1)} style={styles.spRetry}>
+            <Text style={styles.spLink}>Reload policy</Text>
           </TouchableOpacity>
         </> : null}
-        <Text style={[styles.sheetSection, { marginTop: 16 }]}>BOARD AUTHORITY · HOW FAR IT ACTS ALONE</Text>
+        <Text style={[styles.sheetSection, styles.spSectionGap]}>BOARD AUTHORITY · HOW FAR IT ACTS ALONE</Text>
         <Text style={styles.sheetHint}>How far this chat may reach with no approval from you, enforced by the Harman server for any harness. Own work — its own cards, notes and messages. Workspace — also projects, columns and scheduled loops. Organization — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</Text>
         {renderPill(LEVELS, level, pickLevel, "sp-level", "Board authority", levelSaving)}
         {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting at {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</Text> : null}
@@ -471,7 +471,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         `${git.name || "repo"} · ${git.branch || "?"}`,
         <>
           <View style={styles.ssRow}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.flex1}>
               <Text style={styles.ssRowLabel}>{git.name || "repo"}</Text>
               <Text style={styles.ssRowHint} numberOfLines={1}>{git.branch || "?"}{git.remote ? ` · ${git.remote}` : ""}</Text>
             </View>
@@ -479,24 +479,24 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               <Icon name="repeat" size={16} color={t.textMuted} />
             </TouchableOpacity>
           </View>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+          <View style={styles.spGitStats}>
             {(git.dirty ?? 0) > 0 ? (
-              <Text style={{ color: t.warning, fontSize: 12 }}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
+              <Text style={styles.spGitDirty}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
             ) : null}
-            {git.ahead != null && git.ahead > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↑{git.ahead}</Text> : null}
-            {git.behind != null && git.behind > 0 ? <Text style={{ color: t.textMuted, fontSize: 12 }}>↓{git.behind}</Text> : null}
-            {(git.dirty ?? 0) === 0 && !git.ahead && !git.behind ? <Text style={{ color: t.textMuted, fontSize: 12 }}>Up to date</Text> : null}
+            {git.ahead != null && git.ahead > 0 ? <Text style={styles.spGitStat}>↑{git.ahead}</Text> : null}
+            {git.behind != null && git.behind > 0 ? <Text style={styles.spGitStat}>↓{git.behind}</Text> : null}
+            {(git.dirty ?? 0) === 0 && !git.ahead && !git.behind ? <Text style={styles.spGitStat}>Up to date</Text> : null}
           </View>
           <TouchableOpacity
             testID="sp-git-sync"
             disabled={syncing}
             onPress={doSync}
-            style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, backgroundColor: t.accent, borderRadius: 8, paddingVertical: 10, opacity: syncing ? 0.6 : 1 }}
+            style={[styles.spSyncBtn, syncing ? styles.dimmed : null]}
           >
             <Icon name="repeat" size={15} color={t.onAccent} />
-            <Text style={{ color: t.onAccent, fontWeight: "600" }}>{syncing ? "Syncing…" : "Sync branch"}</Text>
+            <Text style={styles.spSyncText}>{syncing ? "Syncing…" : "Sync branch"}</Text>
           </TouchableOpacity>
-          <Text style={[styles.sheetHint, { marginTop: 8 }]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
+          <Text style={[styles.sheetHint, styles.spHintGap]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
         </>) : null}
 
       {/* ── CAPABILITIES: skills + MCP tools for this session's cwd (read-only
@@ -507,7 +507,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         <>
           {cwd ? (
             <View style={styles.ssRow}>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex1}>
                 <Text style={styles.ssRowLabel}>Working dir</Text>
                 <Text style={styles.ssRowHint} numberOfLines={1}>{cwd}</Text>
               </View>
@@ -520,7 +520,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
                 <View key={s.path} style={styles.ssListRow}>
                   <Icon name="sparkle" size={14} color={t.accent} />
                   <Text style={styles.ssListText} numberOfLines={1}>/{s.name}</Text>
-                  <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{s.source}</Text>
+                  <Text style={styles.capBadge}>{s.source}</Text>
                 </View>
               ))}
               {caps.skills.length > 8 ? (
@@ -535,7 +535,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
                 <View key={`${m.scope}:${m.name}`} style={styles.ssListRow}>
                   <Icon name="tool" size={14} color={t.textMuted} />
                   <Text style={styles.ssListText} numberOfLines={1}>{m.name}</Text>
-                  <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{m.scope}</Text>
+                  <Text style={styles.capBadge}>{m.scope}</Text>
                 </View>
               ))}
               {caps.mcp.length > 8 ? (
@@ -549,16 +549,16 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           <TouchableOpacity
             testID="sp-capabilities-manage"
             onPress={() => navigation.navigate("Capabilities", { host, cwd, session: path, title })}
-            style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 12 }}
+            style={styles.spManage}
           >
             <Icon name="settings" size={15} color={t.accent} />
-            <Text style={{ color: t.accent, fontWeight: "600" }}>Manage skills & tools</Text>
+            <Text style={styles.spManageText}>Manage skills & tools</Text>
           </TouchableOpacity>
         </>)}
 
       {renderCard("notifications", "info", "Notifications", "This device", <>
         <View style={styles.ssRow}>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flex1}>
             <Text style={styles.ssRowLabel}>Notify every reply</Text>
             <Text style={styles.ssRowHint}>Get a notification each time the agent finishes a turn.</Text>
           </View>
@@ -612,9 +612,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
               activeOpacity={0.65}
               onPress={() => setJobSheet(j.id)}
             >
-              <View style={{ flex: 1, opacity: paused ? 0.5 : 1 }}>
+              <View style={[styles.flex1, paused ? styles.faded : null]}>
                 <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 2 }}>
+                <View style={styles.spJobMeta}>
                   <Text style={styles.ssJobSchedule}>{describeSchedule(j)}</Text>
                   {j.provider ? (
                     <Text style={styles.ssJobSchedule}>· {providers.find((p) => p.id === j.provider)?.name || "Custom"}</Text>
@@ -640,7 +640,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </View>
           )
         })}
-        <TouchableOpacity testID="sp-job-new" style={[styles.ssAddBtn, { marginHorizontal: 18, marginTop: 8 }]} onPress={() => setJobSheet("new")}>
+        <TouchableOpacity testID="sp-job-new" style={[styles.ssAddBtn, styles.spAddJob]} onPress={() => setJobSheet("new")}>
           <Text style={styles.ssAddBtnText}>Add job</Text>
         </TouchableOpacity>
         <JobScheduler
@@ -660,7 +660,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           {pinnedItems.map((p) => (
             <View key={p.uuid} style={styles.ssListRow}>
               <Icon name="pin" size={14} color={t.accent} />
-              <TouchableOpacity style={{ flex: 1 }} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
+              <TouchableOpacity style={styles.flex1} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
                 <Text style={styles.ssListText} numberOfLines={2}>{p.text || "(no text)"}</Text>
               </TouchableOpacity>
               <TouchableOpacity testID={`sp-pinned-del-${p.uuid}`} onPress={() => unpin(p.uuid)}>
@@ -681,9 +681,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
                 key={a}
                 testID={`sp-avatar-${a}`}
                 onPress={() => pickAvatar(a)}
-                style={[styles.spAvatarCell, on ? { borderColor: t.accent, backgroundColor: t.accent + "1A" } : { borderColor: t.border }]}
+                style={[styles.spAvatarCell, on ? styles.spAvatarCellOn : null]}
               >
-                <Text style={{ fontSize: 24 }}>{a}</Text>
+                <Text style={styles.spAvatarGlyph}>{a}</Text>
               </TouchableOpacity>
             )
           })}
@@ -694,39 +694,39 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {summary ? (
         renderCard("stats", "info", "Stats", `${compactNumber(summary.userMessages + summary.assistantMessages)} messages`, <>
           <View style={styles.statGrid}>
-            <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} t={t} />
-            <Stat label="You" value={compactNumber(summary.userMessages)} t={t} />
-            <Stat label="Agent" value={compactNumber(summary.assistantMessages)} t={t} />
-            <Stat label="Tokens in" value={compactNumber(summary.totalInput)} t={t} />
-            <Stat label="Tokens out" value={compactNumber(summary.totalOutput)} t={t} />
-            {dur ? <Stat label="Duration" value={dur} t={t} /> : null}
+            <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} />
+            <Stat label="You" value={compactNumber(summary.userMessages)} />
+            <Stat label="Agent" value={compactNumber(summary.assistantMessages)} />
+            <Stat label="Tokens in" value={compactNumber(summary.totalInput)} />
+            <Stat label="Tokens out" value={compactNumber(summary.totalOutput)} />
+            {dur ? <Stat label="Duration" value={dur} /> : null}
           </View>
           {summary.models?.length ? (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 16, marginTop: 4 }}>
+            <View style={styles.spModels}>
               <Text style={styles.sheetHint}>Models observed in transcript (historical)</Text>
               {summary.models.map((m) => (
-                <View key={m} style={[styles.pill, { backgroundColor: t.chipBg, marginLeft: 0 }]}>
-                  <Text style={[styles.pillText, { color: t.text }]}>{shortModel(m)}</Text>
+                <View key={m} style={[styles.pill, styles.spModelPill]}>
+                  <Text style={styles.pillText}>{shortModel(m)}</Text>
                 </View>
               ))}
             </View>
           ) : null}
           {tools.length ? (
-            <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+            <View style={styles.spTools}>
               {tools.map((tool) => (
                 <View key={tool.name} style={styles.toolBarRow}>
-                  <Text style={[styles.toolBarName, { color: t.text }]} numberOfLines={1}>{tool.name}</Text>
-                  <View style={[styles.toolBarTrack, { backgroundColor: t.chipBg }]}>
+                  <Text style={styles.toolBarName} numberOfLines={1}>{tool.name}</Text>
+                  <View style={styles.toolBarTrack}>
                     <View style={[styles.toolBarFill, { width: `${Math.max(4, (tool.count / maxTool) * 100)}%` }]} />
                   </View>
-                  <Text style={[styles.toolBarCount, { color: t.textMuted }]}>{tool.count}</Text>
+                  <Text style={styles.toolBarCount}>{tool.count}</Text>
                 </View>
               ))}
             </View>
           ) : null}
         </>)
       ) : path ? (
-        <View style={{ padding: 16 }}>
+        <View style={styles.spAiBody}>
           <ActivityIndicator size="small" color={t.textMuted} />
         </View>
       ) : null}
@@ -734,12 +734,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   )
 }
 
-function Stat({ label, value, t }: { label: string; value: string; t: { text: string; textMuted: string; chipBg: string } }) {
+function Stat({ label, value }: { label: string; value: string }) {
   const styles = useStyles()
   return (
-    <View style={[styles.statCard, { backgroundColor: t.chipBg }]}>
-      <Text style={[styles.statValue, { color: t.text }]}>{value}</Text>
-      <Text style={[styles.statLabel, { color: t.textMuted }]}>{label}</Text>
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   )
 }

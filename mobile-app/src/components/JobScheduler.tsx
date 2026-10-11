@@ -160,12 +160,12 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
   const previewInterval = mode === "interval" ? (schedule.interval ?? 0) : 0
 
   return (
-    <View style={{ flexShrink: 1 }}>
+    <View style={styles.jobFormWrap}>
       <View style={styles.sheetGrabber} />
       <Text style={styles.sheetTitle}>{isEdit ? "Edit job" : "New job"}</Text>
       <ScrollView
-        style={{ flexShrink: 1 }}
-        contentContainerStyle={{ paddingTop: 10, paddingBottom: 8 }}
+        style={styles.jobScroll}
+        contentContainerStyle={styles.jobScrollContent}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
@@ -181,7 +181,7 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
       />
 
       {/* Mode toggle: interval vs cron */}
-      <Text style={[styles.sheetSection, { marginTop: 12 }]}>SCHEDULE</Text>
+      <Text style={[styles.sheetSection, styles.jobSectionTop]}>SCHEDULE</Text>
       <View style={styles.segRow}>
         {(
           [
@@ -206,25 +206,25 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
 
       {/* ── Interval: free amount + unit ── */}
       {mode === "interval" ? (
-        <View style={{ marginHorizontal: 16, marginTop: 10 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View style={styles.jobFieldGroup}>
+          <View style={styles.jobRow}>
             <TextInput
               testID="job-interval-amount"
-              style={[styles.ssInput, { flex: 1, marginBottom: 0, textAlign: "center", fontSize: 18, fontWeight: "700" }]}
+              style={[styles.ssInput, styles.jobAmountInput]}
               value={amount}
               onChangeText={(x) => setAmount(x.replace(/[^0-9.]/g, ""))}
               keyboardType="decimal-pad"
               placeholder="30"
               placeholderTextColor={t.textMuted}
             />
-            <View style={{ flexDirection: "row", gap: 6 }}>
+            <View style={styles.jobUnitRow}>
               {INTERVAL_UNITS.map((u) => {
                 const active = unit === u.value
                 return (
                   <TouchableOpacity
                     key={u.value}
                     testID={`job-unit-${u.value}`}
-                    style={[styles.seg, { flex: 0, paddingHorizontal: 16 }, active ? styles.segActive : null]}
+                    style={[styles.seg, styles.jobUnitSeg, active ? styles.segActive : null]}
                     onPress={() => setUnit(u.value)}
                   >
                     <Text style={[styles.segText, active ? styles.segTextActive : null]}>{u.label}</Text>
@@ -233,14 +233,14 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
               })}
             </View>
           </View>
-          <Text style={[styles.ssRowHint, { marginTop: 8, maxWidth: undefined }]}>
+          <Text style={[styles.ssRowHint, styles.jobHint]}>
             {describeSchedule({ interval: previewInterval })} · runs on a sliding cadence, min 30s, max 24h.
           </Text>
         </View>
       ) : mode === "once" ? (
         /* ── Once: a single local date + time ── */
-        <View style={{ marginHorizontal: 18, marginTop: 8 }}>
-          <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>RUN ONCE AT</Text>
+        <View style={styles.jobPickerGroup}>
+          <Text style={styles.jobPickerLabel}>RUN ONCE AT</Text>
           <DateTimePicker
             testID="job-once-date"
             value={once}
@@ -258,16 +258,16 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
             minuteInterval={5}
             onChange={(_, d) => { if (d) setOnce(new Date(once.getFullYear(), once.getMonth(), once.getDate(), d.getHours(), d.getMinutes())) }}
             textColor={t.text}
-            style={{ height: 120 }}
+            style={styles.jobTimePicker}
           />
-          <Text style={[styles.ssRowHint, { marginTop: 8, maxWidth: undefined }]}>
+          <Text style={[styles.ssRowHint, styles.jobHint]}>
             {describeSchedule(schedule)} · fires once, then the job retires. A time already past fires on the next tick.
           </Text>
         </View>
       ) : (
         /* ── Cron: kind + time + day pickers ── */
         <>
-          <View style={[styles.segRow, { marginTop: 10, flexWrap: "wrap" }]}>
+          <View style={[styles.segRow, styles.jobKindRow]}>
             {CRON_KINDS.map((k) => {
               const active = kind === k.value
               return (
@@ -284,8 +284,8 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
           </View>
 
           {/* Time-of-day (all cron kinds) */}
-          <View style={{ marginHorizontal: 18, marginTop: 8 }}>
-            <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 4 }}>AT TIME</Text>
+          <View style={styles.jobPickerGroup}>
+            <Text style={styles.jobPickerLabel}>AT TIME</Text>
             <DateTimePicker
               testID="job-time-picker"
               value={time}
@@ -294,15 +294,15 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
               minuteInterval={5}
               onChange={(_, d) => { if (d) setTime(d) }}
               textColor={t.text}
-              style={{ height: 120 }}
+              style={styles.jobTimePicker}
             />
           </View>
 
           {/* Day of week (weekly) */}
           {kind === "weekly" ? (
-            <View style={{ marginHorizontal: 18, marginTop: 8 }}>
-              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>ON DAY</Text>
-              <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+            <View style={styles.jobPickerGroup}>
+              <Text style={styles.jobPickerLabel}>ON DAY</Text>
+              <View style={styles.jobDayRow}>
                 {WEEKDAYS.map((day, i) => {
                   const active = dow === i
                   return (
@@ -322,28 +322,19 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
 
           {/* Day of month (monthly) — 1..28 only, so every month has the day */}
           {kind === "monthly" ? (
-            <View style={{ marginHorizontal: 18, marginTop: 8 }}>
-              <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>ON DAY OF MONTH</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4 }}>
+            <View style={styles.jobPickerGroup}>
+              <Text style={styles.jobPickerLabel}>ON DAY OF MONTH</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.jobDomScrollContent}>
                 {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => {
                   const active = dom === d
                   return (
                     <TouchableOpacity
                       key={d}
                       testID={`job-dom-${d}`}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 18,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: active ? t.accent : t.surface,
-                        borderWidth: active ? 0 : 1,
-                        borderColor: t.border,
-                      }}
+                      style={[styles.jobDomPill, active ? styles.jobDomPillActive : null]}
                       onPress={() => setDom(d)}
                     >
-                      <Text style={{ color: active ? t.onAccent : t.text, fontSize: 13, fontWeight: active ? "700" : "400" }}>
+                      <Text style={[styles.jobDomText, active ? styles.jobDomTextActive : null]}>
                         {d}
                       </Text>
                     </TouchableOpacity>
@@ -360,7 +351,7 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
           it (the preset carries the model). */}
       {providers ? (
         <>
-          <Text style={[styles.sheetSection, { marginTop: 12 }]}>MODEL PROVIDER</Text>
+          <Text style={[styles.sheetSection, styles.jobSectionTop]}>MODEL PROVIDER</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
             {[{ id: "", name: "Inherit session" }, ...providers].map((p) => {
               const active = provider === p.id
@@ -382,17 +373,17 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
       </ScrollView>
 
       {/* Footer: outside the scroll, so it stays on screen above the keyboard. */}
-      <View style={{ marginHorizontal: 18, marginTop: 8, flexDirection: "row", gap: 8 }}>
+      <View style={styles.jobFooter}>
         <TouchableOpacity
           testID="job-cancel"
-          style={[styles.ssAddBtn, { flex: 1, backgroundColor: t.chipBg }]}
+          style={[styles.ssAddBtn, styles.jobCancelBtn]}
           onPress={onClose}
         >
-          <Text style={[styles.ssAddBtnText, { color: t.text }]}>Cancel</Text>
+          <Text style={[styles.ssAddBtnText, styles.jobCancelText]}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity
           testID="job-add"
-          style={[styles.ssAddBtn, { flex: 1, opacity: prompt.trim() ? 1 : 0.5 }]}
+          style={[styles.ssAddBtn, styles.jobAddBtn, prompt.trim() ? null : styles.dimmed]}
           disabled={!prompt.trim()}
           onPress={submit}
         >

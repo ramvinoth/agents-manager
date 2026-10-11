@@ -60,21 +60,21 @@ export default function MapScreen({ navigation, route }: Props) {
 
   const trail = crumbs(at, title)
   return (
-    <ScrollView style={styles.page} contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 40 }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: "center", gap: 4 }}>
+    <ScrollView style={styles.page} contentContainerStyle={styles.mapContent}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mapCrumbs}>
         {trail.map((c, i) => {
           const last = i === trail.length - 1
           return (
-            <View key={c.level + c.path} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <View key={c.level + c.path} style={styles.mapCrumb}>
               {i > 0 ? <Icon name="chevronRight" size={12} color={t.textMuted} /> : null}
               <Pressable
                 testID={`map-crumb-${i}`}
                 disabled={last}
                 accessibilityRole="button"
                 onPress={() => setAt({ level: c.level, path: c.path })}
-                style={{ paddingVertical: 6, paddingHorizontal: 4, minHeight: 32, justifyContent: "center" }}
+                style={styles.mapCrumbBtn}
               >
-                <Text style={{ color: last ? t.text : t.accent, fontWeight: "600", fontSize: 14 }}>{c.label}</Text>
+                <Text style={[styles.mapCrumbText, last ? styles.mapCrumbTextLast : null]}>{c.label}</Text>
               </Pressable>
             </View>
           )
@@ -82,34 +82,34 @@ export default function MapScreen({ navigation, route }: Props) {
       </ScrollView>
 
       {error ? (
-        <View testID="map-error" style={{ padding: 12, borderRadius: 10, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, gap: 8 }}>
-          <Text style={{ color: t.text, fontSize: 14 }}>{error}</Text>
+        <View testID="map-error" style={styles.mapErrorBox}>
+          <Text style={styles.mapBody}>{error}</Text>
           <Pressable accessibilityRole="button" onPress={() => void load()}>
-            <Text style={{ color: t.accent, fontWeight: "600", fontSize: 14 }}>Try again</Text>
+            <Text style={styles.mapLink}>Try again</Text>
           </Pressable>
         </View>
       ) : !view ? (
-        <View style={{ padding: 32, alignItems: "center", gap: 8 }}>
+        <View style={styles.mapLoading}>
           <ActivityIndicator accessibilityLabel="Reading the code" />
-          <Text style={{ color: t.textMuted, fontSize: 13 }}>Reading the code… a big project's first map takes a few seconds.</Text>
+          <Text style={styles.mapHint}>Reading the code… a big project's first map takes a few seconds.</Text>
         </View>
       ) : !view.available ? (
-        <View testID="map-install" style={{ padding: 12, gap: 6 }}>
-          <Text style={{ color: t.text, fontWeight: "600", fontSize: 15 }}>The code map isn't installed on the server.</Text>
-          <Text style={{ color: t.textMuted, fontSize: 13 }}>Install it once on the machine running Harman, then reopen the map:</Text>
-          <Text selectable style={{ color: t.codeText, backgroundColor: t.codeBg, padding: 8, borderRadius: 6, fontSize: 12 }}>{view.install}</Text>
+        <View testID="map-install" style={styles.mapInstall}>
+          <Text style={styles.mapInstallTitle}>The code map isn't installed on the server.</Text>
+          <Text style={styles.mapHint}>Install it once on the machine running Harman, then reopen the map:</Text>
+          <Text selectable style={styles.mapCode}>{view.install}</Text>
         </View>
       ) : (
         <>
-          <Text style={{ color: t.textMuted, fontSize: 12 }}>
+          <Text style={styles.mapMeta}>
             {view.files} files mapped{view.truncated ? " · showing the most connected" : ""} · highlighted = an agent wrote it in the last 15 min
           </Text>
           {view.nodes.length ? (
             <MermaidView source={view.mermaid} dark={isDarkBg(t.bg)} textColor={t.text} />
           ) : (
-            <Text style={{ color: t.textMuted, fontStyle: "italic" }}>No source files here the map can read.</Text>
+            <Text style={styles.emptyItalic}>No source files here the map can read.</Text>
           )}
-          <View style={{ borderRadius: 10, borderWidth: 1, borderColor: t.border, overflow: "hidden" }}>
+          <View style={styles.mapList}>
             {view.nodes.map((n, i) => {
               const next = drillTarget(n)
               const here = view.level === "file" && n.id === view.path
@@ -121,18 +121,14 @@ export default function MapScreen({ navigation, route }: Props) {
                   accessibilityRole={next && !here ? "button" : undefined}
                   accessibilityLabel={`${n.label}${n.touched ? ", an agent edited this" : ""}`}
                   onPress={() => next && setAt(next)}
-                  style={{
-                    flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, paddingHorizontal: 12,
-                    borderTopWidth: i ? 1 : 0, borderColor: t.border,
-                    backgroundColor: n.touched ? t.attentionBg : t.surface,
-                  }}
+                  style={[styles.mapRow, i ? styles.mapRowDivided : null, n.touched ? styles.mapRowTouched : null]}
                 >
                   <Icon name={ICONS[n.kind]} size={16} color={t.textMuted} />
-                  <Text style={{ flex: 1, color: t.text, fontSize: 14 }} numberOfLines={1}>{n.label}</Text>
-                  <Text style={{ color: t.textMuted, fontSize: 12 }}>
+                  <Text style={[styles.mapBody, styles.flex1]} numberOfLines={1}>{n.label}</Text>
+                  <Text style={styles.mapMeta}>
                     {n.kind === "folder" ? n.files : n.line ? `:${n.line}` : n.symbols || ""}
                   </Text>
-                  {n.touched ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: t.warning }} /> : null}
+                  {n.touched ? <View style={styles.mapDot} /> : null}
                   {next && !here ? <Icon name="chevronRight" size={14} color={t.textMuted} /> : null}
                 </Pressable>
               )

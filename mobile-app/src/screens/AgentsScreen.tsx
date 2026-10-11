@@ -85,7 +85,7 @@ export default function AgentsScreen({ navigation }: Props) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 8, gap: 6 }}
+        contentContainerStyle={styles.agCats}
       >
         {CATEGORIES.map((c) => {
           const active = category === c.value
@@ -97,39 +97,12 @@ export default function AgentsScreen({ navigation }: Props) {
             <TouchableOpacity
               key={c.value}
               testID={`agents-cat-${c.value}`}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 4,
-                paddingHorizontal: 12,
-                paddingVertical: 5,
-                borderRadius: 14,
-                backgroundColor: active ? catColor : t.bg,
-                borderWidth: 1,
-                borderColor: active ? catColor : t.border,
-              }}
+              style={[styles.agCat, active ? { backgroundColor: catColor, borderColor: catColor } : null]}
               onPress={() => setCategory(c.value)}
             >
-              <Text
-                style={{
-                  fontSize: 13,
-                  fontWeight: "600",
-                  color: active ? t.onAccent : t.textMuted,
-                }}
-              >
-                {c.label}
-              </Text>
+              <Text style={[styles.agCatText, active ? styles.agCatTextActive : null]}>{c.label}</Text>
               {count > 0 ? (
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: "700",
-                    color: active ? "rgba(255,255,255,0.8)" : t.textMuted,
-                    opacity: active ? 1 : 0.5,
-                  }}
-                >
-                  {count}
-                </Text>
+                <Text style={[styles.agCatCount, active ? styles.agCatCountActive : null]}>{count}</Text>
               ) : null}
             </TouchableOpacity>
           )
@@ -142,17 +115,17 @@ export default function AgentsScreen({ navigation }: Props) {
         keyExtractor={(item) => String(item.id)}
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={error ? (
-          <View testID="agents-error" style={{ margin: 12, padding: 12, borderRadius: 10, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, gap: 8 }}>
-            <Text style={{ color: t.text, fontSize: 14 }}>{error}</Text>
+          <View testID="agents-error" style={styles.mapErrorBox}>
+            <Text style={styles.mapBody}>{error}</Text>
             <TouchableOpacity testID="agents-retry" onPress={() => load()} accessibilityRole="button">
-              <Text style={{ color: t.accent, fontSize: 14, fontWeight: "600" }}>Try again</Text>
+              <Text style={styles.mapLink}>Try again</Text>
             </TouchableOpacity>
           </View>
         ) : null}
         ListEmptyComponent={templates === null && !error ? (
-          <View style={{ padding: 32 }}><ActivityIndicator accessibilityLabel="Loading agents" /></View>
+          <View style={styles.audLoading}><ActivityIndicator accessibilityLabel="Loading agents" /></View>
         ) : null}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={styles.calListContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -161,28 +134,9 @@ export default function AgentsScreen({ navigation }: Props) {
           />
         }
         renderSectionHeader={({ section }) => (
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              paddingHorizontal: 20,
-              paddingTop: 18,
-              paddingBottom: 4,
-            }}
-          >
-            <View style={{ width: 3, height: 14, borderRadius: 1.5, backgroundColor: section.color }} />
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: "700",
-                color: t.textMuted,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-              }}
-            >
-              {section.title}
-            </Text>
+          <View style={styles.agSection}>
+            <View style={[styles.agSectionBar, { backgroundColor: section.color }]} />
+            <Text style={styles.agSectionTitle}>{section.title}</Text>
           </View>
         )}
         renderItem={({ item: tmpl }) => {
@@ -191,47 +145,26 @@ export default function AgentsScreen({ navigation }: Props) {
           return (
             <TouchableOpacity
               testID={`agent-${tmpl.id}`}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 12,
-                marginHorizontal: 12,
-                marginTop: 6,
-                paddingHorizontal: 12,
-                paddingVertical: 12,
-                borderRadius: 12,
-                backgroundColor: t.surface,
-                borderWidth: 1,
-                borderColor: t.border,
-              }}
+              style={styles.agCard}
               activeOpacity={0.65}
               onPress={() => pickTemplate(tmpl)}
             >
               {/* Icon */}
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 10,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: catColor + "18",
-                }}
-              >
+              <View style={[styles.agIcon, { backgroundColor: catColor + "18" }]}>
                 <Icon name={iconName} size={20} color={catColor} />
               </View>
 
               {/* Title + description + badges */}
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex1}>
                 <Text
-                  style={{ fontSize: 14, fontWeight: "700", color: t.text }}
+                  style={styles.agName}
                   numberOfLines={1}
                 >
                   {tmpl.name}
                 </Text>
                 {tmpl.description ? (
                   <Text
-                    style={{ fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 16 }}
+                    style={styles.agDesc}
                     numberOfLines={2}
                   >
                     {tmpl.description}
@@ -241,25 +174,25 @@ export default function AgentsScreen({ navigation }: Props) {
                     started from this agent may do on the board ("from the agent
                     it was started from" in the chat's Trust settings). */}
                 {(tmpl.level || tmpl.model || tmpl.jobs?.length) ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <View style={styles.agBadges}>
                     {tmpl.level ? (
-                      <View testID={`agent-level-${tmpl.id}`} style={{ backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-                        <Text style={{ fontSize: 10, fontWeight: "700", color: t.textMuted }}>
+                      <View testID={`agent-level-${tmpl.id}`} style={styles.agBadge}>
+                        <Text style={styles.agBadgeText}>
                           {LEVEL_NAME[tmpl.level]}
                         </Text>
                       </View>
                     ) : null}
                     {tmpl.model ? (
-                      <View style={{ backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-                        <Text style={{ fontSize: 10, fontWeight: "700", color: t.textMuted, textTransform: "capitalize" }}>
+                      <View style={styles.agBadge}>
+                        <Text style={[styles.agBadgeText, styles.agCapitalize]}>
                           {tmpl.model}
                         </Text>
                       </View>
                     ) : null}
                     {tmpl.jobs?.length ? (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+                      <View style={styles.agJobs}>
                         <Icon name="repeat" size={10} color={t.textMuted} />
-                        <Text style={{ fontSize: 10, color: t.textMuted }}>
+                        <Text style={styles.agJobsText}>
                           {tmpl.jobs.length === 1 ? "1 scheduled job" : `${tmpl.jobs.length} scheduled jobs`}
                         </Text>
                       </View>

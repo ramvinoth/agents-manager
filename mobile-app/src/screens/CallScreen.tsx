@@ -22,6 +22,7 @@ import { useAssistantTurn } from "../lib/useAssistantTurn"
 import { stopSpeaking } from "../lib/voice"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Call">
 
@@ -34,6 +35,7 @@ function fmtElapsed(sec: number): string {
 
 export default function CallScreen({ route, navigation }: Props) {
   const { path, label } = route.params
+  const styles = useStyles()
   const t = useTheme()
   const insets = useSafeAreaInsets()
   // Barge-in "Harman, end the call" reaches hangUp via this ref (hangUp is defined
@@ -117,74 +119,63 @@ export default function CallScreen({ route, navigation }: Props) {
     : t.success
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32, alignItems: "center", justifyContent: "space-between" }}>
+    <View style={[styles.callPage, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 }]}>
       {/* Caller identity + live status. */}
-      <View style={{ alignItems: "center", gap: 10, paddingHorizontal: 24 }}>
-        <View
-          style={{
-            width: 112, height: 112, borderRadius: 56, backgroundColor: t.surface,
-            alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: t.accent, marginBottom: 8,
-          }}
-        >
+      <View style={styles.callIdentity}>
+        <View style={styles.callAvatar}>
           <Icon name="sparkle" size={48} color={t.accent} />
         </View>
-        <Text style={{ color: t.text, fontSize: 24, fontWeight: "700" }}>Harman</Text>
-        <Text style={{ color: t.textMuted, fontSize: 14 }} numberOfLines={1}>{label}</Text>
+        <Text style={styles.callName}>Harman</Text>
+        <Text style={styles.callLabel} numberOfLines={1}>{label}</Text>
         {/* The server's own name for what is answering — so a tester can tell a
             Nemotron call from the STT/brain/TTS path without guessing. */}
         {engine ? (
-          <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
+          <Text style={styles.callCaption} numberOfLines={1}>
             {engine === "nemotron" ? `Voice: ${model || "Nemotron"}` : `Brain: ${model || "call brain"}`}
           </Text>
         ) : null}
-        <Text style={{ color: t.textMuted, fontSize: 13, marginTop: 2 }}>{fmtElapsed(elapsed)}</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 }}>
-          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dotColor }} />
-          <Text style={{ color: t.text, fontSize: 16 }}>{statusLine}</Text>
+        <Text style={styles.callElapsed}>{fmtElapsed(elapsed)}</Text>
+        <View style={styles.callStatus}>
+          <View style={[styles.callDot, { backgroundColor: dotColor }]} />
+          <Text style={styles.callStatusText}>{statusLine}</Text>
         </View>
         {/* The exchange in text, so a glance confirms what was heard and said. */}
         {heard ? (
-          <Text style={{ color: t.textMuted, fontSize: 14, textAlign: "center", marginTop: 12, maxWidth: 320 }} numberOfLines={2}>
+          <Text style={styles.callHeard} numberOfLines={2}>
             You: {heard}
           </Text>
         ) : null}
         {reply ? (
-          <Text style={{ color: t.text, fontSize: 14, textAlign: "center", marginTop: 4, maxWidth: 320 }} numberOfLines={4}>
+          <Text style={styles.callReply} numberOfLines={4}>
             {reply}
           </Text>
         ) : null}
         {error ? (
-          <Text style={{ color: t.danger, fontSize: 13, textAlign: "center", marginTop: 8, maxWidth: 300 }}>{error}</Text>
+          <Text style={styles.callError}>{error}</Text>
         ) : null}
       </View>
 
       {/* Call controls: Mute + big red End (mirror the CallKit / lock-screen UI). */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 48 }}>
-        <View style={{ alignItems: "center", gap: 8 }}>
+      <View style={styles.callControls}>
+        <View style={styles.callControl}>
           <Pressable
             testID="call-mute"
             onPress={toggleMute}
-            style={{
-              width: 68, height: 68, borderRadius: 34, alignItems: "center", justifyContent: "center",
-              backgroundColor: muted ? t.accent : t.surface, borderWidth: 1, borderColor: t.border,
-            }}
+            style={[styles.callBtn, styles.callMute, muted ? styles.callMuteOn : null]}
           >
             <Icon name={muted ? "micOff" : "mic"} size={28} color={muted ? t.onAccent : t.text} />
           </Pressable>
-          <Text style={{ color: t.textMuted, fontSize: 12 }}>{muted ? "Unmute" : "Mute"}</Text>
+          <Text style={styles.callCaption}>{muted ? "Unmute" : "Mute"}</Text>
         </View>
-        <View style={{ alignItems: "center", gap: 8 }}>
+        <View style={styles.callControl}>
           <Pressable
             testID="call-end"
             onPress={hangUp}
-            style={{
-              width: 68, height: 68, borderRadius: 34, alignItems: "center", justifyContent: "center",
-              backgroundColor: t.danger,
-            }}
+            style={[styles.callBtn, styles.callEnd]}
           >
             <Icon name="phone" size={28} color={t.onAccent} />
           </Pressable>
-          <Text style={{ color: t.textMuted, fontSize: 12 }}>End</Text>
+          <Text style={styles.callCaption}>End</Text>
         </View>
       </View>
     </View>

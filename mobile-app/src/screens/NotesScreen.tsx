@@ -211,12 +211,12 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
 
   return (
     <View style={styles.page}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8 }}>
-        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: t.chipBg, borderRadius: 10, paddingHorizontal: 10 }}>
+      <View style={styles.notesBar}>
+        <View style={styles.notesSearch}>
           <Icon name="search" size={16} color={t.textMuted} />
           <TextInput
             testID="notes-search"
-            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 8, color: t.text, fontSize: 15 }}
+            style={styles.notesSearchInput}
             placeholder="Search notes"
             placeholderTextColor={t.textMuted}
             value={query}
@@ -243,8 +243,8 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
           data={tagChips}
           keyExtractor={([tg]) => tg}
           showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0 }}
-          contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingBottom: 8 }}
+          style={styles.notesTags}
+          contentContainerStyle={styles.notesTagsContent}
           renderItem={({ item: [tg, n] }) => {
             const on = tags.includes(tg)
             return (
@@ -258,30 +258,30 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
       ) : null}
 
       {exportingNote ? (
-        <View testID="notes-exporting" style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 16, paddingBottom: 8 }}>
+        <View testID="notes-exporting" style={styles.notesExporting}>
           <ActivityIndicator size="small" color={t.accent} />
-          <Text style={{ color: t.textMuted, fontSize: 13 }}>{exportingNote}</Text>
+          <Text style={styles.notesHint}>{exportingNote}</Text>
         </View>
       ) : null}
       {error || actionError ? <Text testID="notes-error" accessibilityLiveRegion="polite" style={styles.errorBanner}>{error || actionError}</Text> : null}
 
       {loading && !notes.length ? (
-        <ActivityIndicator style={{ marginTop: 32 }} color={t.accent} />
+        <ActivityIndicator style={styles.notesLoading} color={t.accent} />
       ) : (
         <FlatList
           testID="notes-list"
           data={rows}
           keyExtractor={(r) => (r.kind === "note" ? String(r.n.id) : `group-${r.key}`)}
           refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
-          contentContainerStyle={{ paddingBottom: 24 }}
+          contentContainerStyle={styles.notesListContent}
           ListEmptyComponent={
-            <View style={{ alignItems: "center", paddingTop: 60, paddingHorizontal: 32 }}>
+            <View style={styles.notesEmpty}>
               <Icon name="book" size={36} color={t.textMuted} />
-              <Text style={{ color: t.text, fontWeight: "600", fontSize: 16, marginTop: 12 }}>
+              <Text style={styles.notesEmptyTitle}>
                 {showArchived ? "Nothing archived" : query || tags.length ? "No matches" : "No notes yet"}
               </Text>
               {!showArchived && !query && !tags.length ? (
-                <Text style={{ color: t.textMuted, textAlign: "center", marginTop: 6 }}>
+                <Text style={styles.notesEmptyHint}>
                   Tap + for a blank note, a journal entry, meeting notes or a checklist. Link notes with [[Title]] and group them with #tags. Agents in your chats can write here too.
                 </Text>
               ) : null}
@@ -317,17 +317,17 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
                 onPress={() => navigation.navigate("NoteEditor", { id: n.id })}
                 onLongPress={() => noteActions(n)}
                 accessibilityHint="Long press for export, archive and delete"
-                style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: t.border }}
+                style={styles.notesRow}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <View style={styles.notesRowHead}>
                   {n.pinned ? <Icon name="pin" size={13} color={t.accent} /> : null}
-                  <Text style={{ flex: 1, color: t.text, fontWeight: "600", fontSize: 16 }} numberOfLines={1}>{displayTitle(n)}</Text>
-                  <Text style={{ color: t.textMuted, fontSize: 12 }}>{fmtWaiting(Math.max(0, Date.now() / 1000 - n.updated_at))}</Text>
+                  <Text style={styles.notesRowTitle} numberOfLines={1}>{displayTitle(n)}</Text>
+                  <Text style={styles.notesMeta}>{fmtWaiting(Math.max(0, Date.now() / 1000 - n.updated_at))}</Text>
                 </View>
                 {previewLine(n) ? (
-                  <Text style={{ color: t.textMuted, fontSize: 14, marginTop: 2 }} numberOfLines={2}>{previewLine(n)}</Text>
+                  <Text style={styles.notesPreview} numberOfLines={2}>{previewLine(n)}</Text>
                 ) : null}
-                <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 4 }}>
+                <Text style={[styles.notesMeta, styles.notesByline]}>
                   {KIND_LABEL[n.kind] || "Note"} · {who.kind === "you" ? "you" : who.kind === "agent" ? `agent ${who.name}` : who.name}
                   {n.replies ? ` · ${n.replies} repl${n.replies === 1 ? "y" : "ies"}` : ""}
                 </Text>
@@ -341,9 +341,9 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
         <Text style={styles.sheetTitle}>New note</Text>
         {templates.map((tp) => (
           <TouchableOpacity key={tp.kind} testID={`note-template-${tp.kind}`} onPress={() => create(tp.kind, tp.body)}
-            style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
-            <Text style={{ color: t.text, fontSize: 16, fontWeight: "600" }}>{tp.label}</Text>
-            <Text style={{ color: t.textMuted, fontSize: 13 }}>{tp.hint}</Text>
+            style={styles.notesTemplate}>
+            <Text style={styles.notesTemplateLabel}>{tp.label}</Text>
+            <Text style={styles.notesHint}>{tp.hint}</Text>
           </TouchableOpacity>
         ))}
       </SheetModal>

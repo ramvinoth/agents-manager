@@ -96,7 +96,7 @@ export default function MarketplaceSheet({ kind, cwd, onClose, onInstalled }: {
                       <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{item.title}</Text>
                       <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{item.description}</Text>
                     </View>
-                    <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{installNote(kind, item)}</Text>
+                    <Text style={styles.capBadge}>{installNote(kind, item)}</Text>
                   </TouchableOpacity>
                 )}
               />

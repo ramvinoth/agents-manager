@@ -101,7 +101,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
                   <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>/{s.name}</Text>
                   {s.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{s.description}</Text> : null}
                 </View>
-                <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{s.source}</Text>
+                <Text style={styles.capBadge}>{s.source}</Text>
               </TouchableOpacity>
             )) : <Text style={styles.capEmpty}>No skills yet. Write one, or pull one from the Marketplace.</Text>
           ) : (
@@ -112,7 +112,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
                   <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{m.name}</Text>
                   <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={1}>{m.transport}{m.target ? ` · ${m.target}` : ""}</Text>
                 </View>
-                <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{m.scope}</Text>
+                <Text style={styles.capBadge}>{m.scope}</Text>
               </TouchableOpacity>
             )) : <Text style={styles.capEmpty}>No MCP tools yet. Add one by hand, or pull one from the Marketplace.</Text>
           )}

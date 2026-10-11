@@ -175,7 +175,7 @@ export function SkillEditor({
           autoCapitalize="none"
         />
         {skill ? (
-          <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{skill.source}</Text>
+          <Text style={styles.capBadge}>{skill.source}</Text>
         ) : (
           <ScopePicker value={scope} opts={["user", "project"]} onPick={(v) => setScope(v as "user" | "project")} />
         )}
@@ -269,7 +269,7 @@ export function McpEditor({
           autoCapitalize="none"
         />
         {server ? (
-          <Text style={[styles.capBadge, { color: t.textMuted, borderColor: t.border }]}>{server.scope}</Text>
+          <Text style={styles.capBadge}>{server.scope}</Text>
         ) : (
           <ScopePicker value={scope} opts={["project", "global"]} onPick={setScope} />
         )}

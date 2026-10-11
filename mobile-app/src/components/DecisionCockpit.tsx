@@ -235,10 +235,10 @@ export default function DecisionCockpit({
     // Everything got resolved while open (or an empty snapshot slipped through).
     return (
       <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-        <SafeAreaView testID="decision-cockpit" style={{ flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center", gap: 12 }}>
+        <SafeAreaView testID="decision-cockpit" style={styles.dcCaughtUp}>
           <Icon name="check" size={28} color={t.accent} />
-          <Text style={{ color: t.text, fontWeight: "700" }}>All caught up</Text>
-          <TouchableOpacity testID="cockpit-done" onPress={onClose} style={[styles.permAllow, { marginLeft: 0 }]}>
+          <Text style={styles.dcCaughtUpText}>All caught up</Text>
+          <TouchableOpacity testID="cockpit-done" onPress={onClose} style={[styles.permAllow, styles.dcDoneBtn]}>
             <Text style={styles.permAllowText}>Done</Text>
           </TouchableOpacity>
         </SafeAreaView>
@@ -250,30 +250,30 @@ export default function DecisionCockpit({
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <SafeAreaView testID="decision-cockpit" style={styles.page}>
         {/* Header: who is asking, what kind, how long they've waited, close. */}
-        <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 10, borderBottomWidth: 1, borderBottomColor: t.border }}>
+        <View style={styles.dcHeader}>
           <Icon name={KIND_ICON[d.kind] || "help"} size={18} color={t.accent} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: t.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
+          <View style={styles.flex1}>
+            <Text style={styles.dcWho} numberOfLines={1}>
               {who}
               {d.host !== "local" ? ` · ${d.host}` : ""}
             </Text>
-            <Text style={{ color: t.textMuted, fontSize: 12 }} numberOfLines={1}>
+            <Text style={styles.dcSub} numberOfLines={1}>
               {KIND_LABEL[d.kind]} · waited {fmtWaiting(d.waiting_s)}
             </Text>
           </View>
-          <Text testID="cockpit-count" style={{ color: t.textMuted, fontSize: 12, flexShrink: 0 }}>
+          <Text testID="cockpit-count" style={styles.dcCount}>
             {openCount} open
           </Text>
-          <TouchableOpacity testID="cockpit-close" onPress={onClose} disabled={busy} style={{ padding: 6 }}>
+          <TouchableOpacity testID="cockpit-close" onPress={onClose} disabled={busy} style={styles.dcCloseBtn}>
             <Icon name="close" size={20} color={t.textMuted} />
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, gap: 10 }} keyboardShouldPersistTaps="handled">
+        <ScrollView style={styles.flex1} contentContainerStyle={styles.dcScrollContent} keyboardShouldPersistTaps="handled">
           {/* The index's one-line summary is the cold-reader headline — always
               shown, even before the full content loads, so the reader has
               context immediately. */}
-          <Text style={{ color: t.text, fontSize: 15, lineHeight: 21 }}>{d.summary || "(no summary)"}</Text>
+          <Text style={styles.dcSummary}>{d.summary || "(no summary)"}</Text>
 
           {loading ? <ActivityIndicator color={t.accent} /> : null}
           {loadError ? (
@@ -347,8 +347,8 @@ export default function DecisionCockpit({
               go see the whole conversation before deciding. Leaves the item
               open (it resurfaces). */}
           {d.kind !== "card" && d.session ? (
-            <TouchableOpacity testID="cockpit-open-chat" onPress={() => onOpenThread(d)} style={{ padding: 12, alignItems: "center" }}>
-              <Text style={{ color: t.accent, fontWeight: "600" }}>Open chat to see the full thread</Text>
+            <TouchableOpacity testID="cockpit-open-chat" onPress={() => onOpenThread(d)} style={styles.dcOpenChat}>
+              <Text style={styles.dcOpenChatText}>Open chat to see the full thread</Text>
             </TouchableOpacity>
           ) : null}
         </ScrollView>
@@ -357,20 +357,20 @@ export default function DecisionCockpit({
             it comes back next tick; Postpone snoozes it (hidden everywhere until
             the snooze lapses); ‹ › browse without acting, no wrap. An item with
             no inbox row cannot be snoozed — only skipped. */}
-        <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 10, borderTopWidth: 1, borderTopColor: t.border }}>
-          <TouchableOpacity testID="cockpit-prev" onPress={() => step(-1)} disabled={busy} style={[styles.permDeny, { marginLeft: 0, flexDirection: "row", alignItems: "center", gap: 4 }]}>
+        <View style={styles.dcFooter}>
+          <TouchableOpacity testID="cockpit-prev" onPress={() => step(-1)} disabled={busy} style={[styles.permDeny, styles.dcNavBtn]}>
             <Icon name="chevronLeft" size={16} color={t.text} />
             <Text style={styles.permDenyText}>Prev</Text>
           </TouchableOpacity>
-          <TouchableOpacity testID="cockpit-skip" onPress={skip} disabled={busy} style={[styles.permDeny, { flex: 1, marginLeft: 0, alignItems: "center" }]}>
+          <TouchableOpacity testID="cockpit-skip" onPress={skip} disabled={busy} style={[styles.permDeny, styles.dcSkipBtn]}>
             <Text style={styles.permDenyText}>Skip</Text>
           </TouchableOpacity>
           {d.inbox_id ? (
-            <TouchableOpacity testID="cockpit-postpone" onPress={() => setPostponing(true)} disabled={busy} style={[styles.permDeny, { flex: 1, marginLeft: 0, alignItems: "center" }]}>
+            <TouchableOpacity testID="cockpit-postpone" onPress={() => setPostponing(true)} disabled={busy} style={[styles.permDeny, styles.dcSkipBtn]}>
               <Text style={styles.permDenyText}>Postpone</Text>
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity testID="cockpit-next" onPress={() => step(1)} disabled={busy} style={[styles.permDeny, { marginLeft: 0, flexDirection: "row", alignItems: "center", gap: 4 }]}>
+          <TouchableOpacity testID="cockpit-next" onPress={() => step(1)} disabled={busy} style={[styles.permDeny, styles.dcNavBtn]}>
             <Text style={styles.permDenyText}>Next</Text>
             <Icon name="chevronRight" size={16} color={t.text} />
           </TouchableOpacity>
@@ -380,11 +380,11 @@ export default function DecisionCockpit({
           <Text style={styles.sheetTitle}>Postpone — bring it back in</Text>
           {SNOOZE_OPTIONS.map((o) => (
             <TouchableOpacity key={o.hours} testID={`cockpit-postpone-${o.hours}`} onPress={() => postpone(o.hours)}
-              style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
-              <Text style={{ color: t.text, fontSize: 16, fontWeight: "600" }}>{o.label}</Text>
+              style={styles.dcSnoozeItem}>
+              <Text style={styles.dcSnoozeLabel}>{o.label}</Text>
             </TouchableOpacity>
           ))}
-          <Text style={{ color: t.textMuted, fontSize: 13, paddingHorizontal: 18, paddingBottom: 8 }}>
+          <Text style={styles.dcSnoozeHint}>
             Hidden from the Inbox and the board until then — never dropped.
           </Text>
         </SheetModal>

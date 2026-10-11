@@ -61,7 +61,7 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
     headerLeft: undefined,
     headerRight: account?.edit
       ? () => (
-        <TouchableOpacity testID="calendar-add" accessibilityLabel="New event" onPress={() => setDraft(newDraft(new Date()))} hitSlop={8} style={{ padding: 4 }}>
+        <TouchableOpacity testID="calendar-add" accessibilityLabel="New event" onPress={() => setDraft(newDraft(new Date()))} hitSlop={8} style={styles.calHeaderBtn}>
           <Icon name="plus" size={24} color={t.accent} />
         </TouchableOpacity>
       )
@@ -97,15 +97,14 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
   }
 
   const toIntegrations = () => navigation.navigate("Integrations")
-  const link = { color: t.accent, fontSize: 14, fontWeight: "600" as const }
 
   if (accounts === null) {
     return (
-      <View style={{ flex: 1, backgroundColor: t.bg, padding: 18 }}>
+      <View style={styles.calLoading}>
         {error ? (
           <>
             <Text testID="calendar-error" style={styles.error}>{error}</Text>
-            <TouchableOpacity onPress={load} style={{ marginTop: 12 }}><Text style={link}>Try again</Text></TouchableOpacity>
+            <TouchableOpacity onPress={load} style={styles.calRetry}><Text style={styles.calLink}>Try again</Text></TouchableOpacity>
           </>
         ) : <ActivityIndicator />}
       </View>
@@ -114,10 +113,10 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
 
   if (!account) {
     return (
-      <View testID="calendar-empty" style={{ flex: 1, backgroundColor: t.bg, padding: 24, alignItems: "center", justifyContent: "center", gap: 12 }}>
+      <View testID="calendar-empty" style={styles.calEmpty}>
         <Icon name="clock" size={40} color={t.textMuted} />
-        <Text style={[styles.sheetTitle, { textAlign: "center" }]}>No calendar connected</Text>
-        <Text style={[styles.ssRowHint, { textAlign: "center", maxWidth: 300 }]}>
+        <Text style={[styles.sheetTitle, styles.textCenter]}>No calendar connected</Text>
+        <Text style={[styles.ssRowHint, styles.calEmptyHint]}>
           Connect Google Calendar so you and your agents can see your day and plan around it.
         </Text>
         <TouchableOpacity testID="calendar-connect" onPress={toIntegrations} style={styles.ssAddBtn}>
@@ -130,7 +129,7 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
   return (
     <View style={styles.page}>
       {accounts.length > 1 ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 18, paddingTop: 10 }}>
+        <View style={styles.calAccounts}>
           {accounts.map((a) => (
             <TouchableOpacity key={a.id} testID={`calendar-account-${a.id}`} onPress={() => setPicked(a.id)}
               style={[styles.filterChip, a.id === account.id && styles.filterChipActive]}>
@@ -140,32 +139,32 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
         </View>
       ) : null}
       {!account.edit ? (
-        <TouchableOpacity testID="calendar-allow-edit" onPress={toIntegrations} style={{ paddingHorizontal: 18, paddingTop: 10 }}>
-          <Text style={styles.ssRowHint}>Read-only. <Text style={{ color: t.accent, fontWeight: "600" }}>Allow editing in Integrations</Text></Text>
+        <TouchableOpacity testID="calendar-allow-edit" onPress={toIntegrations} style={styles.calReadOnly}>
+          <Text style={styles.ssRowHint}>Read-only. <Text style={styles.calInlineLink}>Allow editing in Integrations</Text></Text>
         </TouchableOpacity>
       ) : null}
-      {error ? <Text testID="calendar-error" style={[styles.error, { paddingHorizontal: 18, marginTop: 10 }]}>{error}</Text> : null}
+      {error ? <Text testID="calendar-error" style={[styles.error, styles.calError]}>{error}</Text> : null}
       <SectionList
         testID="calendar-list"
         sections={sections}
         keyExtractor={(e) => e.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={styles.calListContent}
         stickySectionHeadersEnabled
         renderSectionHeader={({ section }) => (
-          <Text style={[styles.sheetSection, { backgroundColor: t.bg, marginTop: 0, paddingTop: 14, paddingBottom: 6 }]}>{section.title.toUpperCase()}</Text>
+          <Text style={[styles.sheetSection, styles.calSectionHeader]}>{section.title.toUpperCase()}</Text>
         )}
         renderItem={({ item }) => (
-          <TouchableOpacity testID={`event-${item.id}`} onPress={() => setDraft(draftOf(item))} style={{ flexDirection: "row", paddingHorizontal: 18, paddingVertical: 10, gap: 12 }}>
-            <View style={{ width: 4, borderRadius: 2, backgroundColor: item.all_day ? t.textMuted : t.accent }} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.ssRowLabel, { fontSize: 15 }]} numberOfLines={2}>{item.title}</Text>
+          <TouchableOpacity testID={`event-${item.id}`} onPress={() => setDraft(draftOf(item))} style={styles.calRow}>
+            <View style={[styles.calBar, item.all_day ? styles.calBarAllDay : null]} />
+            <View style={styles.flex1}>
+              <Text style={[styles.ssRowLabel, styles.calEventTitle]} numberOfLines={2}>{item.title}</Text>
               <Text style={styles.ssRowHint}>{timeLabel(item)}{item.location ? ` · ${item.location}` : ""}</Text>
             </View>
           </TouchableOpacity>
         )}
         ListEmptyComponent={loading ? null : (
-          <Text testID="calendar-none" style={[styles.ssRowHint, { textAlign: "center", marginTop: 40, maxWidth: undefined }]}>
+          <Text testID="calendar-none" style={[styles.ssRowHint, styles.calNone]}>
             Nothing in the next {DAYS} days.
           </Text>
         )}
@@ -214,43 +213,42 @@ function EventSheet({ draft, editable, event, onClose, onSave, onDelete }: {
     setError("")
     try { await onSave(d!) } catch (e) { setError(userError(e, "this event")) } finally { setSaving(false) }
   }
-  const field = { color: t.textMuted, fontSize: 12, marginTop: 8 }
   return (
     <SheetModal visible={!!draft} onClose={onClose}>
-      <View testID="event-sheet" style={{ paddingHorizontal: 18, paddingBottom: 24, gap: 6 }}>
+      <View testID="event-sheet" style={styles.calSheet}>
         <Text style={styles.sheetTitle}>{d.id ? (editable ? "Edit event" : "Event") : "New event"}</Text>
         <TextInput testID="event-title" style={styles.ssInput} value={d.title} editable={editable} placeholder="Title"
           placeholderTextColor={t.textMuted} onChangeText={(title) => setD({ ...d, title })} />
-        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}>
-          <Text style={[styles.ssRowLabel, { flex: 1 }]}>All day</Text>
+        <View style={[styles.calFieldRow, styles.calAllDayRow]}>
+          <Text style={[styles.ssRowLabel, styles.flex1]}>All day</Text>
           <Switch testID="event-all-day" value={d.all_day} disabled={!editable} onValueChange={(all_day) => setD({ ...d, all_day })}
             trackColor={{ true: t.accent, false: t.border }} />
         </View>
         {(["start", "end"] as const).map((k) => (
-          <View key={k} style={{ flexDirection: "row", alignItems: "center" }}>
-            <Text style={[styles.ssRowLabel, { flex: 1 }]}>{k === "start" ? "Starts" : "Ends"}</Text>
+          <View key={k} style={styles.calFieldRow}>
+            <Text style={[styles.ssRowLabel, styles.flex1]}>{k === "start" ? "Starts" : "Ends"}</Text>
             <DateTimePicker testID={`event-${k}`} value={d[k]} mode={d.all_day ? "date" : "datetime"} disabled={!editable}
               display={Platform.OS === "ios" ? "compact" : "default"} minuteInterval={5} onChange={pick(k)} textColor={t.text} />
           </View>
         ))}
-        <Text style={field}>LOCATION</Text>
+        <Text style={styles.calFieldLabel}>LOCATION</Text>
         <TextInput testID="event-location" style={styles.ssInput} value={d.location} editable={editable} placeholder="Optional"
           placeholderTextColor={t.textMuted} onChangeText={(location) => setD({ ...d, location })} />
-        <Text style={field}>NOTES</Text>
-        <TextInput testID="event-description" style={[styles.ssInput, { minHeight: 60 }]} value={d.description} editable={editable}
+        <Text style={styles.calFieldLabel}>NOTES</Text>
+        <TextInput testID="event-description" style={[styles.ssInput, styles.calNotes]} value={d.description} editable={editable}
           multiline placeholder="Optional" placeholderTextColor={t.textMuted} onChangeText={(description) => setD({ ...d, description })} />
         {event?.attendees.length ? <Text style={styles.ssRowHint}>Guests: {event.attendees.join(", ")}</Text> : null}
         {event?.link ? (
-          <TouchableOpacity onPress={() => Linking.openURL(event.link)}><Text style={{ color: t.accent, fontSize: 13, fontWeight: "600" }}>Open in Google Calendar</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => Linking.openURL(event.link)}><Text style={styles.calSmallLink}>Open in Google Calendar</Text></TouchableOpacity>
         ) : null}
         {problem || error ? <Text testID="event-error" style={styles.error}>{problem || error}</Text> : null}
         {editable ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 8 }}>
-            <TouchableOpacity testID="event-save" style={[styles.ssAddBtn, { opacity: problem || saving ? 0.5 : 1 }]} disabled={!!problem || saving} onPress={submit}>
+          <View style={styles.calActions}>
+            <TouchableOpacity testID="event-save" style={[styles.ssAddBtn, problem || saving ? styles.dimmed : null]} disabled={!!problem || saving} onPress={submit}>
               <Text style={styles.ssAddBtnText}>{saving ? "Saving…" : "Save"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={onClose}><Text style={{ color: t.textMuted, fontSize: 13, fontWeight: "600" }}>Cancel</Text></TouchableOpacity>
-            <View style={{ flex: 1 }} />
+            <TouchableOpacity onPress={onClose}><Text style={styles.calCancel}>Cancel</Text></TouchableOpacity>
+            <View style={styles.flex1} />
             {d.id ? (
               <TouchableOpacity testID="event-delete" onPress={() => onDelete(d)} hitSlop={8}><Icon name="trash" size={20} color={t.danger} /></TouchableOpacity>
             ) : null}

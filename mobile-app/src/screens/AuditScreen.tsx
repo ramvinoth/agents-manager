@@ -60,17 +60,16 @@ export default function AuditScreen({ navigation }: Props) {
   }, [load])
 
   const retry = () => void load(state.loaded ? "refresh" : "initial", state.filter)
-  const linkText = { color: t.accent, fontSize: 15, fontWeight: "600" as const }
 
   return (
     <View style={styles.page}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }} style={{ flexGrow: 0, borderBottomWidth: 1, borderColor: t.border }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.audFiltersContent} style={styles.audFilters}>
         {AUDIT_FILTERS.map(filter => {
           const on = filter.value === state.filter
           return <Pressable key={filter.value} testID={`audit-filter-${filter.value}`} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={filter.label}
             onPress={() => { if (!on) void load("initial", filter.value) }}
-            style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, backgroundColor: on ? t.text : t.chipBg }}>
-            <Text style={{ color: on ? t.bg : t.text, fontSize: 14, fontWeight: "600" }}>{filter.label}</Text>
+            style={[styles.audFilter, on ? styles.audFilterOn : null]}>
+            <Text style={[styles.audFilterText, on ? styles.audFilterTextOn : null]}>{filter.label}</Text>
           </Pressable>
         })}
       </ScrollView>
@@ -82,25 +81,25 @@ export default function AuditScreen({ navigation }: Props) {
         sections={sections}
         keyExtractor={item => String(item.id)}
         stickySectionHeadersEnabled
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16), flexGrow: 1 }}
+        contentContainerStyle={[styles.audListContent, { paddingBottom: Math.max(insets.bottom, 16) }]}
         refreshing={state.loading === "refresh"}
         onRefresh={() => void load("refresh", state.filter)}
-        ListHeaderComponent={state.error ? <View style={{ margin: 16, padding: 14, borderRadius: 12, backgroundColor: t.dangerBg, gap: 6 }}>
-          <Text testID="audit-error" accessibilityRole="alert" style={{ color: t.danger, fontSize: 15, fontWeight: "600" }}>{state.error}</Text>
-          {state.loaded ? <Text style={{ color: t.textMuted, fontSize: 14 }}>Showing the previously loaded records.</Text> : null}
-          <Pressable testID={state.loaded ? "audit-refresh-retry" : "audit-retry"} accessibilityRole="button" style={{ minHeight: 44, justifyContent: "center" }} onPress={retry}><Text style={linkText}>Try again</Text></Pressable>
+        ListHeaderComponent={state.error ? <View style={styles.audErrorBox}>
+          <Text testID="audit-error" accessibilityRole="alert" style={styles.audErrorTitle}>{state.error}</Text>
+          {state.loaded ? <Text style={styles.audMuted}>Showing the previously loaded records.</Text> : null}
+          <Pressable testID={state.loaded ? "audit-refresh-retry" : "audit-retry"} accessibilityRole="button" style={styles.audTap} onPress={retry}><Text style={styles.audLink}>Try again</Text></Pressable>
         </View> : null}
-        ListEmptyComponent={state.loading ? <View style={{ padding: 32 }}><ActivityIndicator accessibilityLabel="Loading activity" /></View> : !state.error && state.loaded ? <View style={{ padding: 32, alignItems: "center", gap: 6 }}>
-          <Text testID="audit-empty" style={{ color: t.text, fontSize: 17, fontWeight: "600" }}>{state.filter === "all" ? "Nothing recorded yet" : "Nothing here"}</Text>
-          <Text style={{ color: t.textMuted, fontSize: 14, textAlign: "center" }}>{state.filter === "all" ? "Every board change, approval and denial will show up here as it happens." : "No recorded actions match this filter."}</Text>
+        ListEmptyComponent={state.loading ? <View style={styles.audLoading}><ActivityIndicator accessibilityLabel="Loading activity" /></View> : !state.error && state.loaded ? <View style={styles.audEmpty}>
+          <Text testID="audit-empty" style={styles.audEmptyTitle}>{state.filter === "all" ? "Nothing recorded yet" : "Nothing here"}</Text>
+          <Text style={[styles.audMuted, styles.textCenter]}>{state.filter === "all" ? "Every board change, approval and denial will show up here as it happens." : "No recorded actions match this filter."}</Text>
         </View> : null}
-        renderSectionHeader={({ section }) => <Text accessibilityRole="header" style={{ color: t.textMuted, backgroundColor: t.bg, fontSize: 12, fontWeight: "700", letterSpacing: 0.6, textTransform: "uppercase", paddingHorizontal: 16, paddingTop: 18, paddingBottom: 8 }}>{section.title}</Text>}
+        renderSectionHeader={({ section }) => <Text accessibilityRole="header" style={styles.audSection}>{section.title}</Text>}
         renderItem={({ item }) => <AuditRow item={item} self={self} t={t} onPress={() => navigation.navigate("AuditEntry", { entry: item })} />}
-        ListFooterComponent={<View style={{ paddingHorizontal: 16, paddingTop: 12, alignItems: "center" }}>
-          {state.olderError ? <Text testID="audit-older-error" accessibilityRole="alert" style={{ color: t.danger, fontSize: 14, marginBottom: 6 }}>{state.olderError} Loaded records are unchanged.</Text> : null}
-          {state.nextBefore !== null ? <Pressable testID="audit-load-older" accessibilityRole="button" accessibilityState={{ disabled: !!state.loading }} disabled={!!state.loading} style={{ minHeight: 44, justifyContent: "center" }} onPress={() => void load("older", state.filter, state.nextBefore!)}>
-            <Text style={linkText}>{state.loading === "older" ? "Loading older…" : state.olderError ? "Try loading older again" : "Load older"}</Text>
-          </Pressable> : state.loaded && state.rows.length ? <Text style={{ color: t.textMuted, fontSize: 13, paddingVertical: 16 }}>Beginning of recorded history{state.filter !== "all" ? " for this filter" : ""}.</Text> : null}
+        ListFooterComponent={<View style={styles.audFooter}>
+          {state.olderError ? <Text testID="audit-older-error" accessibilityRole="alert" style={styles.audOlderError}>{state.olderError} Loaded records are unchanged.</Text> : null}
+          {state.nextBefore !== null ? <Pressable testID="audit-load-older" accessibilityRole="button" accessibilityState={{ disabled: !!state.loading }} disabled={!!state.loading} style={styles.audTap} onPress={() => void load("older", state.filter, state.nextBefore!)}>
+            <Text style={styles.audLink}>{state.loading === "older" ? "Loading older…" : state.olderError ? "Try loading older again" : "Load older"}</Text>
+          </Pressable> : state.loaded && state.rows.length ? <Text style={styles.audBeginning}>Beginning of recorded history{state.filter !== "all" ? " for this filter" : ""}.</Text> : null}
         </View>}
       />
     </View>
@@ -115,9 +114,10 @@ export function toneColors(t: Theme, tone: ReturnType<typeof resultTone>): { fg:
 
 /** Initial-letter avatar: humans get the accent tint, agents the neutral chip. */
 export function ActorBadge({ name, kind, t, size = 30 }: { name: string; kind: ReturnType<typeof formatActor>["kind"]; t: Theme; size?: number }) {
+  const styles = useStyles()
   const human = kind === "you" || kind === "human"
-  return <View accessibilityElementsHidden style={{ width: size, height: size, borderRadius: size / 2, alignItems: "center", justifyContent: "center", backgroundColor: human ? t.bubbleUser : t.chipBg }}>
-    <Text style={{ color: human ? t.accent : t.text, fontSize: size * 0.45, fontWeight: "700" }}>{(name.trim()[0] || "?").toUpperCase()}</Text>
+  return <View accessibilityElementsHidden style={[styles.audBadge, human ? styles.audBadgeHuman : null, { width: size, height: size, borderRadius: size / 2 }]}>
+    <Text style={[styles.audBadgeText, human ? styles.audBadgeTextHuman : null, { fontSize: size * 0.45 }]}>{(name.trim()[0] || "?").toUpperCase()}</Text>
   </View>
 }
 
@@ -126,26 +126,27 @@ function AuditRow({ item, self, t, onPress }: { item: AuditEntry; self: string; 
   const subject = auditSubject(item.target)
   const tone = resultTone(item.result.category)
   const chip = toneColors(t, tone)
+  const styles = useStyles()
   return <Pressable
     testID={`audit-row-${item.id}`}
     accessibilityRole="button"
     accessibilityLabel={`${who.name} — ${item.action}, ${subject}. ${auditTime(item.created_at)}. ${item.result.label}`}
     accessibilityHint="Opens the recorded action details"
     onPress={onPress}
-    style={({ pressed }) => ({ flexDirection: "row", gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: pressed ? t.surface : t.bg })}
+    style={({ pressed }) => [styles.audRow, pressed ? styles.audRowPressed : null]}
   >
     <ActorBadge name={who.name} kind={who.kind} t={t} />
-    <View style={{ flex: 1, gap: 3 }}>
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-        <Text numberOfLines={1} style={{ flex: 1, color: t.text, fontSize: 15 }}>
-          <Text style={{ fontWeight: "700" }}>{who.name}</Text>
-          <Text style={{ color: t.textMuted }}> · {item.action}</Text>
+    <View style={styles.audRowBody}>
+      <View style={styles.audRowHead}>
+        <Text numberOfLines={1} style={styles.audRowTitle}>
+          <Text style={styles.audBold}>{who.name}</Text>
+          <Text style={styles.audAction}> · {item.action}</Text>
         </Text>
-        <Text style={{ color: t.textMuted, fontSize: 12, fontVariant: ["tabular-nums"] }}>{auditTime(item.created_at)}</Text>
+        <Text style={styles.audTime}>{auditTime(item.created_at)}</Text>
       </View>
-      <Text numberOfLines={2} style={{ color: t.text, fontSize: 15, lineHeight: 20 }}>{subject}</Text>
-      {tone !== "quiet" ? <View style={{ alignSelf: "flex-start", marginTop: 3, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: chip.bg }}>
-        <Text style={{ color: chip.fg, fontSize: 12, fontWeight: "600" }}>{item.result.label}</Text>
+      <Text numberOfLines={2} style={styles.audSubject}>{subject}</Text>
+      {tone !== "quiet" ? <View style={[styles.audChip, { backgroundColor: chip.bg }]}>
+        <Text style={[styles.audChipText, { color: chip.fg }]}>{item.result.label}</Text>
       </View> : null}
     </View>
   </Pressable>
