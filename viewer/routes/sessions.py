@@ -248,6 +248,8 @@ class SessionsMixin:
             self.send_json({"error": "id required"}, status=400)
             return
         deleted = db.agent_template_delete(int(tid))
+        if deleted:
+            chatplugins.purge_template(int(tid))
         self.send_json({"deleted": deleted})
 
     def _g_default(self, req):
@@ -1202,7 +1204,7 @@ def start_new_session(body):
     # an arbitrary plugin.
     template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
     if template:
-        meta.update(agentTemplate=template["id"], agentPlugin=template.get("plugin") or "")
+        meta.update(chatplugins.start_from_template(template, session_id))
         if template.get("lens") and host == "local":
             try:
                 db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))

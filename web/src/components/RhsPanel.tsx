@@ -259,7 +259,7 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
 /** A chat's plugins: Harman's own (add/remove per chat; "Included" = its agent
  *  brings it by default) and the Mac's enabled Claude plugins (read-only — they
  *  are turned on in Claude Code itself). A plugin is whole: add or remove, never edit. */
-function PluginList({ plugins }: { plugins: Plugin[] }) {
+function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: number; name: string } }) {
   const session = useStore((s) => s.currentSessionPath)
   const loadCapabilities = useStore((s) => s.loadCapabilities)
   const chatScope = useChatScope()
@@ -278,7 +278,23 @@ function PluginList({ plugins }: { plugins: Plugin[] }) {
     }
   }
 
-  const agent = plugins.filter((p) => p.source === "agent")
+  const [kept, setKept] = useState(false)
+
+  async function keepOnAgent() {
+    if (!agent || !window.confirm(`Every new ${agent.name} chat will start with this chat's plugins, skills and MCP tools. This replaces what ${agent.name} kept before; chats already running are not changed.`)) return
+    setBusy("agent"); setErr("")
+    try {
+      await api.chatSaveToAgent(session)
+      setKept(true)
+      await loadCapabilities()
+    } catch (e) {
+      setErr(userError(e, `this setup on ${agent.name}`, "keep"))
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const shipped = plugins.filter((p) => p.source === "agent")
   const machine = plugins.filter((p) => p.source === "machine")
   return (
     <div className="h-full overflow-y-auto">
@@ -289,7 +305,13 @@ function PluginList({ plugins }: { plugins: Plugin[] }) {
           </p>
         )}
         {err && <p className="px-1 text-xs text-destructive">{err}</p>}
-        {agent.map((p) => (
+        {chatScope && agent && (
+          <div className="flex items-center gap-2 rounded-md bg-muted/40 p-2 text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1">{kept ? `Saved: new ${agent.name} chats start with this setup.` : `Started from ${agent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}</span>
+            <Button size="sm" variant="outline" disabled={!!busy} data-testid="keep-on-agent" onClick={keepOnAgent}>Keep on agent</Button>
+          </div>
+        )}
+        {shipped.map((p) => (
           <div key={p.name} className="flex items-center gap-2 rounded-md border border-border p-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-sm">
@@ -428,7 +450,7 @@ export function RhsPanel() {
         </TabsContent>
 
         <TabsContent value="plugins" className="min-h-0 flex-1">
-          <PluginList plugins={caps.plugins ?? []} />
+          <PluginList plugins={caps.plugins ?? []} agent={caps.agent} />
         </TabsContent>
 
         <TabsContent value="analysis" className="min-h-0 flex-1">

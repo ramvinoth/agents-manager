@@ -14,6 +14,12 @@ Skills and MCP servers the owner adds with "this chat" scope live in a
 generated plugin named `chat` under `~/.claude/.viewer-chat-plugins/<sid>/`
 (see `viewer/chatplugins.py`); forks copy it, deleting the chat purges it.
 
+"Keep on agent" (`POST /api/chat/save-to-agent`, human-only) snapshots a chat's
+plugin list into `agent_templates.plugins` and its extras into
+`~/.claude/.viewer-template-plugins/<template id>/`; every later chat from that
+agent starts with both (its own copy). The builtin re-seed never touches
+`plugins`, so a kept setup survives upgrades; deleting the template purges it.
+
 The engine passes one `--plugin-dir` per active plugin plus the chat's extras
 to every **local** Claude run. Plugin parts are namespaced (`<plugin>:<skill>`,
 `plugin:<plugin>:<server>`), so they never collide with user/project skills or

@@ -102,20 +102,38 @@ CHAT_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-chat-plugins"
 CHAT_PLUGIN_NAME = "chat"   # its namespace: skills show as chat:<skill>
 
 
-def chat_plugin_dir(session_id, create=False):
-    """The session's extras plugin folder, or None when the id is not a plain
-    session id or (create=False) it has never been written. create=True makes
+def _extras_dir(root, key, create, description):
+    """A generated extras plugin folder root/<key>, or None when the key is not
+    a plain id or (create=False) it has never been written. create=True makes
     it a valid plugin (manifest) so a first skill or MCP server can land in it."""
-    if not session_id or not re.fullmatch(r"[0-9A-Za-z-]{8,64}", session_id):
+    if not key or not re.fullmatch(r"[0-9A-Za-z-]{1,64}", key):
         return None
-    path = CHAT_PLUGINS_DIR / session_id
+    path = root / key
     if create:
         (path / ".claude-plugin").mkdir(parents=True, exist_ok=True)
         manifest = path / ".claude-plugin" / "plugin.json"
         if not manifest.exists():
-            manifest.write_text(json.dumps({"name": CHAT_PLUGIN_NAME,
-                                            "description": "Skills and MCP servers added to this chat only."}))
+            manifest.write_text(json.dumps({"name": CHAT_PLUGIN_NAME, "description": description}))
     return path if path.is_dir() else None
+
+
+def chat_plugin_dir(session_id, create=False):
+    """The session's extras plugin folder (see _extras_dir)."""
+    if not session_id or len(session_id) < 8:
+        return None
+    return _extras_dir(CHAT_PLUGINS_DIR, session_id, create,
+                       "Skills and MCP servers added to this chat only.")
+
+
+# An agent template's saved extras: copied into each new chat started from it,
+# so "this agent always has these skills/MCP" needs no second loading path.
+TEMPLATE_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-template-plugins"
+
+
+def template_plugin_dir(template_id, create=False):
+    """The template's extras folder (same shape as a chat's), or None."""
+    return _extras_dir(TEMPLATE_PLUGINS_DIR, str(template_id), create,
+                       "Skills and MCP servers this agent starts every chat with.")
 
 
 def session_plugins(meta):

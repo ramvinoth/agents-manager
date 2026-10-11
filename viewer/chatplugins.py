@@ -11,6 +11,10 @@ engine reads config.session_plugin_dirs), so there is one loading mechanism:
     THIS chat only, in a generated plugin named "chat" — so they show as
     chat:<skill> / plugin:chat:<server> and never collide with anyone else's.
 
+An agent template can keep a chat's setup (save_to_template): its plugin list
+(agent_templates.plugins) and a copy of the extras (config.template_plugin_dir),
+which every new chat from that agent starts with (start_from_template).
+
 Applies to local Claude runs only; a remote, Codex or Copilot run gets neither.
 """
 import json
@@ -19,6 +23,7 @@ import shutil
 from viewer import db, skills
 from viewer.config import (
     CHAT_PLUGIN_NAME, agent_plugin_dir, agent_plugin_names, chat_plugin_dir, session_plugins,
+    template_plugin_dir,
 )
 from viewer.engine import frontmatter_description, plugin_description, plugin_mcp_servers
 
@@ -33,12 +38,24 @@ def _meta(sid):
     return db.session_meta_get(sid) or {}
 
 
+def _included(meta, template):
+    """The plugins this chat's agent brings: what the agent kept (its saved
+    list), else its seeded plugin."""
+    if template and isinstance(template.get("plugins"), list):
+        return set(template["plugins"])
+    return {meta.get("agentPlugin") or ""}
+
+
 def merge_into(caps, sid):
     """Add this chat's Harman plugins and extras to a capabilities dict
     ({skills, mcp, plugins}) — read-only rows for plugin parts, editable rows
     for the chat's own extras — plus the catalog of plugins it could add."""
     meta = _meta(sid)
-    included = meta.get("agentPlugin") or ""
+    tid = meta.get("agentTemplate")
+    template = db.agent_template_get(tid) if tid else None
+    included = _included(meta, template)
+    if template:   # the agent this chat came from — the target of "Keep on agent"
+        caps["agent"] = {"id": template["id"], "name": template.get("name") or ""}
     active = session_plugins(meta)
     skill_rows = caps.setdefault("skills", [])
     mcp_rows = caps.setdefault("mcp", [])
@@ -65,7 +82,7 @@ def merge_into(caps, sid):
     # Every shipped plugin is listed — on or off, ahead of the machine's — so the
     # owner can add one; "included" marks the one the chat's agent came with.
     plugin_rows[:0] = [{"name": name, "description": plugin_description(agent_plugin_dir(name)),
-                        "source": "agent", "included": name == included, "active": name in active}
+                        "source": "agent", "included": name in included, "active": name in active}
                        for name in agent_plugin_names()]
     extras = chat_plugin_dir(sid)
     if extras:
@@ -130,6 +147,14 @@ def delete_mcp(sid, name):
     _write_mcp(root, servers)
 
 
+def _replace(src, dst_root):
+    """Make dst_root an exact copy of src (or remove it when src is None)."""
+    if dst_root and dst_root.exists():
+        shutil.rmtree(dst_root)
+    if src:
+        shutil.copytree(src, dst_root)
+
+
 def fork(parent_sid, new_sid):
     """A fork inherits the parent's extras (a copy — the two diverge from here)."""
     src = chat_plugin_dir(parent_sid)
@@ -138,8 +163,45 @@ def fork(parent_sid, new_sid):
         shutil.copytree(src, dst, dirs_exist_ok=True)
 
 
+def start_from_template(template, sid):
+    """Meta fields + extras for a new chat started from an agent template. The
+    template's saved plugin list wins over its single seeded plugin; its saved
+    extras are copied in (the chat's copy diverges from here)."""
+    fields = {"agentTemplate": template["id"], "agentPlugin": template.get("plugin") or ""}
+    if isinstance(template.get("plugins"), list):
+        fields["agentPlugins"] = template["plugins"]
+    src = template_plugin_dir(template["id"])
+    dst = chat_plugin_dir(sid, create=True) if src else None
+    if dst:
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+    return fields
+
+
+def save_to_template(sid):
+    """Keep this chat's plugins and extras on the agent it was started from, so
+    every later chat from that agent starts with them. Replaces what the agent
+    kept before (an exact snapshot, so a removed skill stays removed)."""
+    meta = _meta(sid)
+    tid = meta.get("agentTemplate")
+    if not tid or not db.agent_template_get(tid):
+        raise ChatPluginError("This chat was not started from an agent", 404)
+    plugins = session_plugins(meta)
+    db.agent_template_set_plugins(tid, plugins)
+    src = chat_plugin_dir(sid)
+    dst = template_plugin_dir(tid, create=True)
+    _replace(src, dst)
+    return {"saved": True, "template": tid, "plugins": plugins}
+
+
 def purge(sid):
     """Drop the chat's extras folder — called when the chat is deleted."""
     root = chat_plugin_dir(sid)
+    if root:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def purge_template(template_id):
+    """Drop an agent template's saved extras — called when the template is deleted."""
+    root = template_plugin_dir(template_id)
     if root:
         shutil.rmtree(root, ignore_errors=True)

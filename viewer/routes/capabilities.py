@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from viewer import chatplugins
 from viewer.config import (
-    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, VIEWER_HANDLED, load_system_commands,
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, VIEWER_HANDLED, load_system_commands,
 )
 from viewer.routes import require_human
 from viewer.adapters import resolve_agent_session
@@ -29,7 +29,8 @@ class CapabilitiesMixin:
         if not p or not p.exists():
             self.send_json({"error": "Skill not found"}, status=404)
             return
-        if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR))):
+        if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR),
+                              str(TEMPLATE_PLUGINS_DIR))):
             self.send_json({"error": "Plugin skills are read-only"}, status=403)
             return
         trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
@@ -247,6 +248,11 @@ class CapabilitiesMixin:
         body = self.read_body() or {}
         name = (body.get("name") or "").strip()
         self._chat_write(req, lambda sid: {"plugins": chatplugins.set_plugin(sid, name, bool(body.get("on")))}, body)
+
+    def _p_chat_save_to_agent(self, req):
+        """Keep this chat's plugins, skills and MCP on the agent it came from."""
+        body = self.read_body() or {}
+        self._chat_write(req, chatplugins.save_to_template, body)
 
     def resolve_skill_path(self, raw):
         """Only allow paths inside the three known skill roots."""

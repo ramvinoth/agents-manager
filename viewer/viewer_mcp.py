@@ -428,6 +428,7 @@ _TOOL_LIST = [
          "cwd": {"type": "string", "description": "Working directory on this machine (~ allowed)."},
          "goal": {"type": "string", "description": "Standing goal shown on the session and kept across runs."},
          "systemPrompt": {"type": "string"},
+         "template": {"type": "integer", "description": "Agent template id (GET /api/agent-templates) the worker starts from: it brings that agent's plugins, skills and MCP. Pass its system prompt and goal too."},
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan"]},
          "reason": _REASON_ARG}}},
     {"name": "loop_create",

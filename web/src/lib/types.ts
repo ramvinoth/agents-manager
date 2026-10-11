@@ -171,6 +171,8 @@ export interface Capabilities {
   skills: Skill[]
   mcp: McpServer[]
   plugins?: Plugin[]
+  /** The agent this chat was started from — where "Keep on agent" saves its setup. */
+  agent?: { id: number; name: string }
   models?: { v: string; label: string }[] // Copilot: dynamic per-plan model picker list
 }
 

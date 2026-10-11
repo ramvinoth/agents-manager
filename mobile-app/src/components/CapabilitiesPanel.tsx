@@ -9,7 +9,7 @@
  * `testPrefix` keeps the two hosts' testIDs distinct ("cap" / "drawer").
  */
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
@@ -71,6 +71,29 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
     }
   }
 
+  const agent = chat ? caps?.agent : undefined
+  const [kept, setKept] = useState(false)
+
+  function keepOnAgent() {
+    if (!agent || !chat) return
+    Alert.alert(`Keep on ${agent.name}?`,
+      `Every new ${agent.name} chat will start with this chat's plugins, skills and MCP tools. This replaces what ${agent.name} kept before; chats already running are not changed.`, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Keep", onPress: async () => {
+          setBusy("agent"); setError("")
+          try {
+            await api.chatSaveToAgent(chat)
+            setKept(true)
+            load()
+          } catch (e) {
+            setError(userError(e, `this setup on ${agent.name}`, "keep"))
+          } finally {
+            setBusy("")
+          }
+        } },
+      ])
+  }
+
   function AddRows({ kind }: { kind: MarketKind }) {
     const isSkill = kind === "skills"
     return (
@@ -118,6 +141,16 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }} keyboardShouldPersistTaps="handled">
           {tab !== "plugins" ? <AddRows kind={tab} /> : null}
+          {tab === "plugins" && agent ? (
+            <View style={[styles.capRow, { alignItems: "center" }]}>
+              <Text style={[styles.capRowDesc, { flex: 1, color: t.textMuted }]}>
+                {kept ? `Saved: new ${agent.name} chats start with this setup.` : `Started from ${agent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}
+              </Text>
+              <TouchableOpacity testID={id("keep-on-agent")} disabled={!!busy} onPress={keepOnAgent}>
+                <Text style={{ color: t.accent, fontWeight: "600" }}>Keep on agent</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {tab === "plugins" ? (
             (plugins ?? []).map(p => (
               <View key={`${p.source}:${p.name}`} testID={id(`plugin-${p.name}`)} style={styles.capRow}>

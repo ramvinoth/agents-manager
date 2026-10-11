@@ -155,7 +155,8 @@ export type McpServer = { name: string; scope: string; transport: string; target
 /** A chat's plugin. `agent` = ships with Harman, added/removed per chat (`included` =
  *  the chat's agent brings it by default); `machine` = enabled in Claude Code on the Mac. */
 export type Plugin = { name: string; description?: string; source: "agent" | "machine"; included: boolean; active: boolean }
-export type Capabilities = { skills: Skill[]; mcp: McpServer[]; plugins?: Plugin[] }
+/** `agent`: the agent this chat was started from — where "Keep on agent" saves its setup. */
+export type Capabilities = { skills: Skill[]; mcp: McpServer[]; plugins?: Plugin[]; agent?: { id: number; name: string } }
 /** A marketplace entry (GET /api/market/mcp | /api/market/skills). MCP entries
  *  carry `install` (npm | pypi | remote, or null when only Docker/bundle exists)
  *  and the `inputs` the owner fills; skills carry `license` and a file count. */
@@ -638,6 +639,9 @@ export const api = {
   /** Add (on) or remove one Harman plugin for a chat; returns the chat's plugin list. */
   chatPlugin: (body: { session: string; name: string; on: boolean }) =>
     req<{ plugins: string[] }>("POST", "/api/chat/plugin", body),
+  /** Keep this chat's plugins, skills and MCP on the agent it was started from. */
+  chatSaveToAgent: (session: string) =>
+    req<{ saved: boolean; plugins: string[] }>("POST", "/api/chat/save-to-agent", { session }),
   // Marketplace: the server rebuilds every install from the source's own record;
   // the app names an entry id, never a command. Installs land on this machine.
   marketMcp: (q: string, cursor?: string) =>

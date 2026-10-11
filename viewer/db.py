@@ -410,6 +410,10 @@ def init_db():
             -- The scheduled jobs a chat started from this agent begins with:
             -- [{prompt, cron} | {prompt, interval}], the same shape New chat sends.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS jobs JSONB NOT NULL DEFAULT '[]';
+            -- The Harman plugins a chat from this agent starts with, saved from a
+            -- chat (chatplugins.save_to_template). NULL = just `plugin`. Never
+            -- seeded, so the owner's saved setup survives a builtin re-seed.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugins JSONB;
             -- Lenses are views over a PROJECT (two engineer chats share one Map).
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
             -- Map lens cache: one row per parsed file; re-parsed only when its stamp
@@ -2210,6 +2214,11 @@ def agent_template_create(name, description, category, icon, system_prompt, goal
              plugin, lens, level, created_by)
         )
         return cur.fetchone()
+
+
+def agent_template_set_plugins(template_id, plugins):
+    with _db() as cur:
+        cur.execute("UPDATE agent_templates SET plugins = %s WHERE id = %s", (Json(list(plugins)), template_id))
 
 
 def agent_template_delete(template_id):

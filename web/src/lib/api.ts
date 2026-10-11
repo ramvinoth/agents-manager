@@ -565,6 +565,10 @@ class ApiClient {
   chatPlugin(body: { session: string; name: string; on: boolean }) {
     return this.postStrict<{ plugins: string[] }>("/api/chat/plugin", body)
   }
+  /** Keep this chat's plugins, skills and MCP on the agent it was started from. */
+  chatSaveToAgent(session: string) {
+    return this.postStrict<{ saved: boolean; plugins: string[] }>("/api/chat/save-to-agent", { session })
+  }
   mcpSaveBrowserAllAgents(body: Body) {
     return this.postRes("/api/agents/mcp/browser", this.wh(body))
   }
