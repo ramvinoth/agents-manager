@@ -240,7 +240,7 @@ export default function AgentsScreen({ navigation }: Props) {
                 {/* Level + model + schedule badges. The level is what a chat
                     started from this agent may do on the board ("from the agent
                     it was started from" in the chat's Trust settings). */}
-                {(tmpl.level || tmpl.model || tmpl.cron) ? (
+                {(tmpl.level || tmpl.model || tmpl.jobs?.length) ? (
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
                     {tmpl.level ? (
                       <View testID={`agent-level-${tmpl.id}`} style={{ backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
@@ -256,10 +256,12 @@ export default function AgentsScreen({ navigation }: Props) {
                         </Text>
                       </View>
                     ) : null}
-                    {tmpl.cron ? (
+                    {tmpl.jobs?.length ? (
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
                         <Icon name="repeat" size={10} color={t.textMuted} />
-                        <Text style={{ fontSize: 10, color: t.textMuted }}>Scheduled</Text>
+                        <Text style={{ fontSize: 10, color: t.textMuted }}>
+                          {tmpl.jobs.length === 1 ? "1 scheduled job" : `${tmpl.jobs.length} scheduled jobs`}
+                        </Text>
                       </View>
                     ) : null}
                   </View>

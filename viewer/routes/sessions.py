@@ -222,6 +222,10 @@ class SessionsMixin:
         if level not in orglogic.LEVELS:
             self.send_json({"error": f"Unknown level: {level}"}, status=400)
             return
+        jobs, err = _template_jobs(body.get("jobs"))
+        if err:
+            self.send_json({"error": err}, status=400)
+            return
         row = db.agent_template_create(
             name=name,
             description=(body.get("description") or "").strip(),
@@ -230,8 +234,7 @@ class SessionsMixin:
             system_prompt=(body.get("system_prompt") or "").strip(),
             goal=(body.get("goal") or "").strip(),
             model=(body.get("model") or "").strip(),
-            cron=(body.get("cron") or "").strip() or None,
-            job_prompt=(body.get("job_prompt") or "").strip() or None,
+            jobs=jobs,
             plugin=plugin,
             lens=lens,
             level=level,
@@ -1259,6 +1262,28 @@ def _new_session_jobs(raw, host, agent):
         if err:
             return None, f"Job {i}: {err}"
         jobs.append((prompt, sched))
+    return jobs, None
+
+
+def _template_jobs(raw):
+    """Validate an agent template's jobs → ([{prompt, cron|interval}], error).
+
+    Same schedule rules as a chat's jobs (build_schedule), but stored as the
+    owner typed them: the next run is computed when a chat is started from it."""
+    if not raw:
+        return [], None
+    if not isinstance(raw, list):
+        return None, "jobs must be a list"
+    jobs = []
+    for i, j in enumerate(raw, 1):
+        prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
+        if not prompt:
+            return None, f"Job {i} has no prompt"
+        sched, err = build_schedule(j.get("cron"), j.get("interval"))
+        if err:
+            return None, f"Job {i}: {err}"
+        jobs.append({"prompt": prompt, "cron": sched["cron"]} if sched["cron"]
+                    else {"prompt": prompt, "interval": sched["interval"]})
     return jobs, None
 
 

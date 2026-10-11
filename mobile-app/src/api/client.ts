@@ -10,6 +10,7 @@ import { normModel } from "../lib/model"
 import { isTransportError } from "../lib/errors"
 import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
+import type { NewChatJob } from "../lib/newChat"
 import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
@@ -171,7 +172,9 @@ export type Job = { id: string; session: string; prompt: string; interval: numbe
 export type HarmanLevel = "ic" | "lead" | "manager"
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
-  system_prompt: string; goal: string; model?: string; cron?: string; job_prompt?: string
+  system_prompt: string; goal: string; model?: string
+  /** The scheduled jobs a chat started from this agent begins with. */
+  jobs?: NewChatJob[]
   /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
    *  lens it turns on ("map"); both are read server-side from the template row. */
   plugin?: string; lens?: string

@@ -69,8 +69,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [showMore, setShowMore] = useState(!!template)
-  const [jobs, setJobs] = useState<NewChatJob[]>(() =>
-    template?.cron && template?.job_prompt ? [{ prompt: template.job_prompt, cron: template.cron }] : [])
+  const [jobs, setJobs] = useState<NewChatJob[]>(() => template?.jobs ?? [])
   // -2 = no form, -1 = adding, ≥0 = editing that job.
   const [jobForm, setJobForm] = useState(-2)
   // Jobs run on this machine's scheduler only (the server refuses them for a

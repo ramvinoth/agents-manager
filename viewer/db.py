@@ -69,7 +69,7 @@ def _db():
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _run_migrations(prev):
@@ -100,6 +100,23 @@ def _run_migrations(prev):
                 UPDATE settings SET value = jsonb_build_object(
                     'automation_enabled', COALESCE((value->>'automation_enabled')::boolean, false))
                   WHERE key = 'harman';
+            """)
+    if prev < 3:
+        # An agent template held ONE job (cron + job_prompt columns); it now
+        # holds a list (agent_templates.jobs). Carry a user template's job
+        # over, then drop the pair. Builtins are re-seeded from code anyway.
+        with _db() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'agent_templates' AND column_name = 'job_prompt')
+                  THEN
+                    UPDATE agent_templates
+                       SET jobs = jsonb_build_array(jsonb_build_object('prompt', job_prompt, 'cron', cron))
+                     WHERE cron IS NOT NULL AND job_prompt IS NOT NULL AND jobs = '[]'::jsonb;
+                    ALTER TABLE agent_templates DROP COLUMN cron, DROP COLUMN job_prompt;
+                  END IF;
+                END $$;
             """)
 
 
@@ -377,8 +394,6 @@ def init_db():
               system_prompt  TEXT NOT NULL DEFAULT '',
               goal           TEXT NOT NULL DEFAULT '',
               model          TEXT NOT NULL DEFAULT '',
-              cron           TEXT,
-              job_prompt     TEXT,
               is_builtin     BOOLEAN NOT NULL DEFAULT FALSE,
               created_by     TEXT NOT NULL DEFAULT 'system',
               created_at     DOUBLE PRECISION NOT NULL DEFAULT (extract(epoch from now()))
@@ -392,6 +407,9 @@ def init_db():
             -- The Harman authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
+            -- The scheduled jobs a chat started from this agent begins with:
+            -- [{prompt, cron} | {prompt, interval}], the same shape New chat sends.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS jobs JSONB NOT NULL DEFAULT '[]';
             -- Lenses are views over a PROJECT (two engineer chats share one Map).
             ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
             -- Map lens cache: one row per parsed file; re-parsed only when its stamp
@@ -2073,8 +2091,7 @@ _BUILTIN_TEMPLATES = [
      "goal": "Help the user deeply understand the topic, not just memorize answers."},
     {"name": "Fitness Planner", "description": "Create personalized workout and nutrition plans.",
      "category": "personal", "icon": "barbell", "model": "sonnet",
-     "cron": "0 7 * * *",
-     "job_prompt": "Good morning! Check in on yesterday's workout. Any soreness or energy changes? Adjust today's plan accordingly.",
+     "jobs": [{"cron": "0 7 * * *", "prompt": "Good morning! Check in on yesterday's workout. Any soreness or energy changes? Adjust today's plan accordingly."}],
      "system_prompt": "You are a certified personal trainer and nutritionist. Ask about the user's fitness goals, current fitness level, available equipment, and dietary preferences before creating plans. Provide structured weekly workout routines with sets, reps, and rest periods. Include warm-up and cool-down. Offer meal prep suggestions that are practical and sustainable.",
      "goal": "Create a realistic, sustainable fitness and nutrition plan tailored to the user's goals."},
     {"name": "Travel Planner", "description": "Build detailed itineraries with local tips and logistics.",
@@ -2093,8 +2110,7 @@ _BUILTIN_TEMPLATES = [
      "goal": "Find and fix the root cause of bugs, not just patch symptoms."},
     {"name": "DevOps Engineer", "description": "Infrastructure, CI/CD, monitoring, and deployment automation.",
      "category": "engineering", "icon": "cloud", "model": "sonnet",
-     "cron": "0 */6 * * *",
-     "job_prompt": "Run a health check: review recent logs, check error rates, and report any infrastructure alerts or anomalies.",
+     "jobs": [{"cron": "0 */6 * * *", "prompt": "Run a health check: review recent logs, check error rates, and report any infrastructure alerts or anomalies."}],
      "system_prompt": "You are a senior DevOps engineer. Help with: CI/CD pipelines, infrastructure as code (Terraform, Pulumi), container orchestration (Docker, K8s), monitoring/alerting, secrets management, and deployment strategies. Prioritize: reliability, security, automation, and observability. Always consider failure modes and rollback strategies. Prefer immutable infrastructure and declarative configuration.",
      "goal": "Build reliable, automated infrastructure with proper monitoring and rollback capabilities."},
     # Design
@@ -2124,18 +2140,17 @@ _BUILTIN_TEMPLATES = [
      "goal": "Identify legal risks and suggest protective measures in clear, plain language."},
     {"name": "Financial Analyst", "description": "Budgets, forecasts, financial modeling, and reporting.",
      "category": "business", "icon": "calculator", "model": "opus",
-     "cron": "0 9 * * 1",
-     "job_prompt": "Generate the weekly financial summary: review this week's activity, flag anomalies, and update the forecast.",
+     "jobs": [{"cron": "0 9 * * 1", "prompt": "Generate the weekly financial summary: review this week's activity, flag anomalies, and update the forecast."}],
      "system_prompt": "You are a financial analyst. Help with: budget planning, financial forecasting, P&L analysis, cash flow management, pricing strategy, and financial reporting. Build clear financial models with assumptions stated explicitly. Use sensitivity analysis to show best/worst/expected cases. Present findings in a way that non-finance stakeholders can understand.",
      "goal": "Provide clear financial analysis that drives informed business decisions."},
     {"name": "Privacy Guard", "description": "Watches for your personal data in breaches and on data-broker sites, and tells you what to lock down.",
-     "category": "personal", "icon": "eye", "cron": "43 8 * * *",
-     "job_prompt": "Daily privacy check: search the owner's mail from the last 24 hours for breach notices, data-broker or people-search mentions, new-login and password-reset alerts, and credit-bureau messages. For each finding, attribute it (is it the owner's own action?) before alerting. Append confirmed findings to the Privacy log note and post one plain yes/no question on the privacy board card for anything the owner must do. If nothing new, append one line 'quiet' with the date and stop.",
+     "category": "personal", "icon": "eye", "jobs": [{"cron": "43 8 * * *", "prompt": "Daily privacy check: search the owner's mail from the last 24 hours for breach notices, data-broker or people-search mentions, new-login and password-reset alerts, and credit-bureau messages. For each finding, attribute it (is it the owner's own action?) before alerting. Append confirmed findings to the Privacy log note and post one plain yes/no question on the privacy board card for anything the owner must do. If nothing new, append one line 'quiet' with the date and stop."},
+              {"cron": "17 9 * * 1", "prompt": "Weekly data-broker sweep: read the Privacy log first. Search the major people-search sites (TruePeopleSearch, FastPeopleSearch, Spokeo, Whitepages, BeenVerified, Radaris) for the owner's name and city using the browser. For each listing found, note the site's opt-out link and what it requires (ID upload, phone code, payment). Do not submit any opt-out without the owner's yes; list them on the privacy board card as one question. If a site blocks you, record 'blocked' and move on. Append a dated table (site, listed, opt-out link, status) to the Privacy log."}],
      "system_prompt": "You are the owner's privacy guard. Your job: find where their personal data is exposed (breaches, data brokers, people-search sites, over-shared accounts) and tell them exactly what to do about it, in order of risk.\n\nOn your first run: create a 'Privacy log' note (baseline: which accounts and email addresses you can see, what you checked, what you could not check) and one board card 'Privacy: actions for the owner' listing the manual steps only a human can take (credit freezes, opt-out requests, password changes), each with the exact site and why.\n\nRules:\n- Read-only by default. Never change an account, submit an opt-out, or contact anyone without the owner's explicit yes.\n- Attribute before alerting: check whether a login or reset was the owner's own action before calling it a threat.\n- Never paste personal data (full addresses, SSNs, card numbers, passwords) into cards, comments or notes. Refer to it ('the home address on file').\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- Never spend money or sign up for a paid service without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the context a stranger needs.",
      "goal": "Shrink the owner's personal-data exposure and catch breaches the day they happen."},
     {"name": "Cyber Security", "description": "Watches your accounts, devices and code for threats, and explains each finding in plain language.",
-     "category": "engineering", "icon": "shield", "cron": "37 7 * * *",
-     "job_prompt": "Daily security check: triage the owner's mail from the last 24 hours for security alerts (new sign-ins, password or 2FA changes, new devices, OAuth grants, suspicious payments, phishing). Attribute each before alerting. Then check this machine's posture: listening ports open to the network (/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN), the firewall state (/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate) and pending updates (/usr/sbin/softwareupdate -l). Append findings, ranked HIGH/MEDIUM/LOW, to the Security log note; for anything the owner must decide, post one yes/no question on the security board card. If nothing changed, append one 'quiet' line with the date and stop.",
+     "category": "engineering", "icon": "shield", "jobs": [{"cron": "37 7 * * *", "prompt": "Daily security check: triage the owner's mail from the last 24 hours for security alerts (new sign-ins, password or 2FA changes, new devices, OAuth grants, suspicious payments, phishing). Attribute each before alerting. Then check this machine's posture: listening ports open to the network (/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN), the firewall state (/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate) and pending updates (/usr/sbin/softwareupdate -l). Append findings, ranked HIGH/MEDIUM/LOW, to the Security log note; for anything the owner must decide, post one yes/no question on the security board card. If nothing changed, append one 'quiet' line with the date and stop."},
+              {"cron": "13 10 * * 3", "prompt": "Weekly code check, read-only: in each code repository you can read, run the package manager's audit (e.g. npm audit --omit=dev, pip-audit) and list only high and critical findings with their fix version. Scan the last 8 days of git history for committed secrets (private keys, cloud and API tokens) and report the commit and file only, never the value. List authorized SSH keys on machines you can reach (count and comments only) and flag any new one. Append to the Security log; a HIGH goes on the security board card as one yes/no question with the exact fix command."}],
      "system_prompt": "You are the owner's security analyst. You watch their accounts, this machine and their code for threats, and you explain each finding so someone with no security background can decide in one tap.\n\nOn your first run: create a 'Security log' note with a baseline (accounts visible to you, listening ports and what owns them, firewall and disk-encryption state, pending updates, secrets committed to repositories you can read) and one board card 'Security: decisions for the owner' for anything that needs their call.\n\nRules:\n- Read-only by default. Never change firewall rules, kill processes, rotate keys, edit configs or touch shared infrastructure without the owner's explicit yes for that exact change.\n- Attribute before alerting: a new sign-in or open port may be the owner's own doing; check before raising it.\n- Rank findings HIGH / MEDIUM / LOW by real-world exploitability, not by scanner noise. Say what an attacker could actually do.\n- Never paste secrets, tokens, passwords or personal data into cards, comments or notes. Name where they live instead.\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- macOS system tools live in /usr/sbin and /usr/libexec; call them by full path.\n- Never spend money without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the risk, the fix and its side effects stated.",
      "goal": "Catch account, device and code threats early and get each one fixed with a single owner decision."},
 ]
@@ -2146,12 +2161,12 @@ def _seed_agent_templates():
     longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
     so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
     cols = ("description", "category", "icon", "system_prompt", "goal",
-            "model", "cron", "job_prompt", "plugin", "lens", "level")
-    defaults = {"model": "", "cron": None, "job_prompt": None, "plugin": "", "lens": "",
-                "level": "ic"}
+            "model", "jobs", "plugin", "lens", "level")
+    defaults = {"model": "", "jobs": [], "plugin": "", "lens": "", "level": "ic"}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
             vals = [t.get(c, defaults.get(c)) for c in cols]
+            vals[cols.index("jobs")] = Json(vals[cols.index("jobs")])
             cur.execute("SELECT id FROM agent_templates WHERE name = %s AND is_builtin = TRUE", (t["name"],))
             row = cur.fetchone()
             if row:
@@ -2181,17 +2196,17 @@ def agent_templates_list():
 
 
 def agent_template_create(name, description, category, icon, system_prompt, goal, model="",
-                          cron=None, job_prompt=None, plugin="", lens="", level="ic",
-                          created_by="user"):
-    """Create a user-defined template. Returns the new row."""
+                          jobs=(), plugin="", lens="", level="ic", created_by="user"):
+    """Create a user-defined template. `jobs` is a validated [{prompt, cron|interval}].
+    Returns the new row."""
     with _db() as cur:
         cur.execute(
             """INSERT INTO agent_templates
-               (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
+               (name, description, category, icon, system_prompt, goal, model, jobs,
                 plugin, lens, level, is_builtin, created_by, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, extract(epoch from now()))
                RETURNING *""",
-            (name, description, category, icon, system_prompt, goal, model, cron, job_prompt,
+            (name, description, category, icon, system_prompt, goal, model, Json(list(jobs)),
              plugin, lens, level, created_by)
         )
         return cur.fetchone()
