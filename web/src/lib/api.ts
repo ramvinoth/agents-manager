@@ -569,14 +569,6 @@ class ApiClient {
   chatSaveToAgent(session: string) {
     return this.postStrict<{ saved: boolean; plugins: string[] }>("/api/chat/save-to-agent", { session })
   }
-  /** Package this chat's own skills and MCP as a new catalog plugin (the chat keeps them). */
-  chatSaveAsPlugin(session: string, name: string, description: string) {
-    return this.postStrict<{ saved: boolean; name: string }>("/api/chat/save-as-plugin", { session, name, description })
-  }
-  /** Delete a plugin the owner saved; shipped plugins are refused. */
-  pluginDelete(name: string) {
-    return this.postStrict<{ deleted: boolean; name: string }>("/api/plugins/delete", { name })
-  }
   mcpSaveBrowserAllAgents(body: Body) {
     return this.postRes("/api/agents/mcp/browser", this.wh(body))
   }

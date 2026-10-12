@@ -1,6 +1,7 @@
 /**
- * Shared editor components for Skills and MCP tools — used by both
- * CapabilitiesPanel (rendered by both CapabilitiesScreen and CapabilitiesDrawer).
+ * Shared editor components for Skills and MCP tools — used by CapabilitiesPanel
+ * (a chat's or machine's setup) and AgentEditScreen (an agent's own setup, set by
+ * the `agent` prop: it then saves onto that agent and offers no scope).
  */
 import React, { useEffect, useState } from "react"
 import {
@@ -107,6 +108,7 @@ export function SkillEditor({
   host,
   cwd,
   session,
+  agent,
   onClose,
   onSaved,
 }: {
@@ -115,6 +117,8 @@ export function SkillEditor({
   cwd?: string
   /** Set for an open local Claude chat: offers the "chat" scope (this chat only). */
   session?: string
+  /** Set to an agent's id: the skill lives on that agent (every new chat from it gets a copy). */
+  agent?: number
   onClose: () => void
   onSaved: () => void
 }) {
@@ -141,8 +145,11 @@ export function SkillEditor({
   async function save() {
     setErr("")
     try {
-      const d = await api.skillSave({ name, scope, content: content ?? "", cwd, host, session })
-      if (d.error) throw new Error(d.error)
+      if (agent) await api.agentTemplateExtra({ id: agent, kind: "skill", name, content: content ?? "" })
+      else {
+        const d = await api.skillSave({ name, scope, content: content ?? "", cwd, host, session })
+        if (d.error) throw new Error(d.error)
+      }
       onSaved()
       onClose()
     } catch (e) {
@@ -151,7 +158,8 @@ export function SkillEditor({
   }
   async function del() {
     if (!skill) return
-    await api.skillDelete({ path: skill.path, host }).catch(() => {})
+    await (agent ? api.agentTemplateExtra({ id: agent, kind: "skill", name: skill.name, delete: true })
+      : api.skillDelete({ path: skill.path, host })).catch(() => {})
     onSaved()
     onClose()
   }
@@ -180,7 +188,7 @@ export function SkillEditor({
         />
         {skill ? (
           <Text style={styles.capBadge}>{skill.source}</Text>
-        ) : (
+        ) : agent ? null : (
           <ScopePicker value={scope} opts={session ? ["user", "project", "chat"] : ["user", "project"]} onPick={setScope} />
         )}
       </View>
@@ -207,6 +215,7 @@ export function McpEditor({
   host,
   cwd,
   session,
+  agent,
   onClose,
   onSaved,
 }: {
@@ -215,6 +224,8 @@ export function McpEditor({
   cwd?: string
   /** Set for an open local Claude chat: offers the "chat" scope (this chat only). */
   session?: string
+  /** Set to an agent's id: the server lives on that agent (every new chat from it gets a copy). */
+  agent?: number
   onClose: () => void
   onSaved: () => void
 }) {
@@ -236,8 +247,11 @@ export function McpEditor({
       return setErr("Invalid JSON: " + (e as Error).message)
     }
     try {
-      const d = await api.mcpSave({ name, scope, config: parsed, cwd, host, session })
-      if (d.error) throw new Error(d.error)
+      if (agent) await api.agentTemplateExtra({ id: agent, kind: "mcp", name, config: parsed })
+      else {
+        const d = await api.mcpSave({ name, scope, config: parsed, cwd, host, session })
+        if (d.error) throw new Error(d.error)
+      }
       onSaved()
       onClose()
     } catch (e) {
@@ -246,9 +260,8 @@ export function McpEditor({
   }
   async function del() {
     if (!server) return
-    await api
-      .mcpDelete({ name: server.name, scope, cwd, host, session })
-      .catch(() => {})
+    await (agent ? api.agentTemplateExtra({ id: agent, kind: "mcp", name: server.name, delete: true })
+      : api.mcpDelete({ name: server.name, scope, cwd, host, session })).catch(() => {})
     onSaved()
     onClose()
   }
@@ -277,7 +290,7 @@ export function McpEditor({
         />
         {server ? (
           <Text style={styles.capBadge}>{server.scope}</Text>
-        ) : (
+        ) : agent ? null : (
           <ScopePicker value={scope} opts={session ? ["project", "global", "chat"] : ["project", "global"]} onPick={setScope} />
         )}
       </View>

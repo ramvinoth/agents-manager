@@ -61,5 +61,13 @@ class TestOwnership(unittest.TestCase):
         self.assertEqual(set(copy), set(TEMPLATE_FIELDS))
 
 
+    def test_plugins(self):
+        self.assertEqual(at.plugins_from(None), (None, None))   # not sent: the agent keeps its list
+        self.assertEqual(at.plugins_from([]), ([], None))
+        self.assertEqual(at.plugins_from(["cyber-security", " cyber-security", ""]), (["cyber-security"], None))
+        self.assertEqual(at.plugins_from(["../etc"])[1], "Unknown plugin: ../etc")
+        self.assertEqual(at.plugins_from("cyber-security")[1], "plugins must be a list of names")
+
+
 if __name__ == "__main__":
     unittest.main()

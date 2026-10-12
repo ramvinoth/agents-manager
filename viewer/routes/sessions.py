@@ -9,13 +9,13 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from viewer import agenttemplates, chatplugins, db, discussion
 from viewer.config import (
-    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, read_back,
-    split_lines,
+    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, agent_plugin_names,
+    read_back, split_lines, template_plugin_dir,
 )
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    extract_cwd, get_host, resolve_level, session_analysis, start_claude_run,
+    extract_cwd, get_host, plugin_description, resolve_level, session_analysis, start_claude_run,
     start_copilot_new,
 )
 from viewer.loops import USER_ORIGIN, build_schedule
@@ -217,12 +217,14 @@ class SessionsMixin:
         """Create a personal agent, owned by the human making it."""
         if not require_human(self, req):
             return
-        fields, err = agenttemplates.fields_from(self.read_body() or {})
-        if err:
-            self.send_json({"error": err}, status=400)
+        body = self.read_body() or {}
+        fields, err = agenttemplates.fields_from(body)
+        plugins, perr = agenttemplates.plugins_from(body.get("plugins"))
+        if err or perr:
+            self.send_json({"error": err or perr}, status=400)
             return
         user = req.principal["user"]
-        row = db.agent_template_create(fields, user["id"], created_by=user["username"])
+        row = db.agent_template_create(fields, user["id"], created_by=user["username"], plugins=plugins)
         self.send_json({"id": row["id"], "template": row})
 
     def _owned_template(self, req, body):
@@ -240,6 +242,54 @@ class SessionsMixin:
             return None
         return template
 
+    def _g_agent_template_extras(self, req):
+        """What an agent brings beyond its text: the plugin catalog to pick
+        from, and the skills and MCP servers saved on the agent itself. No id
+        (a new agent's form) answers the catalog alone."""
+        catalog = [{"name": n, "description": plugin_description(agent_plugin_dir(n))} for n in agent_plugin_names()]
+        tid = (req.query.get("id") or [""])[0]
+        if not tid:
+            self.send_json({"catalog": catalog, "skills": [], "mcp": []})
+            return
+        template = db.agent_template_get(int(tid)) if tid.isdigit() else None
+        if not template or not agenttemplates.visible(template, self._template_viewer(req)):
+            self.send_json({"error": "Agent not found"}, status=404)
+            return
+        user = req.principal.get("user")
+        root = template_plugin_dir(template["id"])
+        skills_, mcp = (chatplugins.extras_rows(root, "agent", bool(user) and agenttemplates.editable(template, user))
+                        if root else ([], []))
+        self.send_json({"catalog": catalog, "skills": skills_, "mcp": mcp})
+
+    def _p_agent_template_extra(self, req):
+        """Save or delete one skill or MCP server on an agent (its owner only):
+        {id, kind: skill|mcp, name, content | config, delete}. Every new chat
+        from the agent starts with a copy; chats already running keep theirs."""
+        if not require_human(self, req):
+            return
+        body = self.read_body() or {}
+        if not self._owned_template(req, body):
+            return
+        kind, name, delete = body.get("kind"), (body.get("name") or "").strip(), bool(body.get("delete"))
+        if kind not in ("skill", "mcp"):
+            self.send_json({"error": "kind must be skill or mcp"}, status=400)
+            return
+        try:
+            root = chatplugins.agent_root(int(body["id"]), create=not delete)
+            if kind == "skill":
+                if delete:
+                    chatplugins.delete_skill(root, name)
+                else:
+                    chatplugins.save_skill(root, name, body.get("content") or "")
+            elif delete:
+                chatplugins.delete_mcp(root, name)
+            else:
+                chatplugins.save_mcp(root, name, body.get("config"))
+        except chatplugins.ChatPluginError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return
+        self.send_json({"saved": True})
+
     def _p_agent_templates_update(self, req):
         if not require_human(self, req):
             return
@@ -247,9 +297,12 @@ class SessionsMixin:
         if not self._owned_template(req, body):
             return
         fields, err = agenttemplates.fields_from(body)
-        if err:
-            self.send_json({"error": err}, status=400)
+        plugins, perr = agenttemplates.plugins_from(body.get("plugins"))
+        if err or perr:
+            self.send_json({"error": err or perr}, status=400)
             return
+        if plugins is not None:
+            db.agent_template_set_plugins(int(body["id"]), plugins)
         self.send_json({"template": db.agent_template_update(int(body["id"]), fields)})
 
     def _p_agent_templates_duplicate(self, req):

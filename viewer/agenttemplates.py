@@ -88,6 +88,20 @@ def fields_from(body):
     return fields, None
 
 
+def plugins_from(raw):
+    """An agent's Harman plugin list → (names, error). None means the body did
+    not send one (an older client): the agent keeps what it has."""
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list) or not all(isinstance(n, str) for n in raw):
+        return None, "plugins must be a list of names"
+    names = list(dict.fromkeys(n.strip() for n in raw if n.strip()))
+    unknown = [n for n in names if not agent_plugin_dir(n)]
+    if unknown:
+        return None, f"Unknown plugin: {unknown[0]}"
+    return names, None
+
+
 def copy_fields(template):
     """The fields of a duplicate: the same agent, named as a copy."""
     fields = {c: template.get(c) for c in TEMPLATE_FIELDS}

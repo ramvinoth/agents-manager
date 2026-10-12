@@ -6,12 +6,12 @@
  * For a local Claude chat the server also returns its plugins: Harman's own are
  * added/removed per chat ("Included" = the agent's default), and skills/MCP can
  * be scoped to "this chat" only. A plugin is whole — add or remove, never edit.
- * "Save as plugin" packages the chat's own skills and MCP as a new catalog
- * plugin (badged "Yours", and deletable — a shipped plugin never is).
+ * A chat's setup is per chat; "Keep on agent" makes it the agent's default
+ * (the agent itself is edited in the Agents tab — the hub for its setup).
  * `testPrefix` keeps the two hosts' testIDs distinct ("cap" / "drawer").
  */
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
@@ -19,7 +19,6 @@ import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { SkillEditor, McpEditor } from "./CapabilitiesEditors"
 import MarketplaceSheet from "./MarketplaceSheet"
-import SheetModal from "./SheetModal"
 import Icon from "./Icon"
 
 type Tab = "skills" | "mcp" | "plugins"
@@ -97,36 +96,6 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
       ])
   }
 
-  // The chat's own extras (scope "this chat") — what "Save as plugin" packages.
-  const ownParts = (caps?.skills.filter(s => s.source === "chat").length ?? 0) + (caps?.mcp.filter(m => m.scope === "chat").length ?? 0)
-  const [saving, setSaving] = useState<{ name: string; description: string; error: string } | null>(null)
-
-  async function saveAsPlugin() {
-    if (!chat || !saving) return
-    setBusy("save-plugin")
-    try {
-      await api.chatSaveAsPlugin(chat, saving.name.trim(), saving.description.trim())
-      setSaving(null)
-      load()
-    } catch (e) {
-      setSaving({ ...saving, error: userError(e, "this plugin", "save") })
-    } finally {
-      setBusy("")
-    }
-  }
-
-  function deletePlugin(p: Plugin) {
-    Alert.alert(`Delete ${p.name}?`, "It leaves the catalog for every chat and agent. Chats already using it lose its skills and MCP tools on their next run.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-        setBusy(p.name); setError("")
-        try { await api.pluginDelete(p.name); load() }
-        catch (e) { setError(userError(e, p.name, "delete")) }
-        finally { setBusy("") }
-      } },
-    ])
-  }
-
   function AddRows({ kind }: { kind: MarketKind }) {
     const isSkill = kind === "skills"
     return (
@@ -184,15 +153,6 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
               </TouchableOpacity>
             </View>
           ) : null}
-          {tab === "plugins" && chat ? (
-            <TouchableOpacity testID={id("save-as-plugin")} style={styles.capAddRow} disabled={!!busy || !ownParts}
-              onPress={() => setSaving({ name: "", description: "", error: "" })}>
-              <Icon name="folderPlus" size={16} color={ownParts ? t.accent : t.textMuted} />
-              <Text style={[styles.capAddText, { color: ownParts ? t.accent : t.textMuted }]}>
-                {ownParts ? "Save this chat's skills and MCP as a plugin" : "Add a skill or MCP tool for this chat to save it as a plugin"}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
           {tab === "plugins" ? (
             (plugins ?? []).map(p => (
               <View key={`${p.source}:${p.name}`} testID={id(`plugin-${p.name}`)} style={styles.capRow}>
@@ -201,13 +161,6 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
                   <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{p.name}</Text>
                   {p.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{p.description}</Text> : null}
                 </View>
-                {p.kind === "user" ? (
-                  <TouchableOpacity testID={id(`plugin-delete-${p.name}`)} accessibilityLabel={`Delete ${p.name}`} hitSlop={8}
-                    disabled={!!busy} onPress={() => deletePlugin(p)}>
-                    <Icon name="trash" size={14} color={t.danger} />
-                  </TouchableOpacity>
-                ) : null}
-                {p.kind === "user" ? <Text style={styles.capBadge}>Yours</Text> : null}
                 {p.included ? <Text style={styles.capBadge}>Included</Text> : null}
                 {p.source === "agent" ? (
                   <Switch testID={id(`plugin-toggle-${p.name}`)} value={p.active} disabled={!!busy}
@@ -243,29 +196,6 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
 
       {skillEdit !== undefined && <SkillEditor skill={skillEdit} host={host} cwd={cwd} session={chat} onClose={() => setSkillEdit(undefined)} onSaved={load} />}
       {mcpEdit !== undefined && <McpEditor server={mcpEdit} host={host} cwd={cwd} session={chat} onClose={() => setMcpEdit(undefined)} onSaved={load} />}
-      <SheetModal visible={!!saving} onClose={() => setSaving(null)}>
-        <View style={styles.sheetGrabber} />
-        <Text style={styles.actionSheetTitle}>Save as plugin</Text>
-        <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
-          <Text style={styles.hint}>
-            Packs this chat's {ownParts === 1 ? "skill or MCP tool" : `${ownParts} skills and MCP tools`} into a plugin any chat or agent can add. This chat keeps its own copy.
-          </Text>
-          <Text style={styles.label}>Name</Text>
-          <TextInput testID={id("plugin-name")} style={styles.input} autoCapitalize="none" autoCorrect={false} autoFocus
-            placeholder="research-kit" placeholderTextColor={t.textMuted + "80"}
-            value={saving?.name ?? ""} onChangeText={v => saving && setSaving({ ...saving, name: v.toLowerCase(), error: "" })} />
-          <Text style={styles.hint}>Lowercase letters, digits and dashes.</Text>
-          <Text style={styles.label}>What it's for</Text>
-          <TextInput testID={id("plugin-description")} style={styles.input} placeholder="One line"
-            placeholderTextColor={t.textMuted + "80"}
-            value={saving?.description ?? ""} onChangeText={v => saving && setSaving({ ...saving, description: v })} />
-          {saving?.error ? <Text style={styles.error}>{saving.error}</Text> : null}
-          <TouchableOpacity testID={id("plugin-save")} style={[styles.button, !saving?.name.trim() || busy ? { opacity: 0.5 } : null]}
-            disabled={!saving?.name.trim() || !!busy} onPress={saveAsPlugin}>
-            {busy === "save-plugin" ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Save plugin</Text>}
-          </TouchableOpacity>
-        </View>
-      </SheetModal>
       {market ? <MarketplaceSheet kind={market} cwd={cwd} session={chat} onClose={() => setMarket(null)} onInstalled={load} /> : null}
     </View>
   )

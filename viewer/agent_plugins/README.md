@@ -20,14 +20,12 @@ plugin list into `agent_templates.plugins` and its extras into
 agent starts with both (its own copy). The builtin re-seed never touches
 `plugins`, so a kept setup survives upgrades; deleting the template purges it.
 
-**The catalog has two sources** (`config.plugin_sources`): these shipped
-plugins (read-only, versioned in git) and the owner's own under
-`~/.claude/.viewer-user-plugins/<name>/`. "Save as plugin"
-(`POST /api/chat/save-as-plugin`, human-only) copies a chat's extras there as a
-new, uniquely named plugin; any chat or agent can then add it whole. Names never
-overwrite (a shipped name wins and saving over an existing one is refused);
-`POST /api/plugins/delete` removes only the owner's own, and a chat still
-naming it just stops loading it.
+**The agent is the hub.** Its editor (Agents tab → edit) picks its plugins
+(`plugins` on `POST /api/agent-templates[/update]`) and adds its own skills and
+MCP servers (`POST /api/agent-templates/extra`, owner-only, stored in the same
+template extras folder); `GET /api/agent-templates/extras?id=` lists them with
+the plugin catalog. New plugins ship here, in git — there is no per-user plugin
+catalog: a reusable setup is an agent, not a plugin.
 
 Agents themselves can be personal: `agent_templates.owner_user_id` is the
 account that made one (NULL = shared builtins). Create, edit, duplicate and

@@ -12,6 +12,8 @@ export type AgentDraft = {
   name: string; icon: string; category: string; description: string
   system_prompt: string; goal: string; model: string; level: HarmanLevel
   jobs: NewChatJob[]
+  /** Harman plugins every chat from this agent starts with. */
+  plugins: string[]
   /** Not editable here, but an edit replaces every field: carried through so
    *  saving a duplicated role agent never drops its skills or lens. */
   plugin: string; lens: string
@@ -25,6 +27,8 @@ export function draftFrom(t?: AgentTemplate): AgentDraft {
     model: t?.model ?? "", level: t?.level ?? "ic",
     // A template holds a schedule only; a one-shot `at` means nothing there.
     jobs: (t?.jobs ?? []).filter((j) => !j.at),
+    // An agent that never kept a list brings its one seeded plugin.
+    plugins: t?.plugins ?? (t?.plugin ? [t.plugin] : []),
     plugin: t?.plugin ?? "", lens: t?.lens ?? "",
   }
 }
@@ -45,6 +49,6 @@ export function draftPayload(d: AgentDraft): AgentTemplateFields {
     name: trim(d.name), icon: d.icon, category: d.category, description: trim(d.description),
     system_prompt: trim(d.system_prompt), goal: trim(d.goal), model: d.model, level: d.level,
     jobs: d.jobs.map(({ prompt, cron, interval }) => (cron ? { prompt, cron } : { prompt, interval })),
-    plugin: d.plugin, lens: d.lens,
+    plugins: d.plugins, plugin: d.plugin, lens: d.lens,
   }
 }

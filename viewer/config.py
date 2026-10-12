@@ -74,59 +74,26 @@ def transcript_path(session_id):
     return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
 
-# Harman plugins: standard Claude Code plugin folders a chat adds (or an agent
-# template names) and the engine loads per run with --plugin-dir. They come
-# from SOURCES behind one interface, so every consumer (engine, chat toggles,
-# template validation) reads a single catalog:
-#   - shipped: viewer/agent_plugins, read-only, versioned with Harman;
-#   - user:    made on this machine by "Save as plugin" (chatplugins), removable.
-# A name resolves in source order, so a shipped plugin can never be shadowed.
+# Agent plugins shipped with Harman: standard Claude Code plugin folders that an
+# agent template names (agent_templates.plugin / plugins), a chat adds or removes,
+# and the engine loads per run with --plugin-dir.
 AGENT_PLUGINS_DIR = STATIC_DIR / "viewer" / "agent_plugins"
-USER_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-user-plugins"
-PLUGIN_NAME_RE = r"[a-z0-9][a-z0-9-]{0,63}"
-
-
-class PluginSource:
-    """One folder of plugins: `kind` names it to clients, `writable` says
-    whether Harman may add or remove plugins in it."""
-
-    def __init__(self, kind, root, writable):
-        self.kind, self.root, self.writable = kind, root, writable
-
-    def dir(self, name):
-        if not name or not re.fullmatch(PLUGIN_NAME_RE, name):
-            return None
-        path = self.root / name
-        return path if path.is_dir() else None
-
-    def names(self):
-        if not self.root.is_dir():
-            return []
-        return sorted(p.name for p in self.root.iterdir() if self.dir(p.name))
-
-
-def plugin_sources():
-    """The catalog's sources, in resolution order. Built per call from the
-    module paths, so a test (or a moved install) patches one constant."""
-    return (PluginSource("shipped", AGENT_PLUGINS_DIR, False),
-            PluginSource("user", USER_PLUGINS_DIR, True))
-
-
-def plugin_source(name):
-    """The source a plugin name resolves to, or None when no source has it."""
-    return next((s for s in plugin_sources() if s.dir(name)), None)
 
 
 def agent_plugin_dir(name):
     """The plugin folder for a name, or None when it is blank, not a plain
-    folder name (no path tricks) or in no source."""
-    src = plugin_source(name)
-    return src.dir(name) if src else None
+    folder name (no path tricks) or not shipped here."""
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+        return None
+    path = AGENT_PLUGINS_DIR / name
+    return path if path.is_dir() else None
 
 
 def agent_plugin_names():
-    """Every plugin a chat can pick from, shipped first, without duplicates."""
-    return list(dict.fromkeys(n for s in plugin_sources() for n in s.names()))
+    """Every plugin Harman ships, by folder name — the catalog a chat or agent picks from."""
+    if not AGENT_PLUGINS_DIR.is_dir():
+        return []
+    return sorted(p.name for p in AGENT_PLUGINS_DIR.iterdir() if agent_plugin_dir(p.name))
 
 
 # A chat's own extras (skills / MCP the owner added to ONE chat) live in a

@@ -3,29 +3,29 @@
 Two layers, both standard Claude Code plugins loaded with --plugin-dir (the
 engine reads config.session_plugin_dirs), so there is one loading mechanism:
 
-  - Harman plugins (the catalog, config.plugin_sources): the shipped ones in
-    viewer/agent_plugins and the owner's own, saved from a chat's extras
-    (save_as_plugin). A chat starts with its agent template's plugin
-    ("included"); the owner may add or remove any catalog plugin. A plugin is added or removed whole — editing one would change it for
-    every chat that uses it. The list lives in session_meta.agentPlugins.
+  - Harman plugins (the catalog, config.agent_plugin_names): the ones shipped
+    in viewer/agent_plugins. A chat starts with its agent's plugins
+    ("included"); the owner may add or remove any of them. A plugin is added or
+    removed whole — editing one would change it for every chat that uses it.
+    The list lives in session_meta.agentPlugins.
   - The chat's extras (config.chat_plugin_dir): skills and MCP servers added to
     THIS chat only, in a generated plugin named "chat" — so they show as
     chat:<skill> / plugin:chat:<server> and never collide with anyone else's.
 
-An agent template can keep a chat's setup (save_to_template): its plugin list
-(agent_templates.plugins) and a copy of the extras (config.template_plugin_dir),
-which every new chat from that agent starts with (start_from_template).
+An agent is the hub: its plugin list (agent_templates.plugins) and its own
+extras (config.template_plugin_dir, same shape as a chat's) are what every new
+chat from it starts with (start_from_template). The owner edits them on the
+agent itself, or keeps a chat's setup on it (save_to_template). Skill and MCP
+writes take the extras folder (`root`), so a chat and an agent share them.
 
 Applies to local Claude runs only; a remote, Codex or Copilot run gets neither.
 """
 import json
-import re
 import shutil
 
 from viewer import db, skills
 from viewer.config import (
-    CHAT_PLUGIN_NAME, PLUGIN_NAME_RE, agent_plugin_dir, agent_plugin_names, chat_plugin_dir, plugin_source,
-    plugin_sources, session_plugins, template_plugin_dir,
+    CHAT_PLUGIN_NAME, agent_plugin_dir, agent_plugin_names, chat_plugin_dir, session_plugins, template_plugin_dir,
 )
 from viewer.engine import frontmatter_description, plugin_description, plugin_mcp_servers
 
@@ -48,6 +48,19 @@ def _included(meta, template):
     return {meta.get("agentPlugin") or ""}
 
 
+def extras_rows(root, source, editable):
+    """An extras folder's (skill rows, MCP rows), in the capabilities shape."""
+    skill_rows = [{"name": md.parent.name, "description": frontmatter_description(md),
+                   "source": source, "path": str(md), "editable": editable}
+                  for md in sorted((root / "skills").glob("*/SKILL.md"))]
+    mcp_rows = [{"name": name, "scope": source,
+                 "transport": cfg.get("type") or ("http" if cfg.get("url") else "stdio"),
+                 "target": (cfg.get("url") or " ".join([cfg.get("command", "")] + list(cfg.get("args", [])))).strip(),
+                 "config": cfg, "editable": editable}
+                for name, cfg in plugin_mcp_servers(root).items() if isinstance(cfg, dict)]
+    return skill_rows, mcp_rows
+
+
 def merge_into(caps, sid):
     """Add this chat's Harman plugins and extras to a capabilities dict
     ({skills, mcp, plugins}) — read-only rows for plugin parts, editable rows
@@ -65,28 +78,21 @@ def merge_into(caps, sid):
     seen = {f"{s.get('source')}:{s.get('name')}" for s in skill_rows}
 
     def add_parts(root, source, editable):
-        for md in sorted((root / "skills").glob("*/SKILL.md")):
-            key = f"{source}:{md.parent.name}"
+        skills_, mcp = extras_rows(root, source, editable)
+        for row in skills_:
+            key = f"{source}:{row['name']}"
             if key not in seen:
                 seen.add(key)
-                skill_rows.append({"name": md.parent.name, "description": frontmatter_description(md),
-                                   "source": source, "path": str(md), "editable": editable})
-        for name, cfg in plugin_mcp_servers(root).items():
-            if isinstance(cfg, dict):
-                mcp_rows.append({"name": name, "scope": source,
-                                 "transport": cfg.get("type") or ("http" if cfg.get("url") else "stdio"),
-                                 "target": (cfg.get("url") or " ".join([cfg.get("command", "")] + list(cfg.get("args", [])))).strip(),
-                                 "config": cfg, "editable": editable})
+                skill_rows.append(row)
+        mcp_rows.extend(mcp)
 
     for name in active:
         root = agent_plugin_dir(name)
         add_parts(root, f"plugin:{name}", False)
     # Every catalog plugin is listed — on or off, ahead of the machine's — so the
-    # owner can add one; "included" marks the one the chat's agent came with,
-    # `kind` whether it shipped with Harman or the owner saved it (deletable).
+    # owner can add one; "included" marks the ones the chat's agent came with.
     plugin_rows[:0] = [{"name": name, "description": plugin_description(agent_plugin_dir(name)),
-                        "source": "agent", "kind": plugin_source(name).kind,
-                        "included": name in included, "active": name in active}
+                        "source": "agent", "included": name in included, "active": name in active}
                        for name in agent_plugin_names()]
     extras = chat_plugin_dir(sid)
     if extras:
@@ -107,10 +113,24 @@ def set_plugin(sid, name, on):
     return names
 
 
-def save_skill(sid, name, content):
-    root = chat_plugin_dir(sid, create=True)
-    if not root:
-        raise ChatPluginError("Not a session id")
+def chat_root(sid, create=True):
+    """A chat's extras folder for a write (create) or a delete (must exist)."""
+    root = chat_plugin_dir(sid, create=create)
+    if create and not root:
+        raise ChatPluginError("Pick a local chat for chat scope", 404)
+    return root
+
+
+def agent_root(template_id, create=True):
+    """An agent template's extras folder, same contract as chat_root."""
+    root = template_plugin_dir(template_id, create=create)
+    if create and not root:
+        raise ChatPluginError("Agent not found", 404)
+    return root
+
+
+def save_skill(root, name, content):
+    """Write one skill into an extras folder (a chat's or an agent's)."""
     if not skills.valid_name(name):
         raise ChatPluginError("Skill name must be letters/digits/dashes/underscores")
     d = root / "skills" / name
@@ -119,12 +139,16 @@ def save_skill(sid, name, content):
     return d / "SKILL.md"
 
 
-def install_skill_bundle(sid, name, files):
-    """A marketplace skill installed into this chat only (same validation as
-    skills.write_bundle: a SKILL.md, no path escaping the skill's folder)."""
-    root = chat_plugin_dir(sid, create=True)
-    if not root:
-        raise ChatPluginError("Not a session id")
+def delete_skill(root, name):
+    d = root / "skills" / name if root and skills.valid_name(name) else None
+    if not d or not (d / "SKILL.md").is_file():
+        raise ChatPluginError("Skill not found", 404)
+    shutil.rmtree(d)
+
+
+def install_skill_bundle(root, name, files):
+    """A marketplace skill installed into one extras folder (same validation
+    as skills.write_bundle: a SKILL.md, no path escaping the skill's folder)."""
     return skills.write_bundle(name, files, base=root / "skills")
 
 
@@ -132,22 +156,18 @@ def _write_mcp(root, servers):
     (root / ".mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
 
 
-def save_mcp(sid, name, cfg):
+def save_mcp(root, name, cfg):
     if not name or not isinstance(cfg, dict):
         raise ChatPluginError("A server needs a name and a JSON object config")
-    root = chat_plugin_dir(sid, create=True)
-    if not root:
-        raise ChatPluginError("Not a session id")
     servers = plugin_mcp_servers(root)
     servers[name] = cfg
     _write_mcp(root, servers)
 
 
-def delete_mcp(sid, name):
-    root = chat_plugin_dir(sid)
+def delete_mcp(root, name):
     servers = plugin_mcp_servers(root) if root else {}
     if servers.pop(name, None) is None:
-        raise ChatPluginError("Server not found in this chat", 404)
+        raise ChatPluginError("Server not found", 404)
     _write_mcp(root, servers)
 
 
@@ -202,46 +222,6 @@ def copy_template_extras(src_id, dst_id):
     src = template_plugin_dir(src_id)
     if src:
         _replace(src, template_plugin_dir(dst_id, create=True))
-
-
-def _user_source():
-    return next(s for s in plugin_sources() if s.writable)
-
-
-def save_as_plugin(sid, name, description=""):
-    """Package this chat's extras (its own skills and MCP servers) as a new
-    plugin in the owner's catalog, so any chat or agent can add it whole.
-
-    A new name only — an existing plugin is never overwritten, since chats
-    already running with it would change under them. The chat keeps its
-    extras; turning the plugin on as well would load every skill twice."""
-    name = (name or "").strip().lower()
-    if not re.fullmatch(PLUGIN_NAME_RE, name) or name == CHAT_PLUGIN_NAME:
-        raise ChatPluginError("Name it with lowercase letters, digits and dashes, e.g. sales-research")
-    if plugin_source(name):
-        raise ChatPluginError(f"A plugin named {name} already exists", 409)
-    src = chat_plugin_dir(sid)
-    if not src or not (any((src / "skills").glob("*/SKILL.md")) or plugin_mcp_servers(src)):
-        raise ChatPluginError("This chat has no skills or MCP tools of its own to save")
-    dst = _user_source().root / name
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
-    (dst / ".claude-plugin" / "plugin.json").write_text(json.dumps(
-        {"name": name, "description": (description or "").strip() or "Saved from a chat."}, indent=2))
-    return {"saved": True, "name": name}
-
-
-def delete_user_plugin(name):
-    """Remove one of the owner's saved plugins from the catalog. Shipped ones
-    are read-only. A chat or agent still naming it simply stops loading it
-    (session_plugins drops unknown names)."""
-    src = plugin_source(name or "")
-    if not src:
-        raise ChatPluginError("Plugin not found", 404)
-    if not src.writable:
-        raise ChatPluginError("Plugins that ship with Harman can't be deleted", 403)
-    shutil.rmtree(src.dir(name))
-    return {"deleted": True, "name": name}
 
 
 def purge(sid):

@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 from viewer import chatplugins
 from viewer.config import (
-    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, USER_PLUGINS_DIR, VIEWER_HANDLED,
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, VIEWER_HANDLED,
     load_system_commands,
 )
 from viewer.routes import require_human
@@ -31,7 +31,7 @@ class CapabilitiesMixin:
             self.send_json({"error": "Skill not found"}, status=404)
             return
         if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR),
-                              str(USER_PLUGINS_DIR), str(TEMPLATE_PLUGINS_DIR))):
+                              str(TEMPLATE_PLUGINS_DIR))):
             self.send_json({"error": "Plugin skills are read-only"}, status=403)
             return
         trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
@@ -61,8 +61,8 @@ class CapabilitiesMixin:
         host = body.get("host", "local")
         if scope == "chat":
             MCP_CDP_CACHE.pop("local", None)
-            self._chat_write(req, lambda sid: (chatplugins.delete_mcp(sid, name) if delete
-                                          else chatplugins.save_mcp(sid, name, cfg)) or {"saved": True}, body)
+            self._chat_write(req, lambda sid: (chatplugins.delete_mcp(chatplugins.chat_root(sid, create=False), name) if delete
+                                          else chatplugins.save_mcp(chatplugins.chat_root(sid), name, cfg)) or {"saved": True}, body)
             return
         if body.get("agent", "claude") == "codex" and host == "local":
             MCP_CDP_CACHE.pop(host, None)
@@ -156,7 +156,7 @@ class CapabilitiesMixin:
             self.send_json({"error": "Skill name must be letters/digits/dashes/underscores"}, status=400)
             return
         if scope == "chat":
-            self._chat_write(req, lambda sid: {"saved": True, "path": str(chatplugins.save_skill(sid, name, content))}, body)
+            self._chat_write(req, lambda sid: {"saved": True, "path": str(chatplugins.save_skill(chatplugins.chat_root(sid), name, content))}, body)
             return
         cwd = None
         if scope == "project":
@@ -255,20 +255,6 @@ class CapabilitiesMixin:
         body = self.read_body() or {}
         self._chat_write(req, chatplugins.save_to_template, body)
 
-    def _p_chat_save_as_plugin(self, req):
-        """Package this chat's own skills and MCP as a new catalog plugin."""
-        body = self.read_body() or {}
-        self._chat_write(req, lambda sid: chatplugins.save_as_plugin(sid, body.get("name"), body.get("description")), body)
-
-    def _p_plugins_delete(self, req):
-        """Delete one of the owner's saved plugins (never a shipped one)."""
-        if not require_human(self, req):
-            return
-        try:
-            self.send_json(chatplugins.delete_user_plugin((self.read_body() or {}).get("name")))
-        except chatplugins.ChatPluginError as e:
-            self.send_json({"error": str(e)}, status=e.status)
-
     def resolve_skill_path(self, raw):
         """Only allow paths inside the known skill roots."""
         try:
@@ -277,7 +263,7 @@ class CapabilitiesMixin:
             return None
         roots = [Path.home() / ".claude" / "skills",
                  Path.home() / ".claude" / "plugins" / "cache",
-                 AGENT_PLUGINS_DIR, USER_PLUGINS_DIR, CHAT_PLUGINS_DIR, TEMPLATE_PLUGINS_DIR]
+                 AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, TEMPLATE_PLUGINS_DIR]
         if p.is_file() and p.name == "SKILL.md":
             # project skills can live anywhere under a project's .claude/skills
             if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):

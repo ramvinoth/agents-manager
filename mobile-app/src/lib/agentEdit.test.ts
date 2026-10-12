@@ -40,3 +40,11 @@ test("the payload trims text and sends interval jobs as interval", () => {
   assert.equal(p.goal, "win")
   assert.deepEqual(p.jobs, [{ prompt: "p", interval: 1800 }])
 })
+
+test("plugins: a kept list wins, else the agent's one seeded plugin, and the payload carries it", () => {
+  assert.deepEqual(draftFrom(role).plugins, ["engineer"])
+  assert.deepEqual(draftFrom({ ...role, plugins: [] }).plugins, [])
+  assert.deepEqual(draftFrom({ ...role, plugins: ["a", "b"] }).plugins, ["a", "b"])
+  assert.deepEqual(draftFrom().plugins, [])
+  assert.deepEqual(draftPayload(draftFrom({ ...role, plugins: ["a"] })).plugins, ["a"])
+})

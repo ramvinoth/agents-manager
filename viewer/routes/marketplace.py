@@ -71,7 +71,7 @@ class MarketplaceMixin:
             name = marketplace.config_name(server)
             MCP_CDP_CACHE.pop("local", None)
             if scope == "chat":
-                chatplugins.save_mcp(self._chat_sid(body), name, cfg)
+                chatplugins.save_mcp(chatplugins.chat_root(self._chat_sid(body)), name, cfg)
                 return {"installed": name, "scope": scope}
             cwd = self._project_cwd(body) if scope == "project" else ""
             res = get_host("local").mcp_save(name, scope, cfg, cwd, False)
@@ -90,7 +90,7 @@ class MarketplaceMixin:
             scope = body.get("scope") if body.get("scope") in ("project", "chat") else "user"
             files = marketplace.skill_bundle(_fetch, name)
             if scope == "chat":
-                path = chatplugins.install_skill_bundle(self._chat_sid(body), name, files)
+                path = chatplugins.install_skill_bundle(chatplugins.chat_root(self._chat_sid(body)), name, files)
                 return {"installed": name, "scope": scope, "path": str(path)}
             cwd = self._project_cwd(body) if scope == "project" else None
             path = skills.write_bundle(name, files, scope=scope, cwd=cwd)

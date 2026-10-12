@@ -1,8 +1,9 @@
-import React, { useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api } from "../api/client"
+import { api, type AgentExtras, type McpServer, type Skill } from "../api/client"
+import { McpEditor, SkillEditor } from "../components/CapabilitiesEditors"
 import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
 import { MODEL_CHOICES, draftBlocker, draftFrom, draftPayload, type AgentDraft } from "../lib/agentEdit"
@@ -19,9 +20,12 @@ const ICONS: IconName[] = ["sparkle", "book", "school", "barbell", "airplane", "
   "clipboard", "shield", "calculator", "mail", "calendar", "user", "star"]
 
 /**
- * Create or edit a personal agent: a preset a new chat starts from (name,
- * instructions, goal, model, board level, scheduled jobs). Only its owner sees
- * or edits it; the server enforces both. Built-ins are duplicated, not edited.
+ * Create or edit a personal agent — the hub a new chat starts from: name,
+ * instructions, goal, model, board level, scheduled jobs, Harman plugins, and
+ * its own skills and MCP servers (each new chat gets a copy). Only its owner
+ * sees or edits it; the server enforces both. Built-ins are duplicated, not edited.
+ * Plugins save with the form; skills and MCP save one by one, so they need the
+ * agent to exist first.
  */
 export default function AgentEditScreen({ route, navigation }: Props) {
   const styles = useStyles()
@@ -34,6 +38,17 @@ export default function AgentEditScreen({ route, navigation }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const blocker = draftBlocker(d)
+  const [extras, setExtras] = useState<AgentExtras | null>(null)
+  const [extrasError, setExtrasError] = useState("")
+  const [skillEdit, setSkillEdit] = useState<Skill | null | undefined>(undefined)
+  const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
+  const loadExtras = useCallback(() => {
+    setExtrasError("")
+    api.agentTemplateExtras(existing?.id).then(setExtras).catch((e) => setExtrasError(userError(e, "plugins, skills and MCP")))
+  }, [existing?.id])
+  useEffect(loadExtras, [loadExtras])
+  const togglePlugin = (name: string) =>
+    set("plugins", d.plugins.includes(name) ? d.plugins.filter((p) => p !== name) : [...d.plugins, name])
 
   async function save() {
     setError(""); setBusy(true)
@@ -145,6 +160,64 @@ export default function AgentEditScreen({ route, navigation }: Props) {
           setJobForm(-2)
         }}
       />
+
+      <Text style={styles.label}>Plugins</Text>
+      {extrasError ? (
+        <TouchableOpacity testID="agent-extras-retry" onPress={loadExtras}>
+          <Text style={styles.error}>{extrasError} Tap to try again.</Text>
+        </TouchableOpacity>
+      ) : !extras ? <ActivityIndicator size="small" color={t.textMuted} style={{ alignSelf: "flex-start" }} /> : (
+        <>
+          <Text style={styles.hint}>Harman's ready-made kits. Every chat from this agent starts with the ones you pick.</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {extras.catalog.map((p) => {
+              const on = d.plugins.includes(p.name)
+              return (
+                <TouchableOpacity key={p.name} testID={`agent-plugin-${p.name}`} accessibilityState={{ selected: on }}
+                  accessibilityHint={p.description} onPress={() => togglePlugin(p.name)}
+                  style={[styles.agCat, on ? { backgroundColor: t.accent, borderColor: t.accent } : null]}>
+                  <Text style={[styles.agCatText, on ? styles.agCatTextActive : null]}>{p.name}</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+        </>
+      )}
+
+      {(["skill", "mcp"] as const).map((kind) => {
+        const rows: (Skill | McpServer)[] = (kind === "skill" ? extras?.skills : extras?.mcp) ?? []
+        return (
+          <React.Fragment key={kind}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={styles.label}>{kind === "skill" ? "Skills" : "MCP tools"}</Text>
+              {existing ? (
+                <TouchableOpacity testID={`agent-add-${kind}`} hitSlop={8} style={styles.ncAddBtn}
+                  onPress={() => (kind === "skill" ? setSkillEdit(null) : setMcpEdit(null))}>
+                  <Icon name="add" size={13} color={t.accent} />
+                  <Text style={styles.ncAddText}>Add</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {!existing ? <Text style={styles.hint}>Create the agent first, then add its own {kind === "skill" ? "skills" : "MCP tools"} here.</Text>
+              : !rows.length && extras ? <Text style={styles.hint}>{kind === "skill"
+                ? "Instructions a chat can call by name, e.g. /weekly-review. Each new chat gets a copy."
+                : "Tools a chat can use, e.g. a database or a web API. Each new chat gets a copy."}</Text> : null}
+            {rows.map((r) => (
+              <TouchableOpacity key={r.name} testID={`agent-${kind}-${r.name}`} activeOpacity={0.65} style={styles.ncJob}
+                onPress={() => (kind === "skill" ? setSkillEdit(r as Skill) : setMcpEdit(r as McpServer))}>
+                <Icon name={kind === "skill" ? "sparkle" : "tool"} size={15} color={t.accent} />
+                <View style={styles.flex1}>
+                  <Text style={styles.ncJobPrompt} numberOfLines={1}>{kind === "skill" ? `/${r.name}` : r.name}</Text>
+                  {kind === "skill" ? ((r as Skill).description ? <Text style={styles.ncJobWhen} numberOfLines={2}>{(r as Skill).description}</Text> : null)
+                    : <Text style={styles.ncJobWhen} numberOfLines={1}>{(r as McpServer).transport}{(r as McpServer).target ? ` · ${(r as McpServer).target}` : ""}</Text>}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </React.Fragment>
+        )
+      })}
+      {existing && skillEdit !== undefined ? <SkillEditor skill={skillEdit} host="local" agent={existing.id} onClose={() => setSkillEdit(undefined)} onSaved={loadExtras} /> : null}
+      {existing && mcpEdit !== undefined ? <McpEditor server={mcpEdit} host="local" agent={existing.id} onClose={() => setMcpEdit(undefined)} onSaved={loadExtras} /> : null}
 
       {error || (blocker && d.name) ? <Text style={styles.error}>{error || blocker}</Text> : null}
       <TouchableOpacity testID="agent-save" style={[styles.button, { marginTop: 20 }, blocker || busy ? { opacity: 0.5 } : null]}

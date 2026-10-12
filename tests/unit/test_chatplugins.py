@@ -26,7 +26,6 @@ class TestChatPlugins(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         patch.object(config, "CHAT_PLUGINS_DIR", Path(tmp.name) / "chats").start()
         patch.object(config, "TEMPLATE_PLUGINS_DIR", Path(tmp.name) / "templates").start()
-        patch.object(config, "USER_PLUGINS_DIR", Path(tmp.name) / "user").start()
         self.templates = {7: {"id": 7, "plugin": "privacy-guard", "plugins": None}}
         patch("viewer.db.agent_template_get", side_effect=lambda tid: self.templates.get(tid)).start()
         patch("viewer.db.agent_template_set_plugins",
@@ -57,8 +56,8 @@ class TestChatPlugins(unittest.TestCase):
 
     def test_chat_extras_are_a_valid_plugin_on_the_run(self):
         self.assertEqual(session_plugin_dirs(SID, {}), [])
-        chatplugins.save_skill(SID, "my-skill", "---\ndescription: d\n---\n")
-        chatplugins.save_mcp(SID, "srv", {"command": "echo"})
+        chatplugins.save_skill(chatplugins.chat_root(SID), "my-skill", "---\ndescription: d\n---\n")
+        chatplugins.save_mcp(chatplugins.chat_root(SID), "srv", {"command": "echo"})
         root = config.chat_plugin_dir(SID)
         self.assertEqual(json.loads((root / ".claude-plugin" / "plugin.json").read_text())["name"], "chat")
         dirs = session_plugin_dirs(SID, {"agentPlugin": "privacy-guard"})
@@ -67,17 +66,17 @@ class TestChatPlugins(unittest.TestCase):
         self.assertIn({"name": "my-skill", "source": "chat", "editable": True},
                       [{k: s[k] for k in ("name", "source", "editable")} for s in caps["skills"]])
         self.assertEqual([(m["name"], m["scope"], m["editable"]) for m in caps["mcp"]], [("srv", "chat", True)])
-        chatplugins.delete_mcp(SID, "srv")
+        chatplugins.delete_mcp(chatplugins.chat_root(SID), "srv")
         with self.assertRaises(chatplugins.ChatPluginError):
-            chatplugins.delete_mcp(SID, "srv")
+            chatplugins.delete_mcp(chatplugins.chat_root(SID), "srv")
 
     def test_bad_ids_and_names_never_touch_disk(self):
         self.assertIsNone(config.chat_plugin_dir("../x", create=True))
         with self.assertRaises(chatplugins.ChatPluginError):
-            chatplugins.save_skill(SID, "../evil", "")
+            chatplugins.save_skill(chatplugins.chat_root(SID), "../evil", "")
 
     def test_fork_copies_and_purge_removes(self):
-        chatplugins.save_skill(SID, "s1", "x")
+        chatplugins.save_skill(chatplugins.chat_root(SID), "s1", "x")
         child = "99999999-1111-2222-3333-444455556666"
         chatplugins.fork(SID, child)
         self.assertTrue((config.chat_plugin_dir(child) / "skills" / "s1" / "SKILL.md").exists())
@@ -93,8 +92,8 @@ class TestChatPlugins(unittest.TestCase):
         self.assertIsNone(config.chat_plugin_dir(SID))
         # The owner customises it, then keeps that on the agent.
         chatplugins.set_plugin(SID, "cyber-security", True)
-        chatplugins.save_skill(SID, "s1", "x")
-        chatplugins.save_mcp(SID, "srv", {"command": "echo"})
+        chatplugins.save_skill(chatplugins.chat_root(SID), "s1", "x")
+        chatplugins.save_mcp(chatplugins.chat_root(SID), "srv", {"command": "echo"})
         self.assertEqual(chatplugins.save_to_template(SID)["plugins"], ["privacy-guard", "cyber-security"])
         # The next chat from agent 7 starts with all of it, marked as the agent's.
         nxt = "77777777-1111-2222-3333-444455556666"
@@ -117,57 +116,36 @@ class TestChatPlugins(unittest.TestCase):
         with self.assertRaises(chatplugins.ChatPluginError):
             chatplugins.save_to_template(SID)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TestSaveAsPlugin(TestChatPlugins):
-    """A chat's extras become a catalog plugin any chat can add whole."""
-
-    def test_save_lists_runs_and_deletes(self):
-        with self.assertRaises(chatplugins.ChatPluginError):   # nothing of its own yet
-            chatplugins.save_as_plugin(SID, "sales-research")
-        chatplugins.save_skill(SID, "prospect", "---\ndescription: d\n---\n")
-        chatplugins.save_mcp(SID, "crm", {"command": "echo"})
-        self.assertEqual(chatplugins.save_as_plugin(SID, "Sales-Research", "Find leads")["name"], "sales-research")
-        manifest = json.loads((config.USER_PLUGINS_DIR / "sales-research" / ".claude-plugin" / "plugin.json").read_text())
-        self.assertEqual(manifest, {"name": "sales-research", "description": "Find leads"})
-        rows = {p["name"]: p for p in chatplugins.merge_into({"skills": [], "mcp": [], "plugins": []}, SID)["plugins"]}
-        self.assertEqual(rows["sales-research"]["kind"], "user")
-        self.assertEqual(rows["cyber-security"]["kind"], "shipped")
-        # Another chat can turn it on; its parts ride the run under the plugin's name.
-        other = "9f8e7d6c-1111-2222-3333-444455556666"
-        chatplugins.set_plugin(other, "sales-research", True)
-        self.assertIn(config.USER_PLUGINS_DIR / "sales-research", session_plugin_dirs(other, self.store[other]))
-        skills = chatplugins.merge_into({"skills": [], "mcp": [], "plugins": []}, other)["skills"]
-        self.assertTrue(any(s["source"] == "plugin:sales-research" and not s["editable"] for s in skills))
-        # Delete: the owner's own only; a chat still naming it just stops loading it.
-        with self.assertRaises(chatplugins.ChatPluginError) as e:
-            chatplugins.delete_user_plugin("cyber-security")
-        self.assertEqual(e.exception.status, 403)
-        chatplugins.delete_user_plugin("sales-research")
-        self.assertEqual(session_plugins(self.store[other]), [])
-
-    def test_name_rules(self):
-        chatplugins.save_skill(SID, "s", "x")
-        for bad, status in (("../x", 400), ("chat", 400), ("", 400), ("cyber-security", 409)):
-            with self.assertRaises(chatplugins.ChatPluginError) as e:
-                chatplugins.save_as_plugin(SID, bad)
-            self.assertEqual(e.exception.status, status, bad)
-        chatplugins.save_as_plugin(SID, "mine")
-        with self.assertRaises(chatplugins.ChatPluginError) as e:   # never overwrite
-            chatplugins.save_as_plugin(SID, "mine")
-        self.assertEqual(e.exception.status, 409)
-        with self.assertRaises(chatplugins.ChatPluginError) as e:
-            chatplugins.delete_user_plugin("nope")
-        self.assertEqual(e.exception.status, 404)
-
     def test_duplicate_copies_template_extras(self):
         self.store[SID] = {"agentTemplate": 7}
-        chatplugins.save_skill(SID, "kept", "x")
+        chatplugins.save_skill(chatplugins.chat_root(SID), "kept", "x")
         chatplugins.save_to_template(SID)
         chatplugins.copy_template_extras(7, 8)
         self.assertTrue((config.template_plugin_dir(8) / "skills" / "kept" / "SKILL.md").is_file())
         chatplugins.copy_template_extras(99, 100)   # nothing saved → nothing made
         self.assertIsNone(config.template_plugin_dir(100))
+
+    def test_an_agent_edits_its_own_extras(self):
+        # The agent is the hub: skills and MCP saved on it, no chat needed.
+        root = chatplugins.agent_root(7)
+        chatplugins.save_skill(root, "brief", "---\ndescription: d\n---\n")
+        chatplugins.save_mcp(root, "crm", {"command": "echo"})
+        skills, mcp = chatplugins.extras_rows(config.template_plugin_dir(7), "agent", True)
+        self.assertEqual([(s["name"], s["description"]) for s in skills], [("brief", "d")])
+        self.assertEqual([(m["name"], m["target"]) for m in mcp], [("crm", "echo")])
+        # The next chat from it starts with a copy.
+        self.store[SID] = chatplugins.start_from_template(self.templates[7], SID)
+        self.assertTrue((config.chat_plugin_dir(SID) / "skills" / "brief" / "SKILL.md").is_file())
+        chatplugins.delete_skill(root, "brief")
+        chatplugins.delete_mcp(root, "crm")
+        with self.assertRaises(chatplugins.ChatPluginError):
+            chatplugins.delete_skill(root, "brief")
+        with self.assertRaises(chatplugins.ChatPluginError):
+            chatplugins.delete_skill(root, "../x")
+        self.assertIsNone(chatplugins.agent_root("../x", create=False))
+        with self.assertRaises(chatplugins.ChatPluginError):
+            chatplugins.agent_root("../x")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -158,14 +158,12 @@ export interface McpServer {
   editable: boolean
 }
 /** A plugin a chat runs with. `agent` plugins are in Harman's catalog and the owner adds
- *  or removes them per chat (`included` = the chat's agent brings it by default; `kind`:
- *  `shipped` with Harman or `user` = saved from a chat, deletable); `machine` plugins
+ *  or removes them per chat (`included` = the chat's agent brings it by default); `machine` plugins
  *  are enabled for every Claude run on this Mac (read-only here). */
 export interface Plugin {
   name: string
   description?: string
   source: "agent" | "machine"
-  kind?: "shipped" | "user"
   included: boolean
   active: boolean
 }
