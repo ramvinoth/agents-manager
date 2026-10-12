@@ -1369,6 +1369,11 @@ function buildStyles(t: Theme) {
     agSectionTitle: { fontSize: 12, fontWeight: "700", color: t.textMuted, letterSpacing: 0.5, textTransform: "uppercase" },
     agCard: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 12, marginTop: 6, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border },
     agIcon: { width: 40, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+    // AgentEditScreen (ae): its four section heads and the plugin checkboxes.
+    aeSection: { fontSize: 12, fontWeight: "700", color: t.textMuted, letterSpacing: 1, marginTop: 28 },
+    aeSectionHint: { fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 16 },
+    aeNotice: { fontSize: 13, color: t.text, backgroundColor: t.chipBg, borderRadius: 10, padding: 12 },
+    aeCheck: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: t.border, alignItems: "center", justifyContent: "center" },
     agName: { fontSize: 14, fontWeight: "700", color: t.text },
     agDesc: { fontSize: 12, color: t.textMuted, marginTop: 2, lineHeight: 16 },
     agBadges: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },

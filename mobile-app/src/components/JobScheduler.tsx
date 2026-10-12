@@ -85,6 +85,8 @@ type FormProps = {
    *  job can pin its runs to a specific endpoint; omit it to hide the picker (the
    *  job then inherits the session's own provider). */
   providers?: Provider[]
+  /** Hide "Once": an agent's jobs repeat for every chat started from it. */
+  repeatOnly?: boolean
 }
 
 export default function JobScheduler({ visible, ...form }: FormProps & { visible: boolean }) {
@@ -105,14 +107,18 @@ export default function JobScheduler({ visible, ...form }: FormProps & { visible
   )
 }
 
-function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormProps) {
+function JobForm({ onSubmit, styles, initialValues, onClose, providers, repeatOnly }: FormProps) {
   const t = useTheme()
   // Fixed for this opening: the caller clears initialValues as the sheet slides
   // out, and the title must not flip to "New job" mid-animation.
   const [isEdit] = useState(!!initialValues)
 
   const [prompt, setPrompt] = useState(initialValues?.prompt ?? "")
-  const [mode, setMode] = useState<Mode>(initialMode(initialValues))
+  // A one-shot opened where Once is hidden starts as a repeat, never a hidden mode.
+  const [mode, setMode] = useState<Mode>(() => {
+    const m = initialMode(initialValues)
+    return repeatOnly && m === "once" ? "interval" : m
+  })
 
   // Interval axis: a free numeric string + a unit. Kept as text so the field
   // can be empty mid-edit; parsed (and clamped) only on submit.
@@ -180,7 +186,7 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
         multiline
       />
 
-      {/* Mode toggle: interval vs cron */}
+      {/* Mode toggle: interval, set times, or once (hidden when repeatOnly) */}
       <Text style={[styles.sheetSection, styles.jobSectionTop]}>SCHEDULE</Text>
       <View style={styles.segRow}>
         {(
@@ -189,7 +195,7 @@ function JobForm({ onSubmit, styles, initialValues, onClose, providers }: FormPr
             { v: "cron", label: "At set times" },
             { v: "once", label: "Once" },
           ] as { v: Mode; label: string }[]
-        ).map((o) => {
+        ).filter((o) => !repeatOnly || o.v !== "once").map((o) => {
           const active = mode === o.v
           return (
             <TouchableOpacity

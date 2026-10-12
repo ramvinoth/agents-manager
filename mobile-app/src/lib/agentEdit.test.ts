@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { NAME_MAX, draftBlocker, draftFrom, draftPayload, pickable } from "./agentEdit.ts"
+import { NAME_MAX, draftBlocker, draftFrom, draftPayload, pickable, sameDraft } from "./agentEdit.ts"
 
 const role = {
   id: 3, name: "Engineer", description: "d", category: "engineering", icon: "code",
@@ -56,4 +56,12 @@ test("From this Mac offers what the agent lacks, once per name, never a plugin's
   ]
   assert.deepEqual(pickable(machine, [{ name: "kept" }]).map((r) => `${r.name}:${r.scope}`), ["review:global", "db:project"])
   assert.deepEqual(pickable([{ name: "notes" }], []).map((r) => r.name), ["notes"])
+})
+
+test("unsaved changes: only what Save would send counts", () => {
+  const base = draftFrom(role)
+  assert.equal(sameDraft(base, draftFrom(role)), true)
+  assert.equal(sameDraft(base, { ...base, goal: "g " }), true) // trimmed away
+  assert.equal(sameDraft(base, { ...base, goal: "new" }), false)
+  assert.equal(sameDraft(base, { ...base, jobs: [] }), false)
 })

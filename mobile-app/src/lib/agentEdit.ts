@@ -38,7 +38,6 @@ export function draftBlocker(d: AgentDraft): string {
   const name = d.name.trim()
   if (!name) return "Name the agent"
   if (name.length > NAME_MAX) return `Keep the name under ${NAME_MAX} characters`
-  if (d.jobs.some((j) => j.at)) return "A job on an agent repeats; pick Every N or At set times"
   return ""
 }
 
@@ -51,6 +50,11 @@ export function draftPayload(d: AgentDraft): AgentTemplateFields {
     jobs: d.jobs.map(({ prompt, cron, interval }) => (cron ? { prompt, cron } : { prompt, interval })),
     plugins: d.plugins, plugin: d.plugin, lens: d.lens,
   }
+}
+
+/** True when two drafts would save the same agent — what leaving unsaved compares. */
+export function sameDraft(a: AgentDraft, b: AgentDraft): boolean {
+  return JSON.stringify(draftPayload(a)) === JSON.stringify(draftPayload(b))
 }
 
 /** What "From this Mac" offers for an agent: the machine's skills or MCP servers
