@@ -108,7 +108,7 @@ export default function AgentEditScreen({ route, navigation }: Props) {
         </HeaderButton>
       ),
     })
-  })
+  }, [navigation, busy, canSave, existing, d, t.accent]) // save reads d and existing
 
   function remove() {
     if (!existing) return
