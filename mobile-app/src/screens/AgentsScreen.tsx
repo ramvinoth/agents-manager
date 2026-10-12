@@ -110,10 +110,14 @@ export default function AgentsScreen({ navigation }: Props) {
   }
 
   function agentActions(tmpl: AgentTemplate) {
-    showActions(tmpl.name, [
-      ...(tmpl.editable ? [{ text: "Edit", onPress: () => navigation.navigate("AgentEdit", { template: tmpl }) }] : []),
+    // A built-in is re-seeded on every server start, so it is never edited in
+    // place: "Customize" makes the user's own copy and opens it in the editor.
+    showActions(tmpl.name, tmpl.editable ? [
+      { text: "Edit", onPress: () => navigation.navigate("AgentEdit", { template: tmpl }) },
       { text: "Duplicate", onPress: () => duplicate(tmpl) },
-      ...(tmpl.editable ? [{ text: "Delete", destructive: true, onPress: () => confirmDelete(tmpl) }] : []),
+      { text: "Delete", destructive: true, onPress: () => confirmDelete(tmpl) },
+    ] : [
+      { text: "Customize (your own copy)", onPress: () => duplicate(tmpl) },
     ])
   }
 
@@ -187,7 +191,7 @@ export default function AgentsScreen({ navigation }: Props) {
               activeOpacity={0.65}
               onPress={() => pickTemplate(tmpl)}
               onLongPress={() => agentActions(tmpl)}
-              accessibilityHint="Starts a chat. Long-press or ⋯ for edit, duplicate and delete"
+              accessibilityHint="Starts a chat. Long-press or ⋯ to edit or customize"
             >
               {/* Icon */}
               <View style={[styles.agIcon, { backgroundColor: catColor + "18" }]}>
@@ -249,7 +253,7 @@ export default function AgentsScreen({ navigation }: Props) {
               {/* Visible door to Edit / Duplicate / Delete — long-press alone hides them. */}
               <TouchableOpacity testID={`agent-more-${tmpl.id}`} onPress={() => agentActions(tmpl)}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                accessibilityLabel={`${tmpl.editable ? "Edit, duplicate or delete" : "Duplicate"} ${tmpl.name}`}>
+                accessibilityLabel={`${tmpl.editable ? "Edit, duplicate or delete" : "Customize"} ${tmpl.name}`}>
                 <Icon name="more" size={18} color={t.textMuted} />
               </TouchableOpacity>
             </TouchableOpacity>
