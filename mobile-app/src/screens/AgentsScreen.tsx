@@ -187,7 +187,7 @@ export default function AgentsScreen({ navigation }: Props) {
               activeOpacity={0.65}
               onPress={() => pickTemplate(tmpl)}
               onLongPress={() => agentActions(tmpl)}
-              accessibilityHint="Long-press for edit, duplicate and delete"
+              accessibilityHint="Starts a chat. Long-press or ⋯ for edit, duplicate and delete"
             >
               {/* Icon */}
               <View style={[styles.agIcon, { backgroundColor: catColor + "18" }]}>
@@ -246,7 +246,12 @@ export default function AgentsScreen({ navigation }: Props) {
                 ) : null}
               </View>
 
-              <Icon name="chevronRight" size={14} color={t.border} />
+              {/* Visible door to Edit / Duplicate / Delete — long-press alone hides them. */}
+              <TouchableOpacity testID={`agent-more-${tmpl.id}`} onPress={() => agentActions(tmpl)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityLabel={`${tmpl.editable ? "Edit, duplicate or delete" : "Duplicate"} ${tmpl.name}`}>
+                <Icon name="more" size={18} color={t.textMuted} />
+              </TouchableOpacity>
             </TouchableOpacity>
           )
         }}
