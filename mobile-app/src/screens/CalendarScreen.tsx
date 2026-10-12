@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react"
-import { ActivityIndicator, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import DateTimePicker from "@react-native-community/datetimepicker"
@@ -79,8 +79,16 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
     await load()
   }
 
-  // Instant with Undo (lib/undo.ts): the event leaves the agenda now and the
-  // Google delete runs when the window closes. Guests are not emailed.
+  // Confirm first (over the open event sheet; Cancel keeps it), then the event
+  // leaves the agenda at once and the Google delete waits out an Undo window
+  // (lib/undo.ts). Guests are not emailed.
+  function confirmRemove(d: EventDraft) {
+    if (!account || !d.id) return
+    Alert.alert(`Delete "${d.title || "(no title)"}"?`, "It is removed from your Google Calendar. Guests are not emailed.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => remove(d) },
+    ])
+  }
   function remove(d: EventDraft) {
     if (!account || !d.id) return
     const id = d.id, conn = account.id
@@ -175,7 +183,7 @@ export default function CalendarScreen({ navigation }: { navigation: NativeStack
         event={events.find((e) => e.id === draft?.id)}
         onClose={() => setDraft(null)}
         onSave={save}
-        onDelete={remove}
+        onDelete={confirmRemove}
       />
     </View>
   )

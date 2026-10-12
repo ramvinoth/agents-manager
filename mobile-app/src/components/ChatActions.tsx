@@ -27,7 +27,7 @@ export default function ChatActions({
   onRename: (title: string) => void
   onArchive: () => void
   onFavorite: () => void
-  onDelete: () => void
+  onDelete: () => void // confirms over this sheet and closes it on Delete; Cancel keeps it up
   onSelect?: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
@@ -39,12 +39,6 @@ export default function ChatActions({
       setTitle(name)
     }
   }, [visible, name])
-
-  // No confirm: ChatsScreen deletes with an Undo toast (lib/undo.ts).
-  function del() {
-    onDelete()
-    onClose()
-  }
 
   const styles = useStyles()
   return (
@@ -113,7 +107,7 @@ export default function ChatActions({
           >
             <Text style={styles.actionText}>{archived ? "Unarchive" : "Archive"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity testID="action-delete" style={styles.actionRow} onPress={del}>
+          <TouchableOpacity testID="action-delete" style={styles.actionRow} onPress={onDelete}>
             <Text style={[styles.actionText, styles.actionDanger]}>Delete chat</Text>
           </TouchableOpacity>
         </>

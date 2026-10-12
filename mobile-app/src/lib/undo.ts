@@ -13,9 +13,12 @@
  * the app leaving the foreground (flush) — a pending delete is never lost and
  * never silently dropped.
  *
- * Keep a confirm instead when the action can neither be held back nor flipped:
- * approval-gated deletes (may queue for the owner), forgetting credentials,
- * signing out.
+ * Every DELETE confirms first (Ram, 2026-10-11: "Delete chat has no
+ * confirmation. This is dangerous."); the Undo is a second net behind the
+ * confirm, never a replacement for it. Flips (archive, pause, unshare) need no
+ * confirm — Undo alone is enough there. Actions that can neither be held back
+ * nor flipped (approval-gated deletes, forgetting credentials, signing out)
+ * confirm and skip the Undo.
  */
 export const UNDO_MS = 5000
 

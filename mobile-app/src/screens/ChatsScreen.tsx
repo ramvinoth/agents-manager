@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -110,9 +110,11 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
-  // Delete is instant with an Undo (lib/undo.ts): the rows leave the list now and
-  // the server delete runs when the Undo window closes. `deleting` keeps the 4s
-  // poll from bringing them back meanwhile.
+  // Delete always confirms first: the chat file goes to the server's trash, but
+  // its scheduled jobs, notes and inbox messages are erased for good. After the
+  // confirm the rows leave the list at once and the server delete still waits
+  // out an Undo window (lib/undo.ts) — a second net for a mis-tap. `deleting`
+  // keeps the 4s poll from bringing them back meanwhile.
   const deleting = useRef(new Set<string>())
   // A swipe that starts on a row is not a tap on it (one finger, one guard).
   const rowTap = useTapGuard()
@@ -130,6 +132,21 @@ export default function ChatsScreen({ navigation }: Props) {
         if (failed.length) { setError(userError(failed[0], paths.length > 1 ? "some chats" : "that chat", "delete")); load(true) }
       },
     })
+  }
+
+  // Shown over whatever is open (the action sheet stays up behind it, so the
+  // alert is never torn down by a dismissing modal); `done` runs on Delete only.
+  function confirmRemove(paths: string[], name?: string, done?: () => void) {
+    if (!paths.length) return
+    const many = paths.length > 1
+    Alert.alert(
+      many ? `Delete ${paths.length} chats?` : `Delete "${name || "this chat"}"?`,
+      `${many ? "Their" : "Its"} scheduled jobs, notes and inbox messages are deleted for good. Archive instead to just hide ${many ? "them" : "it"}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: many ? `Delete ${paths.length}` : "Delete", style: "destructive", onPress: () => { done?.(); remove(paths) } },
+      ],
+    )
   }
 
   function enterSelection(s: Session) {
@@ -151,9 +168,7 @@ export default function ChatsScreen({ navigation }: Props) {
   }
 
   function bulkDelete() {
-    if (!selected.size) return
-    remove(Array.from(selected))
-    exitSelection()
+    confirmRemove(Array.from(selected), undefined, exitSelection)
   }
 
   // Mark a session read: clear its dot locally (optimistic) and advance the
@@ -537,7 +552,7 @@ export default function ChatsScreen({ navigation }: Props) {
         onRename={(title) => actionFor && rename(actionFor, title)}
         onArchive={() => actionFor && setFlag(actionFor, "archived", !actionFor.archived)}
         onFavorite={() => actionFor && setFlag(actionFor, "favorite", !actionFor.favorite)}
-        onDelete={() => actionFor && remove([actionFor.path])}
+        onDelete={() => actionFor && confirmRemove([actionFor.path], actionFor.title || actionFor.id.slice(0, 8), () => setActionFor(null))}
         onSelect={() => actionFor && enterSelection(actionFor)}
       />
     </View>

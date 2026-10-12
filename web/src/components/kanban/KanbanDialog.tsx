@@ -195,18 +195,13 @@ export function KanbanDialog({
     reload()
   }
 
-  // Card delete always confirms: it removes the card AND its comment thread.
-  // Column delete confirms only when the column holds cards — an empty column
-  // is free to drop (adding one back is one click, nothing is at stake).
+  // Every delete confirms (a card takes its comment thread with it; a column
+  // sends its cards to Unsorted).
   function requestDeleteCard(card: Card) {
     setConfirm({ kind: "card", card })
   }
   function requestDeleteColumn(column: BoardColumn) {
     const count = cards.filter((c) => c.column_id === column.id).length
-    if (count === 0) {
-      deleteColumn(column.id)
-      return
-    }
     setConfirm({ kind: "column", column, count })
   }
   function confirmDelete() {
@@ -367,7 +362,9 @@ export function KanbanDialog({
               <DialogDescription>
                 {confirm.kind === "card"
                   ? "The card and its comment thread are removed from the board. This can't be undone."
-                  : `Its ${confirm.count} card${confirm.count === 1 ? "" : "s"} move to Unsorted with their comments intact; only the column itself is removed.`}
+                  : confirm.count
+                    ? `Its ${confirm.count} card${confirm.count === 1 ? "" : "s"} move to Unsorted with their comments intact; only the column itself is removed.`
+                    : "The column is empty; only the column itself is removed."}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

@@ -220,10 +220,17 @@ export default function FilesScreen({ navigation }: Props) {
     }
   }
 
-  // Instant with Undo (lib/undo.ts): the row goes now, the trash move runs when
-  // the window closes. Reload after either so the list is the server's truth.
+  // Confirm first (a long-press is easy to trigger by accident), then the row
+  // goes at once and the trash move waits out an Undo window (lib/undo.ts).
+  // Reload after either so the list is the server's truth.
   const here = useRef("")
   here.current = JSON.stringify([scope, path])
+  function confirmRemove(item: FileEntry) {
+    Alert.alert(`Move "${item.name}" to trash?`, item.dir ? "The folder and everything in it leave this view." : undefined, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Move to trash", style: "destructive", onPress: () => remove(item) },
+    ])
+  }
   function remove(item: FileEntry) {
     const at = { path, host, location, scope }
     const key = here.current
@@ -341,7 +348,7 @@ export default function FilesScreen({ navigation }: Props) {
               testID={`filestab-${item.name}`}
               style={styles.fsRow}
               onPress={() => (item.dir ? go(joinPath(path, item.name)) : downloadShare(item))}
-              onLongPress={() => remove(item)}
+              onLongPress={() => confirmRemove(item)}
               delayLongPress={350}
             >
               <Icon name={item.dir ? "folder" : "file"} size={18} color={item.dir ? t.warning : t.textMuted} />
