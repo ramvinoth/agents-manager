@@ -15,7 +15,7 @@ def store(monkeypatch):
 
     def add(by, sid, commit, reason):
         r = {"id": len(reqs) + 1, "requested_by": by, "session_id": sid,
-             "commit_sha": commit, "reason": reason, "status": "queued"}
+             "commit_sha": commit, "reason": reason, "status": "queued", "created_at": 0}
         reqs.append(r)
         return dict(r)
     monkeypatch.setattr(db, "restart_request_add", add)
@@ -119,6 +119,21 @@ def test_new_process_writes_the_single_audit_entry(store):
     assert store["settings"]["maintenance_pending"] is None
     assert [t[3] for t in store["told"]] == ["s1"] and len(store["pushed"]) == 1
     assert maintenance.finish_after_boot(sleep=lambda s: None) is None   # once only
+
+
+def test_restart_outside_the_window_closes_requests_it_already_applied(store):
+    maintenance.request("a", "s1", "abc", "x")    # filed before this process booted (created_at 0)
+    rec = maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    assert rec["trigger"] == "restart outside the window"
+    assert {r["status"] for r in store["reqs"]} == {"done"}
+    assert len(store["audit"]) == 1 and [t[3] for t in store["told"]] == ["s1"]
+
+
+def test_request_filed_after_boot_waits_for_its_window(store):
+    maintenance.request("a", "s1", "", "x")
+    store["reqs"][0]["created_at"] = maintenance.BOOT_TIME + 1
+    assert maintenance.finish_after_boot(sleep=lambda s: None) is None
+    assert store["reqs"][0]["status"] == "queued" and not store["audit"]
 
 
 def test_unhealthy_boot_is_recorded_as_such(store):

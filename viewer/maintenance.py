@@ -55,6 +55,7 @@ def _git_head():
 
 
 BOOT_COMMIT = _git_head()   # the code THIS process loaded, not whatever is on disk later
+BOOT_TIME = time.time()     # imported at boot (server.py), so requests older than this are live
 
 
 def window_key(now):
@@ -196,9 +197,17 @@ def finish_after_boot(sleep=time.sleep, health=None):
     """On a real (non-preflight) boot: close the restart the previous process
     started. Writes the one audit entry and wakes the requesters."""
     record = db.setting_get(_PENDING_KEY)
-    if not record:
-        return None
-    db.setting_set(_PENDING_KEY, None)
+    if record:
+        db.setting_set(_PENDING_KEY, None)
+    else:
+        # Restarted outside the window (the owner's kickstart, a crash, a reboot):
+        # requests filed before this boot are already live, so close them here
+        # rather than let the next window cut every running turn for nothing.
+        stale = [r for r in db.restart_requests_by_status("queued") if (r.get("created_at") or 0) < BOOT_TIME]
+        if not stale:
+            return None
+        record = {"trigger": "restart outside the window", "version_before": "?", "commit_before": "",
+                  "requests": [_summary(r) for r in stale]}
     sleep(5)   # let the HTTP server come up before probing it
     h = (health or _health)()
     record.update({"finished_at": time.time(), "version_after": config.VERSION,
