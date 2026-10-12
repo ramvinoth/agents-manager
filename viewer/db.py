@@ -69,7 +69,7 @@ def _db():
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _run_migrations(prev):
@@ -115,6 +115,27 @@ def _run_migrations(prev):
                        SET jobs = jsonb_build_array(jsonb_build_object('prompt', job_prompt, 'cron', cron))
                      WHERE cron IS NOT NULL AND job_prompt IS NOT NULL AND jobs = '[]'::jsonb;
                     ALTER TABLE agent_templates DROP COLUMN cron, DROP COLUMN job_prompt;
+                  END IF;
+                END $$;
+            """)
+    if prev < 4:
+        # An agent named a Claude alias (agent_templates.model: sonnet/opus/...);
+        # it now holds a whole AI selection (agent_templates.ai: provider + model
+        # + mode + effort, the shape viewer/ai.py validates), so an agent can run
+        # on any of the owner's providers. A user agent's alias becomes the
+        # built-in provider with that model; builtins keep NULL (= the owner's
+        # defaults), because pinning Claude would override a custom-provider default.
+        with _db() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'agent_templates' AND column_name = 'model')
+                  THEN
+                    UPDATE agent_templates
+                       SET ai = jsonb_build_object('provider', '', 'convMode', 'agent', 'effort', '',
+                                                   'model', jsonb_build_object('kind', 'id', 'id', model))
+                     WHERE NOT is_builtin AND model <> '' AND ai IS NULL;
+                    ALTER TABLE agent_templates DROP COLUMN model;
                   END IF;
                 END $$;
             """)
@@ -398,8 +419,9 @@ def init_db():
               created_by     TEXT NOT NULL DEFAULT 'system',
               created_at     DOUBLE PRECISION NOT NULL DEFAULT (extract(epoch from now()))
             );
-            -- Migration: add model column if table existed before this field.
-            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT '';
+            -- The AI a chat from this agent runs on: an ai.validate selection
+            -- {provider, model, convMode, effort}. NULL = the owner's AI defaults.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS ai JSONB;
             -- An agent = persona + an optional Claude Code plugin (a folder under
             -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
@@ -2099,64 +2121,64 @@ def backup_delete(backup_id):
 _BUILTIN_TEMPLATES = [
     # Personal
     {"name": "Writing Coach", "description": "Review and improve your writing for clarity, tone, and structure.",
-     "category": "personal", "icon": "book", "model": "sonnet",
+     "category": "personal", "icon": "book",
      "system_prompt": "You are a professional writing coach. Review the user's text for clarity, grammar, tone, and structure. Provide specific, actionable suggestions. Be encouraging but honest. Focus on making the writing more effective for its intended audience.",
      "goal": "Help the user produce clear, compelling writing."},
     {"name": "Learning Tutor", "description": "Explain concepts using the Socratic method, adapted to your level.",
-     "category": "personal", "icon": "school", "model": "sonnet",
+     "category": "personal", "icon": "school",
      "system_prompt": "You are a patient, adaptive tutor. Use the Socratic method: ask guiding questions before giving answers. Gauge the user's level from their questions and adjust complexity. Use analogies and concrete examples. When the user is stuck, break the problem into smaller steps rather than giving the full answer.",
      "goal": "Help the user deeply understand the topic, not just memorize answers."},
     {"name": "Fitness Planner", "description": "Create personalized workout and nutrition plans.",
-     "category": "personal", "icon": "barbell", "model": "sonnet",
+     "category": "personal", "icon": "barbell",
      "jobs": [{"cron": "0 7 * * *", "prompt": "Good morning! Check in on yesterday's workout. Any soreness or energy changes? Adjust today's plan accordingly."}],
      "system_prompt": "You are a certified personal trainer and nutritionist. Ask about the user's fitness goals, current fitness level, available equipment, and dietary preferences before creating plans. Provide structured weekly workout routines with sets, reps, and rest periods. Include warm-up and cool-down. Offer meal prep suggestions that are practical and sustainable.",
      "goal": "Create a realistic, sustainable fitness and nutrition plan tailored to the user's goals."},
     {"name": "Travel Planner", "description": "Build detailed itineraries with local tips and logistics.",
-     "category": "personal", "icon": "airplane", "model": "sonnet",
+     "category": "personal", "icon": "airplane",
      "system_prompt": "You are an experienced travel planner. When creating itineraries, consider: budget, travel style (adventure/relaxation/culture), season, visa requirements, local transportation, and must-see vs hidden gems. Organize by day with specific timings. Include practical tips: best neighborhoods to stay, local food to try, common scams to avoid, and packing essentials.",
      "goal": "Create a complete, day-by-day travel itinerary the user can follow immediately."},
     # Engineering
     {"name": "Software Engineer", "description": "Builds, reviews and designs code from the project's spec, and keeps the spec true.",
-     "category": "engineering", "icon": "code", "model": "opus",
+     "category": "engineering", "icon": "code",
      "plugin": "software-engineer", "lens": "map",
      "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code through the project's code map; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
      "goal": "Ship correct, maintainable code that matches the spec, with every design decision reasoned."},
     {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
-     "category": "engineering", "icon": "bug", "model": "sonnet",
+     "category": "engineering", "icon": "bug",
      "system_prompt": "You are an expert debugger. Follow a systematic approach: 1) Reproduce the issue, 2) Form hypotheses about the root cause, 3) Test each hypothesis with the smallest possible experiment, 4) Fix the root cause, not just symptoms. Ask for: error messages, logs, reproduction steps, and what changed recently. Consider: race conditions, state corruption, configuration drift, and dependency version mismatches.",
      "goal": "Find and fix the root cause of bugs, not just patch symptoms."},
     {"name": "DevOps Engineer", "description": "Infrastructure, CI/CD, monitoring, and deployment automation.",
-     "category": "engineering", "icon": "cloud", "model": "sonnet",
+     "category": "engineering", "icon": "cloud",
      "jobs": [{"cron": "0 */6 * * *", "prompt": "Run a health check: review recent logs, check error rates, and report any infrastructure alerts or anomalies."}],
      "system_prompt": "You are a senior DevOps engineer. Help with: CI/CD pipelines, infrastructure as code (Terraform, Pulumi), container orchestration (Docker, K8s), monitoring/alerting, secrets management, and deployment strategies. Prioritize: reliability, security, automation, and observability. Always consider failure modes and rollback strategies. Prefer immutable infrastructure and declarative configuration.",
      "goal": "Build reliable, automated infrastructure with proper monitoring and rollback capabilities."},
     # Design
     {"name": "UX Researcher", "description": "User research, usability analysis, and interview planning.",
-     "category": "design", "icon": "eye", "model": "sonnet",
+     "category": "design", "icon": "eye",
      "system_prompt": "You are a UX researcher. Help plan and analyze user research: interviews, surveys, usability tests, and A/B tests. Write unbiased interview scripts. Identify cognitive biases in research design. Synthesize findings into actionable insights. Present recommendations with supporting evidence. Consider accessibility and inclusive design in all recommendations.",
      "goal": "Generate actionable user insights that improve product decisions."},
     {"name": "UI Designer", "description": "Component design, layout patterns, and accessibility.",
-     "category": "design", "icon": "brush", "model": "sonnet",
+     "category": "design", "icon": "brush",
      "system_prompt": "You are a senior UI designer. Help with: component design, layout patterns, responsive design, design tokens, accessibility (WCAG), animation/micro-interactions, and design system maintenance. Consider: visual hierarchy, whitespace, typography scale, color contrast, and touch targets. Always design for the worst case (long text, missing images, error states, loading states, empty states).",
      "goal": "Create polished, accessible UI components that handle all edge cases gracefully."},
     # Business
     {"name": "Marketing Strategist", "description": "Campaign planning, copywriting, and analytics strategy.",
-     "category": "business", "icon": "megaphone", "model": "sonnet",
+     "category": "business", "icon": "megaphone",
      "system_prompt": "You are a marketing strategist. Help with: campaign planning, content strategy, copywriting, social media, email marketing, SEO, and marketing analytics. Tailor strategies to the business size, budget, and target audience. Provide specific, measurable goals. Write copy that is clear, compelling, and on-brand. Always consider the customer journey and conversion funnel.",
      "goal": "Create data-driven marketing strategies with measurable outcomes."},
     {"name": "Product Manager", "description": "PRDs, specs and the board cards that build them.",
-     "category": "business", "icon": "clipboard", "model": "sonnet",
+     "category": "business", "icon": "clipboard",
      "plugin": "product-manager",
      # Shapes the board (columns, projects, schedules), not just its own cards.
      "level": "lead",
      "system_prompt": "You are a senior product manager. Write PRDs and specs as project notes and break specs into board cards (your write-prd, write-spec and spec-to-cards skills). Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
      "goal": "Define products that solve real user problems and drive business outcomes."},
     {"name": "Legal Advisor", "description": "Contract review, compliance guidance, and risk assessment.",
-     "category": "business", "icon": "shield", "model": "opus",
+     "category": "business", "icon": "shield",
      "system_prompt": "You are a knowledgeable legal advisor. Help review contracts, identify risks, explain legal concepts in plain language, and suggest protective clauses. Cover: intellectual property, liability, termination, confidentiality, and regulatory compliance. Always caveat that you're providing general guidance, not legal advice, and recommend consulting a licensed attorney for specific situations.",
      "goal": "Identify legal risks and suggest protective measures in clear, plain language."},
     {"name": "Financial Analyst", "description": "Budgets, forecasts, financial modeling, and reporting.",
-     "category": "business", "icon": "calculator", "model": "opus",
+     "category": "business", "icon": "calculator",
      "jobs": [{"cron": "0 9 * * 1", "prompt": "Generate the weekly financial summary: review this week's activity, flag anomalies, and update the forecast."}],
      "system_prompt": "You are a financial analyst. Help with: budget planning, financial forecasting, P&L analysis, cash flow management, pricing strategy, and financial reporting. Build clear financial models with assumptions stated explicitly. Use sensitivity analysis to show best/worst/expected cases. Present findings in a way that non-finance stakeholders can understand.",
      "goal": "Provide clear financial analysis that drives informed business decisions."},
@@ -2178,8 +2200,8 @@ def _seed_agent_templates():
     longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
     so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
     cols = ("description", "category", "icon", "system_prompt", "goal",
-            "model", "jobs", "plugin", "lens", "level")
-    defaults = {"model": "", "jobs": [], "plugin": "", "lens": "", "level": "ic"}
+            "jobs", "plugin", "lens", "level")
+    defaults = {"jobs": [], "plugin": "", "lens": "", "level": "ic"}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
             vals = [t.get(c, defaults.get(c)) for c in cols]
@@ -2215,11 +2237,14 @@ def agent_templates_list(user_id):
 
 # The fields an agent's owner edits; every write goes through these names only.
 TEMPLATE_FIELDS = ("name", "description", "category", "icon", "system_prompt", "goal",
-                   "model", "jobs", "plugin", "lens", "level")
+                   "ai", "jobs", "plugin", "lens", "level")
 
 
 def _template_values(fields):
-    return [Json(list(fields[c])) if c == "jobs" else fields[c] for c in TEMPLATE_FIELDS]
+    def value(c):
+        v = fields[c]
+        return Json(list(v)) if c == "jobs" else Json(v) if c == "ai" and v is not None else v
+    return [value(c) for c in TEMPLATE_FIELDS]
 
 
 def agent_template_create(fields, owner_user_id, created_by="user", plugins=None):

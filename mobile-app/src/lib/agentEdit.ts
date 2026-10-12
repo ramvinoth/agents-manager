@@ -2,15 +2,18 @@
  *  (viewer/agenttemplates.fields_from) is the one validator; this mirrors its
  *  rules only to keep Save disabled with a reason instead of a round trip. */
 import type { AgentTemplate, AgentTemplateFields, HarmanLevel } from "../api/client"
+import type { AISelection } from "./aiSelection"
 import type { NewChatJob } from "./newChat"
 import { TEMPLATE_CATEGORIES } from "./templateCategories.ts"
+import { textFilter } from "./textFilter.ts"
 
 export const NAME_MAX = 80 // viewer/agenttemplates.NAME_MAX
-export const MODEL_CHOICES = ["", "sonnet", "opus", "haiku"] as const
 
 export type AgentDraft = {
   name: string; icon: string; category: string; description: string
-  system_prompt: string; goal: string; model: string; level: HarmanLevel
+  system_prompt: string; goal: string; level: HarmanLevel
+  /** The AI its chats run on; null = the owner's AI defaults (Profile). */
+  ai: AISelection | null
   jobs: NewChatJob[]
   /** Harman plugins every chat from this agent starts with. */
   plugins: string[]
@@ -19,12 +22,25 @@ export type AgentDraft = {
   plugin: string; lens: string
 }
 
+/** The plugin catalog as the picker lists it: those matching `query` (name or
+ *  description), the agent's own first so what it has never scrolls away. */
+export function pluginRows<T extends { name: string; description: string }>(catalog: T[], on: string[], query: string): T[] {
+  const has = new Set(on)
+  const hit = textFilter(catalog, query, (p) => [p.name, p.description])
+  return [...hit.filter((p) => has.has(p.name)), ...hit.filter((p) => !has.has(p.name))]
+}
+
+/** A plugin's folder name as people read it: "cyber-security" → "Cyber security". */
+export function pluginLabel(name: string): string {
+  return name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase())
+}
+
 export function draftFrom(t?: AgentTemplate): AgentDraft {
   return {
     name: t?.name ?? "", icon: t?.icon || "sparkle",
     category: t && TEMPLATE_CATEGORIES[t.category] ? t.category : "personal",
     description: t?.description ?? "", system_prompt: t?.system_prompt ?? "", goal: t?.goal ?? "",
-    model: t?.model ?? "", level: t?.level ?? "ic",
+    ai: t?.ai ?? null, level: t?.level ?? "ic",
     // A template holds a schedule only; a one-shot `at` means nothing there.
     jobs: (t?.jobs ?? []).filter((j) => !j.at),
     // An agent that never kept a list brings its one seeded plugin.
@@ -46,7 +62,7 @@ export function draftPayload(d: AgentDraft): AgentTemplateFields {
   const trim = (s: string) => s.trim()
   return {
     name: trim(d.name), icon: d.icon, category: d.category, description: trim(d.description),
-    system_prompt: trim(d.system_prompt), goal: trim(d.goal), model: d.model, level: d.level,
+    system_prompt: trim(d.system_prompt), goal: trim(d.goal), ai: d.ai, level: d.level,
     jobs: d.jobs.map(({ prompt, cron, interval }) => (cron ? { prompt, cron } : { prompt, interval })),
     plugins: d.plugins, plugin: d.plugin, lens: d.lens,
   }

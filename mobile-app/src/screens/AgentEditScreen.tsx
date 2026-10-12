@@ -3,13 +3,15 @@ import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, Text, TextInput,
 import { UNSTABLE_usePreventRemove as usePreventRemove, type NavigationAction } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type AgentExtras, type McpServer, type Skill } from "../api/client"
+import { api, type AgentExtras, type McpServer, type Provider, type Skill } from "../api/client"
 import { McpEditor, SkillEditor } from "../components/CapabilitiesEditors"
 import MarketplaceSheet from "../components/MarketplaceSheet"
+import ProviderPicker from "../components/ProviderPicker"
 import HeaderButton from "../components/HeaderButton"
 import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
-import { MODEL_CHOICES, draftBlocker, draftFrom, draftPayload, pickable, sameDraft, type AgentDraft } from "../lib/agentEdit"
+import { draftBlocker, draftFrom, draftPayload, pickable, pluginLabel, pluginRows, sameDraft, type AgentDraft } from "../lib/agentEdit"
+import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { showActions } from "../lib/actionSheet"
 import { HARMAN_LEVELS, LEVEL_NAME, LEVEL_REACH } from "../lib/harmanLevel"
 import { describeSchedule } from "../lib/interval"
@@ -25,7 +27,7 @@ const ICONS: IconName[] = ["sparkle", "book", "school", "barbell", "airplane", "
 
 /**
  * Create or edit a personal agent — the hub a new chat starts from: name,
- * instructions, goal, model, board level, scheduled jobs, Harman plugins, and
+ * instructions, goal, AI (provider + model), board level, scheduled jobs, Harman plugins, and
  * its own skills and MCP servers (each new chat gets a copy). Only its owner
  * sees or edits it; the server enforces both. Built-ins are duplicated, not edited.
  * Plugins save with the form; skills and MCP save one by one, so they need the
@@ -64,7 +66,24 @@ export default function AgentEditScreen({ route, navigation }: Props) {
   }, [existing?.id])
   useEffect(loadExtras, [loadExtras])
   const togglePlugin = (name: string) =>
-    set("plugins", d.plugins.includes(name) ? d.plugins.filter((p) => p !== name) : [...d.plugins, name])
+    setD((prev) => ({ ...prev, plugins: prev.plugins.includes(name) ? prev.plugins.filter((p) => p !== name) : [...prev.plugins, name] }))
+  const [pluginsOpen, setPluginsOpen] = useState(false)
+
+  // The agent's AI is the same server-owned selection a chat has (any provider,
+  // any model the provider lists), picked in the one ProviderPicker. The owner's
+  // defaults are what "no AI of its own" means, so they are loaded to show it.
+  const [aiDefaults, setAIDefaults] = useState<AIConfig | null>(null)
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [aiErrorText, setAIErrorText] = useState("")
+  const [aiOpen, setAIOpen] = useState(false)
+  const loadAI = useCallback(() => {
+    setAIErrorText("")
+    Promise.all([api.aiConfig({ host: "local" }), api.providers()]).then(([config, result]) => {
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      setAIDefaults(config); setProviders(result.providers || [])
+    }).catch((e) => setAIErrorText(aiError(e)))
+  }, [])
+  useEffect(loadAI, [loadAI])
 
   const dirty = !sameDraft(d, saved)
   usePreventRemove(dirty && !leaving, ({ data }) => {
@@ -181,9 +200,32 @@ export default function AgentEditScreen({ route, navigation }: Props) {
       {section("HOW IT WORKS", "Every chat from this agent starts with these; a chat can still change its own copy.")}
       {field("agent-system-prompt", "Instructions", "system_prompt", "How it should behave, e.g. \"Edit for clarity; keep my voice\"", true)}
       {field("agent-goal", "Goal", "goal", "What counts as done — the agent checks it before stopping")}
-      <Text style={styles.label}>Model</Text>
-      {chips("agent-model", MODEL_CHOICES, d.model as (typeof MODEL_CHOICES)[number], (v) => v ? v[0].toUpperCase() + v.slice(1) : "Default", (v) => set("model", v))}
-      <Text style={styles.hint}>Default follows AI settings in Profile. A Claude model here applies when the chat runs on Claude; another provider uses its own model.</Text>
+      <Text style={styles.label}>AI</Text>
+      {aiErrorText ? (
+        <TouchableOpacity testID="agent-ai-retry" onPress={loadAI}><Text style={styles.error}>{aiErrorText} Tap to try again.</Text></TouchableOpacity>
+      ) : (
+        <TouchableOpacity testID="agent-ai-row" activeOpacity={0.65} disabled={!aiDefaults} onPress={() => setAIOpen(true)} style={styles.ncJob}>
+          <Icon name="sparkle" size={15} color={t.accent} />
+          <View style={styles.flex1}>
+            <Text style={styles.ncJobPrompt} numberOfLines={1}>
+              {d.ai ? aiSummary(d.ai, providers) : "Your default AI"}
+            </Text>
+            <Text style={styles.ncJobWhen} numberOfLines={2}>
+              {!aiDefaults ? "Loading…" : d.ai ? "Its own — changing your default AI won't change it." : `Follows Profile → AI, now ${aiSummary(aiDefaults.selection, providers)}.`}
+            </Text>
+          </View>
+          {d.ai ? (
+            <TouchableOpacity testID="agent-ai-default" hitSlop={8} onPress={() => set("ai", null)}>
+              <Text style={styles.ncAddText}>Use default</Text>
+            </TouchableOpacity>
+          ) : <Icon name="chevronRight" size={14} color={t.textMuted} />}
+        </TouchableOpacity>
+      )}
+      {aiOpen && aiDefaults ? (
+        <ProviderPicker config={{ ...aiDefaults, selection: d.ai ?? aiDefaults.selection }} scope={{ host: "local" }} providers={providers}
+          title="AI for this agent" localOnly hint="Every new chat from this agent starts on this. Your default AI is unchanged."
+          onSave={(c) => set("ai", c.selection)} onClose={() => setAIOpen(false)} />
+      ) : null}
 
       {section("WHAT IT CAN USE", "Each new chat gets its own copy; changes here reach chats started afterwards.")}
       <Text style={styles.label}>Plugins</Text>
@@ -192,25 +234,18 @@ export default function AgentEditScreen({ route, navigation }: Props) {
           <Text style={styles.error}>{extrasError} Tap to try again.</Text>
         </TouchableOpacity>
       ) : !extras ? <ActivityIndicator size="small" color={t.textMuted} style={{ alignSelf: "flex-start" }} /> : (
-        <>
-          <Text style={styles.hint}>Harman's ready-made kits of skills and tools. Tick the ones it starts with.</Text>
-          {extras.catalog.map((p) => {
-            const on = d.plugins.includes(p.name)
-            return (
-              <TouchableOpacity key={p.name} testID={`agent-plugin-${p.name}`} accessibilityRole="checkbox" accessibilityState={{ checked: on }}
-                activeOpacity={0.65} onPress={() => togglePlugin(p.name)} style={styles.ncJob}>
-                <View style={[styles.aeCheck, on ? { backgroundColor: t.accent, borderColor: t.accent } : null]}>
-                  {on ? <Icon name="check" size={13} color={t.onAccent} /> : null}
-                </View>
-                <View style={styles.flex1}>
-                  <Text style={styles.ncJobPrompt}>{p.name.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase())}</Text>
-                  {p.description ? <Text style={styles.ncJobWhen} numberOfLines={2}>{p.description}</Text> : null}
-                </View>
-              </TouchableOpacity>
-            )
-          })}
-        </>
+        <TouchableOpacity testID="agent-plugins-row" activeOpacity={0.65} onPress={() => setPluginsOpen(true)} style={styles.ncJob}>
+          <Icon name="sparkle" size={15} color={t.accent} />
+          <View style={styles.flex1}>
+            <Text style={styles.ncJobPrompt} numberOfLines={1}>
+              {d.plugins.length ? `${d.plugins.length} on · ${d.plugins.map(pluginLabel).join(", ")}` : "None"}
+            </Text>
+            <Text style={styles.ncJobWhen}>Harman's ready-made kits of skills and tools · {extras.catalog.length} available</Text>
+          </View>
+          <Icon name="chevronRight" size={14} color={t.textMuted} />
+        </TouchableOpacity>
       )}
+      {pluginsOpen && extras ? <PluginPicker catalog={extras.catalog} on={d.plugins} onToggle={togglePlugin} onClose={() => setPluginsOpen(false)} /> : null}
 
       {(["skill", "mcp"] as const).map((kind) => {
         const rows: (Skill | McpServer)[] = (kind === "skill" ? extras?.skills : extras?.mcp) ?? []
@@ -374,6 +409,57 @@ function FromThisMac({ kind, agentId, onAgent, onClose, onAdded }: {
             )}
           />
         ) : null}
+      </View>
+    </Modal>
+  )
+}
+
+/** The plugin catalog to tick from — searchable and virtualized, so a catalog of
+ *  a thousand stays one scroll; the agent's own sit first. Ticks edit the draft
+ *  directly (it saves with the form), so Done only closes. */
+function PluginPicker({ catalog, on, onToggle, onClose }: {
+  catalog: AgentExtras["catalog"]; on: string[]; onToggle: (name: string) => void; onClose: () => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const [query, setQuery] = useState("")
+  // Order is fixed while the sheet is open: a row jumping to the top under your
+  // finger as you tick it would be worse than the agent's own scrolling off.
+  const [opened] = useState(on)
+  const rows = pluginRows(catalog, opened, query)
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={styles.page}>
+        <View style={{ flexDirection: "row", alignItems: "center", padding: 16, paddingBottom: 8 }}>
+          <Text style={{ flex: 1, fontSize: 18, fontWeight: "700", color: t.text }}>Plugins · {on.length} on</Text>
+          <TouchableOpacity testID="plugins-done" onPress={onClose} hitSlop={10}><Text style={{ color: t.accent, fontSize: 17, fontWeight: "600" }}>Done</Text></TouchableOpacity>
+        </View>
+        <TextInput testID="plugins-search" style={[styles.input, { marginHorizontal: 16 }]} placeholder={`Search ${catalog.length} plugins`}
+          placeholderTextColor={t.textMuted + "80"} value={query} onChangeText={setQuery} autoCorrect={false} autoCapitalize="none" clearButtonMode="while-editing" />
+        <FlatList
+          testID="plugins-list"
+          data={rows}
+          keyExtractor={(p) => p.name}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
+          ListEmptyComponent={<Text style={styles.capEmpty}>{catalog.length ? `No plugin matches "${query.trim()}".` : "No plugins on this server yet."}</Text>}
+          renderItem={({ item: p }) => {
+            const checked = on.includes(p.name)
+            return (
+              <TouchableOpacity testID={`agent-plugin-${p.name}`} accessibilityRole="checkbox" accessibilityState={{ checked }}
+                activeOpacity={0.65} onPress={() => onToggle(p.name)} style={styles.ncJob}>
+                <View style={[styles.aeCheck, checked ? { backgroundColor: t.accent, borderColor: t.accent } : null]}>
+                  {checked ? <Icon name="check" size={13} color={t.onAccent} /> : null}
+                </View>
+                <View style={styles.flex1}>
+                  <Text style={styles.ncJobPrompt}>{pluginLabel(p.name)}</Text>
+                  {p.description ? <Text style={styles.ncJobWhen} numberOfLines={2}>{p.description}</Text> : null}
+                </View>
+              </TouchableOpacity>
+            )
+          }}
+        />
       </View>
     </Modal>
   )

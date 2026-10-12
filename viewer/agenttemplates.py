@@ -7,7 +7,7 @@ the account that made it (agent_templates.owner_user_id); NULL is shared — the
 builtins, and agents made before agents had owners. Builtins are never edited
 in place; Duplicate makes an editable personal copy.
 """
-from viewer import orglogic
+from viewer import ai, orglogic
 from viewer.config import agent_plugin_dir
 from viewer.db import LENSES, TEMPLATE_FIELDS
 from viewer.loops import build_schedule
@@ -81,11 +81,26 @@ def fields_from(body):
     jobs, err = jobs_from(body.get("jobs"))
     if err:
         return None, err
+    selection, err = ai_from(body.get("ai"))
+    if err:
+        return None, err
     fields = {"name": name, "description": text("description"), "category": category,
               "icon": text("icon") or "sparkle", "system_prompt": text("system_prompt"), "goal": text("goal"),
-              "model": text("model"), "jobs": jobs, "plugin": plugin, "lens": lens, "level": level}
+              "ai": selection, "jobs": jobs, "plugin": plugin, "lens": lens, "level": level}
     assert set(fields) == set(TEMPLATE_FIELDS)
     return fields, None
+
+
+def ai_from(raw):
+    """An agent's AI → (selection, error). None = the owner's AI defaults; else
+    the same {provider, model, convMode, effort} a chat's AI is (ai.validate),
+    checked for the local Claude harness — the one an agent's chats run on."""
+    if raw is None:
+        return None, None
+    try:
+        return ai.validate(raw, "local", "claude"), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
 def plugins_from(raw):

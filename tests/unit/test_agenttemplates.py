@@ -23,10 +23,21 @@ class TestFields(unittest.TestCase):
                              ({"name": "a", "jobs": "daily"}, "list"),
                              ({"name": "a", "jobs": [{"prompt": " "}]}, "no prompt"),
                              ({"name": "a", "jobs": [{"prompt": "p"}]}, "Job 1"),
-                             ({"name": "a", "jobs": [{"prompt": "p", "interval": "nonsense"}]}, "Job 1")):
+                             ({"name": "a", "jobs": [{"prompt": "p", "interval": "nonsense"}]}, "Job 1"),
+                             ({"name": "a", "ai": "sonnet"}, "selection"),
+                             ({"name": "a", "ai": {"provider": "", "model": {"kind": "id", "id": "a b"},
+                                                   "convMode": "agent", "effort": ""}}, "Model ID")):
             fields, err = at.fields_from(body)
             self.assertIsNone(fields, body)
             self.assertIn(needle, err, body)
+
+    def test_ai_is_a_whole_selection_or_the_owners_defaults(self):
+        self.assertIsNone(at.fields_from({"name": "a"})[0]["ai"])
+        pinned = {"provider": "", "model": {"kind": "id", "id": "opus"}, "convMode": "chat", "effort": ""}
+        fields, err = at.fields_from({"name": "a", "ai": pinned})
+        self.assertIsNone(err)
+        # The built-in provider always runs the agent harness (ai.validate).
+        self.assertEqual(fields["ai"], {**pinned, "convMode": "agent"})
 
     def test_jobs_keep_the_typed_schedule(self):
         fields, err = at.fields_from({"name": "a", "level": "lead", "plugin": "cyber-security", "jobs": [
@@ -55,7 +66,7 @@ class TestOwnership(unittest.TestCase):
 
     def test_copy(self):
         src = {"id": 1, "is_builtin": True, "name": "Coach", "description": "d", "category": "personal", "icon": "x",
-               "system_prompt": "sp", "goal": "g", "model": "", "jobs": None, "plugin": "", "lens": "", "level": "ic"}
+               "system_prompt": "sp", "goal": "g", "ai": None, "jobs": None, "plugin": "", "lens": "", "level": "ic"}
         copy = at.copy_fields(src)
         self.assertEqual((copy["name"], copy["jobs"], copy["system_prompt"]), ("Coach copy", [], "sp"))
         self.assertEqual(set(copy), set(TEMPLATE_FIELDS))

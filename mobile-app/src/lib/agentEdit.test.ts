@@ -1,10 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { NAME_MAX, draftBlocker, draftFrom, draftPayload, pickable, sameDraft } from "./agentEdit.ts"
+import { NAME_MAX, draftBlocker, draftFrom, draftPayload, pickable, pluginLabel, pluginRows, sameDraft } from "./agentEdit.ts"
 
 const role = {
   id: 3, name: "Engineer", description: "d", category: "engineering", icon: "code",
-  system_prompt: "sp", goal: "g", model: "opus", level: "lead" as const,
+  system_prompt: "sp", goal: "g", level: "lead" as const,
   jobs: [{ prompt: "daily", cron: "0 9 * * *" }, { prompt: "once", at: "2026-10-12T09:00:00Z" }],
   plugin: "engineer", lens: "map", is_builtin: true, created_by: "", created_at: 0,
 }
@@ -64,4 +64,22 @@ test("unsaved changes: only what Save would send counts", () => {
   assert.equal(sameDraft(base, { ...base, goal: "g " }), true) // trimmed away
   assert.equal(sameDraft(base, { ...base, goal: "new" }), false)
   assert.equal(sameDraft(base, { ...base, jobs: [] }), false)
+})
+
+test("AI: none means the owner's defaults; a pinned one round-trips and counts as a change", () => {
+  assert.equal(draftPayload(draftFrom(role)).ai, null)
+  const ai = { provider: "p1", model: { kind: "id" as const, id: "qwen" }, convMode: "agent" as const, effort: "" }
+  const d = draftFrom({ ...role, ai })
+  assert.deepEqual(draftPayload(d).ai, ai)
+  assert.equal(sameDraft(d, draftFrom(role)), false)
+})
+
+test("plugin picker: filters by name or description, the agent's own first, at catalog scale", () => {
+  const catalog = Array.from({ length: 1000 }, (_, i) => ({ name: `p-${i}`, description: i % 2 ? "security scan" : "notes" }))
+  const rows = pluginRows(catalog, ["p-999", "p-1"], "")
+  assert.equal(rows.length, 1000)
+  assert.deepEqual(rows.slice(0, 2).map((p) => p.name), ["p-1", "p-999"])
+  assert.equal(pluginRows(catalog, [], "  SECURITY ").length, 500)
+  assert.deepEqual(pluginRows(catalog, ["p-2"], "p-2").map((p) => p.name).slice(0, 2), ["p-2", "p-20"])
+  assert.equal(pluginLabel("cyber-security"), "Cyber security")
 })

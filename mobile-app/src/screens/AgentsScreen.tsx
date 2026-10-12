@@ -215,10 +215,10 @@ export default function AgentsScreen({ navigation }: Props) {
                     {tmpl.description}
                   </Text>
                 ) : null}
-                {/* Level + model + schedule badges. The level is what a chat
+                {/* Level + pinned model + schedule badges. The level is what a chat
                     started from this agent may do on the board ("from the agent
                     it was started from" in the chat's Trust settings). */}
-                {(tmpl.owner_user_id != null || tmpl.level || tmpl.model || tmpl.jobs?.length) ? (
+                {(tmpl.owner_user_id != null || tmpl.level || tmpl.ai || tmpl.jobs?.length) ? (
                   <View style={styles.agBadges}>
                     {tmpl.owner_user_id != null ? (
                       <View testID={`agent-yours-${tmpl.id}`} style={[styles.agBadge, { backgroundColor: t.accent + "22" }]}>
@@ -232,10 +232,10 @@ export default function AgentsScreen({ navigation }: Props) {
                         </Text>
                       </View>
                     ) : null}
-                    {tmpl.model ? (
-                      <View style={styles.agBadge}>
-                        <Text style={[styles.agBadgeText, styles.agCapitalize]}>
-                          {tmpl.model}
+                    {tmpl.ai?.model?.kind === "id" ? (
+                      <View style={[styles.agBadge, { maxWidth: 160 }]}>
+                        <Text style={styles.agBadgeText} numberOfLines={1}>
+                          {tmpl.ai.model.id}
                         </Text>
                       </View>
                     ) : null}

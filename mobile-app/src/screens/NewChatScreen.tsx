@@ -85,10 +85,10 @@ export default function NewChatScreen({ navigation, route }: Props) {
       if (!alive) return
       if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
       setProviders(result.providers || [])
-      setAIConfig({...config, selection: newChatAI(config, composerPrefs().model, template?.model)})
+      setAIConfig({...config, selection: newChatAI(config, composerPrefs().model, template?.ai)})
     }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
     return () => { alive = false }
-  }, [host, template?.model])
+  }, [host, template?.id])
 
   useEffect(() => {
     let alive = true

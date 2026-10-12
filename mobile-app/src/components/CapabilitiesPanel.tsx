@@ -8,13 +8,16 @@
  * be scoped to "this chat" only. A plugin is whole — add or remove, never edit.
  * A chat's setup is per chat; "Keep on agent" makes it the agent's default
  * (the agent itself is edited in the Agents tab — the hub for its setup).
+ * Each tab is one searchable, virtualized list: a Mac with hundreds of skills
+ * or plugins stays one scroll and one search away.
  * `testPrefix` keeps the two hosts' testIDs distinct ("cap" / "drawer").
  */
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
+import { textFilter } from "../lib/textFilter"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { SkillEditor, McpEditor } from "./CapabilitiesEditors"
@@ -41,6 +44,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
   const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
   const [market, setMarket] = useState<MarketKind | null>(null)
   const [busy, setBusy] = useState("")
+  const [query, setQuery] = useState("")
 
   const load = useCallback(() => {
     setError("")
@@ -117,6 +121,48 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
     )
   }
 
+  // The current tab's rows, narrowed by the search (shared across tabs, so a
+  // name looked up under Skills is still looked up under MCP tools).
+  const all: (Plugin | Skill | McpServer)[] = !caps ? [] : tab === "plugins" ? plugins ?? [] : tab === "skills" ? caps.skills : caps.mcp
+  const rows = tab === "mcp"
+    ? textFilter(all as McpServer[], query, (m) => [m.name, m.target])
+    : textFilter(all as (Plugin | Skill)[], query, (r) => [r.name, r.description])
+
+  const pluginRow = (p: Plugin) => (
+    <View testID={id(`plugin-${p.name}`)} style={styles.capRow}>
+      <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{p.name}</Text>
+        {p.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{p.description}</Text> : null}
+      </View>
+      {p.included ? <Text style={styles.capBadge}>Included</Text> : null}
+      {p.source === "agent" ? (
+        <Switch testID={id(`plugin-toggle-${p.name}`)} value={p.active} disabled={!!busy}
+          accessibilityLabel={`${p.active ? "Remove" : "Add"} ${p.name}`} onValueChange={() => toggle(p)} />
+      ) : <Text style={styles.capBadge}>on this Mac</Text>}
+    </View>
+  )
+  const skillRow = (s: Skill) => (
+    <TouchableOpacity testID={id(`skill-${s.name}`)} style={styles.capRow} onPress={() => setSkillEdit(s)}>
+      <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>/{s.name}</Text>
+        {s.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{s.description}</Text> : null}
+      </View>
+      <Text style={styles.capBadge}>{s.source}</Text>
+    </TouchableOpacity>
+  )
+  const mcpRow = (m: McpServer) => (
+    <TouchableOpacity testID={id(`mcp-${m.name}`)} style={styles.capRow} onPress={() => setMcpEdit(m)}>
+      <View style={[styles.capRowIcon, { backgroundColor: t.textMuted + "18" }]}><Icon name="tool" size={16} color={t.textMuted} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{m.name}</Text>
+        <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={1}>{m.transport}{m.target ? ` · ${m.target}` : ""}</Text>
+      </View>
+      <Text style={styles.capBadge}>{m.scope}</Text>
+    </TouchableOpacity>
+  )
+
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.segRow}>
@@ -141,57 +187,38 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
       ) : !caps ? (
         <ActivityIndicator size="small" color={t.textMuted} style={{ marginTop: 24 }} />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }} keyboardShouldPersistTaps="handled">
-          {tab !== "plugins" ? <AddRows kind={tab} /> : null}
-          {tab === "plugins" && agent ? (
-            <View style={[styles.capRow, { alignItems: "center" }]}>
-              <Text style={[styles.capRowDesc, { flex: 1, color: t.textMuted }]}>
-                {kept ? `Saved: new ${agent.name} chats start with this setup.` : `Started from ${agent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}
-              </Text>
-              <TouchableOpacity testID={id("keep-on-agent")} disabled={!!busy} onPress={keepOnAgent}>
-                <Text style={{ color: t.accent, fontWeight: "600" }}>Keep on agent</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          {tab === "plugins" ? (
-            (plugins ?? []).map(p => (
-              <View key={`${p.source}:${p.name}`} testID={id(`plugin-${p.name}`)} style={styles.capRow}>
-                <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{p.name}</Text>
-                  {p.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{p.description}</Text> : null}
-                </View>
-                {p.included ? <Text style={styles.capBadge}>Included</Text> : null}
-                {p.source === "agent" ? (
-                  <Switch testID={id(`plugin-toggle-${p.name}`)} value={p.active} disabled={!!busy}
-                    accessibilityLabel={`${p.active ? "Remove" : "Add"} ${p.name}`} onValueChange={() => toggle(p)} />
-                ) : <Text style={styles.capBadge}>on this Mac</Text>}
+        <FlatList<Plugin | Skill | McpServer>
+          testID={id("list")}
+          data={rows}
+          keyExtractor={(r) => tab === "plugins" ? `${(r as Plugin).source}:${r.name}` : tab === "skills" ? (r as Skill).path : `${(r as McpServer).scope}:${r.name}`}
+          contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          ListHeaderComponent={<>
+            {tab !== "plugins" ? <AddRows kind={tab} /> : null}
+            {tab === "plugins" && agent ? (
+              <View style={[styles.capRow, { alignItems: "center" }]}>
+                <Text style={[styles.capRowDesc, { flex: 1, color: t.textMuted }]}>
+                  {kept ? `Saved: new ${agent.name} chats start with this setup.` : `Started from ${agent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}
+                </Text>
+                <TouchableOpacity testID={id("keep-on-agent")} disabled={!!busy} onPress={keepOnAgent}>
+                  <Text style={{ color: t.accent, fontWeight: "600" }}>Keep on agent</Text>
+                </TouchableOpacity>
               </View>
-            ))
-          ) : tab === "skills" ? (
-            caps.skills.length ? caps.skills.map(s => (
-              <TouchableOpacity key={s.path} testID={id(`skill-${s.name}`)} style={styles.capRow} onPress={() => setSkillEdit(s)}>
-                <View style={[styles.capRowIcon, { backgroundColor: t.accent + "18" }]}><Icon name="sparkle" size={16} color={t.accent} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>/{s.name}</Text>
-                  {s.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{s.description}</Text> : null}
-                </View>
-                <Text style={styles.capBadge}>{s.source}</Text>
-              </TouchableOpacity>
-            )) : <Text style={styles.capEmpty}>No skills yet. Write one, or pull one from the Marketplace.</Text>
-          ) : (
-            caps.mcp.length ? caps.mcp.map(m => (
-              <TouchableOpacity key={`${m.scope}:${m.name}`} testID={id(`mcp-${m.name}`)} style={styles.capRow} onPress={() => setMcpEdit(m)}>
-                <View style={[styles.capRowIcon, { backgroundColor: t.textMuted + "18" }]}><Icon name="tool" size={16} color={t.textMuted} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{m.name}</Text>
-                  <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={1}>{m.transport}{m.target ? ` · ${m.target}` : ""}</Text>
-                </View>
-                <Text style={styles.capBadge}>{m.scope}</Text>
-              </TouchableOpacity>
-            )) : <Text style={styles.capEmpty}>No MCP tools yet. Add one by hand, or pull one from the Marketplace.</Text>
-          )}
-        </ScrollView>
+            ) : null}
+            {all.length > 1 || query ? (
+              <TextInput testID={id("search")} style={[styles.input, { marginHorizontal: 16, marginVertical: 8 }]}
+                placeholder={`Search ${all.length} ${tab === "mcp" ? "MCP tools" : tab}`} placeholderTextColor={t.textMuted + "80"}
+                value={query} onChangeText={setQuery} autoCorrect={false} autoCapitalize="none" clearButtonMode="while-editing" />
+            ) : null}
+          </>}
+          ListEmptyComponent={<Text style={styles.capEmpty}>{
+            query.trim() ? `Nothing matches "${query.trim()}".`
+              : tab === "skills" ? "No skills yet. Write one, or pull one from the Marketplace."
+              : tab === "mcp" ? "No MCP tools yet. Add one by hand, or pull one from the Marketplace."
+              : "No plugins on this server yet."}</Text>}
+          renderItem={({ item }) => tab === "plugins" ? pluginRow(item as Plugin) : tab === "skills" ? skillRow(item as Skill) : mcpRow(item as McpServer)}
+        />
       )}
 
       {skillEdit !== undefined && <SkillEditor skill={skillEdit} host={host} cwd={cwd} session={chat} onClose={() => setSkillEdit(undefined)} onSaved={load} />}

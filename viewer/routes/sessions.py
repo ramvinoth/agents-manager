@@ -1242,10 +1242,13 @@ def start_new_session(body):
             return {"error": f"Not a directory: {cwd}"}, 400
 
     from viewer import ai
+    # Started from an agent: read from the template row, never from the body,
+    # so a client cannot name an arbitrary plugin. Its AI (if it pins one) is
+    # the fallback when the body sends none, ahead of the owner's defaults.
+    template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
     selection = body.get("ai")
     if "ai" not in body and body.get("agent", "claude") == "claude":
-        defaults = db.setting_get(ai.DEFAULTS_KEY) or {}
-        selection = defaults.get("selection")
+        selection = (template or {}).get("ai") or (db.setting_get(ai.DEFAULTS_KEY) or {}).get("selection")
     if selection is not None:
         try:
             selection = ai.validate(selection, host, body.get("agent", "claude"))
@@ -1293,10 +1296,7 @@ def start_new_session(body):
         # (a remote run gets no --name, and the client's rename can fail).
         meta["title"] = title
     # Started from an agent template: its plugin rides on every Claude run
-    # (engine --plugin-dir) and its lens turns on for this project. Read
-    # from the template row, never from the body, so a client cannot name
-    # an arbitrary plugin.
-    template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
+    # (engine --plugin-dir) and its lens turns on for this project.
     if template:
         meta.update(chatplugins.start_from_template(template, session_id))
         if template.get("lens") and host == "local":

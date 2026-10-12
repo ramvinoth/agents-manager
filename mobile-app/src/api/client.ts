@@ -176,7 +176,9 @@ export type Job = { id: string; session: string; prompt: string; interval: numbe
 export type HarmanLevel = "ic" | "lead" | "manager"
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
-  system_prompt: string; goal: string; model?: string
+  system_prompt: string; goal: string
+  /** The AI its chats run on; null = the owner's AI defaults. */
+  ai?: AISelection | null
   /** The scheduled jobs a chat started from this agent begins with. */
   jobs?: NewChatJob[]
   /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
@@ -193,7 +195,7 @@ export type AgentTemplate = {
   editable?: boolean
 }
 /** What a person sets on an agent (viewer/db.TEMPLATE_FIELDS). */
-export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "model" | "jobs" | "plugin" | "lens" | "level"> & { plugins: string[] }
+export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "lens" | "level"> & { ai: AISelection | null; plugins: string[] }
 /** GET /api/agent-templates/extras: the plugin catalog an agent picks from, and
  *  the skills and MCP servers saved on the agent itself (empty for a new one). */
 export type AgentExtras = { catalog: { name: string; description: string }[]; skills: Skill[]; mcp: McpServer[] }

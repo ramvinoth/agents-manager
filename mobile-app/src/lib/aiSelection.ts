@@ -31,16 +31,14 @@ export function aiError(error: unknown): string {
   return e?.message || "Could not load or save AI settings. Please retry."
 }
 
-/** Only legacy prefill uses device preferences; never migrate them to defaults. */
-export function newChatAI(config: AIConfig, legacyModel: string, templateModel?: string): AISelection {
-  // An agent's own model is more specific than the server's defaults, so it wins —
-  // but it names a Claude model, so only when the chat starts on Claude.
-  if (config.configured) {
-    const s = config.selection
-    return templateModel && !s.provider ? { ...s, model: { kind: "id", id: templateModel } } : s
-  }
-  const model = templateModel || legacyModel
+/** Only legacy prefill uses device preferences; never migrate them to defaults.
+ *  An agent's own AI (`agentAI`) is more specific than the server's defaults, so
+ *  it wins wherever it can run: a custom provider runs on this machine only. */
+export function newChatAI(config: AIConfig, legacyModel: string, agentAI?: AISelection | null): AISelection {
+  if (agentAI && (!agentAI.provider || config.capabilities?.customProviders)) return agentAI
+  if (config.configured) return config.selection
   // A legacy custom preset's own model wins, not a built-in device model.
+  const model = legacyModel
   return { ...config.selection, model: !config.selection.provider && model && model !== "default" ? { kind: "id", id: model } : { kind: "default" } }
 }
 

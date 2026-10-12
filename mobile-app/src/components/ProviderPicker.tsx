@@ -15,8 +15,10 @@ const CONVMODE_SUB: Record<string, string> = { agent: "Reads files, runs command
 const EFFORT_LABEL: Record<string, string> = { "": "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" }
 
 /** One staged transaction for all three scopes. Mounted afresh on each open. */
-export default function ProviderPicker({ config, scope, providers, title, localOnly, onSave, onClose }: {
+export default function ProviderPicker({ config, scope, providers, title, localOnly, hint, onSave, onClose }: {
   config: AIConfig; scope: { id?: string; host: string; agent?: string }; providers: Provider[]; title: string; localOnly?: boolean
+  /** What the choice applies to, when the caller is not one of the three scopes (an agent). */
+  hint?: string
   onSave: (config: AIConfig) => void; onClose: () => void
 }) {
   const t = useTheme(), styles = useStyles()
@@ -150,7 +152,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       </View> : null}
       <FlatList data={models} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
-          <Text style={styles.aiSectionHint}>{localOnly ? "Only this unsent chat. Your defaults are unchanged." : scope.id ? "Applies from this chat's next reply; a reply already running keeps its settings." : "What every new chat on this Harman server starts with. Existing chats keep their own."}</Text>
+          <Text style={styles.aiSectionHint}>{hint ?? (localOnly ? "Only this unsent chat. Your defaults are unchanged." : scope.id ? "Applies from this chat's next reply; a reply already running keeps its settings." : "What every new chat on this Harman server starts with. Existing chats keep their own.")}</Text>
           {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.aiSectionHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This machine can't run that combination. Pick a different provider or model.")}</Text> : null}
           {config.issue ? <Text style={[styles.aiSectionHint, {color: t.danger}]}>{config.issue}</Text> : null}
 

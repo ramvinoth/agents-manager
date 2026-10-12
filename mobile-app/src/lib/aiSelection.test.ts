@@ -20,9 +20,12 @@ test("server defaults trump legacy prefill; unconfigured full IDs preserved", ()
   assert.equal(newChatAI(config, "old-model"), a)
   assert.deepEqual(newChatAI({...config, configured: false}, "full/legacy-id").model, {kind: "id", id: "full/legacy-id"})
   assert.deepEqual(newChatAI({...config, configured: false, selection: {...a, provider: "custom"}}, "opus").model, {kind: "default"})
-  // An agent's model beats configured defaults on Claude; a custom provider keeps its own.
-  assert.deepEqual(newChatAI(config, "old", "sonnet").model, {kind: "id", id: "sonnet"})
-  assert.equal(newChatAI({...config, selection: {...a, provider: "custom"}}, "old", "sonnet").model, a.model)
+  // An agent's own AI beats the defaults; a custom-provider one only where custom providers run.
+  const pinned = {...a, provider: "custom", model: {kind: "id" as const, id: "qwen"}}
+  assert.equal(newChatAI({...config, capabilities: {customProviders: true}} as AIConfig, "old", pinned), pinned)
+  assert.equal(newChatAI({...config, capabilities: {customProviders: false}} as AIConfig, "old", pinned), a)
+  assert.equal(newChatAI({...config, configured: false}, "old", {...a, provider: ""}).provider, "")
+  assert.equal(newChatAI(config, "old", null), a)
 })
 test("missing selected IDs remain visible and searchable without a catalog", () => {
   assert.equal(modelChoices(null, a.model, "full-id")[0].id, "opus/full-id")

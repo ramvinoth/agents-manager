@@ -1379,7 +1379,6 @@ function buildStyles(t: Theme) {
     agBadges: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
     agBadge: { backgroundColor: t.chipBg, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
     agBadgeText: { fontSize: 10, fontWeight: "700", color: t.textMuted },
-    agCapitalize: { textTransform: "capitalize" },
     agJobs: { flexDirection: "row", alignItems: "center", gap: 2 },
     agJobsText: { fontSize: 10, color: t.textMuted },
   })
