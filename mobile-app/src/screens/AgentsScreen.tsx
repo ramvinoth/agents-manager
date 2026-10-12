@@ -126,6 +126,7 @@ export default function AgentsScreen({ navigation }: Props) {
       {/* Compact category filter chips */}
       <ScrollView
         horizontal
+        style={styles.agCatsBar}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.agCats}
       >

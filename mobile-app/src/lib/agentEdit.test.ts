@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { NAME_MAX, draftBlocker, draftFrom, draftPayload } from "./agentEdit.ts"
+import { NAME_MAX, draftBlocker, draftFrom, draftPayload, pickable } from "./agentEdit.ts"
 
 const role = {
   id: 3, name: "Engineer", description: "d", category: "engineering", icon: "code",
@@ -47,4 +47,13 @@ test("plugins: a kept list wins, else the agent's one seeded plugin, and the pay
   assert.deepEqual(draftFrom({ ...role, plugins: ["a", "b"] }).plugins, ["a", "b"])
   assert.deepEqual(draftFrom().plugins, [])
   assert.deepEqual(draftPayload(draftFrom({ ...role, plugins: ["a"] })).plugins, ["a"])
+})
+
+test("From this Mac offers what the agent lacks, once per name, never a plugin's MCP", () => {
+  const machine = [
+    { name: "review", scope: "global" }, { name: "db", scope: "project" },
+    { name: "db", scope: "global" }, { name: "browser", scope: "plugin:web" }, { name: "kept", scope: "global" },
+  ]
+  assert.deepEqual(pickable(machine, [{ name: "kept" }]).map((r) => `${r.name}:${r.scope}`), ["review:global", "db:project"])
+  assert.deepEqual(pickable([{ name: "notes" }], []).map((r) => r.name), ["notes"])
 })

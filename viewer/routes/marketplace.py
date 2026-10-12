@@ -6,8 +6,9 @@ installing is human-only — an MCP server is code that will run on this
 machine, so the owner presses Install. The install body names an entry, never
 a command: the config is rebuilt here from the registry's own record.
 Scope follows the manual editors: "user"/"global" for every session,
-"project" for one session's folder (its cwd), or "chat" for that one chat
-(its extras plugin, viewer.chatplugins).
+"project" for one session's folder (its cwd), "chat" for that one chat
+(its extras plugin, viewer.chatplugins), or "agent" for an agent template the
+caller owns (body.agent; every new chat from it gets a copy).
 """
 import urllib.request
 
@@ -59,19 +60,35 @@ class MarketplaceMixin:
             raise marketplace.MarketError("Pick a local chat for a this-chat install.", 404)
         return self.sid_from_path(rel)
 
-    def _p_market_mcp_install(self, req):
+    def _install_body(self, req):
+        """The install request when this human may make it, else None (answered).
+        An agent-scoped install needs the caller to own that agent."""
         if not require_human(self, req):
-            return
+            return None
         body = self.read_body() or {}
+        if body.get("scope") == "agent" and not self._owned_template(req, {"id": body.get("agent")}):
+            return None
+        return body
+
+    def _extras_root(self, scope, body):
+        """The extras folder a chat- or agent-scoped install lands in."""
+        if scope == "agent":
+            return chatplugins.agent_root(int(body["agent"]))
+        return chatplugins.chat_root(self._chat_sid(body))
+
+    def _p_market_mcp_install(self, req):
+        body = self._install_body(req)
+        if body is None:
+            return
 
         def run():
             server = marketplace.mcp_lookup(_fetch, (body.get("id") or "").strip())
             cfg = marketplace.mcp_config(server, body.get("values"))
-            scope = body.get("scope") if body.get("scope") in ("project", "chat") else "global"
+            scope = body.get("scope") if body.get("scope") in ("project", "chat", "agent") else "global"
             name = marketplace.config_name(server)
             MCP_CDP_CACHE.pop("local", None)
-            if scope == "chat":
-                chatplugins.save_mcp(chatplugins.chat_root(self._chat_sid(body)), name, cfg)
+            if scope in ("chat", "agent"):
+                chatplugins.save_mcp(self._extras_root(scope, body), name, cfg)
                 return {"installed": name, "scope": scope}
             cwd = self._project_cwd(body) if scope == "project" else ""
             res = get_host("local").mcp_save(name, scope, cfg, cwd, False)
@@ -81,16 +98,16 @@ class MarketplaceMixin:
         self._market(run)
 
     def _p_market_skill_install(self, req):
-        if not require_human(self, req):
+        body = self._install_body(req)
+        if body is None:
             return
-        body = self.read_body() or {}
 
         def run():
             name = (body.get("id") or "").strip()
-            scope = body.get("scope") if body.get("scope") in ("project", "chat") else "user"
+            scope = body.get("scope") if body.get("scope") in ("project", "chat", "agent") else "user"
             files = marketplace.skill_bundle(_fetch, name)
-            if scope == "chat":
-                path = chatplugins.install_skill_bundle(chatplugins.chat_root(self._chat_sid(body)), name, files)
+            if scope in ("chat", "agent"):
+                path = chatplugins.install_skill_bundle(self._extras_root(scope, body), name, files)
                 return {"installed": name, "scope": scope, "path": str(path)}
             cwd = self._project_cwd(body) if scope == "project" else None
             path = skills.write_bundle(name, files, scope=scope, cwd=cwd)

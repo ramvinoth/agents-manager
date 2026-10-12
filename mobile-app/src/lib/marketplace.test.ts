@@ -32,3 +32,7 @@ test("a this-chat install is offered only for an open local Claude chat", () => 
   assert.deepEqual(scopes("/repo", true), ["global", "project", "chat"])
   assert.deepEqual(scopes(undefined, true), ["global", "chat"])
 })
+
+test("from an agent's editor the install lands on that agent only", () => {
+  assert.deepEqual(scopes("/repo", true, true), ["agent"])
+})

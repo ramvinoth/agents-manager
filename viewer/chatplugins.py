@@ -146,6 +146,20 @@ def delete_skill(root, name):
     shutil.rmtree(d)
 
 
+def copy_skill(root, skill_md):
+    """An existing skill on this machine (its SKILL.md, already resolved inside
+    a known skill root) copied whole — scripts and all — into an extras folder.
+    Replaces one of the same name; the copy diverges from its source."""
+    name = skill_md.parent.name
+    if not skills.valid_name(name):
+        raise ChatPluginError("Skill name must be letters/digits/dashes/underscores")
+    d = root / "skills" / name
+    if d.exists():
+        shutil.rmtree(d)
+    shutil.copytree(skill_md.parent, d)
+    return d / "SKILL.md"
+
+
 def install_skill_bundle(root, name, files):
     """A marketplace skill installed into one extras folder (same validation
     as skills.write_bundle: a SKILL.md, no path escaping the skill's folder)."""

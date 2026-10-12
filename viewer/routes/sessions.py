@@ -263,8 +263,10 @@ class SessionsMixin:
 
     def _p_agent_template_extra(self, req):
         """Save or delete one skill or MCP server on an agent (its owner only):
-        {id, kind: skill|mcp, name, content | config, delete}. Every new chat
-        from the agent starts with a copy; chats already running keep theirs."""
+        {id, kind: skill|mcp, name, content | config | from_path, delete}.
+        `from_path` copies an existing skill on this machine (its SKILL.md path
+        from /api/capabilities) whole. Every new chat from the agent starts
+        with a copy; chats already running keep theirs."""
         if not require_human(self, req):
             return
         body = self.read_body() or {}
@@ -279,6 +281,12 @@ class SessionsMixin:
             if kind == "skill":
                 if delete:
                     chatplugins.delete_skill(root, name)
+                elif body.get("from_path"):
+                    src = self.resolve_skill_path(body["from_path"])
+                    if not src:
+                        self.send_json({"error": "Skill not found"}, status=404)
+                        return
+                    chatplugins.copy_skill(root, src)
                 else:
                     chatplugins.save_skill(root, name, body.get("content") or "")
             elif delete:

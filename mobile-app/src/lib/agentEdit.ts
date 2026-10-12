@@ -52,3 +52,16 @@ export function draftPayload(d: AgentDraft): AgentTemplateFields {
     plugins: d.plugins, plugin: d.plugin, lens: d.lens,
   }
 }
+
+/** What "From this Mac" offers for an agent: the machine's skills or MCP servers
+ *  the agent does not already have. A plugin's MCP server is left out — its
+ *  config points inside that plugin's folder, so a copy would not run. */
+export function pickable<T extends { name: string; scope?: string }>(machine: T[], onAgent: { name: string }[]): T[] {
+  const have = new Set(onAgent.map((r) => r.name))
+  const seen = new Set<string>()
+  return machine.filter((r) => {
+    if (have.has(r.name) || seen.has(r.name) || r.scope?.startsWith("plugin:")) return false
+    seen.add(r.name)
+    return true
+  })
+}

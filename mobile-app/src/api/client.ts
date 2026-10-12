@@ -658,9 +658,9 @@ export const api = {
   marketMcp: (q: string, cursor?: string) =>
     req<MarketPage>("GET", `/api/market/mcp?${new URLSearchParams({ q, ...(cursor ? { cursor } : {}) })}`),
   marketSkills: (q: string) => req<MarketPage>("GET", `/api/market/skills?${new URLSearchParams({ q })}`),
-  marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat"; cwd?: string; session?: string }) =>
+  marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat" | "agent"; cwd?: string; session?: string; agent?: number }) =>
     req<{ installed: string; scope: string }>("POST", "/api/market/mcp/install", body),
-  marketSkillInstall: (body: { id: string; scope: "user" | "project" | "chat"; cwd?: string; session?: string }) =>
+  marketSkillInstall: (body: { id: string; scope: "user" | "project" | "chat" | "agent"; cwd?: string; session?: string; agent?: number }) =>
     req<{ installed: string; scope: string }>("POST", "/api/market/skill/install", body),
 
   // ---- scheduled jobs (re-run a prompt on a schedule), server API still named "loops" ----
@@ -683,8 +683,9 @@ export const api = {
     req<{ id: number; template: AgentTemplate }>("POST", "/api/agent-templates/duplicate", { id }),
   agentTemplateExtras: (id?: number) =>
     req<AgentExtras>("GET", `/api/agent-templates/extras${id ? `?id=${id}` : ""}`),
-  /** Save or delete one skill or MCP server on an agent (its owner only). */
-  agentTemplateExtra: (body: { id: number; kind: "skill" | "mcp"; name: string; content?: string; config?: Record<string, unknown>; delete?: boolean }) =>
+  /** Save or delete one skill or MCP server on an agent (its owner only).
+   *  `from_path` copies an existing skill on this Mac (its SKILL.md path) whole. */
+  agentTemplateExtra: (body: { id: number; kind: "skill" | "mcp"; name: string; content?: string; config?: Record<string, unknown>; from_path?: string; delete?: boolean }) =>
     req<{ saved: boolean }>("POST", "/api/agent-templates/extra", body),
   agentTemplateDelete: (id: number) => req<{ deleted: boolean }>("POST", "/api/agent-templates/delete", { id }),
 

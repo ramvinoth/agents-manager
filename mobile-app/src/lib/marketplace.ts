@@ -6,7 +6,7 @@
 import type { MarketInput, MarketItem } from "../api/client"
 
 export type MarketKind = "mcp" | "skills"
-export type InstallScope = "global" | "project" | "chat"
+export type InstallScope = "global" | "project" | "chat" | "agent"
 
 /** The first required input the owner left blank, or null when the form is complete. */
 export function missingInput(inputs: MarketInput[], values: Record<string, string>): MarketInput | null {
@@ -26,9 +26,11 @@ export function installNote(kind: MarketKind, item: MarketItem): string {
 }
 
 /** Scopes the sheet offers: a project install needs the session's folder; a
- *  this-chat install needs an open local Claude chat (its own plugin). */
-export function scopes(cwd?: string, chat = false): InstallScope[] {
+ *  this-chat install needs an open local Claude chat (its own plugin). Opened
+ *  from an agent's editor it installs onto that agent only — nothing wider. */
+export function scopes(cwd?: string, chat = false, agent = false): InstallScope[] {
+  if (agent) return ["agent"]
   return ["global", ...(cwd ? ["project" as const] : []), ...(chat ? ["chat" as const] : [])]
 }
 
-export const SCOPE_LABEL: Record<InstallScope, string> = { global: "All sessions", project: "This project", chat: "This chat" }
+export const SCOPE_LABEL: Record<InstallScope, string> = { global: "All sessions", project: "This project", chat: "This chat", agent: "This agent" }

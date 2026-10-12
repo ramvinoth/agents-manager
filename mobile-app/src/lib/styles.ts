@@ -1355,7 +1355,10 @@ function buildStyles(t: Theme) {
 
     // AgentsScreen (ag) — category chips and template cards. Category colours
     // come from data (TEMPLATE_CATEGORIES), so their tints stay inline.
-    agCats: { paddingHorizontal: 14, paddingVertical: 8, gap: 6 },
+    // flexGrow 0: a horizontal ScrollView otherwise splits the leftover height with the
+    // list, so the chips swell whenever a category with few agents is picked.
+    agCatsBar: { flexGrow: 0 },
+    agCats: { paddingHorizontal: 14, paddingVertical: 8, gap: 6, alignItems: "center" },
     agCat: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, backgroundColor: t.bg, borderWidth: 1, borderColor: t.border },
     agCatText: { fontSize: 13, fontWeight: "600", color: t.textMuted },
     agCatTextActive: { color: t.onAccent },

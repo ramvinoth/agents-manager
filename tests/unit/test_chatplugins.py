@@ -146,6 +146,20 @@ class TestChatPlugins(unittest.TestCase):
         with self.assertRaises(chatplugins.ChatPluginError):
             chatplugins.agent_root("../x")
 
+    def test_an_agent_copies_a_skill_from_this_mac_whole(self):
+        src = Path(config.CHAT_PLUGINS_DIR).parent / "mac" / "review"
+        (src / "scripts").mkdir(parents=True)
+        (src / "SKILL.md").write_text("---\ndescription: r\n---\n")
+        (src / "scripts" / "run.sh").write_text("echo hi")
+        root = chatplugins.agent_root(7)
+        chatplugins.save_skill(root, "review", "stale")
+        md = chatplugins.copy_skill(root, src / "SKILL.md")
+        self.assertEqual(md.read_text(), "---\ndescription: r\n---\n")
+        self.assertEqual((md.parent / "scripts" / "run.sh").read_text(), "echo hi")
+        # A copy: the source is untouched when the agent's diverges.
+        md.write_text("mine")
+        self.assertIn("description: r", (src / "SKILL.md").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

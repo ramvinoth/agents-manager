@@ -19,8 +19,10 @@ const SOURCE: Record<MarketKind, string> = {
   skills: "Anthropic skills · github.com/anthropics/skills",
 }
 
-export default function MarketplaceSheet({ kind, cwd, session, onClose, onInstalled }: {
+export default function MarketplaceSheet({ kind, cwd, session, agent, onClose, onInstalled }: {
   kind: MarketKind
+  /** An agent's editor: installs onto that agent (every new chat from it gets a copy). */
+  agent?: { id: number; name: string }
   /** The session's folder; offers "This project" when present. */
   cwd?: string
   /** An open local Claude chat; offers "This chat" (its own plugin) when present. */
@@ -66,7 +68,7 @@ export default function MarketplaceSheet({ kind, cwd, session, onClose, onInstal
           <TouchableOpacity testID="market-close" onPress={onClose} hitSlop={10}><Icon name="close" size={22} color={t.textMuted} /></TouchableOpacity>
         </View>
         {pick ? (
-          <Install kind={kind} item={pick} cwd={cwd} session={session} onDone={() => { onInstalled(); onClose() }} />
+          <Install kind={kind} item={pick} cwd={cwd} session={session} agent={agent} onDone={() => { onInstalled(); onClose() }} />
         ) : (
           <>
             <View style={{ paddingHorizontal: 16 }}>
@@ -110,14 +112,16 @@ export default function MarketplaceSheet({ kind, cwd, session, onClose, onInstal
   )
 }
 
-function Install({ kind, item, cwd, session, onDone }: { kind: MarketKind; item: MarketItem; cwd?: string; session?: string; onDone: () => void }) {
+function Install({ kind, item, cwd, session, agent, onDone }: {
+  kind: MarketKind; item: MarketItem; cwd?: string; session?: string; agent?: { id: number; name: string }; onDone: () => void
+}) {
   const styles = useStyles()
   const t = useTheme()
   const inputs = item.inputs ?? []
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(inputs.map(i => [i.name, i.default || ""])))
-  const offered = scopes(cwd, !!session)
+  const offered = scopes(cwd, !!session, !!agent)
   // Default to the widest-but-scoped choice: this project when known, else all sessions.
-  const [scope, setScope] = useState<InstallScope>(cwd ? "project" : "global")
+  const [scope, setScope] = useState<InstallScope>(agent ? "agent" : cwd ? "project" : "global")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const installable = kind === "skills" || !!item.install
@@ -127,11 +131,11 @@ function Install({ kind, item, cwd, session, onDone }: { kind: MarketKind; item:
     if (gap) { setError(`${gap.name} is required.`); return }
     setBusy(true); setError("")
     try {
-      const at = scope === "project" ? { cwd } : scope === "chat" ? { session } : {}
+      const at = scope === "project" ? { cwd } : scope === "chat" ? { session } : scope === "agent" ? { agent: agent?.id } : {}
       if (kind === "mcp") await api.marketMcpInstall({ id: item.id, values: filledValues(values), scope, ...at })
       else await api.marketSkillInstall({ id: item.id, scope: scope === "global" ? "user" : scope, ...at })
-      const who = scope === "chat" ? "this chat" : scope === "project" ? "this project's sessions" : "every session"
-      Alert.alert("Installed", `${item.title} is ready for ${who}. New runs pick it up.`)
+      const who = scope === "agent" ? `every new ${agent?.name} chat` : scope === "chat" ? "this chat" : scope === "project" ? "this project's sessions" : "every session"
+      Alert.alert("Installed", `${item.title} is ready for ${who}.${scope === "agent" ? "" : " New runs pick it up."}`)
       onDone()
     } catch (e) {
       setError(userError(e, item.title))
