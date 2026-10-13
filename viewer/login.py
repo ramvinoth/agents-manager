@@ -1,4 +1,4 @@
-"""viewer.login — Claude & Codex OAuth login managers and auth status."""
+"""viewer.login — Claude, Codex, Copilot and MCP-server OAuth login managers and auth status."""
 import fcntl
 import json
 import os
@@ -385,6 +385,153 @@ class CodexLoginManager:
 
 
 CODEX_LOGIN = CodexLoginManager()
+
+
+class McpLoginManager:
+    """Signs the owner in to one OAuth MCP server (e.g. Microsoft 365) by
+    driving `claude mcp login <name> --no-browser` through a pty, so the token
+    lands in the same store every Claude Code session on this machine reads.
+
+    The CLI listens on the server's localhost callback port: a browser on this
+    Mac completes on its own; a phone's redirect fails to load, so the owner
+    pastes that address and it is typed into the CLI's paste prompt. One
+    sign-in at a time — it is a person at a keyboard."""
+
+    URL_RE = re.compile(r"Visit this URL to authorize:\s*(https://\S+)")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        self.pid = None
+        self.fd = None
+        self.buffer = ""
+        self.url = None
+        self.name = ""
+        self.stage = "idle"  # idle | starting | url | done | error
+        self.error = ""
+        self.started = 0
+
+    def start(self, name, cwd=None, plugin_dir=None, project_server=False):
+        """name as `claude mcp list` shows it (plugin:chat:<n> for an extras
+        folder, which plugin_dir loads). project_server pre-approves a
+        project .mcp.json entry, which the CLI otherwise refuses to sign in."""
+        argv = [claude_bin()]
+        if plugin_dir:
+            argv += ["--plugin-dir", str(plugin_dir)]
+        if project_server:
+            argv += ["--settings", json.dumps({"enabledMcpjsonServers": [name]})]
+        argv += ["mcp", "login", name, "--no-browser"]
+        with self.lock:
+            if self.stage in ("starting", "url") and self.pid and self.name == name:
+                return
+            self.cancel_locked()
+            self.reset()
+            self.name, self.stage, self.started = name, "starting", time.time()
+            pid, fd = pty.fork()
+            if pid == 0:
+                if cwd:
+                    os.chdir(cwd)
+                os.execvp(argv[0], argv)
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 4000, 0, 0))
+            self.pid, self.fd = pid, fd
+            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+
+    def _reader(self, pid, fd):
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            with self.lock:
+                if self.pid != pid:
+                    return
+                if chunk:
+                    self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
+                    m = not self.url and self.URL_RE.search(self.buffer)
+                    if m:
+                        self.url, self.stage = m.group(1), "url"
+                    continue
+            try:
+                _, status = os.waitpid(pid, 0)
+            except ChildProcessError:
+                status = 0
+            with self.lock:
+                if self.pid != pid:
+                    return
+                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
+                if code == 0:
+                    self.stage = "done"
+                else:
+                    self.stage = "error"
+                    # Drop the authorize URL and any pasted code: neither belongs on a screen.
+                    tail = re.sub(r"https://\S+", "", self.buffer[-500:]).strip()
+                    self.error = tail.splitlines()[-1] if tail else "Sign-in failed."
+                self.pid = None
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self.fd = None
+                return
+
+    def submit(self, redirect_url):
+        """Type the pasted redirect address into the CLI's paste prompt. Enter
+        goes as its own keystroke: a one-chunk write reads as a paste and loses
+        its newline (same as LoginManager.submit_code)."""
+        u = urlparse((redirect_url or "").strip())
+        if u.scheme not in ("http", "https") or "code=" not in u.query:
+            return False
+        with self.lock:
+            if not self.fd or self.stage != "url":
+                return False
+            fd = self.fd
+            try:
+                os.write(fd, redirect_url.strip().encode())
+            except OSError:
+                return False
+        time.sleep(0.3)
+        with self.lock:
+            if self.fd == fd:
+                try:
+                    os.write(fd, b"\r")
+                except OSError:
+                    pass
+        return True
+
+    def cancel_locked(self):
+        if self.pid:
+            # Kill the group so the CLI's localhost callback listener dies with it.
+            try:
+                os.killpg(os.getpgid(self.pid), signal.SIGKILL)
+            except Exception:
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        self.pid = None
+        self.fd = None
+
+    def cancel(self):
+        with self.lock:
+            self.cancel_locked()
+            self.stage = "idle"
+
+    def poll(self):
+        with self.lock:
+            if self.stage in ("starting", "url") and time.time() - self.started > 900:
+                self.cancel_locked()
+                self.stage, self.error = "error", "Sign-in timed out after 15 minutes."
+            return {"name": self.name, "stage": self.stage, "url": self.url, "error": self.error}
+
+
+MCP_LOGIN = McpLoginManager()
 
 
 class RemoteCodexLoginManager:

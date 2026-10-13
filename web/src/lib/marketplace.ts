@@ -20,6 +20,21 @@ export function filledValues(values: Record<string, string>): Record<string, str
 /** What the row's badge says: how it runs, or why it can't be installed from here. */
 export function installNote(kind: MarketKind, item: MarketItem): string {
   if (kind === "skills") return item.license || "skill"
+  if (item.featured) return `Featured · ${item.publisher || "Hosted"}`
   if (!item.install) return "Not installable here"
   return item.install === "remote" ? "Hosted" : item.install
+}
+
+/** A pasted sign-in redirect is usable only whole: the browser's address after
+ *  the publisher's page, carrying the one-time `code`. Checked before sending so
+ *  a half-copied address gets a plain reason instead of a failed sign-in. */
+export function signinRedirectProblem(text: string): string | null {
+  const s = text.trim()
+  if (!s) return "Paste the address first."
+  let u: URL
+  try { u = new URL(s) } catch { return "That isn't a web address. Copy the whole address bar." }
+  if (!/^https?:$/.test(u.protocol)) return "That isn't a web address. Copy the whole address bar."
+  if (u.searchParams.get("error")) return u.searchParams.get("error_description") || "The sign-in page reported an error. Start again."
+  if (!u.searchParams.get("code")) return "That address has no sign-in code. Copy it after the sign-in page sends you on."
+  return null
 }

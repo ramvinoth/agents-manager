@@ -4,7 +4,7 @@
 
 import type { NoteGraph } from "./noteLinks"
 import type { NoteExportFormat } from "./notes"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketPage } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import type { KeyAction } from "./providerModels"
@@ -556,7 +556,20 @@ class ApiClient {
     return this.getStrict<MarketPage>(`/api/market/skills?${new URLSearchParams({ q })}`)
   }
   marketMcpInstall(body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat"; session?: string }) {
-    return this.postStrict<{ installed: string; scope: string }>("/api/market/mcp/install", body)
+    return this.postStrict<MarketInstalled>("/api/market/mcp/install", body)
+  }
+  /** Sign in to an OAuth MCP server at the scope it was installed at. */
+  mcpSigninStart(body: { name: string; scope: "global" | "project" | "chat"; session?: string }) {
+    return this.postStrict<McpSignin>("/api/market/mcp/signin/start", body)
+  }
+  mcpSignin() {
+    return this.getStrict<McpSignin>("/api/market/mcp/signin")
+  }
+  mcpSigninSubmit(redirect: string) {
+    return this.postStrict<McpSignin>("/api/market/mcp/signin/submit", { redirect })
+  }
+  mcpSigninCancel() {
+    return this.postStrict<McpSignin>("/api/market/mcp/signin/cancel")
   }
   marketSkillInstall(body: { id: string; scope: "user" | "project" | "chat"; session?: string }) {
     return this.postStrict<{ installed: string; scope: string }>("/api/market/skill/install", body)

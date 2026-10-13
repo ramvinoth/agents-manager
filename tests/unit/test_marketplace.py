@@ -134,3 +134,54 @@ def test_write_bundle_replaces_and_refuses_traversal(tmp_path):
     assert p.read_bytes() == b"v2", "a refused bundle must not delete the installed one"
     with pytest.raises(ValueError, match="SKILL.md"):
         skills.write_bundle("pdf", {"a": b""}, scope="project", cwd=tmp_path)
+
+
+# --- featured plugins ---------------------------------------------------------
+
+WORKIQ_MCP = {"mcpServers": {"workiq": {
+    "type": "http", "url": "https://workiq.svc.cloud.microsoft/mcp",
+    "oauthClientId": "ba081686-5d24-4bc6-a0d6-d034ecffed87", "oauthPublicClient": True,
+    "auth": {"redirectPort": 12798}}}}
+WORKIQ_TREE = {"tree": [
+    {"path": "plugins/workiq/.mcp.json", "type": "blob", "size": 10},
+    {"path": "plugins/workiq/skills/mail", "type": "tree"},
+    {"path": "plugins/workiq/skills/mail/SKILL.md", "type": "blob", "size": 5},
+    {"path": "plugins/workiq/skills/mail/ref/a.md", "type": "blob", "size": 5},
+    {"path": "plugins/workiq/skills/notes.md", "type": "blob", "size": 5},
+    {"path": "skills/other/SKILL.md", "type": "blob", "size": 5},
+]}
+
+
+def test_copilot_cli_oauth_keys_become_claude_codes():
+    assert M.claude_mcp(WORKIQ_MCP["mcpServers"]["workiq"]) == {
+        "type": "http", "url": "https://workiq.svc.cloud.microsoft/mcp",
+        "oauth": {"clientId": "ba081686-5d24-4bc6-a0d6-d034ecffed87", "callbackPort": 12798}}
+
+
+def test_claude_code_oauth_keys_are_kept_as_written():
+    cfg = {"type": "http", "url": "u", "oauth": {"clientId": "c", "callbackPort": 1}, "oauthClientId": "x"}
+    assert M.claude_mcp(cfg) == {"type": "http", "url": "u", "oauth": {"clientId": "c", "callbackPort": 1}}
+
+
+def test_featured_bundle_reads_the_server_and_its_skills_from_the_publisher_repo():
+    fetch = fetcher({"plugins/workiq/.mcp.json": WORKIQ_MCP, "git/trees": WORKIQ_TREE,
+                     "mail/SKILL.md": b"md", "mail/ref/a.md": b"a"})
+    b = M.featured_bundle(fetch, "microsoft/work-iq")
+    assert list(b["mcp"]) == ["workiq"] and b["mcp"]["workiq"]["oauth"]["callbackPort"] == 12798
+    assert b["skills"] == {"mail": {"SKILL.md": b"md", "ref/a.md": b"a"}}
+
+
+def test_featured_bundle_without_a_server_installs_nothing():
+    fetch = fetcher({".mcp.json": {"mcpServers": {}}, "git/trees": WORKIQ_TREE})
+    with pytest.raises(M.MarketError, match="no longer publishes"):
+        M.featured_bundle(fetch, "microsoft/work-iq")
+    with pytest.raises(M.MarketError, match="No featured"):
+        M.featured_bundle(fetch, "nope/nope")
+
+
+def test_featured_leads_the_first_page_only_when_the_query_matches():
+    fetch = fetcher({"servers?": {"servers": [{"server": NPM}], "metadata": {"nextCursor": "c2"}}})
+    first = M.mcp_search(fetch, "calendar")["items"]
+    assert first[0]["id"] == "microsoft/work-iq" and first[0]["featured"] and len(first) == 2
+    assert not any(i.get("featured") for i in M.mcp_search(fetch, "calendar", "c2")["items"])
+    assert not any(i.get("featured") for i in M.mcp_search(fetch, "zzz-no-match")["items"])

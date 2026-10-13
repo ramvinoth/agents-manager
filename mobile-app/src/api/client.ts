@@ -165,8 +165,14 @@ export type MarketItem = {
   id: string; title: string; description: string; repo: string
   version?: string; publisher?: string; install?: "npm" | "pypi" | "remote" | null; inputs?: MarketInput[]
   license?: string; files?: number
+  /** A vetted publisher's own plugin (an MCP server plus its skills), listed first. */
+  featured?: boolean
 }
 export type MarketPage = { items: MarketItem[]; cursor?: string }
+/** An MCP install: `signin` names the servers that still need the owner's OAuth sign-in. */
+export type MarketInstalled = { installed: string; scope: string; skills?: string[]; signin?: string[] }
+/** One OAuth sign-in to an MCP server, driven on the viewer's machine. */
+export type McpSignin = { name: string; stage: "idle" | "starting" | "url" | "done" | "error"; url: string | null; error: string }
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
@@ -661,7 +667,13 @@ export const api = {
     req<MarketPage>("GET", `/api/market/mcp?${new URLSearchParams({ q, ...(cursor ? { cursor } : {}) })}`),
   marketSkills: (q: string) => req<MarketPage>("GET", `/api/market/skills?${new URLSearchParams({ q })}`),
   marketMcpInstall: (body: { id: string; values: Record<string, string>; scope: "global" | "project" | "chat" | "agent"; cwd?: string; session?: string; agent?: number }) =>
-    req<{ installed: string; scope: string }>("POST", "/api/market/mcp/install", body),
+    req<MarketInstalled>("POST", "/api/market/mcp/install", body),
+  /** Sign in to an OAuth MCP server at the scope it was installed at. */
+  mcpSigninStart: (body: { name: string; scope: "global" | "project" | "chat" | "agent"; cwd?: string; session?: string; agent?: number }) =>
+    req<McpSignin>("POST", "/api/market/mcp/signin/start", body),
+  mcpSignin: () => req<McpSignin>("GET", "/api/market/mcp/signin"),
+  mcpSigninSubmit: (redirect: string) => req<McpSignin>("POST", "/api/market/mcp/signin/submit", { redirect }),
+  mcpSigninCancel: () => req<McpSignin>("POST", "/api/market/mcp/signin/cancel"),
   marketSkillInstall: (body: { id: string; scope: "user" | "project" | "chat" | "agent"; cwd?: string; session?: string; agent?: number }) =>
     req<{ installed: string; scope: string }>("POST", "/api/market/skill/install", body),
 

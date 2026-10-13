@@ -9,12 +9,18 @@ Scope follows the manual editors: "user"/"global" for every session,
 "project" for one session's folder (its cwd), "chat" for that one chat
 (its extras plugin, viewer.chatplugins), or "agent" for an agent template the
 caller owns (body.agent; every new chat from it gets a copy).
+
+A server that signs in with OAuth (an install answers `signin`) is signed in
+from the same dialog: /api/market/mcp/signin/* drive viewer.login.MCP_LOGIN
+against the scope it was installed at.
 """
 import urllib.request
 
 from viewer import chatplugins, marketplace, skills
 from viewer.browser import MCP_CDP_CACHE
+from viewer.config import CHAT_PLUGIN_NAME
 from viewer.engine import get_host
+from viewer.login import MCP_LOGIN
 from viewer.routes import require_human
 
 _UA = {"User-Agent": "harman-viewer", "Accept": "application/json"}
@@ -76,24 +82,43 @@ class MarketplaceMixin:
             return chatplugins.agent_root(int(body["agent"]))
         return chatplugins.chat_root(self._chat_sid(body))
 
+    def _save_mcp(self, scope, body, name, cfg):
+        MCP_CDP_CACHE.pop("local", None)
+        if scope in ("chat", "agent"):
+            return chatplugins.save_mcp(self._extras_root(scope, body), name, cfg)
+        cwd = self._project_cwd(body) if scope == "project" else ""
+        res = get_host("local").mcp_save(name, scope, cfg, cwd, False)
+        if isinstance(res, dict) and res.get("error"):
+            raise marketplace.MarketError(res["error"], res.get("status") or 500)
+
+    def _save_skill(self, scope, body, name, files):
+        if scope in ("chat", "agent"):
+            return chatplugins.install_skill_bundle(self._extras_root(scope, body), name, files)
+        cwd = self._project_cwd(body) if scope == "project" else None
+        return skills.write_bundle(name, files, scope="user" if scope == "global" else scope, cwd=cwd)
+
     def _p_market_mcp_install(self, req):
+        """A registry server, or a featured plugin (its MCP server plus the
+        skills that teach an agent to use it), installed in one press."""
         body = self._install_body(req)
         if body is None:
             return
 
         def run():
-            server = marketplace.mcp_lookup(_fetch, (body.get("id") or "").strip())
-            cfg = marketplace.mcp_config(server, body.get("values"))
+            fid = (body.get("id") or "").strip()
             scope = body.get("scope") if body.get("scope") in ("project", "chat", "agent") else "global"
+            if marketplace.featured(fid):
+                bundle = marketplace.featured_bundle(_fetch, fid)
+                for name, cfg in bundle["mcp"].items():
+                    self._save_mcp(scope, body, name, cfg)
+                for name, files in bundle["skills"].items():
+                    self._save_skill(scope, body, name, files)
+                return {"installed": ", ".join(bundle["mcp"]), "scope": scope,
+                        "skills": sorted(bundle["skills"]), "signin": sorted(bundle["mcp"])}
+            server = marketplace.mcp_lookup(_fetch, fid)
+            cfg = marketplace.mcp_config(server, body.get("values"))
             name = marketplace.config_name(server)
-            MCP_CDP_CACHE.pop("local", None)
-            if scope in ("chat", "agent"):
-                chatplugins.save_mcp(self._extras_root(scope, body), name, cfg)
-                return {"installed": name, "scope": scope}
-            cwd = self._project_cwd(body) if scope == "project" else ""
-            res = get_host("local").mcp_save(name, scope, cfg, cwd, False)
-            if isinstance(res, dict) and res.get("error"):
-                raise marketplace.MarketError(res["error"], res.get("status") or 500)
+            self._save_mcp(scope, body, name, cfg)
             return {"installed": name, "scope": scope}
         self._market(run)
 
@@ -105,11 +130,44 @@ class MarketplaceMixin:
         def run():
             name = (body.get("id") or "").strip()
             scope = body.get("scope") if body.get("scope") in ("project", "chat", "agent") else "user"
-            files = marketplace.skill_bundle(_fetch, name)
-            if scope in ("chat", "agent"):
-                path = chatplugins.install_skill_bundle(self._extras_root(scope, body), name, files)
-                return {"installed": name, "scope": scope, "path": str(path)}
-            cwd = self._project_cwd(body) if scope == "project" else None
-            path = skills.write_bundle(name, files, scope=scope, cwd=cwd)
+            path = self._save_skill(scope, body, name, marketplace.skill_bundle(_fetch, name))
             return {"installed": name, "scope": scope, "path": str(path)}
         self._market(run)
+
+    def _p_market_mcp_signin_start(self, req):
+        body = self._install_body(req)
+        if body is None:
+            return
+
+        def run():
+            name = (body.get("name") or "").strip()
+            if not name or not name.replace("-", "").replace("_", "").isalnum():
+                raise marketplace.MarketError("Name the server to sign in to.", 400)
+            scope = body.get("scope")
+            if scope in ("chat", "agent"):
+                MCP_LOGIN.start(f"plugin:{CHAT_PLUGIN_NAME}:{name}",
+                                plugin_dir=self._extras_root(scope, body))
+            elif scope == "project":
+                MCP_LOGIN.start(name, cwd=self._project_cwd(body), project_server=True)
+            else:
+                MCP_LOGIN.start(name)
+            return MCP_LOGIN.poll()
+        self._market(run)
+
+    def _p_market_mcp_signin_submit(self, req):
+        if not require_human(self, req):
+            return
+        ok = MCP_LOGIN.submit((self.read_body() or {}).get("redirect") or "")
+        self.send_json(MCP_LOGIN.poll() if ok else
+                       {"error": "Paste the whole address from the browser's address bar — it starts with http://localhost and contains code="},
+                       status=200 if ok else 400)
+
+    def _p_market_mcp_signin_cancel(self, req):
+        if not require_human(self, req):
+            return
+        MCP_LOGIN.cancel()
+        self.send_json(MCP_LOGIN.poll())
+
+    def _g_market_mcp_signin(self, req):
+        if require_human(self, req):
+            self.send_json(MCP_LOGIN.poll())

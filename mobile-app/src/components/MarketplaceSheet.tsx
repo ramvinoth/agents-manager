@@ -3,12 +3,13 @@
  * the official MCP Registry, skills from anthropics/skills. Search → pick an
  * entry → read who publishes it, fill its inputs, choose where it applies →
  * Install. The server rebuilds the install from the source's own record, so
- * nothing typed here becomes a command.
+ * nothing typed here becomes a command. A server that signs in with OAuth
+ * (a featured plugin like Microsoft 365) goes straight on to its sign-in.
  */
-import React, { useCallback, useEffect, useState } from "react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, Linking, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
-import { api, type MarketItem } from "../api/client"
-import { filledValues, installNote, missingInput, scopes, SCOPE_LABEL, type InstallScope, type MarketKind } from "../lib/marketplace"
+import { api, type MarketItem, type McpSignin } from "../api/client"
+import { filledValues, installNote, missingInput, scopes, signinRedirectProblem, SCOPE_LABEL, type InstallScope, type MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
@@ -68,7 +69,7 @@ export default function MarketplaceSheet({ kind, cwd, session, agent, onClose, o
           <TouchableOpacity testID="market-close" onPress={onClose} hitSlop={10}><Icon name="close" size={22} color={t.textMuted} /></TouchableOpacity>
         </View>
         {pick ? (
-          <Install kind={kind} item={pick} cwd={cwd} session={session} agent={agent} onDone={() => { onInstalled(); onClose() }} />
+          <Install kind={kind} item={pick} cwd={cwd} session={session} agent={agent} onInstalled={onInstalled} onDone={onClose} />
         ) : (
           <>
             <View style={{ paddingHorizontal: 16 }}>
@@ -112,8 +113,9 @@ export default function MarketplaceSheet({ kind, cwd, session, agent, onClose, o
   )
 }
 
-function Install({ kind, item, cwd, session, agent, onDone }: {
-  kind: MarketKind; item: MarketItem; cwd?: string; session?: string; agent?: { id: number; name: string }; onDone: () => void
+function Install({ kind, item, cwd, session, agent, onInstalled, onDone }: {
+  kind: MarketKind; item: MarketItem; cwd?: string; session?: string; agent?: { id: number; name: string }
+  onInstalled: () => void; onDone: () => void
 }) {
   const styles = useStyles()
   const t = useTheme()
@@ -125,6 +127,8 @@ function Install({ kind, item, cwd, session, agent, onDone }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const installable = kind === "skills" || !!item.install
+  // Servers still waiting on the owner's sign-in after the install, in order.
+  const [signin, setSignin] = useState<string[]>([])
 
   async function install() {
     const gap = missingInput(inputs, values)
@@ -132,8 +136,14 @@ function Install({ kind, item, cwd, session, agent, onDone }: {
     setBusy(true); setError("")
     try {
       const at = scope === "project" ? { cwd } : scope === "chat" ? { session } : scope === "agent" ? { agent: agent?.id } : {}
-      if (kind === "mcp") await api.marketMcpInstall({ id: item.id, values: filledValues(values), scope, ...at })
-      else await api.marketSkillInstall({ id: item.id, scope: scope === "global" ? "user" : scope, ...at })
+      if (kind === "mcp") {
+        const res = await api.marketMcpInstall({ id: item.id, values: filledValues(values), scope, ...at })
+        onInstalled()
+        if (res.signin?.length) return setSignin(res.signin)
+      } else {
+        await api.marketSkillInstall({ id: item.id, scope: scope === "global" ? "user" : scope, ...at })
+        onInstalled()
+      }
       const who = scope === "agent" ? `every new ${agent?.name} chat` : scope === "chat" ? "this chat" : scope === "project" ? "this project's sessions" : "every session"
       Alert.alert("Installed", `${item.title} is ready for ${who}.${scope === "agent" ? "" : " New runs pick it up."}`)
       onDone()
@@ -150,6 +160,12 @@ function Install({ kind, item, cwd, session, agent, onDone }: {
     kind === "mcp" && item.install ? (item.install === "remote" ? "Runs on the publisher's servers" : `Runs on this machine via ${item.install}`) : "",
     item.license ? `License: ${item.license}` : "",
   ].filter(Boolean)
+
+  if (signin.length) {
+    const at = scope === "project" ? { cwd } : scope === "chat" ? { session } : scope === "agent" ? { agent: agent?.id } : {}
+    return <SignIn key={signin[0]} title={item.title} name={signin[0]} scope={scope} at={at}
+      onDone={() => (signin.length > 1 ? setSignin(signin.slice(1)) : onDone())} />
+  }
 
   return (
     <ScrollView testID="market-detail" contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
@@ -189,6 +205,103 @@ function Install({ kind, item, cwd, session, agent, onDone }: {
           {kind === "mcp" ? <Text style={[styles.hint, { textAlign: "center" }]}>An MCP tool is code your agents can run. Install only what you trust.</Text> : null}
         </>
       )}
+    </ScrollView>
+  )
+}
+
+/** One OAuth sign-in, driven on the server's machine. A phone can't reach that
+ *  machine's localhost, so the last page fails to load — expected: the owner
+ *  copies its address and pastes it here, and the server finishes the sign-in. */
+function SignIn({ title, name, scope, at, onDone }: {
+  title: string; name: string; scope: InstallScope; at: { cwd?: string; session?: string; agent?: number }; onDone: () => void
+}) {
+  const styles = useStyles()
+  const t = useTheme()
+  const [state, setState] = useState<McpSignin | null>(null)
+  const [pasted, setPasted] = useState("")
+  const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
+  const live = useRef(true)
+  const opened = useRef(false)
+  useEffect(() => () => { live.current = false }, [])
+
+  // Poll while a sign-in is open: it can also finish in a browser on that machine.
+  const open = state?.stage === "starting" || state?.stage === "url"
+  useEffect(() => {
+    if (!open) return
+    const h = setInterval(() => { api.mcpSignin().then(s => live.current && setState(s)).catch(() => {}) }, 2000)
+    return () => clearInterval(h)
+  }, [open])
+
+  async function start() {
+    setError(""); setBusy(true); opened.current = false
+    try {
+      setState(await api.mcpSigninStart({ name, scope, ...at }))
+    } catch (e) { setError(userError(e, title, "start sign-in for")) }
+    finally { setBusy(false) }
+  }
+
+  // The URL can arrive on a later poll; open the browser once it does.
+  useEffect(() => {
+    if (state?.url && !opened.current) { opened.current = true; Linking.openURL(state.url) }
+  }, [state?.url])
+
+  async function submit() {
+    const problem = signinRedirectProblem(pasted)
+    if (problem) return setError(problem)
+    setError(""); setBusy(true)
+    try { setState(await api.mcpSigninSubmit(pasted.trim())); setPasted("") }
+    catch (e) { setError(userError(e, title, "finish sign-in for")) }
+    finally { setBusy(false) }
+  }
+
+  function later() {
+    if (open) api.mcpSigninCancel().catch(() => {})
+    onDone()
+  }
+
+  if (state?.stage === "done") {
+    return (
+      <View testID="market-signin-done" style={{ padding: 16 }}>
+        <Text style={{ color: t.text, fontSize: 17, fontWeight: "700" }}>Signed in to {title}.</Text>
+        <Text style={[styles.hint, { marginTop: 6 }]}>Your agents can use it from their next run.</Text>
+        <TouchableOpacity testID="market-signin-close" style={styles.button} onPress={onDone}>
+          <Text style={{ color: t.onAccent, fontWeight: "700", fontSize: 16 }}>Done</Text>
+        </TouchableOpacity>
+      </View>
+    )
+  }
+
+  return (
+    <ScrollView testID="market-signin" contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      <Text style={{ color: t.text, fontSize: 17, fontWeight: "700" }}>Installed. One step left: sign in.</Text>
+      <Text style={[styles.hint, { marginTop: 6 }]}>
+        Your agents can't reach {title} until you sign in once. The publisher's sign-in page opens in your browser; Harman never sees your password.
+      </Text>
+      <TouchableOpacity testID="market-signin-open" style={[styles.button, busy || (open && !state?.url) ? { opacity: 0.6 } : null]}
+        disabled={busy || (open && !state?.url)} onPress={() => (state?.url ? Linking.openURL(state.url) : start())}>
+        {busy || (open && !state?.url) ? <ActivityIndicator color={t.onAccent} /> : <Text style={{ color: t.onAccent, fontWeight: "700", fontSize: 16 }}>Open sign-in page</Text>}
+      </TouchableOpacity>
+      {state?.url ? (
+        <>
+          <Text style={[styles.hint, { marginTop: 14 }]}>
+            After you sign in, the last page says it can't connect. That's expected: copy its whole address and paste it here.
+          </Text>
+          <TextInput testID="market-signin-paste" style={[styles.input, { marginTop: 8 }]} value={pasted} onChangeText={setPasted}
+            placeholder="http://localhost:…/callback?code=…" placeholderTextColor={t.textMuted + "80"} autoCapitalize="none" autoCorrect={false} />
+          <TouchableOpacity testID="market-signin-submit" style={[styles.button, busy || !pasted.trim() ? { opacity: 0.6 } : null]} disabled={busy || !pasted.trim()} onPress={submit}>
+            <Text style={{ color: t.onAccent, fontWeight: "700", fontSize: 16 }}>Finish sign-in</Text>
+          </TouchableOpacity>
+        </>
+      ) : null}
+      {error || state?.stage === "error" ? <Text testID="market-signin-error" style={styles.error}>{error || state?.error}</Text> : null}
+      {state?.stage === "error" ? (
+        <TouchableOpacity testID="market-signin-retry" onPress={start} style={{ marginTop: 8 }}><Text style={{ color: t.accent }}>Try again</Text></TouchableOpacity>
+      ) : null}
+      <TouchableOpacity testID="market-signin-later" onPress={later} style={{ marginTop: 18, alignItems: "center" }}>
+        <Text style={{ color: t.accent }}>Later</Text>
+      </TouchableOpacity>
+      <Text style={[styles.hint, { textAlign: "center" }]}>To sign in later, open {title} here again and press Install.</Text>
     </ScrollView>
   )
 }

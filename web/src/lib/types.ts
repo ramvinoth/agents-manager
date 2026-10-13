@@ -146,8 +146,14 @@ export interface MarketItem {
   id: string; title: string; description: string; repo: string
   version?: string; publisher?: string; install?: "npm" | "pypi" | "remote" | null; inputs?: MarketInput[]
   license?: string; files?: number
+  /** A vetted publisher's own plugin (an MCP server plus its skills), listed first. */
+  featured?: boolean
 }
 export interface MarketPage { items: MarketItem[]; cursor?: string }
+/** An MCP install: `signin` names the servers that still need the owner's OAuth sign-in. */
+export interface MarketInstalled { installed: string; scope: string; skills?: string[]; signin?: string[] }
+/** One OAuth sign-in to an MCP server, driven on the viewer's machine. */
+export interface McpSignin { name: string; stage: "idle" | "starting" | "url" | "done" | "error"; url: string | null; error: string }
 
 export interface McpServer {
   name: string
