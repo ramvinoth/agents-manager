@@ -144,3 +144,14 @@ def test_probe_classifies_by_http_answer(monkeypatch):
     assert h.probe("https://example", "m")["state"] == h.ORIGIN_DOWN
     answers["/"] = (503, "")  # warming up, not gone
     assert h.probe("https://example", "m")["state"] == h.REACHABLE
+
+
+def test_diagnose_names_a_context_overflow_as_not_temporary():
+    # vLLM's wording behind the suha-ai gateway (seen 2026-10-12, "Email buddy"):
+    # an HTTP 500 that Claude Code retries as transient and never compacts.
+    line = json.dumps({"type": "result", "is_error": True, "result": (
+        "API Error: 500 This model's maximum context length is 245760 tokens. However, you "
+        "requested 32000 output tokens and your prompt contains at least 213761 input tokens, "
+        "for a total of at least 245761 tokens.")})
+    msg = h.diagnose(line)
+    assert "213,761" in msg and "245,760" in msg and "not temporary" in msg and "new chat" in msg

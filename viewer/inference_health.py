@@ -189,14 +189,28 @@ class Watch:
 
 def diagnose(text):
     """A self-contained explanation for a deterministic endpoint failure in a
-    line of CLI output, or None. Today: a proxy cut the request off before the
-    model's first byte (Cloudflare 524 origin_response_timeout) — the model was
-    still reading the context; the same request will be cut off again."""
-    if not text or "origin_response_timeout" not in text:
+    line of CLI output, or None. Each case fails the same way on every retry:
+    - a proxy cut the request off before the model's first byte (Cloudflare 524
+      origin_response_timeout) — the model was still reading the context;
+    - the chat outgrew the model's window and the engine said so in its own
+      words (vLLM: "maximum context length") — Claude Code only compacts on
+      "prompt is too long", so it retries the overflow as a 'temporary' 500."""
+    if not text:
         return None
-    m = re.search(r'\\?"zone\\?"\s*:\s*\\?"([^"\\]+)', text)
-    host = m.group(1) if m else "the model server"
-    return (f"The model was still reading this chat's context when the proxy in front of {host} "
-            "(Cloudflare) cut the request off at its ~2-minute limit. Retrying sends the same "
-            "long context and is cut off the same way. Fix: use a provider for this chat that "
-            "doesn't go through Cloudflare, or continue in a new chat with a shorter context.")
+    if "origin_response_timeout" in text:
+        m = re.search(r'\\?"zone\\?"\s*:\s*\\?"([^"\\]+)', text)
+        host = m.group(1) if m else "the model server"
+        return (f"The model was still reading this chat's context when the proxy in front of {host} "
+                "(Cloudflare) cut the request off at its ~2-minute limit. Retrying sends the same "
+                "long context and is cut off the same way. Fix: use a provider for this chat that "
+                "doesn't go through Cloudflare, or continue in a new chat with a shorter context.")
+    m = re.search(r"maximum context length is (\d+) tokens.*?prompt contains at least (\d+)", text)
+    if m:
+        limit, used = int(m.group(1)), int(m.group(2))
+        return (f"This chat is now longer than the model can read: it holds about {used:,} tokens "
+                f"and the model's limit is {limit:,} including room for its reply. This is not "
+                "temporary — every retry, including /compact, sends the same oversized chat. It "
+                "usually happens when one step pulls in many large tool results at once (e.g. full "
+                "email bodies). Fix: continue in a new chat, or ask Harman to trim the oversized "
+                "tool results from this chat's history.")
+    return None
