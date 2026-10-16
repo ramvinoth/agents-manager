@@ -682,6 +682,16 @@ In-conversation todos are scratch for the current task only. Work that outlives 
                 $n$notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree);$n$))
               WHERE key = 'system_preamble'
                 AND position('note_comments' in value #>> '{}') = 0;
+            -- Sessions run headless (claude -p): name what that means for
+            -- long-running processes. Appended once; a no-op when present or
+            -- when an operator rewrote the preamble without the board section.
+            UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
+
+## Running headless (claude -p, not the interactive CLI)
+You run as `claude -p` (print mode), not the interactive CLI: no terminal watches your output, and nothing you start in the foreground outlives your turn. Never block a turn on a long-running process (a server, a watcher, a dev build). Before starting one, check whether it is already running (lsof -i :PORT, pgrep -f '<command>') and reuse it — a duplicate wastes the machine, fights over the port and confuses the next session. When you must start one, detach it (nohup <cmd> > <log> 2>&1 &), then record its PID, port and log path on your card so the next session finds it instead of starting another. Stop throwaway processes you started once the work is done.$n$)
+              WHERE key = 'system_preamble'
+                AND position('## Running headless' in value #>> '{}') = 0
+                AND position('## Work discipline' in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same
