@@ -60,15 +60,22 @@ _parse_flags() {
 # HM_WORKDIR at the stable `current` symlink (what the service runs from).
 _provision_release() {
   local rel="$1"
-  HM_APP_DIR="$rel" HM_WORKDIR="$HM_CURRENT" PORT="$PORT"
-  export HM_APP_DIR HM_WORKDIR
-  hm_deps
-  hm_claude_cli
-  hm_db
-  hm_pyenv
-  hm_bootstrap
-  hm_web_build
-  hm_service_install
+  # A subshell, sourcing the INCOMING release's lib.sh: that release defines its
+  # own prerequisites (e.g. the Claude Code CLI) and unit templates, which the
+  # running release's lib.sh predates. Activate/rollback stay on the running copy.
+  (
+    HM_APP_DIR="$rel" HM_WORKDIR="$HM_CURRENT" PORT="$PORT"
+    export HM_APP_DIR HM_WORKDIR
+    # shellcheck source=deploy/lib.sh
+    source "$rel/deploy/lib.sh"
+    hm_deps
+    hm_claude_cli
+    hm_db
+    hm_pyenv
+    hm_bootstrap
+    hm_web_build
+    hm_service_install
+  )
 }
 
 cmd_update() {
