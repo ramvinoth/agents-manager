@@ -1058,7 +1058,10 @@ class TerminalSession:
                 try:
                     os.execvp(shell, [shell, "-l"])
                 except Exception:
-                    os.execvp("/bin/sh", ["/bin/sh"])
+                    try:
+                        os.execvp("/bin/sh", ["/bin/sh"])
+                    finally:
+                        os._exit(127)  # never fall back into a second copy of the server
             self.resize(cols, rows)
 
     def read(self):

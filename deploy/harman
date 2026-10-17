@@ -63,6 +63,7 @@ _provision_release() {
   HM_APP_DIR="$rel" HM_WORKDIR="$HM_CURRENT" PORT="$PORT"
   export HM_APP_DIR HM_WORKDIR
   hm_deps
+  hm_claude_cli
   hm_db
   hm_pyenv
   hm_bootstrap

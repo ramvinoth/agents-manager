@@ -28,6 +28,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 hm_deps          # 1. system prerequisites
+hm_claude_cli    # 1b. Claude Code CLI for the service user
 hm_db            # 2. Postgres `viewer` database
 hm_pyenv         # 2b. Python venv + deps
 hm_bootstrap     # 3. schema + seed data

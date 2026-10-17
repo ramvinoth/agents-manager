@@ -94,6 +94,29 @@ hm_deps() {
   fi
 }
 
+# 1b. Claude Code CLI ─────────────────────────────────────────────────────────
+# Every agent run and the "Sign in with Claude" flow spawn `claude`; a box
+# without it boots fine and then hangs at the first sign-in. Anthropic's native
+# installer puts it in ~/.local/bin of whoever runs it (it refuses sudo-as-root
+# by design), so it runs AS the service user — viewer/config.py claude_bin()
+# looks in exactly that place. It keeps itself current afterwards. Non-fatal:
+# a network blip must not block a Harman update, and the app names the gap.
+hm_claude_cli() {
+  if [[ -n "${SKIP_DEPS:-}" ]]; then return 0; fi
+  local home; home="$(eval echo "~$SERVICE_USER")"
+  if [[ -x "$home/.local/bin/claude" ]]; then
+    hm_log "Claude Code present for $SERVICE_USER."
+    return 0
+  fi
+  hm_log "Installing Claude Code for $SERVICE_USER (native installer → $home/.local/bin)…"
+  local cmd='curl -fsSL https://claude.ai/install.sh | bash'
+  if [[ "$(id -un)" == "$SERVICE_USER" ]]; then
+    bash -c "$cmd"
+  else
+    sudo -u "$SERVICE_USER" -H bash -c "$cmd"
+  fi || hm_log "Claude Code install failed — sign-in will say so; re-run 'harman' update or the installer."
+}
+
 # 2. Postgres `viewer` database ────────────────────────────────────────────────
 # DATABASE_URL overrides; default is the local `dbname=viewer` over the unix socket.
 hm_db() {

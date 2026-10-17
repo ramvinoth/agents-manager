@@ -46,6 +46,35 @@ def auth_status():
     return info
 
 
+def _pty_spawn(argv, cols=2000, cwd=None):
+    """Fork argv onto a fresh pty; returns (pid, fd). The child must never
+    return into the server: a failed exec (binary missing) would otherwise run
+    on as a second copy of the viewer holding the pty open, and the flow would
+    sit at "starting" forever. Instead it prints a plain reason and exits 127,
+    which the reader turns into an error stage."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            if cwd:
+                os.chdir(cwd)
+            os.execvp(argv[0], argv)
+        except BaseException as e:
+            os.write(1, f"Could not start {argv[0]}: {e}\n".encode())
+        finally:
+            os._exit(127)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, cols, 0, 0))
+    return pid, fd
+
+
+def _missing_cli(name, binpath):
+    """A plain, actionable error when a CLI is not installed — checked before
+    forking so the owner sees why, not a spinner."""
+    if shutil.which(binpath) or os.access(binpath, os.X_OK):
+        return ""
+    return (f"{name} is not installed on this computer, so sign-in cannot start. "
+            f"Install it (or update Harman, which installs it), then try again.")
+
+
 class LoginManager:
     """Drives `claude setup-token` through a pty: exposes the OAuth URL,
     forwards the pasted code, and reports completion."""
@@ -71,15 +100,15 @@ class LoginManager:
                 return  # already in progress; frontend will pick up the URL
             self.cancel_locked()
             self.reset()
+            missing = _missing_cli("Claude Code", claude_bin())
+            if missing:
+                self.stage, self.error = "error", missing
+                return
             self.stage = "starting"
             self.started = time.time()
-            pid, fd = pty.fork()
-            if pid == 0:
-                os.execvp(claude_bin(), [claude_bin(), "setup-token"])
             # Wide terminal so the URL is not hard-wrapped by the pty.
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-            self.pid, self.fd = pid, fd
-            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+            self.pid, self.fd = _pty_spawn([claude_bin(), "setup-token"])
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
 
     def _reader(self, pid, fd):
         while True:
@@ -277,14 +306,14 @@ class CodexLoginManager:
                 return
             self.cancel_locked()
             self.reset()
+            missing = _missing_cli("Codex", codex_bin())
+            if missing:
+                self.stage, self.error = "error", missing
+                return
             self.stage = "starting"
             self.started = time.time()
-            pid, fd = pty.fork()
-            if pid == 0:
-                os.execvp(codex_bin(), [codex_bin(), "login"])
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-            self.pid, self.fd = pid, fd
-            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+            self.pid, self.fd = _pty_spawn([codex_bin(), "login"])
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
 
     def _reader(self, pid, fd):
         while True:
@@ -429,14 +458,12 @@ class McpLoginManager:
             self.cancel_locked()
             self.reset()
             self.name, self.stage, self.started = name, "starting", time.time()
-            pid, fd = pty.fork()
-            if pid == 0:
-                if cwd:
-                    os.chdir(cwd)
-                os.execvp(argv[0], argv)
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 4000, 0, 0))
-            self.pid, self.fd = pid, fd
-            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+            missing = _missing_cli("Claude Code", argv[0])
+            if missing:
+                self.stage, self.error = "error", missing
+                return
+            self.pid, self.fd = _pty_spawn(argv, cols=4000, cwd=cwd)
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
 
     def _reader(self, pid, fd):
         while True:
@@ -753,12 +780,12 @@ class CopilotLoginManager:
                     self.chan = chan
                     threading.Thread(target=self._reader_remote, args=(chan,), daemon=True).start()
                 else:
-                    pid, fd = pty.fork()
-                    if pid == 0:
-                        os.execvp(copilot_bin(), [copilot_bin(), "login"])
-                    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-                    self.pid, self.fd = pid, fd
-                    threading.Thread(target=self._reader_local, args=(pid, fd), daemon=True).start()
+                    missing = _missing_cli("GitHub Copilot CLI", copilot_bin())
+                    if missing:
+                        self.stage, self.error = "error", missing
+                        return
+                    self.pid, self.fd = _pty_spawn([copilot_bin(), "login"])
+                    threading.Thread(target=self._reader_local, args=(self.pid, self.fd), daemon=True).start()
             except Exception as e:
                 self.stage = "error"
                 self.error = str(e)
