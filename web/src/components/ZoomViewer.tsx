@@ -2,28 +2,32 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { centered, fitView, wheelFactor, zoomAt, type Size, type View } from "@/lib/zoom"
 
+/** What the viewer shows: a rendered SVG string (a Mermaid diagram) or an image URL (a screenshot). */
+export type ZoomSource = { svg: string } | { src: string; alt?: string }
+
 /**
- * Full-screen pan/zoom viewer for one rendered SVG (a Mermaid diagram).
+ * Full-screen pan/zoom viewer for one diagram or image.
  * Wheel / trackpad pinch / two-finger pinch zoom at the pointer, drag pans,
  * double-click zooms in, + − 0 keys and the toolbar buttons do the same.
  * The maths lives in lib/zoom; this only translates events into it.
  */
-export function DiagramViewer({ svg, open, onOpenChange }: { svg: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function ZoomViewer({ source, open, onOpenChange }: { source: ZoomSource; open: boolean; onOpenChange: (o: boolean) => void }) {
+  const isSvg = "svg" in source
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 rounded-none p-0 sm:max-w-none"
         showCloseButton={false}
       >
-        <DialogTitle className="sr-only">Diagram</DialogTitle>
+        <DialogTitle className="sr-only">{isSvg ? "Diagram" : "Image"}</DialogTitle>
         <DialogDescription className="sr-only">Zoom with the wheel or a pinch, drag to pan.</DialogDescription>
-        {open && <Stage svg={svg} onClose={() => onOpenChange(false)} />}
+        {open && <Stage source={source} onClose={() => onOpenChange(false)} />}
       </DialogContent>
     </Dialog>
   )
 }
 
-function Stage({ svg, onClose }: { svg: string; onClose: () => void }) {
+function Stage({ source, onClose }: { source: ZoomSource; onClose: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const [content, setContent] = useState<Size>({ w: 0, h: 0 })
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 })
@@ -33,14 +37,19 @@ function Stage({ svg, onClose }: { svg: string; onClose: () => void }) {
     const r = boxRef.current?.getBoundingClientRect()
     return { w: r?.width ?? 0, h: r?.height ?? 0 }
   }
-  // Natural size comes from the SVG's viewBox, so the text renders at its real size at 100%.
-  useLayoutEffect(() => {
-    const el = boxRef.current?.querySelector("svg")
-    const vb = el?.viewBox?.baseVal
-    const size = vb && vb.width > 0 ? { w: vb.width, h: vb.height } : { w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 }
+  const place = useCallback((size: Size) => {
     setContent(size)
     setView(fitView(size, box()))
-  }, [svg])
+  }, [])
+  // Natural size: an SVG's viewBox (text renders at its real size at 100%), or an
+  // image's pixel size once it has decoded (onLoad below).
+  const svg = "svg" in source ? source.svg : null
+  useLayoutEffect(() => {
+    if (svg == null) return
+    const el = boxRef.current?.querySelector("svg")
+    const vb = el?.viewBox?.baseVal
+    place(vb && vb.width > 0 ? { w: vb.width, h: vb.height } : { w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 })
+  }, [svg, place])
 
   const zoomBy = useCallback((factor: number, px?: number, py?: number) => {
     const b = box()
@@ -103,35 +112,50 @@ function Stage({ svg, onClose }: { svg: string; onClose: () => void }) {
     e.preventDefault()
   }
 
+  const style = {
+    width: content.w || undefined,
+    height: content.h || undefined,
+    transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+  }
+
   return (
-    <div className="mermaid-viewer" tabIndex={-1} onKeyDown={onKeyDown}>
-      <div className="mermaid-viewer-bar">
-        <span className="mermaid-viewer-pct" aria-live="polite">{Math.round(view.scale * 100)}%</span>
+    <div className="zoom-viewer" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="zoom-viewer-bar">
+        <span className="zoom-viewer-pct" aria-live="polite">{Math.round(view.scale * 100)}%</span>
         <button type="button" onClick={() => zoomBy(0.8)} title="Zoom out (−)" aria-label="Zoom out">−</button>
         <button type="button" onClick={() => zoomBy(1.25)} title="Zoom in (+)" aria-label="Zoom in">+</button>
         <button type="button" onClick={fit} title="Fit to screen (0)">Fit</button>
         <button type="button" onClick={actual} title="Actual size">100%</button>
-        <button type="button" onClick={onClose} title="Close (Esc)" className="mermaid-viewer-close">Close</button>
+        <button type="button" onClick={onClose} title="Close (Esc)" className="zoom-viewer-close">Close</button>
       </div>
       <div
         ref={boxRef}
-        className="mermaid-viewer-stage"
+        className="zoom-viewer-stage"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onDoubleClick={(e) => { const p = local(e); zoomBy(2, p.x, p.y) }}
       >
-        <div
-          className="mermaid-viewer-content"
-          style={{
-            width: content.w || undefined,
-            height: content.h || undefined,
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-          }}
-          // Same strict-mode mermaid SVG the inline diagram already shows.
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
+        {svg != null ? (
+          <div
+            className="zoom-viewer-content"
+            style={style}
+            // Same strict-mode mermaid SVG the inline diagram already shows.
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        ) : (
+          <div className="zoom-viewer-content" style={style}>
+            <img
+              src={"src" in source ? source.src : ""}
+              alt={"alt" in source ? source.alt : ""}
+              draggable={false}
+              // Past 2x a screenshot is inspected pixel by pixel; smoothing would blur it.
+              style={{ imageRendering: view.scale >= 2 ? "pixelated" : "auto" }}
+              onLoad={(e) => place({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

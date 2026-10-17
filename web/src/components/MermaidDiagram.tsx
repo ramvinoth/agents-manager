@@ -5,7 +5,7 @@ import {
   downloadMermaidPng,
   downloadMermaidSvg,
 } from "@/lib/mermaid"
-import { DiagramViewer } from "@/components/DiagramViewer"
+import { ZoomViewer } from "@/components/ZoomViewer"
 
 /**
  * MermaidDiagram — renders a ```mermaid fence as a React-owned diagram.
@@ -97,7 +97,7 @@ export function MermaidDiagram({ source, dark }: { source: string; dark: boolean
       ) : (
         <pre className="mermaid-src"><code className="language-mermaid">{source}</code></pre>
       )}
-      {svg && <DiagramViewer svg={svg} open={expanded} onOpenChange={setExpanded} />}
+      {svg && <ZoomViewer source={{ svg }} open={expanded} onOpenChange={setExpanded} />}
     </div>
   )
 }

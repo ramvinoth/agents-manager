@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Image, Pressable, Text, TouchableOpacity, View } from "react-native"
-import { extractImages, fmtClock, resultToText, type Block, type ThreadItem, type ToolBlock } from "../lib/thread"
+import { extractImages, fmtClock, resultToText, type Block, type ImagePart, type ThreadItem, type ToolBlock } from "../lib/thread"
 import { splitThinking } from "../lib/thinking"
 import { useTheme } from "../lib/useTheme"
 import { speak, stopSpeaking } from "../lib/voice"
@@ -16,6 +16,7 @@ import PlanCard from "./PlanCard"
 import Markdown from "./Markdown"
 import Collapsible from "./Collapsible"
 import Icon from "./Icon"
+import ImageViewer from "./ImageViewer"
 import { useStyles } from "../lib/styles"
 
 // The live placeholder shown while a run is in flight. It names the step the
@@ -109,9 +110,7 @@ export function ItemView({
               )}
             </Collapsible>
           ) : null}
-          {item.images?.map((img, i) => (
-            <Image key={i} style={styles.bubbleImage} resizeMode="cover" source={{ uri: `data:${img.mime};base64,${img.data}` }} />
-          ))}
+          {item.images?.length ? <Thumbs images={item.images} /> : null}
           <View style={styles.bubbleMetaRow}>
             {isPinned ? <Icon name="pin" size={11} color={t.accent} /> : null}
             {item.ts ? <Text style={[styles.msgTime, { color: t.textMuted }]}>{fmtClock(item.ts)}</Text> : null}
@@ -301,6 +300,23 @@ function StepView({ block }: { block: Block }) {
   return <ToolStep block={block} />
 }
 
+// Inline thumbnails; tap one to open it full screen with pinch-zoom and pan.
+function Thumbs({ images }: { images: ImagePart[] }) {
+  const styles = useStyles()
+  const [openAt, setOpenAt] = useState<number | null>(null)
+  const uri = (img: ImagePart) => `data:${img.mime};base64,${img.data}`
+  return (
+    <>
+      {images.map((img, i) => (
+        <Pressable key={i} testID="chat-image" accessibilityRole="imagebutton" accessibilityLabel="Open image full screen" onPress={() => setOpenAt(i)}>
+          <Image style={styles.bubbleImage} resizeMode="cover" source={{ uri: uri(img) }} />
+        </Pressable>
+      ))}
+      {openAt != null && images[openAt] ? <ImageViewer uri={uri(images[openAt])} onClose={() => setOpenAt(null)} /> : null}
+    </>
+  )
+}
+
 // A single tool call: a chip that expands to show the input and result, plus any
 // images the tool returned (e.g. screenshots).
 function ToolStep({ block }: { block: Extract<Block, { kind: "tool" }> }) {
@@ -345,9 +361,7 @@ function ToolStep({ block }: { block: Extract<Block, { kind: "tool" }> }) {
           ) : null}
         </View>
       ) : null}
-      {images.map((img, i) => (
-        <Image key={i} style={styles.bubbleImage} resizeMode="cover" source={{ uri: `data:${img.mime};base64,${img.data}` }} />
-      ))}
+      {images.length ? <Thumbs images={images} /> : null}
     </View>
   )
 }

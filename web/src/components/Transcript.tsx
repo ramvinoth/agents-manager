@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
@@ -10,20 +10,24 @@ import { PlanBlock } from "./PlanBlock"
 import { MessageActions } from "./MessageActions"
 import { Collapsible } from "./Collapsible"
 import { extractImages } from "@/lib/parser"
+import { ZoomViewer } from "./ZoomViewer"
 import type { AssistantTurn, Block, ImagePart, Turn } from "@/lib/types"
 
+// Click an image (a screenshot, a Read of a .png) to open it full screen with pan/zoom.
 function Images({ images }: { images: ImagePart[] }) {
+  const [openAt, setOpenAt] = useState<number | null>(null)
   if (!images.length) return null
+  const src = (img: ImagePart) => `data:${img.mime};base64,${img.data}`
   return (
     <div className="mt-1.5 flex flex-wrap gap-2">
       {images.map((img, i) => (
-        <img
-          key={i}
-          src={`data:${img.mime};base64,${img.data}`}
-          loading="lazy"
-          className="max-h-80 max-w-full rounded-md border border-border object-contain"
-        />
+        <button key={i} type="button" className="chat-image" title="Open full screen to zoom" onClick={() => setOpenAt(i)}>
+          <img src={src(img)} loading="lazy" alt="" className="max-h-80 max-w-full rounded-md border border-border object-contain" />
+        </button>
       ))}
+      {openAt != null && images[openAt] && (
+        <ZoomViewer source={{ src: src(images[openAt]) }} open onOpenChange={(o) => { if (!o) setOpenAt(null) }} />
+      )}
     </div>
   )
 }
