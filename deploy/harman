@@ -34,9 +34,12 @@ usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 # Resolve lib.sh. Prefer the active release (so the CLI runs the release's own
 # step definitions); fall back to a sibling of this script for first install.
+# The lib.sh beside THIS script first: script and library must come from the same
+# release. A newer release's harman run against the older `current` lib.sh dies on
+# functions the old one lacks (seen: hm_wait_quiet, 1.0.2 -> 1.0.4).
 _lib() {
   local c
-  for c in "$HM_PREFIX/current/deploy/lib.sh" "$(dirname "$(readlink -f "$0")")/lib.sh"; do
+  for c in "$(dirname "$(readlink -f "$0")")/lib.sh" "$HM_PREFIX/current/deploy/lib.sh"; do
     [[ -f "$c" ]] && { echo "$c"; return 0; }
   done
   die "cannot locate deploy/lib.sh (looked in $HM_PREFIX/current and next to this script)"

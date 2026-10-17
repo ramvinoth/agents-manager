@@ -122,3 +122,17 @@ def test_failed_version_not_retried(box):
     (box.prefix / ".auto-update-failed").write_text("1.0.1\n")
     rc, out = box.run()
     assert rc == 0 and "skipping 1.0.1" in out
+
+
+def test_script_uses_its_own_lib_not_currents(box, tmp_path):
+    """A newer release's `harman` must source the lib.sh shipped beside it: the
+    running release's lib.sh predates functions it calls (1.0.2 -> 1.0.4 died on
+    `hm_wait_quiet: command not found` after provisioning, before the swap)."""
+    old_lib = box.prefix / "current" / "deploy" / "lib.sh"
+    old_lib.write_text("# an older release's library: defines none of today's hm_* functions\n")
+    env = dict(os.environ, HM_PREFIX=str(box.prefix), PORT="1",
+               PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    p = subprocess.run(["bash", str(REPO / "deploy" / "harman"), "status"],
+                       env=env, capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "current:  1.0.0" in p.stdout
