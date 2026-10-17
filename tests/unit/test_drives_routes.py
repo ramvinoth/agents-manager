@@ -286,16 +286,16 @@ class _OriginHandler:
 @pytest.mark.parametrize("headers, origin", [
     # Through the Cloudflare tunnel: the browser's Host arrives with the
     # scheme it used.
-    ({"Host": "life.suhai.ai", "X-Forwarded-Proto": "https"}, "https://life.suhai.ai"),
+    ({"Host": "harman.example.com", "X-Forwarded-Proto": "https"}, "https://harman.example.com"),
     # A proxy that rewrites Host but forwards the original.
-    ({"Host": "127.0.0.1:8091", "X-Forwarded-Host": "life.suhai.ai",
-      "X-Forwarded-Proto": "https"}, "https://life.suhai.ai"),
+    ({"Host": "127.0.0.1:8091", "X-Forwarded-Host": "harman.example.com",
+      "X-Forwarded-Proto": "https"}, "https://harman.example.com"),
     # Dev box, no proxy: loopback is plain http, port preserved.
     ({"Host": "localhost:8091"}, "http://localhost:8091"),
     ({"Host": "127.0.0.1:9999"}, "http://127.0.0.1:9999"),
     # A public hostname with no proto header is never assumed to be plain
     # http — a vendor would refuse an http redirect URI anyway.
-    ({"Host": "life.suhai.ai"}, "https://life.suhai.ai"),
+    ({"Host": "harman.example.com"}, "https://harman.example.com"),
     # A proxy chain lists several protos; the first is the client's.
     ({"Host": "h.example.test", "X-Forwarded-Proto": "https, http"}, "https://h.example.test"),
 ])

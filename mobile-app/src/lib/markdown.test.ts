@@ -140,7 +140,7 @@ test("notes: [[links]] with heading and alias", () => {
   ])
   assert.deepEqual(parseInline("[[Plan#Risks]]", true), [{ t: "wikilink", target: "Plan", s: "Plan › Risks" }])
   assert.deepEqual(parseInline("[[Plan|the plan]]", true), [{ t: "wikilink", target: "Plan", s: "the plan" }])
-  assert.deepEqual(parseInline("[[Ram's idea]]", true), [{ t: "wikilink", target: "Ram's idea", s: "Ram's idea" }])
+  assert.deepEqual(parseInline("[[Alice's idea]]", true), [{ t: "wikilink", target: "Alice's idea", s: "Alice's idea" }])
   assert.deepEqual(parseInline("[[#Local]]", true), [{ t: "text", s: "[[#Local]]" }])
 })
 

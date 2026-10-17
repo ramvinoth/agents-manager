@@ -118,7 +118,7 @@ def _read_session_title(path):
 def _project_label(session_id):
     """The project the session's transcript lives in, read off the CLAUDE_DIR
     layout (the project dir is the cwd with '/' -> '-', e.g.
-    -Users-rponnarasu-srv-tim-agents -> 'agents'). The last resolvable name
+    -Users-alice-src-agents -> 'agents'). The last resolvable name
     before a raw id: a session with no custom title, no goal and no cwd still
     gets 'agents' instead of 'Chat 65cf166a'."""
     try:

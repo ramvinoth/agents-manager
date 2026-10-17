@@ -25,8 +25,8 @@ Endpoints (mirror pocket_service so the viewer can proxy either):
 Env:
   HARMAN_ASSISTANT_PORT   (default 8099)
   HARMAN_STEP_URL      (default http://127.0.0.1:8000/v1/chat/completions)
-  HARMAN_QWEN_URL      (default http://100.115.120.89:8081/v1/chat/completions)
-  HARMAN_QWEN_KEY      (default sk-llama-suhai-2026)
+  HARMAN_QWEN_URL      (required: OpenAI-compatible chat completions URL)
+  HARMAN_QWEN_KEY      (required: its API key)
   HARMAN_ASSISTANT_VOICE    (default <model>/voices/assistant.wav)
   HARMAN_ASSISTANT_DEVICE (default cuda:0 for token2wav)
 """
@@ -48,10 +48,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 PORT = int(os.environ.get("HARMAN_ASSISTANT_PORT", "8099"))
 STEP_URL = os.environ.get("HARMAN_STEP_URL", "http://127.0.0.1:8000/v1/chat/completions")
 STEP_MODEL = os.environ.get("HARMAN_STEP_MODEL", "step-audio-2-mini")
-QWEN_URL = os.environ.get("HARMAN_QWEN_URL", "http://100.115.120.89:8081/v1/chat/completions")
-QWEN_KEY = os.environ.get("HARMAN_QWEN_KEY", "sk-llama-suhai-2026")
+QWEN_URL = os.environ.get("HARMAN_QWEN_URL", "")
+QWEN_KEY = os.environ.get("HARMAN_QWEN_KEY", "")
 MODEL_DIR = os.environ.get("HARMAN_STEP_MODEL_DIR",
-                           "/home/suhai/Documents/vllm-models/step-audio-2-mini")
+                           os.path.expanduser("~/Documents/vllm-models/step-audio-2-mini"))
 VOICE_WAV = os.environ.get("HARMAN_ASSISTANT_VOICE", MODEL_DIR + "/voices/assistant.wav")
 DEVICE = os.environ.get("HARMAN_ASSISTANT_DEVICE", "cuda:0")
 
@@ -80,7 +80,7 @@ app = FastAPI()
 
 # --- token2wav (assistant voice) — the only local GPU piece ------------------
 import sys
-sys.path.insert(0, "/home/suhai/Documents/Step-Audio2")
+sys.path.insert(0, os.environ.get("HARMAN_STEP_AUDIO_DIR", os.path.expanduser("~/Documents/Step-Audio2")))
 _t2w = None
 try:
     import torch  # noqa: F401

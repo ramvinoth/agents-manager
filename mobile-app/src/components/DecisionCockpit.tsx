@@ -29,7 +29,7 @@ const KIND_LABEL: Record<OpenDecision["kind"], string> = {
 
 /**
  * DecisionCockpit — decide the cross-session queue IN PLACE, one item at a time,
- * without leaving the board (card #60, Ram's big-vision ask). The band hands it
+ * without leaving the board (card #60, the owner's big-vision ask). The band hands it
  * a FROZEN snapshot of the queue + the tapped index; the 4s board poll keeps
  * running underneath but must NOT reshuffle the item under the reader's thumb,
  * so the cockpit walks its own copy. New items simply appear on the next open;

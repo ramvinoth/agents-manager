@@ -10,8 +10,7 @@
  *
  * Which of the two decisions it was IS a string heuristic on CLI output, and is
  * deliberately confined to this file. Verified against 12 real ExitPlanMode
- * results in ~/.claude/projects/-Users-rponnarasu-srv-tim-fvg-stock-scanner/
- * dbd49b66-1f22-477e-870f-72a84fe4fe57.jsonl: every approved one begins
+ * results in Claude CLI session transcripts: every approved one begins
  * "User has approved your plan." A declined one is the user's own feedback text
  * (viewer/engine.py, _await_plan_decision). If the CLI ever rewords its message
  * we fall back to the neutral "decided" — the badge degrades, the collapse does

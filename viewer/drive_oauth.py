@@ -70,7 +70,7 @@ def _pkce():
 
 def redirect_uri_for(origin):
     """The callback the vendor must have on record for this deployment, from
-    the origin the browser reached us on (e.g. 'https://life.suhai.ai'). Every
+    the origin the browser reached us on (e.g. 'https://harman.example.com'). Every
     vendor matches redirect_uri against its registration verbatim, so this
     exact string is what the owner registers — start() returns it so a
     mismatch error can show precisely what to add."""

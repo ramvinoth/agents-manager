@@ -688,10 +688,18 @@ In-conversation todos are scratch for the current task only. Work that outlives 
             UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
 
 ## Running headless (claude -p, not the interactive CLI)
-You run as `claude -p` (print mode), not the interactive CLI: no terminal watches your output, and nothing you start in the foreground outlives your turn. Never block a turn on a long-running process (a server, a watcher, a dev build). Before starting one, check whether it is already running (lsof -i :PORT, pgrep -f '<command>') and reuse it — a duplicate wastes the machine, fights over the port and confuses the next session. When you must start one, detach it (nohup <cmd> > <log> 2>&1 &), then record its PID, port and log path on your card so the next session finds it instead of starting another. Stop throwaway processes you started once the work is done.$n$)
+You run as `claude -p` (print mode), not the interactive CLI: no terminal watches your output, and nothing you start in the foreground outlives your turn. Never block a turn on a long-running process (a server, a watcher, a dev build). Before starting one, check whether it is already running (pgrep -fl '<command>'; for a port, /usr/sbin/lsof -nP -iTCP:PORT -sTCP:LISTEN on macOS or ss -ltnp on Linux) and reuse it — a duplicate wastes the machine, fights over the port and confuses the next session. When you must start one, detach it (nohup <cmd> > <log> 2>&1 & disown) — a tool's own background mode (run_in_background) is killed when your turn ends, so it is not detached — then record its PID, port and log path on your card so the next session finds it instead of starting another. Stop throwaway processes you started once the work is done.$n$)
               WHERE key = 'system_preamble'
                 AND position('## Running headless' in value #>> '{}') = 0
                 AND position('## Work discipline' in value #>> '{}') > 0;
+            -- The first headless text named a bare `lsof` (not on launchd's
+            -- PATH) and a plain `&` (a tool's background task still dies with
+            -- the turn). Rewrite installs that hold it; no-op once updated.
+            UPDATE settings SET value = to_jsonb(replace(replace(value #>> '{}',
+                $o$check whether it is already running (lsof -i :PORT, pgrep -f '<command>') and reuse it$o$, $n$check whether it is already running (pgrep -fl '<command>'; for a port, /usr/sbin/lsof -nP -iTCP:PORT -sTCP:LISTEN on macOS or ss -ltnp on Linux) and reuse it$n$),
+                $o$detach it (nohup <cmd> > <log> 2>&1 &), then$o$, $n$detach it (nohup <cmd> > <log> 2>&1 & disown) — a tool's own background mode (run_in_background) is killed when your turn ends, so it is not detached — then$n$))
+              WHERE key = 'system_preamble'
+                AND position('lsof -i :PORT' in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same

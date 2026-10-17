@@ -9,7 +9,7 @@ function eq(label: string, got: unknown, want: unknown) {
 
 const D = (id: string, label: string, kind = "google"): Drive =>
   ({ id, label, kind, status: "active", hidden: false, authorized: true })
-const drives = [D("dr-1", "Ram's Drive"), D("dr-2", "Work", "dropbox")]
+const drives = [D("dr-1", "Alice's Drive"), D("dr-2", "Work", "dropbox")]
 
 eq("host location shows the host label", describeLocation(HOST_LOCATION, drives, "This machine"), "This machine")
 eq("drive location shows the drive label", describeLocation("dr-2", drives, "This machine"), "Work")

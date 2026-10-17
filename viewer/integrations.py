@@ -177,7 +177,7 @@ for _p in PROVIDERS.values():
 # A token provider's extra inputs beyond the token. `name` (every provider) is
 # how the owner tells two accounts apart — a Hetzner token covers ONE project.
 _NAME = {"id": "name", "label": "Name", "placeholder": "Optional — e.g. Production", "required": False}
-_UA = "Harman/1.0 (+https://life.suhai.ai)"
+_UA = "Harman/1.0 (+https://agents.suhai.ai)"
 _TOKEN = []      # (provider id, service entry), turned into SERVICES below
 
 
@@ -268,7 +268,7 @@ _token("discord", "Discord", "social", "https://discord.com/api/v10", "/users/@m
        "Read your servers' channels as your bot; post messages only if you allow it.",
        "List the Discord servers and channels my bot can see.",
        "https://discord.com/developers/docs/reference", account="username", auth="bot",
-       headers={"User-Agent": "DiscordBot (https://life.suhai.ai, 1.0)"})
+       headers={"User-Agent": "DiscordBot (https://agents.suhai.ai, 1.0)"})
 _planned("x", "X (Twitter)", "social",
          "X charges for API use (pay-per-use credits). Connect it once you decide to buy credits; not built yet.",
          ("Developer portal", "https://developer.x.com/"))

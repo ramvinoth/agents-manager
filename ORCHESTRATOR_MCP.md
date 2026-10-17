@@ -7,11 +7,11 @@
 > design history.
 
 Design + build tracker. Build steps 1-3 are SHIPPED and live (see §9 — struck-through
-items); steps 4-10 remain design-only, pending sequencing, audit data, and Ram's §14
+items); steps 4-10 remain design-only, pending sequencing, audit data, and the owner's §14
 decisions. The original "no code until agreed" gate applied to the whole shape; the agreed
 foundation (principal resolution, `execute()`, the read-only MCP tier) is now code.
 
-Goal, in Ram's words: *a system that can see everything, all chat sessions with roles
+Goal, in the owner's words: *a system that can see everything, all chat sessions with roles
 and RBAC, which can control and orchestrate other agents, and can always distill and
 learn a skill/sub-skill routing subsystem connected to all chat sessions as an MCP —
 with RBAC-controlled user management — distilling skills from the user's messages,
@@ -19,11 +19,11 @@ judgements, intent, goal and clarity.* And: **installable on any machine.**
 
 Plus, from the second pass: *harvesting agents that Harman creates on first install,
 running in a loop and also triggered on demand as Harman wants; Harman approves
-everything on Ram's behalf and surfaces only genuinely real questions and decisions.*
+everything on the owner's behalf and surfaces only genuinely real questions and decisions.*
 
 And the third pass, which is the product the rest of this doc serves: *one prefixed
-Harman chat session, pinned to the top by default, as Ram's only interface — a second
-brain that reasons, plans, creates tasks and delegates but does not act; where Ram
+Harman chat session, pinned to the top by default, as the owner's only interface — a second
+brain that reasons, plans, creates tasks and delegates but does not act; where the owner
 supplies only real-world resources and decisions, and is not interrupted for silly
 things, because the user's time is precious.* §12.
 
@@ -47,7 +47,7 @@ Most of this is built. Naming it prevents building a second copy.
 | **Harman autonomous loop** | `orchestrator.py:121` `harman_tick()`, driven by `engine.py:198` | **built and live** — survey → plan → assign → spawn → escalate |
 | **Loop safety rails** | `HARD_CAP=4`, budget, in-progress guard, self-throttle (`orchestrator.py:9-13, 26`) | works |
 | **Session spawning** | `_spawn_employee_session` (`orchestrator.py:82-118`) | works — this is how a harvester agent gets created |
-| **First-install bootstrap** | `bootstrap.py` (`make bootstrap`) — tables, seeds Ram + Harman, skills dir, Harman config | works, idempotent |
+| **First-install bootstrap** | `bootstrap.py` (`make bootstrap`) — tables, seeds the owner + Harman, skills dir, Harman config | works, idempotent |
 
 Two consequences worth stating plainly, because they shrink the build:
 
@@ -66,19 +66,19 @@ Two consequences worth stating plainly, because they shrink the build:
 2. **Red approvals are inert.** `_org_do` queues them (orchestrator.py:50-55) but
    `_p_org_approvals_resolve` executes only `kind == "skill"`.
    Approving a Red infra action does nothing — the `mutate` closure died with the request.
-   **This also blocks Harman approving on Ram's behalf**: there is nothing to execute.
+   **This also blocks Harman approving on the owner's behalf**: there is nothing to execute.
 3. **Skill truth is one machine's filesystem.** `skills_learned` stores a `path`
    (`db.py:187`); the body lives at `~/.claude/skills/<n>/SKILL.md`. A skill learned on
    the Mac does not exist on a remote host. Same root cause as "not installable."
 4. **Topology is hardcoded, and facts the nodes publish are re-typed by hand.**
-   `config.py:67-87` names `100.115.120.89` four times; `push.py:30` defaults to
+   `config.py:67-87` names `<gpu-host>` four times; `push.py:30` defaults to
    `com.suhai.agents`. Separately, `providers.py:55` hand-types `contextLimit` while the
    engine already reports `max_model_len` and the discovery route
    (`routes/providers.py:84`) discards it. Same shape twice: a fact that lives on the node,
    copied into our source. §7A.
 5. **`bootstrap.py` seeds employees but no `users` row** — and the employee it seeds is
-   a *person by name*: `{"name": "Ram", "role": "Founder/CEO"}` (`bootstrap.py:19`), the
-   only literal "Ram" in shipped code (the rest are comments). So a fresh install has no
+   a *person by name*: `{"name": "<owner name>", "role": "Founder/CEO"}` (`bootstrap.py:19`), the
+   only literal "<owner name>" in shipped code (the rest are comments). So a fresh install has no
    owner account for §2's human ceiling to resolve against, *and* it seeds a stranger as
    CEO on someone else's hardware. The owner is a role, resolved at runtime — never a
    name in source. §7.2.
@@ -91,7 +91,7 @@ Two consequences worth stating plainly, because they shrink the build:
 | Fact | Today | Target |
 |---|---|---|
 | Human authority | none — hardcoded `manager` | `users.role` in Postgres |
-| Who the owner is | `"Ram"` in `bootstrap.py:19` | `users.role == "owner"`, resolved at runtime |
+| Who the owner is | `"<owner name>"` in `bootstrap.py:19` | `users.role == "owner"`, resolved at runtime |
 | Session authority | `session_tokens.employee_level` | unchanged ✅ |
 | Effective authority | n/a | derived: `min(human_role, session_level)` — stored nowhere |
 | Delegation scope | n/a | derived from `audit_log` outcomes (§2B) — stored nowhere |
@@ -137,9 +137,9 @@ Deny-by-default survives: `_MIN_LEVEL` lists what is granted; anything unlisted 
 
 ---
 
-## 2A. Harman approves on Ram's behalf — delegation, not bypass
+## 2A. Harman approves on the owner's behalf — delegation, not bypass
 
-Ram: *"it can approve everything on my behalf and only surface to me with genuinely real
+The owner: *"it can approve everything on my behalf and only surface to me with genuinely real
 questions and decisions that it requires me."*
 
 The wrong implementation is to widen Green until nothing is Red. That destroys the audit
@@ -147,7 +147,7 @@ trail and the distinction between "safe" and "someone chose this" — and it can
 undone once the classifier is gutted.
 
 The right implementation keeps the Red classification exactly as-is and adds **one
-delegated approver**. Red still means "a decision was made"; it stops meaning "Ram is
+delegated approver**. Red still means "a decision was made"; it stops meaning "the owner is
 interrupted."
 
 ```
@@ -162,7 +162,7 @@ boundary — no new taxonomy.
 ```python
 # orglogic.py — pure, table-driven, sits beside _RED_ACTIONS.
 _DELEGATED_KINDS = {"infra", "destructive"}   # Harman may self-approve
-_RESERVED_KINDS  = {"secret", "money"}        # ALWAYS Ram
+_RESERVED_KINDS  = {"secret", "money"}        # ALWAYS the owner
 
 def delegable(approval_kind, *, reversible, blast_radius):
     """True if Harman may resolve this approval itself."""
@@ -170,27 +170,27 @@ def delegable(approval_kind, *, reversible, blast_radius):
 
 ### The three tests an approval must pass to be self-approved
 
-An approval is delegable only when **all three** hold. Any failure surfaces to Ram.
+An approval is delegable only when **all three** hold. Any failure surfaces to the owner.
 
 1. **Recoverable** — the action has a stated undo path (a backup exists, it's a card
    move, the file is in git). `session_delete` with a verified backup: recoverable.
    Without one: not.
 2. **Contained** — blast radius is this install. Touching a foreign host, DNS, a tunnel,
    or a shared service is never delegable (`_RED_ACTIONS` already lists these).
-3. **Precedented** — Ram has approved this action kind before, or it follows from a
+3. **Precedented** — The owner has approved this action kind before, or it follows from a
    stated preference. First-of-kind always surfaces. This is what makes delegation *earn*
    scope instead of being granted it.
 
 Precedent is not a new store: `audit_log` already records every `approval_resolve` with
-actor and resolution (`routes/orchestrator.py:280`). "Has Ram approved this action kind
+actor and resolution (`routes/orchestrator.py:280`). "Has the owner approved this action kind
 before?" is a query over data already being written.
 
-### What always reaches Ram
+### What always reaches the owner
 
 - `secret` and `money` kinds — unconditionally. Cost and credentials are not delegable.
 - Anything failing recoverable / contained / precedented.
 - **Genuine ambiguity**: two defensible paths where the choice is a preference, not a
-  correctness question. This is Ram's "genuinely real decisions" — and it is the one
+  correctness question. This is the owner's "genuinely real decisions" — and it is the one
   category no table can classify. It is raised by the *agent*, via `AskUserQuestion`, not
   inferred by policy.
 - Anything Harman self-approved that then **failed** — reported after, not asked before.
@@ -199,14 +199,14 @@ before?" is a query over data already being written.
 
 - **Separation of duties: an agent may never approve its own escalation.** If
   `approval.created_by == the resolving principal`, delegation is refused and it goes to
-  Ram. Without this rail, any session escalates to Red and then rubber-stamps itself,
+  the owner. Without this rail, any session escalates to Red and then rubber-stamps itself,
   and the entire gate is theatre. This is the single most important line in this section.
   **Built in step 2** as `orglogic.may_resolve` — it had to land the moment approvals
   started executing, and it binds *humans* too: an operator has enough authority to resolve
   approvals, so exempting people would leave the identical hole wearing a person's name.
   The owner is never caught by it — acting at the UI they never queue in the first place.
 - Self-approvals are audited as `resolution="approved:harman"` — distinguishable from
-  `approved` forever. Ram can always ask "what did you approve without me?"
+  `approved` forever. The owner can always ask "what did you approve without me?"
 - A **kill switch**: `delegation_enabled` in Harman config, default **off**. Delegation
   is opt-in per install, not a surprise on upgrade.
 - A **rate rail**: N self-approvals per hour (reuse the `HARD_CAP` pattern from
@@ -214,8 +214,8 @@ before?" is a query over data already being written.
 
 ### The master switch, above all of it
 
-`delegation_enabled` above scopes one behaviour: whether Harman may *approve* on Ram's
-behalf. Ram asked for something broader — *"pass the full system with a single switch and
+`delegation_enabled` above scopes one behaviour: whether Harman may *approve* on the owner's
+behalf. The owner asked for something broader — *"pass the full system with a single switch and
 keep it off"* — so there is one flag above every rail here: **`automation_enabled` in
 Harman config, default off**. While it is off, nothing starts *without a person asking*:
 not Harman's manager tick, not any agent-scheduled loop or one-shot. The owner's own
@@ -254,7 +254,7 @@ the write.
 | action | min level | risk | what actually happens |
 |---|---|---|---|
 | `automation_pause` | `ic` | green | any session stops the machine, immediately — stopping must never sit in a queue |
-| `automation_resume` | `manager` | **red** | the owner at the UI resumes; an agent's resume becomes an approval |
+| `automation_resume` | `manager` | **red** | The owner at the UI resumes; an agent's resume becomes an approval |
 
 Three consequences worth stating:
 
@@ -299,8 +299,8 @@ No new self-report, no new store. Every input already lands in `audit_log` and
 
 | Signal | Source | Weight |
 |---|---|---|
-| Ram approved this kind | `approvals.resolution = "approved"` | `+1` |
-| Ram **rejected** it | `resolution = "rejected"` | `−λ` (λ=3) |
+| The owner approved this kind | `approvals.resolution = "approved"` | `+1` |
+| The owner **rejected** it | `resolution = "rejected"` | `−λ` (λ=3) |
 | Harman self-approved and it succeeded | `"approved:harman"` + `audit done` | `+0.5` |
 | Self-approved and it **failed/was reverted** | `"approved:harman"` + `audit error`, or the card returning from Review | `−μ` (μ=2) |
 
@@ -314,7 +314,7 @@ Four properties, each deliberate:
 - **Starts at 0, not 1.** An unknown pair has no track record, so it cannot
   self-approve — the same deny-by-default posture as `_MIN_LEVEL` (`orglogic.py:159`).
   A fresh install grants zero autonomy and earns it.
-- **A rejection is expensive.** λ=3 means one explicit "no" from Ram outweighs three
+- **A rejection is expensive.** λ=3 means one explicit "no" from the owner outweighs three
   silent yeses. Human correction is the highest-quality signal in the system; weighting
   it equally would let volume drown out judgement.
 - **It decays.** Good behaviour six months ago does not buy trust today. Without decay
@@ -331,7 +331,7 @@ def delegable(kind, *, reversible, contained, score, n):
     return reversible and contained and n >= N_MIN and score >= TAU
 ```
 
-`N_MIN = 3`, `TAU = 0.8`. Below either, the approval surfaces to Ram — which is also
+`N_MIN = 3`, `TAU = 0.8`. Below either, the approval surfaces to the owner — which is also
 how the score recovers, since a human decision is a `+1` or a `−3`.
 
 ### Rails
@@ -342,7 +342,7 @@ how the score recovers, since a human decision is a `+1` or a `−3`.
 - **It must be explainable.** `accountability(principal, kind)` returns the number *and*
   the rows behind it. "Why is this 0.4?" has a concrete answer, always.
 - **Score never widens Green.** It only decides who resolves a Red approval. A low score
-  means more reaches Ram; a high score never makes a Red action Green.
+  means more reaches the owner; a high score never makes a Red action Green.
 
 The same evidence-from-audit shape is reused for **node reliability** in §7A — different
 subject, different use (placement, not autonomy), identical principle: measure what
@@ -352,9 +352,9 @@ already happened rather than asking the thing to rate itself.
 
 ## 3. Actions become serializable intents (the Red-gating blocker)
 
-This is the load-bearing refactor. Ram chose "everything, with Red gating" — which is
+This is the load-bearing refactor. The owner chose "everything, with Red gating" — which is
 only real if approving a queued action **executes** it. It is also the prerequisite for
-§2A: Harman cannot approve on Ram's behalf if approval does nothing.
+§2A: Harman cannot approve on the owner's behalf if approval does nothing.
 
 Today `_org_do(action, level, actor, target, mutate)` takes a closure. Replace with a
 registry of named handlers over plain data:
@@ -427,7 +427,7 @@ is not broken mid-flight.
 
 ## 5. Two objects: observations vs. skills
 
-Ram's choice. An **observation** is a fact about Ram or this work (*"wants terse replies"*,
+The owner's choice. An **observation** is a fact about the owner or this work (*"wants terse replies"*,
 *"rejected approach X because Y"*). A **skill** is a transferable procedure (*"how to ship
 to TestFlight"*). Merging them pollutes the shared skill library with personal preference.
 
@@ -445,7 +445,7 @@ CREATE TABLE observations (
 ALTER TABLE skills_learned ADD COLUMN body TEXT NOT NULL DEFAULT '';  -- DB is truth
 ```
 
-The five `kind` values are exactly Ram's list: intent, goal, judgement, clarity
+The five `kind` values are exactly the owner's list: intent, goal, judgement, clarity
 (→ `clarification`), plus `correction` (a judgement with a rejected alternative).
 
 ### The pipeline
@@ -472,7 +472,7 @@ isn't mistaken for a solved problem.
 
 ## 5A. The harvester: an agent Harman creates on first install
 
-Ram: *"auto-harvested skills by an agent/chat session within the system that the Harman
+The owner: *"auto-harvested skills by an agent/chat session within the system that the Harman
 orchestrator creates on first install, so that this agent runs in a loop and also gets
 triggered on demand as the Harman agent wants."*
 
@@ -485,18 +485,18 @@ needs a model, not a `for` loop, and because that reuses machinery that already 
 `plan_assignments` → `_spawn_employee_session` → work → advance already exists
 (`orchestrator.py:82-118, 121-189`). A thread would be a second, unaudited execution path
 for the same job — the parallel-code-path trap. As a card, the distiller inherits budget,
-`HARD_CAP`, the in-progress guard, audit, and Ram's board visibility **for free**.
+`HARD_CAP`, the in-progress guard, audit, and the owner's board visibility **for free**.
 
 ### First install (`bootstrap.py`, ~4 lines beside the existing seeds)
 
-`bootstrap.py:18-21` already seeds Ram and Harman. Add one more:
+`bootstrap.py:18-21` already seeds the owner and Harman. Add one more:
 
 ```python
 {"name": "Scribe", "role": "Distiller", "level": "ic"},
 ```
 
 Plus an internal project ("Harman Internal") owning the distillation cards, so the
-harvester never needs `projects` to be non-empty for Ram's real work. Idempotent, dedupes
+harvester never needs `projects` to be non-empty for the owner's real work. Idempotent, dedupes
 by name, same as the existing seeds.
 
 ### Loop + on demand — one mechanism
@@ -527,7 +527,7 @@ always reaches a human or Harman, never self-merges.
 ### What the Scribe is told
 
 Its system prompt is the one genuinely new artifact, and it encodes the §5 distinction:
-an **observation** is a fact about Ram; a **skill** is a procedure anyone could follow.
+an **observation** is a fact about the owner; a **skill** is a procedure anyone could follow.
 It proposes a skill only when observations converge on a repeatable procedure — and it
 uses `AskUserQuestion` when the distinction is genuinely unclear rather than guessing.
 
@@ -567,7 +567,7 @@ idempotent. **Extend it — do not write a second installer.** The gaps are what
 2. **Seed the owner user — and stop hardcoding who that is.** `bootstrap.py` seeds
    *employees* (`_SEED_EMPLOYEES`) but never a `users` row, so §2's human ceiling has
    nothing to resolve against (defect §0.5). Worse, the seed itself names a person:
-   `{"name": "Ram", "role": "Founder/CEO"}` (`bootstrap.py:19`) — the only literal "Ram"
+   `{"name": "<owner name>", "role": "Founder/CEO"}` (`bootstrap.py:19`) — the only literal "<owner name>"
    in shipped code. On someone else's hardware that seeds a stranger as CEO.
    Bootstrap should create the first `users` row from the install (env / prompt / first
    signup), mark it `role="owner"`, and create the matching employee from *that* name.
@@ -577,7 +577,7 @@ idempotent. **Extend it — do not write a second installer.** The gaps are what
    (`orchestrator.py:25`). Widen that pattern to service endpoints rather than inventing
    `~/.harman/config.toml`: precedence env → file → defaults, where **no default names a
    machine**. `SPEECH_SERVICE_URL` etc. (`config.py:67-87`) default to empty = feature off,
-   not "point at Ram's tailnet". `APNS_TOPIC` (`push.py:30`) gets no default.
+   not "point at the owner's tailnet". `APNS_TOPIC` (`push.py:30`) gets no default.
 5. **Service unit from a template** for the detected platform, replacing hand-assembly of
    `deploy/com.harman.viewer.plist` / `deploy/harman-viewer.service`.
 6. **Schema is the migration.** `db.py` already uses `CREATE TABLE IF NOT EXISTS` +
@@ -586,12 +586,12 @@ idempotent. **Extend it — do not write a second installer.** The gaps are what
 
 **Naming rule, applied everywhere below.** The owner is a *role*, resolved at runtime from
 `users.role == "owner"` — never a name in source. That is why §2A says "the owner" where it
-once said "Ram", and why §12's pinned session addresses whoever installed it. Prose in this
-doc says "Ram" because Ram is *this* install's owner — code must not.
+once said "<owner name>", and why §12's pinned session addresses whoever installed it. Prose in this
+doc says "the owner" for the same reason.
 
 Acceptance test, and it must pass on a clean box: *fresh machine, `pip install`,
 `make bootstrap`, log in, spawn a session, watch the Scribe distil its first skill — with
-no file copied from Ram's Mac, and no occurrence of "Ram" anywhere in the running system.*
+no file copied from the owner's Mac, and no occurrence of "<owner name>" anywhere in the running system.*
 
 ---
 
@@ -607,14 +607,14 @@ fail for the same reason: **the topology is hardcoded.**
 `config.py` hardcodes one machine three times:
 
 ```python
-SPEECH_SERVICE_URL    = env("HARMAN_SPEECH_URL",    "http://100.115.120.89:8095")
-TTS_STREAM_URL        = env("HARMAN_TTS_STREAM_URL","http://100.115.120.89:8097")
-VERIFY_SERVICE_URL    = env("HARMAN_VERIFY_URL",    "http://100.115.120.89:8095")
+SPEECH_SERVICE_URL    = env("HARMAN_SPEECH_URL",    "http://<gpu-host>:8095")
+TTS_STREAM_URL        = env("HARMAN_TTS_STREAM_URL","http://<gpu-host>:8097")
+VERIFY_SERVICE_URL    = env("HARMAN_VERIFY_URL",    "http://<gpu-host>:8095")
 ```
 
 That is not configuration, it is a topology baked into source. Move the GPU box's IP and
 three constants are wrong. Install on someone else's hardware and it silently points at
-Ram's tailnet. Add a second speech node and there is nowhere to put it.
+The owner's tailnet. Add a second speech node and there is nowhere to put it.
 
 ### Nodes declare what they can do
 
@@ -652,7 +652,7 @@ The capability block should be **probed**, not hand-written. An `/v1/models` res
 already carries everything needed. Verified live just now against GPU0:
 
 ```
-$ curl -s http://100.115.120.89:18020/v1/models
+$ curl -s http://<gpu-host>:18020/v1/models
 {"data":[{"id":"qwen3.8-27b", "max_model_len":245760, "owned_by":"vllm", …}]}
 ```
 
@@ -764,7 +764,7 @@ same list, and `docs_read system-status` shows the live posture.
 Planned in §8 but **not built**: `session_spawn/send/steer/interrupt`, `template_*`,
 `capability_*`, `observation_list`, `accountability`, `skill_grant/revoke/materialize`,
 `mcp_grant`, `project_create`, `approval_resolve` as an agent tool
-(the owner resolves approvals from the app; separation of duties). Add a row here when one
+(The owner resolves approvals from the app; separation of duties). Add a row here when one
 ships — the preamble, this table, and `_TOOLS` must agree.
 
 ---
@@ -844,14 +844,14 @@ Each step ships working and is independently reversible.
 
 Steps 1-2 are prerequisites for everything and contain all the real risk. Step 5 is where
 autonomy is granted — it should not ship until the audit trail from 1-4 is trusted. Step
-10 is the only one Ram interacts with directly, and it is deliberately the last thing
+10 is the only one the owner interacts with directly, and it is deliberately the last thing
 built rather than the first.
 
 ---
 
-## 12. The Harman session — Ram's only interface
+## 12. The Harman session — The owner's only interface
 
-Ram: *"a single prefixed Harman chat session pinned to the top by default, my only
+The owner: *"a single prefixed Harman chat session pinned to the top by default, my only
 interface to Harman. Harman doesn't do anything on its own but reason, plan, create tasks
 and delegate — an interface, a second brain, where I give only real-world resources and
 decisions. Everything else is handled responsibly, but not so intrusive as to come to me
@@ -877,7 +877,7 @@ Why this is a real constraint and not decoration:
   escalation. If Harman both created and executed work, its `approval_resolve` power
   would let it authorise itself through a second door.
 - **It makes the interruption budget honest.** A planner that cannot act has nothing to
-  hide; its entire output is cards, questions and delegations that Ram can see.
+  hide; its entire output is cards, questions and delegations that the owner can see.
 
 Harman's ability to *spawn* is therefore indirect: it creates a card; the existing
 planner (`plan_assignments` → `_spawn_employee_session`, `orchestrator.py:82-189`)
@@ -897,17 +897,17 @@ Not a new UI surface — a seeded session that sorts first.
   The mobile list sorts by `modified` today (`ChatsScreen.tsx:241`); it gets the same key.
 - **Prefixed** title so it is unmistakable in the list.
 - **Never archivable, never deletable.** `session_delete` on the pinned id is refused
-  outright — not queued as Red. Ram's interface is not a thing that can be approved away.
+  outright — not queued as Red. The owner's interface is not a thing that can be approved away.
 - **It is a normal session.** Same transcript, same MCP, same audit. If it were special
   it would drift from the code path everything else uses.
-- **It addresses the owner, not "Ram".** The session belongs to whoever holds
+- **It addresses the owner, not "<owner name>".** The session belongs to whoever holds
   `users.role == "owner"` on this install (§7.2). Harman's prompt resolves that name at
   spawn; nothing in source knows it.
 
-Ram keeps every other session. This is the *default* interface, not a cage — the pin
+The owner keeps every other session. This is the *default* interface, not a cage — the pin
 makes Harman first, not exclusive.
 
-### 12.3 What reaches Ram — the interruption budget
+### 12.3 What reaches the owner — the interruption budget
 
 *"Not so intrusive to come to me all the time for silly things"* is a testable
 constraint, not a tone. Four rules, in order:
@@ -927,7 +927,7 @@ constraint, not a tone. Four rules, in order:
 3. **Batched, not streamed.** Non-urgent items accumulate into one digest rather than N
    pushes. Ten questions in one message costs a fraction of ten interruptions.
 4. **Every question carries a recommendation and a default.** Never "what should I do?" —
-   always "I plan X because Y; say no to change it." Ram's cheapest possible action is
+   always "I plan X because Y; say no to change it." the owner's cheapest possible action is
    silence, and silence must be safe.
 
 **Measured, not asserted.** Interruptions/day is derived from `audit_log` — `ask_owner`
@@ -980,7 +980,7 @@ theatre; `_MIN_LEVEL` is the actual boundary.
 
 ---
 
-## 14. Open, needs Ram
+## 14. Open, needs the owner
 
 1. **Distillation threshold** — how many observations before a skill candidate is proposed?
    Too low = noise in the library; too high = it never learns. Start at 3 within one concern?
@@ -994,7 +994,7 @@ theatre; `_MIN_LEVEL` is the actual boundary.
    `money` always reserved — is `destructive` too far for a first cut? A narrower start
    (`infra` only) still removes most interruptions and can widen once the
    `approved:harman` audit trail has been read a few times.
-5. **How does Ram see what was approved without him?** A digest (daily push, or a Board
+5. **How does the owner see what was approved without them?** A digest (daily push, or a Board
    column) — or only on request? Delegation without a review surface is indistinguishable
    from no gate at all. §12.3 assumes a digest; confirm the channel (push vs. the pinned
    session itself).
@@ -1003,7 +1003,7 @@ theatre; `_MIN_LEVEL` is the actual boundary.
    first month of real audit data rather than defended as chosen.
 7. **Does the pinned Harman session survive `apply_default`?** `/api/providers/apply-default`
    (`routes/providers.py:87`) rewrites the provider on *every* session. Harman's own
-   provider probably should be exempt — otherwise one bulk change can point Ram's sole
+   provider probably should be exempt — otherwise one bulk change can point the owner's sole
    interface at an unreachable engine.
 
 

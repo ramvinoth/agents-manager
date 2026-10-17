@@ -30,7 +30,7 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
 
     Ordering is oldest-first: wait time is the only order that exists before a
     human ranks anything (manual priority is a later phase — its semantics for
-    a durable row are Ram's call, not this module's). Each item is a pointer +
+    a durable row are the owner's call, not this module's). Each item is a pointer +
     summary, not a decision surface: deciding an item uses the EXISTING
     per-session routes (/api/chat/question/answer, /api/chat/plan/decide,
     /api/chat/permission/decide) and, for an org Red approval (kind "red"),

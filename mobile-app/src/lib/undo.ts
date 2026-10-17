@@ -13,7 +13,7 @@
  * the app leaving the foreground (flush) — a pending delete is never lost and
  * never silently dropped.
  *
- * Every DELETE confirms first (Ram, 2026-10-11: "Delete chat has no
+ * Every DELETE confirms first (the owner, 2026-10-11: "Delete chat has no
  * confirmation. This is dangerous."); the Undo is a second net behind the
  * confirm, never a replacement for it. Flips (archive, pause, unshare) need no
  * confirm — Undo alone is enough there. Actions that can neither be held back

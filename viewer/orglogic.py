@@ -77,7 +77,7 @@ def next_position(cards_in_column, index):
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
 
 
-# ── Approval gate: classify an action Green (auto) vs Red (needs Ram) ─────────
+# ── Approval gate: classify an action Green (auto) vs Red (needs the owner) ─────────
 # The charter's rule: escalate only what can irreversibly destroy work, spend money
 # or leak a secret, or hit a shared service. Everything else Harman does and logs.
 # Table-driven so the policy is one obvious place to read/audit.
@@ -161,7 +161,7 @@ _RED_KINDS = {"destructive", "secret", "money", "infra"}
 
 
 def classify_action(action):
-    """Return 'red' if the action needs Ram's explicit approval, else 'green'.
+    """Return 'red' if the action needs the owner's explicit approval, else 'green'.
     `action` may be an action name (str) or a dict with an 'action'/'kind' key.
     Unknown actions default to 'green' (reversible/contained) — the charter's
     narrowed rule of doubt: only escalate what's clearly irreversible/costly/shared."""
@@ -182,7 +182,7 @@ def is_red(action):
 
 # ── Responsibility scope: authority level bounds WHAT a session may do ────────
 # Orthogonal to the Green/Red gate (which bounds HOW RISKY). An action must be
-# BOTH within the caller's responsibility scope AND (if Red) approved by Ram.
+# BOTH within the caller's responsibility scope AND (if Red) approved by the owner.
 # Levels are ordered least→most authority; each action names the MINIMUM level.
 
 LEVELS = ("ic", "lead", "manager")
