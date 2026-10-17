@@ -4,7 +4,7 @@ import threading
 import traceback
 from viewer import config, db
 from viewer.browser import (
-    browser_frame, browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws, serve_terminal_ws,
+    browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws, serve_terminal_ws,
 )
 
 
@@ -92,23 +92,6 @@ class PanelsMixin:
             self.send_json(browser_status(req.host))
         except Exception as e:
             self.send_json({"running": False, "reasons": [f"Cannot reach host: {e}"]}, status=502)
-
-    def _g_browser_frame(self, req):
-        try:
-            frame, page_url = browser_frame(req.host)
-        except Exception as e:
-            self.send_json({"error": f"frame: {e}"}, status=502)
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
-        self.send_header("Content-Length", str(len(frame)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Page-Url", page_url[:2000])
-        self.end_headers()
-        try:
-            self.wfile.write(frame)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
 
     def _g_terminal_ws(self, req):
         try:

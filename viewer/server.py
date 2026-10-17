@@ -408,7 +408,6 @@ class SessionViewerHandler(
         "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
-        "/api/browser/frame": "_g_browser_frame",
         "/api/capabilities": "_g_capabilities",
         "/api/market/mcp": "_g_market_mcp",
         "/api/market/skills": "_g_market_skills",
