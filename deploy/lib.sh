@@ -179,9 +179,12 @@ hm_service_install() {
   if [[ "$OS" == "Darwin" ]]; then
     local plist="$HOME/Library/LaunchAgents/com.harman.viewer.plist"
     local python_bin; python_bin="$(hm_py "$HM_WORKDIR")"
+    # The viewer runs under Harman.app so macOS privacy settings name it "Harman".
+    local app_bin; app_bin="$("$HM_APP_DIR/deploy/macos/build-app.sh")"
     hm_log "Installing launchd agent 'com.harman.viewer' (port=$PORT)…"
     mkdir -p "$HOME/Library/LaunchAgents"
     sed \
+      -e "s|__APP__|$app_bin|g" \
       -e "s|__PYTHON__|$python_bin|g" \
       -e "s|__WORKDIR__|$HM_WORKDIR|g" \
       -e "s|__PORT__|$PORT|g" \

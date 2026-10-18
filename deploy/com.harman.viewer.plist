@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   launchd agent for the Harman viewer on macOS (systemd's counterpart).
-  install.sh renders __WORKDIR__ / __PYTHON__ / __PORT__ and drops the result at
-  ~/Library/LaunchAgents/com.harman.viewer.plist, then `launchctl bootstrap`s it.
+  install.sh renders __APP__ / __WORKDIR__ / __PYTHON__ / __PORT__ and drops the
+  result at ~/Library/LaunchAgents/com.harman.viewer.plist, then `launchctl
+  bootstrap`s it. __APP__ is Harman.app's launcher (deploy/macos), so macOS
+  privacy settings list the viewer as "Harman", not as Python.
 
   KeepAlive restarts the server if it dies (≈ Restart=always). We deliberately do
   NOT set an ANTHROPIC_*/CLAUDE_CODE_MAX_* environment here: a clean env is exactly
@@ -15,6 +17,7 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>__APP__</string>
         <string>__PYTHON__</string>
         <string>server.py</string>
         <string>__PORT__</string>
