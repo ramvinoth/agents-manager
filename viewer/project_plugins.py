@@ -37,6 +37,14 @@ def _env(name):
     return (os.environ.get(name) or "").strip()
 
 
+def local_folder(cwd):
+    """A project folder on this machine as one absolute path, or None. The
+    session list names folders "~/x"; an agent's run knows them as "/Users/u/x".
+    Both must key the app's one project for that folder."""
+    path = os.path.expanduser((cwd or "").strip()).rstrip("/")
+    return path if path.startswith("/") else None
+
+
 class ProjectPlugin:
     """The contract one app fills in. `icon` is a lucide name the web registry maps."""
     id = label = icon = description = ""

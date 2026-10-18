@@ -17,13 +17,13 @@ class ProjectPluginsMixin:
             return
         body = self.read_body() or {}
         plugin = project_plugins.get(body.get("id") or "")
-        cwd = (body.get("cwd") or "").strip()
+        cwd = project_plugins.local_folder(body.get("cwd"))
         if not plugin:
             self.send_json({"error": "That app is not set up on this computer."}, status=404); return
         if (body.get("host") or "local") != "local":
             self.send_json({"error": f"{plugin.label} opens only for projects on this computer."}, status=400); return
-        if not cwd.startswith("/"):
-            self.send_json({"error": "cwd must be an absolute folder"}, status=400); return
+        if not cwd:
+            self.send_json({"error": "cwd must be a folder on this computer"}, status=400); return
         try:
             self.send_json({"url": plugin.open_url(cwd, self.request_origin())})
         except project_plugins.PluginError as e:

@@ -52,6 +52,13 @@ class TestSift(unittest.TestCase):
                                          {"email": "a@example.com", "folder": "/work/thesis", "name": "thesis"}))
         self.assertEqual(self.calls[1], ("/api/service/ticket", {"email": "a@example.com"}))
 
+    def test_local_folder_is_one_absolute_path(self):
+        with patch.dict("os.environ", {"HOME": "/home/u"}):
+            for given in ("~/work", "~/work/", " /home/u/work ", "/home/u/work/"):
+                self.assertEqual(project_plugins.local_folder(given), "/home/u/work", given)
+        for given in ("", None, "work", "./work"):
+            self.assertIsNone(project_plugins.local_folder(given), given)
+
     def test_browser_address_follows_the_origin_or_the_public_url(self):
         self.assertEqual(Sift().public_base("http://127.0.0.1:8091"), "http://127.0.0.1:8120")
         self.assertEqual(Sift().public_base("http://[::1]:8091"), "http://[::1]:8120")
