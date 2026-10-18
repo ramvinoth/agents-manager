@@ -4,7 +4,7 @@
 
 import type { NoteGraph } from "./noteLinks"
 import type { NoteExportFormat } from "./notes"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import type { KeyAction } from "./providerModels"
@@ -210,6 +210,14 @@ class ApiClient {
   /** Find-or-create the org project for a (host, cwd) directory → the board it maps to. */
   orgProjectForCwd(body: { host: string; cwd: string; name?: string }) {
     return this.postJSON<OrgProject>("/api/org/project-for-cwd", body)
+  }
+  /** The project plugins this server has on (viewer/project_plugins.py). */
+  projectPlugins() {
+    return this.getStrict<{ plugins: ProjectPlugin[] }>("/api/project-plugins")
+  }
+  /** A one-time signed-in URL opening a project plugin at this folder's project. */
+  projectPluginOpen(body: { id: string; host: string; cwd: string }) {
+    return this.postStrict<{ url: string }>("/api/project-plugins/open", body)
   }
   /** One level of the project's code Map (the Map lens). Throws the server's
    *  sentence (remote project, not a code folder) for the dialog to show. */

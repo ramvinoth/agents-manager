@@ -36,7 +36,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import codemap, db, inference_health, orglogic, resume
+from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -1656,10 +1656,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         extra.append("Active goal (keep working toward this; check it before stopping): " + meta["goal"])
     if extra:
         cmd += ["--append-system-prompt", "\n\n".join(extra)]
-    # The chat's plugins (its agent's, any the owner added) and its own extras
-    # folder — skills, MCP, hooks. Local runs only: the folders live here.
+    # The chat's plugins (its agent's, any the owner added), its own extras
+    # folder, and every project plugin this machine has on (an app sharing the
+    # project's folder, e.g. Sift) — skills, MCP, hooks. Local runs only: the
+    # folders live here.
     if not remote:
-        for plugin_dir in session_plugin_dirs(session_id, meta):
+        for plugin_dir in session_plugin_dirs(session_id, meta) + project_plugins.plugin_dirs():
             cmd += ["--plugin-dir", str(plugin_dir)]
 
     def run():
@@ -1668,6 +1670,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         try:
             env = dict(os.environ)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            # The session's name, for tools that sign their edits with it (a
+            # project plugin's MCP server, e.g. Sift's "edited by" line).
+            env["HARMAN_SESSION_LABEL"] = job.get("label") or ""
             # CRITICAL: never let the SERVER'S OWN model/provider env leak into the
             # child claude. If the viewer was launched from a shell that exported
             # ANTHROPIC_* or CLAUDE_CODE_MAX_* (e.g. pointing at a LiteLLM proxy),

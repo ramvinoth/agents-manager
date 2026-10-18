@@ -7,8 +7,9 @@ import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
 import { api } from "@/lib/api"
-import type { SessionListItem, SessionDetail } from "@/lib/types"
-import { KanbanDialog, NotesDialog, MapDialog, InboxDialog } from "@/components/lazyDialogs"
+import type { SessionListItem, SessionDetail, ProjectPlugin } from "@/lib/types"
+import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog } from "@/components/lazyDialogs"
+import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
 interface Group {
   dir: string
@@ -54,6 +55,8 @@ export function SessionList() {
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
   const [mapFor, setMapFor] = useState<Group | null>(null)
+  const projectPlugins = useProjectPlugins()
+  const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
 
@@ -151,6 +154,11 @@ export function SessionList() {
                 <PinnedRow key="notes" icon={NotebookPen} label="Notes" onClick={() => setNotesFor(active)} />,
                 <PinnedRow key="inbox" icon={Mail} label="Inbox" onClick={() => setInboxFor(active)} />,
                 <PinnedRow key="map" icon={Network} label="Map" onClick={() => setMapFor(active)} />,
+                // Then the apps sharing this folder (project plugins), on this computer's projects.
+                ...(currentHost === "local" ? projectPlugins : []).map((p) => (
+                  <PinnedRow key={`plugin:${p.id}`} icon={pluginIcon(p.icon)} label={p.label} title={p.description}
+                    onClick={() => setPluginFor({ plugin: p, group: active })} />
+                )),
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -198,6 +206,15 @@ export function SessionList() {
           onClose={() => setMapFor(null)}
         />
       )}
+      {pluginFor && (
+        <ProjectPluginDialog
+          plugin={pluginFor.plugin}
+          host={currentHost}
+          cwd={pluginFor.group.project || pluginFor.group.dir}
+          name={projectName(pluginFor.group.project || pluginFor.group.dir)}
+          onClose={() => setPluginFor(null)}
+        />
+      )}
       {inboxSession && (
         <InboxDialog
           host={currentHost}
@@ -213,7 +230,7 @@ export function SessionList() {
   )
 }
 
-/** A fixed, bordered entry above the list (Harman, or a project's Tasks/Notes/Inbox/Map). */
+/** A fixed, bordered entry above the list (Harman, or a project's Tasks/Notes/Inbox/Map and its plugins). */
 function PinnedRow({
   icon: Icon,
   label,

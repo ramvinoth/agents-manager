@@ -317,6 +317,15 @@ export type LoopSchedule = { interval?: number; at?: string }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
 // ---- org / Kanban ----------------------------------------------------------
+/** An app sharing a project's folder, opened beside Tasks/Notes/Inbox/Map (viewer/project_plugins.py). */
+export interface ProjectPlugin {
+  id: string
+  label: string
+  /** A lucide icon name; projectPlugins/registry.ts maps it. */
+  icon: string
+  description: string
+}
+
 export interface OrgProject {
   id: number
   name: string

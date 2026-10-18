@@ -73,6 +73,7 @@ from viewer.routes.orchestrator import OrchestratorMixin
 from viewer.routes.drives import DrivesMixin
 from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.inbox import InboxMixin
+from viewer.routes.project_plugins import ProjectPluginsMixin
 from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
@@ -82,7 +83,7 @@ class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin,
+    IntakeMixin, ProjectPluginsMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -375,6 +376,7 @@ class SessionViewerHandler(
         "/api/env/value": "_g_env_value",
         "/api/debug/stacks": "_g_debug_stacks",
         "/api/sessions": "_g_sessions",
+        "/api/project-plugins": "_g_project_plugins",
         "/api/chat/status": "_g_chat_status",
         "/api/decisions/open": "_g_decisions_open",
         "/api/auth/status": "_g_auth_status",
@@ -552,6 +554,7 @@ class SessionViewerHandler(
         "/api/providers/delete": "_p_providers_delete",
         "/api/org/projects": "_p_org_projects",
         "/api/org/project-for-cwd": "_p_org_project_for_cwd",
+        "/api/project-plugins/open": "_p_project_plugin_open",
         "/api/org/columns": "_p_org_columns",
         "/api/org/columns/update": "_p_org_columns_update",
         "/api/org/columns/delete": "_p_org_columns_delete",
