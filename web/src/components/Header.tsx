@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
-import { MobileNav } from "./MobileNav"
+import { MobileLeftNav, MobileRightNav } from "./MobileNav"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -97,8 +97,8 @@ export function Header() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
-      <MobileNav />
-      {/* The left rail's toggle on wide screens; narrow ones use the MobileNav drawer. */}
+      <MobileLeftNav />
+      {/* The left rail's toggle on wide screens; narrow ones use the MobileLeftNav drawer. */}
       <Button
         variant="ghost"
         size="icon"
@@ -219,8 +219,9 @@ export function Header() {
 
       {!authUser && themeToggle}
 
-      {/* Skills · MCP · Plugins: a closed side panel on wide screens (the drawer
-          in MobileNav covers narrow ones). */}
+      {/* Skills · MCP · Plugins: a closed side panel on wide screens, a drawer
+          (MobileRightNav) on narrow ones - both at the right edge. */}
+      <MobileRightNav />
       <Button
         variant="ghost"
         size="icon"
