@@ -3,6 +3,13 @@ import { api } from "../lib/api"
 import type { Slice, ChatStatus, PermApproval, RestoreMode } from "./types"
 import { sessionIdOf } from "./helpers"
 
+/** The composer's permission mode until the owner picks another (Claude's id). */
+export const DEFAULT_PERM_MODE = "bypassPermissions"
+// v2: Bypass became the default; the old "permMode" key held the previous
+// default, so it is dropped once and everyone starts in Bypass.
+const PERM_MODE_KEY = "permMode.v2"
+localStorage.removeItem("permMode")
+
 export interface ChatSlice {
   chatRunning: boolean
   chatStatus: ChatStatus | null
@@ -36,10 +43,10 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
     queue: [],
     pendingApprovals: [],
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
-    permMode: localStorage.getItem("permMode") || "acceptEdits",
+    permMode: localStorage.getItem(PERM_MODE_KEY) || DEFAULT_PERM_MODE,
     model: localStorage.getItem("model") || "",
     pendingDraft: null,
-    setPermMode: (m) => { localStorage.setItem("permMode", m); set({ permMode: m }) },
+    setPermMode: (m) => { localStorage.setItem(PERM_MODE_KEY, m); set({ permMode: m }) },
     setModel: (m) => { localStorage.setItem("model", m); set({ model: m }) },
     sendChat: async (msg) => {
       const { currentSessionPath, chatRunning, permMode, model, currentAgent } = get()

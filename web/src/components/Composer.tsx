@@ -13,16 +13,18 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
+import { DEFAULT_PERM_MODE } from "@/store/chat"
 import { api } from "@/lib/api"
 
 // Model + permission options are per-agent. Claude uses --permission-mode +
 // its model aliases; Copilot maps to native --mode (interactive/plan/autopilot)
 // and its own model ids (the CLI can't enumerate models, so this is curated).
+// The first entry of each list is that agent's default.
 const PERM_MODES_CLAUDE = [
+  { v: DEFAULT_PERM_MODE, label: "Bypass" },
   { v: "acceptEdits", label: "Accept edits" },
   { v: "default", label: "Ask" },
   { v: "plan", label: "Plan" },
-  { v: "bypassPermissions", label: "Bypass" },
 ]
 const PERM_MODES_COPILOT = [
   { v: "autopilot", label: "Autopilot" },
