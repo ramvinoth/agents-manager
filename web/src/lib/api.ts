@@ -613,6 +613,12 @@ class ApiClient {
       `/api/fs?path=${encodeURIComponent(path)}&hidden=${hidden ? 1 : 0}` + this.fsq(drive)
     )
   }
+  // The composer's "#" picker: fuzzy-ranked files and folders of a project.
+  fsSearch(cwd: string, q: string) {
+    return this.getJSON(
+      `/api/fs/search?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(q)}` + this.qs()
+    )
+  }
   fsMkdir(body: Body, drive?: string) {
     return this.postRes("/api/fs/mkdir", this.fsBody(body, drive))
   }

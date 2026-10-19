@@ -392,6 +392,7 @@ class SessionViewerHandler(
         "/api/agents": "_g_agents",
         "/api/agents/login/poll": "_g_agent_login_poll",
         "/api/fs": "_g_fs",
+        "/api/fs/search": "_g_fs_search",
         "/api/fs/download": "_g_fs_download",
         "/api/fs/download-zip": "_g_fs_download_zip",
         "/api/drives": "_g_drives",

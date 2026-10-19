@@ -720,6 +720,13 @@ export const api = {
       `/api/fs?${new URLSearchParams({ path, hidden: hidden ? "1" : "0", ...scope })}`
     ),
 
+  // The composer's "#" picker: fuzzy-ranked files and folders of a project.
+  fsSearch: (host: string, cwd: string, q: string) =>
+    req<{ results: { path: string; dir: boolean }[] }>(
+      "GET",
+      `/api/fs/search?${new URLSearchParams({ cwd, q, ...(host && host !== "local" ? { host } : {}) })}`
+    ),
+
   // Create a folder. `name` must be a single segment (server rejects slashes).
   fsMkdir: (scope: FsScope, body: { path: string; name: string }) =>
     req<{ error?: string }>("POST", "/api/fs/mkdir", { ...body, ...scope }),

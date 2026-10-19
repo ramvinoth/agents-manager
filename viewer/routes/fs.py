@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from viewer import db, integrations
 from viewer.drives import DriveError, adapter_for
+from viewer.filesearch import search as search_project
 from viewer.engine import (
     get_host,
 )
@@ -559,6 +560,28 @@ class FsMixin:
             self.send_json({"uploaded": uploaded})
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
+
+    def _g_fs_search(self, req):
+        """GET /api/fs/search?cwd=&q= — the composer's "#" picker: fuzzy-ranked
+        files and folders of one project (local or SSH; drives have no project)."""
+        cwd = (req.query.get("cwd") or [""])[0]
+        q = (req.query.get("q") or [""])[0]
+        if not cwd:
+            self.send_json({"error": "Missing cwd"}, status=400)
+            return
+        ok, _ = self._drive_target(req, None, cwd, "read")
+        if ok is None:
+            return
+        if ok:
+            self.send_json({"error": "Search works on a project folder, not a drive"}, status=400)
+            return
+        try:
+            hits = search_project(req.host, cwd, q)
+        except Exception as e:
+            self.send_json({"error": f"search failed: {e}"}, status=502)
+            return
+        self.send_json({"results": [h for h in hits
+                                    if not _is_secret_path(os.path.join(cwd, h["path"]))]})
 
     def _g_fs(self, req):
         raw = (req.query.get("path") or ["~"])[0]

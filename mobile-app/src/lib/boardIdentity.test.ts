@@ -84,6 +84,7 @@ function screen(initial: Route) {
     } },
     "../lib/thread": { groupThread: () => [], parseTranscript: () => [], fmtDate: () => "", itemUuid: () => undefined },
     "../lib/slash": { matchCommands: () => [], slashTerm: () => "" },
+    "../lib/fileMention": { hashTerm: () => null, applyMention: () => ({ text: "", caret: 0 }) },
     "../lib/thinking": {}, "../lib/plan": {}, "../lib/quote": {}, "../lib/attach": {}, "../lib/voice": {},
     "../lib/search": { findMatches: () => [] },
     "../lib/session": { resolveSessionPath: async () => undefined },
