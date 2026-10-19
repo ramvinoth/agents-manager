@@ -48,6 +48,7 @@ function App() {
   const loadOlder = useStore((s) => s.loadOlder)
   const auth = useStore((s) => s.auth)
   const needsAuth = useStore((s) => s.needsAuth)
+  const rhsOpen = useStore((s) => s.rhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
   const agentLabel = useAgentLabel()
 
@@ -313,7 +314,7 @@ function App() {
             </>
           )}
         </main>
-        {!needsAuth && (
+        {!needsAuth && rhsOpen && (
           <aside className="hidden w-72 shrink-0 border-l border-border lg:block">
             <ErrorBoundary label="Skills panel error">
               <RhsPanel />

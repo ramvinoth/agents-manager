@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/select"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
-import { AnalyticsPanel } from "@/components/AnalyticsPanel"
 import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Plugin, Skill } from "@/lib/types"
 import { MarketplaceDialog } from "@/components/lazyDialogs"
@@ -368,7 +367,6 @@ export function RhsPanel() {
           <TabsTrigger value="skills">Skills</TabsTrigger>
           <TabsTrigger value="mcp">MCP</TabsTrigger>
           {currentAgent === "claude" && <TabsTrigger value="plugins">Plugins</TabsTrigger>}
-          {currentAgent === "claude" && <TabsTrigger value="analysis">Analytics</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="skills" className="min-h-0 flex-1">
@@ -454,10 +452,6 @@ export function RhsPanel() {
         <TabsContent value="plugins" className="min-h-0 flex-1">
           <PluginList plugins={caps.plugins ?? []} agent={caps.agent} />
         </TabsContent>
-
-        <TabsContent value="analysis" className="min-h-0 flex-1">
-          <AnalyticsPanel />
-        </TabsContent>
       </Tabs>
 
       {skillEdit !== undefined && <SkillEditor skill={skillEdit} onClose={() => setSkillEdit(undefined)} />}
@@ -466,7 +460,7 @@ export function RhsPanel() {
         <MarketplaceDialog kind={market} session={session || undefined} chatScope={chatScope} onClose={() => setMarket(null)} onInstalled={loadCapabilities} />
       )}
 
-      {capsLoading && rhsTab !== "analysis" && !caps.skills.length && !caps.mcp.length && (
+      {capsLoading && !caps.skills.length && !caps.mcp.length && (
         <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" /> loading…
         </div>

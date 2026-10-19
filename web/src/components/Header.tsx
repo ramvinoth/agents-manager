@@ -19,6 +19,8 @@ import {
   Plug,
   MessageSquarePlus,
   Wrench,
+  UserRound,
+  PanelRight,
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
@@ -37,7 +39,7 @@ import {
 import { useStore } from "@/store"
 import { describeHost } from "@/lib/host"
 import type { HostInfo } from "@/lib/types"
-import { HostDialog, EnvDialog, IntegrationsDialog, NewSessionDialog } from "@/components/lazyDialogs"
+import { HostDialog, EnvDialog, IntegrationsDialog, NewSessionDialog, ProfileDialog } from "@/components/lazyDialogs"
 
 function useTheme() {
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark")
@@ -54,6 +56,7 @@ export function Header() {
   const [envOpen, setEnvOpen] = useState(false)
   const [intOpen, setIntOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [hostEdit, setHostEdit] = useState<HostInfo | null | undefined>(undefined)
   const hosts = useStore((s) => s.hosts)
   const currentHost = useStore((s) => s.currentHost)
@@ -69,6 +72,8 @@ export function Header() {
   const serverVersion = useStore((s) => s.serverVersion)
   const signout = useStore((s) => s.signout)
   const needsAuth = useStore((s) => s.needsAuth)
+  const rhsOpen = useStore((s) => s.rhsOpen)
+  const toggleRhs = useStore((s) => s.toggleRhs)
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
@@ -248,6 +253,9 @@ export function Header() {
               </DropdownMenuLabel>
             )}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+              <UserRound className="size-3.5" /> Profile
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={toggle}>
               {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />} {dark ? "Light mode" : "Dark mode"}
             </DropdownMenuItem>
@@ -271,9 +279,25 @@ export function Header() {
 
       {!authUser && themeToggle}
 
+      {/* Skills · MCP · Plugins: a closed side panel on wide screens (the drawer
+          in MobileNav covers narrow ones). */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className={"hidden size-7 shrink-0 lg:inline-flex" + (rhsOpen ? " bg-accent" : "")}
+        onClick={toggleRhs}
+        data-track="rhs toggle"
+        aria-label={rhsOpen ? "Hide skills panel" : "Show skills panel"}
+        aria-pressed={rhsOpen}
+        title={rhsOpen ? "Hide skills panel" : "Skills, MCP and plugins"}
+      >
+        <PanelRight className="size-4" />
+      </Button>
+
       {nsOpen && <NewSessionDialog open onOpenChange={setNsOpen} />}
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {intOpen && <IntegrationsDialog onClose={() => setIntOpen(false)} />}
+      {profileOpen && <ProfileDialog onClose={() => setProfileOpen(false)} />}
       {feedbackOpen && (
         <TextFieldDialog
           title="Send feedback"

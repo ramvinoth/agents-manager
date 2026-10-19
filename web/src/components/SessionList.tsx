@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react"
-import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus } from "lucide-react"
+import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus, MoreHorizontal } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
 import { cn } from "@/lib/utils"
@@ -12,6 +20,9 @@ import { activity, groupSessions, type Group } from "@/lib/projectGroups"
 import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
+// The drilled-in project, per host, so a page refresh reopens the same project.
+const dirKey = (host: string) => "projectDir:" + host
+
 export function SessionList() {
   const sessions = useStore((s) => s.sessions)
   const providers = useStore((s) => s.providers)
@@ -21,7 +32,13 @@ export function SessionList() {
   // The master switch decides whether the orchestrator exists for this app at
   // all: OFF → no pinned Harman entry, the plain chat-session system it is.
   const automationOn = useStore((s) => s.automationOn)
-  const [dir, setDir] = useState<string | null>(null)
+  const [dir, setDirState] = useState<string | null>(() => localStorage.getItem(dirKey(currentHost)))
+  useEffect(() => setDirState(localStorage.getItem(dirKey(currentHost))), [currentHost])
+  const setDir = (d: string | null) => {
+    if (d) localStorage.setItem(dirKey(currentHost), d)
+    else localStorage.removeItem(dirKey(currentHost))
+    setDirState(d)
+  }
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
@@ -63,7 +80,7 @@ export function SessionList() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Filter sessions…"
+          placeholder={active ? "Filter chats…" : "Filter projects…"}
           className="h-8"
         />
       </div>
@@ -126,24 +143,61 @@ export function SessionList() {
                   )),
               ]
             : [
-                <button
-                  key="back"
-                  onClick={() => setDir(null)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
-                >
-                  <ArrowLeft className="size-4" /> All projects
-                </button>,
-                // Fixed rows, always first under a project: its board, notes ledger,
-                // message ledger and code map — each shared by every session in this dir.
-                <PinnedRow key="tasks" icon={ClipboardList} label="Tasks" onClick={() => setTasksFor(active)} />,
-                <PinnedRow key="notes" icon={NotebookPen} label="Notes" onClick={() => setNotesFor(active)} />,
-                <PinnedRow key="inbox" icon={Mail} label="Inbox" onClick={() => setInboxFor(active)} />,
-                <PinnedRow key="map" icon={Network} label="Map" onClick={() => setMapFor(active)} />,
-                // Then the apps sharing this folder (project plugins), on this computer's projects.
-                ...(currentHost === "local" ? projectPlugins : []).map((p) => (
-                  <PinnedRow key={`plugin:${p.id}`} icon={pluginIcon(p.icon)} label={p.label} title={p.description}
-                    onClick={() => setPluginFor({ plugin: p, group: active })} />
-                )),
+                // The project's header: back to all projects, its name, and a "⋯" menu
+                // with its board, notes ledger, message ledger, code map and the apps
+                // sharing this folder — tucked away so the rail is just its chats.
+                <div key="head" className="mb-1 flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0"
+                    onClick={() => setDir(null)}
+                    aria-label="All projects"
+                    title="All projects"
+                  >
+                    <ArrowLeft className="size-4" />
+                  </Button>
+                  <div className="min-w-0 flex-1 truncate text-sm font-semibold" title={active.project}>
+                    {projectName(active.project || active.dir)}
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        data-track="project menu"
+                        aria-label="Project tools"
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuItem onClick={() => setTasksFor(active)}>
+                        <ClipboardList className="size-3.5" /> Tasks
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setNotesFor(active)}>
+                        <NotebookPen className="size-3.5" /> Notes
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setInboxFor(active)}>
+                        <Mail className="size-3.5" /> Inbox
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setMapFor(active)}>
+                        <Network className="size-3.5" /> Map
+                      </DropdownMenuItem>
+                      {/* Project plugins only open this computer's folders. */}
+                      {currentHost === "local" && projectPlugins.length > 0 && <DropdownMenuSeparator />}
+                      {(currentHost === "local" ? projectPlugins : []).map((p) => {
+                        const Icon = pluginIcon(p.icon)
+                        return (
+                          <DropdownMenuItem key={p.id} title={p.description} onClick={() => setPluginFor({ plugin: p, group: active })}>
+                            <Icon className="size-3.5" /> {p.label}
+                          </DropdownMenuItem>
+                        )
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>,
                 // A chat-less project's one action: start its first chat there.
                 ...(active.sessions.length
                   ? []
@@ -220,7 +274,7 @@ export function SessionList() {
   )
 }
 
-/** A fixed, bordered entry above the list (Harman, or a project's Tasks/Notes/Inbox/Map and its plugins). */
+/** A fixed, bordered entry above the list (Harman, or an empty project's Start session). */
 function PinnedRow({
   icon: Icon,
   label,

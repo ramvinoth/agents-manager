@@ -222,12 +222,6 @@ export interface AgentInfo {
   loggedIn?: boolean
 }
 
-export interface SessionAnalysis {
-  assumptions: string[]
-  decisions: string[]
-  at?: number // user-message count when the analysis was run (client-stamped)
-}
-
 export interface SlashCommand {
   name: string
   description?: string

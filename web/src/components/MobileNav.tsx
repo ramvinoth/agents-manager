@@ -5,20 +5,20 @@ import { LeftPanel } from "./LeftPanel"
 import { RhsPanel } from "./RhsPanel"
 
 // Drawer access to the side panels on narrow screens (the sidebars are hidden
-// below md/lg). The left button (< md) opens Sessions/Settings/Stats; the right
-// button (< lg) opens Skills/MCP.
+// below md/lg). The left button (< md) opens Projects/Settings/Stats; the right
+// button (< lg) opens Skills/MCP/Plugins (wide screens toggle it in the Header).
 export function MobileNav() {
   return (
     <>
       <Sheet>
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon" className="size-7 md:hidden" aria-label="Open sessions">
+          <Button variant="ghost" size="icon" className="size-7 md:hidden" aria-label="Open projects">
             <Menu className="size-4" />
           </Button>
         </SheetTrigger>
         <SheetContent side="left" className="w-80 gap-0 p-0">
           <SheetHeader className="sr-only">
-            <SheetTitle>Sessions, Settings, Stats</SheetTitle>
+            <SheetTitle>Projects, Settings, Stats</SheetTitle>
           </SheetHeader>
           <div className="h-full pt-2">
             <LeftPanel />

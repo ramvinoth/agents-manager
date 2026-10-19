@@ -56,7 +56,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
       localStorage.setItem("currentAgent", id)
       set({
         currentAgent: id, currentSessionPath: "", turns: [], loading: true, error: null,
-        chatRunning: false, chatStatus: null, queue: [], analysis: null, analysisError: null,
+        chatRunning: false, chatStatus: null, queue: [],
       })
       try {
         const sessions = (await api.sessions()) as SessionListItem[]

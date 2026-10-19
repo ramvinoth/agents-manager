@@ -4,6 +4,8 @@ import type { Slice } from "./types"
 export interface LayoutSlice {
   lhsTab: string
   rhsTab: string
+  /** The wide-screen Skills/MCP/Plugins panel; closed until the user opens it. */
+  rhsOpen: boolean
   panel: "terminal" | "browser" | null
   // When set, the terminal panel launches this command in a dedicated persistent
   // session (key) instead of the general host shell — used by "Continue interactively".
@@ -15,6 +17,7 @@ export interface LayoutSlice {
   floatRect: { x: number; y: number; w: number; h: number }
   setLhsTab: (t: string) => void
   setRhsTab: (t: string) => void
+  toggleRhs: () => void
   openPanel: (k: "terminal" | "browser") => void
   closePanel: () => void
   continueInteractively: (cmd: string, key: string) => void
@@ -28,8 +31,9 @@ export interface LayoutSlice {
 
 export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
   return {
-    lhsTab: localStorage.getItem("lhsTab") || "settings",
+    lhsTab: localStorage.getItem("lhsTab") || "projects",
     rhsTab: localStorage.getItem("rhsTab") || "skills",
+    rhsOpen: localStorage.getItem("rhsOpen") === "1",
     panel: (localStorage.getItem("panel") as "terminal" | "browser" | null) || null,
     termInit: JSON.parse(localStorage.getItem("termInit") || "null"),
     fsOpen: false,
@@ -47,6 +51,11 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
     })(),
     setLhsTab: (t) => { localStorage.setItem("lhsTab", t); set({ lhsTab: t }) },
     setRhsTab: (t) => { localStorage.setItem("rhsTab", t); set({ rhsTab: t }) },
+    toggleRhs: () => {
+      const v = !get().rhsOpen
+      localStorage.setItem("rhsOpen", v ? "1" : "0")
+      set({ rhsOpen: v })
+    },
     openPanel: (k) => {
       // Persist so a refresh restores the open panel; opening the general
       // terminal clears any interactive-session target (back to the host shell).

@@ -139,15 +139,13 @@ export function createRuntime(set: SetState, get: GetState) {
         set({ chatRunning: false, queue: [], pendingApprovals: [] })
         await pollTick()
         get().loadGitStatus() // the run may have committed / switched branches
-        // Refresh the full-session summary (fresh user-message count) without a
-        // null-flash, then re-analyze if we crossed a new 10-message boundary.
+        // Refresh the full-session summary (fresh user-message count) without a null-flash.
         try {
           const sum: any = await api.sessionSummary(get().currentSessionPath)
           if (sum && !sum.error) set({ fullSummary: sum })
         } catch {
           /* keep stale summary */
         }
-        get().maybeAutoAnalyze()
         if (d.interrupted) {
           set({ chatStatus: { kind: "done", text: "Interrupted — ready for your next message" } })
         } else if (d.idle || d.returncode === 0) {

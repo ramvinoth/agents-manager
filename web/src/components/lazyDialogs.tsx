@@ -27,3 +27,4 @@ export const HostDialog = onDemand(() => import("./HostDialog").then((m) => m.Ho
 export const EnvDialog = onDemand(() => import("./EnvDialog").then((m) => m.EnvDialog))
 export const MarketplaceDialog = onDemand(() => import("./MarketplaceDialog").then((m) => m.MarketplaceDialog))
 export const NewSessionDialog = onDemand(() => import("./NewSessionDialog").then((m) => m.NewSessionDialog))
+export const ProfileDialog = onDemand(() => import("./ProfileDialog").then((m) => m.ProfileDialog))

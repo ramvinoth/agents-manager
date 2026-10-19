@@ -4,7 +4,6 @@ import { SessionParser } from "../lib/parser"
 import type { SessionListItem, Turn, VisibleTypes } from "../lib/types"
 import type { Slice, ProjectDir, NewSessionOpts } from "./types"
 import { turnText, TAIL_LINES, CHUNK_LINES } from "./helpers"
-import { resetAnalyzeBucket } from "./details"
 
 export interface SessionSlice {
   sessions: SessionListItem[]
@@ -60,7 +59,6 @@ export const createSessionSlice: Slice<SessionSlice> = (set, get, rt) => {
     searchIndex: 0,
     loadSession: async (path) => {
       stopTimers()
-      resetAnalyzeBucket()
       // Mark read for this reader: clear the dot optimistically and advance the
       // server-side per-reader cursor, so it stays read on the next list refresh
       // and on every other device/principal-shared surface. No-op if already read.
@@ -79,9 +77,6 @@ export const createSessionSlice: Slice<SessionSlice> = (set, get, rt) => {
         // Cleared on every load; only Claude refills it (loadCommands). Keeps
         // Claude's project/user commands from leaking into a Codex/Copilot "/".
         slashCommands: [],
-        analysis: null,
-        analysisLoading: false,
-        analysisError: null,
         git: null,
       })
       try {
@@ -134,7 +129,7 @@ export const createSessionSlice: Slice<SessionSlice> = (set, get, rt) => {
         set({
           droppedFile: file.name, currentSessionPath: "", turns, parser,
           loading: false, error: turns.length ? null : "No messages found in that file.",
-          chatRunning: false, chatStatus: null, queue: [], analysis: null,
+          chatRunning: false, chatStatus: null, queue: [],
         })
       } catch (e: any) {
         set({ error: "Couldn't read file: " + (e?.message || e), loading: false })

@@ -442,7 +442,7 @@ class ApiClient {
     return this.postRes("/api/session/rename", this.wha(body))
   }
 
-  // ---- session metadata / summary / analysis ----
+  // ---- session metadata / summary ----
   sessionMeta(path: string) {
     return this.getJSON<SessionMeta>(`/api/session-meta?session=${encodeURIComponent(path)}` + this.qs())
   }
@@ -468,13 +468,6 @@ class ApiClient {
   /** "" clears the chat's override back to the level of the agent it was started from. */
   sessionLevelSet(session: string, level: HarmanLevel | "") {
     return this.postJSON<TrustWrite>("/api/session/level", { for_session: session, level })
-  }
-  sessionAnalysis(path: string, refresh?: boolean) {
-    return this.getJSON(
-      `/api/session-analysis?session=${encodeURIComponent(path)}` +
-        this.qs() +
-        (refresh ? "&refresh=1" : "")
-    )
   }
 
   // ---- chat ----
