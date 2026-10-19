@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#E4501C"
+      "backgroundColor": "#A64B2A"
     },
     "ios": {
       "supportsTablet": true,
@@ -35,7 +35,7 @@
       "package": "com.suhai.agents",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#E4501C"
+        "backgroundColor": "#A64B2A"
       }
     },
     "web": {
@@ -75,7 +75,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#E4501C"
+          "color": "#A64B2A"
         }
       ]
     ]

@@ -259,8 +259,8 @@ function Brand({ compact = false }: { compact?: boolean }) {
     <div className="flex items-center gap-2 font-semibold">
       {/* Same mark as public/favicon.svg and the app icon: brand colour in both themes. */}
       <svg viewBox="0 0 100 100" className="size-6 shrink-0" aria-hidden>
-        <rect width="100" height="100" rx="22" fill="#E4501C" />
-        <path transform="translate(50 50) scale(.66) translate(-50 -50)" fill="#fff" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z" />
+        <rect width="100" height="100" rx="22" fill="#A64B2A" />
+        <path transform="translate(50 50) scale(.66) translate(-50 -50)" fill="#F6EFE6" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z" />
       </svg>
       <span className={compact ? "hidden text-sm sm:inline" : "text-sm"}>Harman</span>
     </div>
