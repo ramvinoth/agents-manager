@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react"
-import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
@@ -7,38 +7,10 @@ import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
 import { api } from "@/lib/api"
-import type { SessionListItem, SessionDetail, ProjectPlugin } from "@/lib/types"
-import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog } from "@/components/lazyDialogs"
+import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "@/lib/types"
+import { activity, groupSessions, type Group } from "@/lib/projectGroups"
+import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
-
-interface Group {
-  dir: string
-  project: string
-  sessions: SessionListItem[]
-  modified: number
-  unread: boolean
-  running: number
-}
-
-/** When the chat last had a message; `modified` from a server that predates it. */
-const activity = (s: SessionListItem) => s.last_message ?? s.modified
-
-function groupSessions(sessions: SessionListItem[]): Group[] {
-  const groups: Record<string, Group> = {}
-  for (const s of sessions) {
-    // Group by project (cwd) so it's meaningful across agents — Claude, Codex
-    // and Pi all store the working directory, even though their paths differ.
-    const key = s.project || s.path.split("/").slice(0, -1).join("/")
-    if (!groups[key]) groups[key] = { dir: key, project: s.project, sessions: [], modified: 0, unread: false, running: 0 }
-    groups[key].sessions.push(s)
-    if (activity(s) > groups[key].modified) groups[key].modified = activity(s)
-    if (s.unread) groups[key].unread = true
-    if (s.running) groups[key].running += 1
-  }
-  const list = Object.values(groups).sort((a, b) => b.modified - a.modified)
-  for (const g of list) g.sessions.sort((a, b) => activity(b) - activity(a))
-  return list
-}
 
 export function SessionList() {
   const sessions = useStore((s) => s.sessions)
@@ -59,8 +31,16 @@ export function SessionList() {
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
+  const [startIn, setStartIn] = useState<string | null>(null)
+  // Org projects, so a project made before its first chat (on the board, by an
+  // import) is in the rail too. Refetched as sessions change: a new chat can
+  // create a project.
+  const [orgProjects, setOrgProjects] = useState<OrgProject[]>([])
+  useEffect(() => {
+    api.orgProjects().then((d) => Array.isArray(d?.projects) && setOrgProjects(d.projects)).catch(() => {})
+  }, [sessions.length])
 
-  const groups = useMemo(() => groupSessions(sessions), [sessions])
+  const groups = useMemo(() => groupSessions(sessions, orgProjects, currentHost), [sessions, orgProjects, currentHost])
   const active = dir ? groups.find((g) => g.dir === dir) : null
   const filter = q.toLowerCase()
 
@@ -126,8 +106,13 @@ export function SessionList() {
                           <div className="truncate font-medium">{projectName(g.project)}</div>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {g.sessions.length} session{g.sessions.length === 1 ? "" : "s"} ·{" "}
-                          {fmtAgo(g.modified)}
+                          {g.sessions.length ? (
+                            <>
+                              {g.sessions.length} session{g.sessions.length === 1 ? "" : "s"} · {fmtAgo(g.modified)}
+                            </>
+                          ) : (
+                            "No sessions yet"
+                          )}
                           {g.running > 0 && (
                             <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-600">
                               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -159,6 +144,10 @@ export function SessionList() {
                   <PinnedRow key={`plugin:${p.id}`} icon={pluginIcon(p.icon)} label={p.label} title={p.description}
                     onClick={() => setPluginFor({ plugin: p, group: active })} />
                 )),
+                // A chat-less project's one action: start its first chat there.
+                ...(active.sessions.length
+                  ? []
+                  : [<PinnedRow key="start" icon={Plus} label="Start session" onClick={() => setStartIn(active.dir)} />]),
                 ...active.sessions
                   .filter((s) => !filter || s.title.toLowerCase().includes(filter))
                   .map((s) => (
@@ -225,6 +214,7 @@ export function SessionList() {
           onClose={() => setInboxSession(null)}
         />
       )}
+      {startIn && <NewSessionDialog open cwd={startIn} onOpenChange={(o) => !o && setStartIn(null)} />}
       <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
   )

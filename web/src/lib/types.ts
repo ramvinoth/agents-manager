@@ -336,6 +336,8 @@ export interface OrgProject {
   created_at: number
   /** Views an agent turned on for this project (viewer/db.LENSES), e.g. "map". */
   lenses?: string[]
+  /** A local project whose folder no longer exists. */
+  missing?: boolean
 }
 /** One box on the code Map (viewer/codemap.graph). Folder ids end in "/";
  *  symbol ids are "<file>#<Class.>name". */

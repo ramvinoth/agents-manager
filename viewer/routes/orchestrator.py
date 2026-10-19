@@ -57,7 +57,12 @@ class OrchestratorMixin:
 
     # ── projects ─────────────────────────────────────────────────────────────
     def _g_org_projects(self, req):
-        self.send_json({"projects": db.project_list()})
+        # `missing`: a local project whose folder is gone (moved, deleted, or a
+        # row from an old machine) — the rail leaves it out until a chat runs there.
+        projects = db.project_list()
+        for p in projects:
+            p["missing"] = p["host"] == "local" and not os.path.isdir(p["cwd"])
+        self.send_json({"projects": projects})
 
     def _p_org_projects(self, req):
         body = self.read_body() or {}

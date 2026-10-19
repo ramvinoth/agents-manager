@@ -17,7 +17,8 @@ import type { GitRepo } from "@/lib/types"
 import { useStore, useAgentLabel } from "@/store"
 import { userError } from "@/lib/errors"
 
-export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+/** `cwd` prefills the working directory (a project's "Start session"). */
+export function NewSessionDialog({ open, onOpenChange, cwd: initialCwd = "" }: { open: boolean; onOpenChange: (o: boolean) => void; cwd?: string }) {
   const projects = useStore((s) => s.projects)
   const loadProjects = useStore((s) => s.loadProjects)
   const startNewSession = useStore((s) => s.startNewSession)
@@ -27,7 +28,7 @@ export function NewSessionDialog({ open, onOpenChange }: { open: boolean; onOpen
   const hosts = useStore((s) => s.hosts)
   const agentLabel = useAgentLabel()
   const hostLabel = describeHost(currentHost, hosts, "this machine")
-  const [cwd, setCwd] = useState("")
+  const [cwd, setCwd] = useState(initialCwd)
   const [name, setName] = useState("")
   const [message, setMessage] = useState("")
   const [advanced, setAdvanced] = useState(false)
