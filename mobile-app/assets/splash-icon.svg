@@ -2,5 +2,5 @@
   <!-- Harman mark: two stems of an H, the right one stepped up, joined by a
        rising bar - the hand-off from one agent to the next. -->
   <!-- Transparent: Expo fills the splash backgroundColor. -->
-  <path transform="translate(50 50) scale(0.4) translate(-50 -50)" fill="#F6EFE6" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z"/>
+  <path transform="translate(50 50) scale(0.4) translate(-50 -50)" fill="#F3EEE6" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z"/>
 </svg>
