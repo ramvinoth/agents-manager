@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ChevronRight, ChevronDown, ChevronsDownUp, RefreshCw, Eye, EyeOff, Loader2, Download, Copy, Check } from "lucide-react"
+import { ChevronRight, ChevronDown, ChevronsDownUp, RefreshCw, Eye, EyeOff, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
-import { fmtBytes } from "@/lib/format"
-import { fetchAndSave } from "@/lib/download"
 import { userError } from "@/lib/errors"
 import { START_PATH } from "@/lib/location"
-import { looksBinary, previewKind, sortEntries, visibleRows, type TreeRow } from "@/lib/fileTree"
+import { sortEntries, visibleRows, type TreeRow } from "@/lib/fileTree"
+import { FilePreview } from "@/components/FilePreview"
 import type { FileEntry, FileListResponse } from "@/lib/types"
 import { iconFor } from "@/components/fileIcons"
 import { useStore } from "@/store"
@@ -280,103 +278,5 @@ function TreeItem({
         </div>
       )}
     </>
-  )
-}
-
-const MIME: Record<string, string> = { svg: "image/svg+xml", pdf: "application/pdf" }
-
-type Loaded = { kind: "text"; text: string } | { kind: "url"; url: string } | { kind: "none"; reason: string }
-
-/** Read-only preview of one file: text, image or PDF; anything else offers Download. */
-function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => void }) {
-  const kind = previewKind(row.entry)
-  const [loaded, setLoaded] = useState<Loaded | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const href = api.fsDownload(row.path)
-
-  useEffect(() => {
-    if (kind === "none") {
-      setLoaded({ kind: "none", reason: row.entry.size > 0 ? "No preview for this file type or size." : "This file is empty." })
-      return
-    }
-    let url = ""
-    let live = true
-    ;(async () => {
-      try {
-        const res = await api.getRes(href)
-        if (!res.ok) {
-          const d = await res.json().catch(() => null)
-          throw Object.assign(new Error(d?.error || `HTTP ${res.status}`), { status: res.status })
-        }
-        const buf = await res.arrayBuffer()
-        if (!live) return
-        if (kind === "text") {
-          const bytes = new Uint8Array(buf)
-          if (looksBinary(bytes)) setLoaded({ kind: "none", reason: "This looks like a binary file." })
-          else setLoaded({ kind: "text", text: new TextDecoder().decode(bytes) })
-        } else {
-          const ext = row.entry.name.split(".").pop()?.toLowerCase() || ""
-          url = URL.createObjectURL(new Blob([buf], { type: MIME[ext] || res.headers.get("content-type") || "" }))
-          setLoaded({ kind: "url", url })
-        }
-      } catch (e) {
-        if (live) setError(userError(e, "this file"))
-      }
-    })()
-    return () => {
-      live = false
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [href, kind, row.entry])
-
-  const download = () => fetchAndSave(href, row.entry.name, (h) => api.getRes(h)).catch((e) => setError(userError(e, "this file", "download")))
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex max-h-[90vh] flex-col gap-3 overflow-hidden sm:max-w-4xl">
-        <DialogHeader className="min-w-0">
-          <DialogTitle className="flex min-w-0 items-center gap-2 pr-6">
-            <span className="truncate">{row.entry.name}</span>
-          </DialogTitle>
-          <DialogDescription className="flex min-w-0 items-center gap-2 text-xs">
-            <span className="truncate font-mono" title={row.path}>{row.path}</span>
-            <span className="shrink-0">· {fmtBytes(row.entry.size)}</span>
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex shrink-0 gap-2">
-          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={download}>
-            <Download className="size-3.5" /> Download
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1 text-xs"
-            onClick={() => navigator.clipboard?.writeText(row.path).then(() => setCopied(true), () => {})}
-          >
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} Copy path
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-muted/30">
-          {error ? (
-            <div className="p-4 text-sm text-destructive">{error}</div>
-          ) : !loaded ? (
-            <div className="flex items-center gap-1.5 p-4 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> loading…
-            </div>
-          ) : loaded.kind === "text" ? (
-            <pre className="whitespace-pre p-3 font-mono text-xs leading-relaxed">{loaded.text}</pre>
-          ) : loaded.kind === "url" && kind === "pdf" ? (
-            <iframe src={loaded.url} title={row.entry.name} className="h-[70vh] w-full" />
-          ) : loaded.kind === "url" ? (
-            <div className="flex justify-center p-3">
-              <img src={loaded.url} alt={row.entry.name} className="max-h-[70vh] max-w-full object-contain" />
-            </div>
-          ) : (
-            <div className="p-4 text-sm text-muted-foreground">{loaded.reason}</div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
   )
 }

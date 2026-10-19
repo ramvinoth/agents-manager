@@ -176,6 +176,27 @@
 .sh-string { color: #16a34a; } .dark .sh-string { color: #86efac; }
 .sh-number { color: #ea580c; } .dark .sh-number { color: #fdba74; }
 .sh-comment { color: var(--muted-foreground); font-style: italic; }
+/* File preview code (highlight.js tokens), GitHub light/dark palette */
+.hljs-keyword, .hljs-doctag, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-type, .hljs-variable.language_ { color: #cf222e; }
+.hljs-title, .hljs-title.class_, .hljs-title.function_ { color: #8250df; }
+.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-variable, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id { color: #0550ae; }
+.hljs-regexp, .hljs-string, .hljs-meta .hljs-string { color: #0a3069; }
+.hljs-built_in, .hljs-symbol { color: #953800; }
+.hljs-comment, .hljs-code, .hljs-formula { color: #6e7781; font-style: italic; }
+.hljs-name, .hljs-quote, .hljs-selector-tag, .hljs-selector-pseudo { color: #116329; }
+.hljs-section { color: #0550ae; font-weight: 600; }
+.hljs-bullet { color: #953800; }
+.hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; }
+.hljs-addition { color: #116329; background: #dafbe1; } .hljs-deletion { color: #82071e; background: #ffebe9; }
+.dark :is(.hljs-keyword, .hljs-doctag, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-type, .hljs-variable.language_) { color: #ff7b72; }
+.dark :is(.hljs-title, .hljs-title.class_, .hljs-title.function_) { color: #d2a8ff; }
+.dark :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-variable, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id) { color: #79c0ff; }
+.dark :is(.hljs-regexp, .hljs-string, .hljs-meta .hljs-string) { color: #a5d6ff; }
+.dark :is(.hljs-built_in, .hljs-symbol, .hljs-bullet) { color: #ffa657; }
+.dark :is(.hljs-comment, .hljs-code, .hljs-formula) { color: #8b949e; }
+.dark :is(.hljs-name, .hljs-quote, .hljs-selector-tag, .hljs-selector-pseudo) { color: #7ee787; }
+.dark .hljs-section { color: #1f6feb; }
+.dark .hljs-addition { color: #aff5b4; background: #033a16; } .dark .hljs-deletion { color: #ffdcd7; background: #67060c; }
 
 /* ---- SPA viewport lock: the app fills the screen; only inner regions scroll ---- */
 html,

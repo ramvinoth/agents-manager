@@ -9,7 +9,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
 import { SessionActions } from "@/components/SessionActions"
 import { cn } from "@/lib/utils"
@@ -69,8 +68,7 @@ export function SessionList() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="space-y-2 p-2">
-        <AgentPicker />
+      <div className="p-2">
         <div className="flex gap-1.5">
           <Input
             value={q}

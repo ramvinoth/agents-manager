@@ -308,11 +308,6 @@ export function Transcript({
           </div>
         )
       })}
-      <div className="pt-2 text-center">
-        <Badge variant="outline" className="text-muted-foreground">
-          {turns.length} turns
-        </Badge>
-      </div>
     </div>
   )
 }

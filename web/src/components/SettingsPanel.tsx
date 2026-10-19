@@ -27,6 +27,7 @@ import { GitDialog } from "./settings/GitDialog";
 import { aiSummary } from "@/lib/aiSelection";
 import type { HostInfo, VisibleTypes } from "@/lib/types";
 import { AISelectionDialog, HostDialog } from "@/components/lazyDialogs";
+import { AgentPicker } from "@/components/AgentPicker";
 
 function SectionHeader({
   icon: Icon,
@@ -180,6 +181,16 @@ function HostSection() {
   );
 }
 
+/** Which coding agent new chats use (Claude Code, Codex, …). App-wide, like Host. */
+function AgentSection() {
+  return (
+    <section className="py-4">
+      <SectionHeader icon={Bot} title="Agent" />
+      <AgentPicker />
+    </section>
+  );
+}
+
 type Modal = "ai" | "systemPrompt" | "goal" | "loops" | "git" | null;
 
 export function SettingsPanel() {
@@ -205,6 +216,7 @@ export function SettingsPanel() {
     <div className="h-full overflow-y-auto">
       <div className="divide-y divide-border/70 px-4">
         <HostSection />
+        <AgentSection />
         {!currentSessionPath ? (
           <p className="py-4 text-xs text-muted-foreground">
             Open a chat to see its settings.

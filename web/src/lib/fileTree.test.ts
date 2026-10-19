@@ -1,4 +1,4 @@
-import { joinPath, sortEntries, visibleRows, previewKind, looksBinary, PREVIEW_MAX_BYTES } from "./fileTree.ts"
+import { joinPath, sortEntries, visibleRows, previewKind, codeLanguage, isolatedDocument, looksBinary, PREVIEW_MAX_BYTES, DOC_PREVIEW_MAX_BYTES } from "./fileTree.ts"
 import type { FileEntry } from "./types.ts"
 
 let pass = 0, fail = 0
@@ -31,15 +31,34 @@ eq("expanded state of a file is ignored",
   visibleRows("/p", listings, new Set(["/p/README.md"])).find((r) => r.path === "/p/README.md")?.expanded, false)
 eq("missing root yields no rows", visibleRows("/nope", listings, new Set()), [])
 
-eq("ts is text", previewKind(F("a.ts")), "text")
-eq("Dockerfile is text", previewKind(F("Dockerfile")), "text")
-eq(".gitignore is text", previewKind(F(".gitignore")), "text")
+eq("ts is code", previewKind(F("a.ts")), "code")
+eq("Dockerfile is code", previewKind(F("Dockerfile")), "code")
+eq(".gitignore is code", previewKind(F(".gitignore")), "code")
+eq("md renders as markdown", previewKind(F("README.md")), "markdown")
+eq("MDX any case is markdown", previewKind(F("Doc.MDX")), "markdown")
+eq("html renders", previewKind(F("index.htm")), "html")
 eq("PNG any case is image", previewKind(F("Shot.PNG")), "image")
 eq("pdf", previewKind(F("brief.pdf")), "pdf")
+eq("docx", previewKind(F("memo.docx")), "docx")
+eq("old binary .doc has no preview", previewKind(F("memo.doc")), "none")
 eq("unknown binary", previewKind(F("app.exe")), "none")
 eq("no extension unknown", previewKind(F("data")), "none")
-eq("too big", previewKind(F("big.log", PREVIEW_MAX_BYTES + 1)), "none")
+eq("text too big", previewKind(F("big.log", PREVIEW_MAX_BYTES + 1)), "none")
+eq("pdf may exceed the text cap", previewKind(F("big.pdf", PREVIEW_MAX_BYTES + 1)), "pdf")
+eq("document too big", previewKind(F("huge.docx", DOC_PREVIEW_MAX_BYTES + 1)), "none")
 eq("folder", previewKind(D("src")), "none")
+eq("tsx highlights as typescript", codeLanguage("App.tsx"), "typescript")
+eq("py", codeLanguage("server.py"), "python")
+eq("ext matching a language id", codeLanguage("main.go"), "go")
+eq("yml alias", codeLanguage("ci.YML"), "yaml")
+eq("Dockerfile by name", codeLanguage("Dockerfile"), "dockerfile")
+eq("dotfile by name", codeLanguage(".editorconfig"), "ini")
+eq("unknown text is plain", codeLanguage("notes.txt"), null)
+eq("no extension is plain", codeLanguage("LICENSE"), null)
+const iso = isolatedDocument("<script>x()</script><p>hi</p>", "p{color:red}")
+eq("CSP comes first", iso.startsWith('<meta http-equiv="Content-Security-Policy"'), true)
+eq("CSP blocks scripts and network", /default-src 'none'/.test(iso) && !/script-src/.test(iso), true)
+eq("css then body kept", iso.endsWith("<style>p{color:red}</style><script>x()</script><p>hi</p>"), true)
 eq("binary sniff", [looksBinary(new Uint8Array([104, 0, 105])), looksBinary(new TextEncoder().encode("hi"))], [true, false])
 
 console.log(`fileTree: ${pass} passed, ${fail} failed`)
