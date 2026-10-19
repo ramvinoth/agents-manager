@@ -29,22 +29,29 @@ export function Collapsible({
   const { collapsed, preview, hiddenLines } = useMemo(() => collapsePreview(text), [text])
   const showToggle = collapsed && !expanded
   return (
-    <div className={cn(showToggle && "relative")}>
-      {children(showToggle ? preview : text)}
-      {showToggle && (
-        // Sits over the last ~2 lines so the cut reads as "continues" rather
-        // than "ended". pointer-events-none keeps the text under it selectable.
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-12"
-          style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${fadeTo})` }}
-        />
-      )}
+    <div>
+      {/* The fade is positioned on the text box alone — on the outer box it
+          would sit over the button's gap and shade barely one line. */}
+      <div className={cn(showToggle && "relative")}>
+        {children(showToggle ? preview : text)}
+        {showToggle && (
+          // Sits over the last ~3 lines so the cut reads as "continues" rather
+          // than "ended". pointer-events-none keeps the text under it selectable.
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-20"
+            style={{ backgroundImage: `linear-gradient(to bottom, transparent, ${fadeTo})` }}
+          />
+        )}
+      </div>
       {collapsed && (
+        // Its own pill, a clear gap below the text, so it reads as a control and
+        // not as the message's last line.
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
-          className="relative mt-1 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          style={{ backgroundColor: fadeTo }}
+          className="relative mt-3 flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs font-medium text-primary shadow-xs hover:bg-accent"
         >
           {showToggle ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
           {showToggle ? `Show more${hiddenLines ? ` · ${hiddenLines} lines` : ""}` : "Show less"}

@@ -28,7 +28,7 @@ export interface SessionSlice {
   loadOlder: () => Promise<void>
   loadProjects: () => Promise<void>
   startNewSession: (opts: NewSessionOpts) => Promise<void>
-  renameCurrent: (title: string) => Promise<void>
+  renameByPath: (path: string, title: string) => Promise<void>
   deleteByPath: (path: string) => Promise<void>
   toggleVisible: (t: keyof VisibleTypes) => void
   openSearch: () => void
@@ -185,10 +185,9 @@ export const createSessionSlice: Slice<SessionSlice> = (set, get, rt) => {
         set({ chatRunning: false, chatStatus: { kind: "error", text: "Failed to start: " + (e?.message || e) } })
       }
     },
-    renameCurrent: async (title) => {
-      const { currentSessionPath } = get()
-      if (!currentSessionPath || !title.trim()) return
-      const res = await api.renameSession({ session: currentSessionPath, title: title.trim() })
+    renameByPath: async (path, title) => {
+      if (!path || !title.trim()) return
+      const res = await api.renameSession({ session: path, title: title.trim() })
       const d = await res.json().catch(() => ({}))
       if (!d.error) api.sessions().then((s: any) => Array.isArray(s) && set({ sessions: s })).catch(() => {})
     },

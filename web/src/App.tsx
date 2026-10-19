@@ -49,6 +49,7 @@ function App() {
   const auth = useStore((s) => s.auth)
   const needsAuth = useStore((s) => s.needsAuth)
   const rhsOpen = useStore((s) => s.rhsOpen)
+  const lhsOpen = useStore((s) => s.lhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
   const agentLabel = useAgentLabel()
 
@@ -177,7 +178,7 @@ function App() {
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <Header />
       <div className="flex min-h-0 flex-1">
-        {!needsAuth && (
+        {!needsAuth && lhsOpen && (
           <aside className="hidden w-72 shrink-0 flex-col border-r border-border md:flex">
             <LeftPanel />
           </aside>

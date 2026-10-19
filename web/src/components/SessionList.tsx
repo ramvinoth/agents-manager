@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { AgentPicker } from "@/components/AgentPicker"
 import { HarmanDialog } from "@/components/HarmanDialog"
+import { SessionActions } from "@/components/SessionActions"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
 import { useStore } from "@/store"
@@ -19,9 +20,6 @@ import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
 import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
-
-// The drilled-in project, per host, so a page refresh reopens the same project.
-const dirKey = (host: string) => "projectDir:" + host
 
 export function SessionList() {
   const sessions = useStore((s) => s.sessions)
@@ -32,13 +30,8 @@ export function SessionList() {
   // The master switch decides whether the orchestrator exists for this app at
   // all: OFF → no pinned Harman entry, the plain chat-session system it is.
   const automationOn = useStore((s) => s.automationOn)
-  const [dir, setDirState] = useState<string | null>(() => localStorage.getItem(dirKey(currentHost)))
-  useEffect(() => setDirState(localStorage.getItem(dirKey(currentHost))), [currentHost])
-  const setDir = (d: string | null) => {
-    if (d) localStorage.setItem(dirKey(currentHost), d)
-    else localStorage.removeItem(dirKey(currentHost))
-    setDirState(d)
-  }
+  const dir = useStore((s) => s.projectDirs[s.currentHost] ?? null)
+  const setDir = useStore((s) => s.setProjectDir)
   const [q, setQ] = useState("")
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
@@ -48,6 +41,7 @@ export function SessionList() {
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
+  // The New dialog's folder: a project's dir, "" for the dialog's own default, null = closed.
   const [startIn, setStartIn] = useState<string | null>(null)
   // Org projects, so a project made before its first chat (on the board, by an
   // import) is in the rail too. Refetched as sessions change: a new chat can
@@ -77,12 +71,25 @@ export function SessionList() {
     <div className="flex h-full flex-col">
       <div className="space-y-2 p-2">
         <AgentPicker />
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={active ? "Filter chats…" : "Filter projects…"}
-          className="h-8"
-        />
+        <div className="flex gap-1.5">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={active ? "Filter chats…" : "Filter projects…"}
+            className="h-8"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1 px-2 text-xs"
+            onClick={() => setStartIn(active?.dir ?? "")}
+            data-track="New"
+            aria-label="New chat"
+            title={active ? `New chat in ${projectName(active.project || active.dir)}` : "New chat"}
+          >
+            <Plus className="size-3.5" /> New
+          </Button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="space-y-0.5 p-2 pt-0">
@@ -268,7 +275,7 @@ export function SessionList() {
           onClose={() => setInboxSession(null)}
         />
       )}
-      {startIn && <NewSessionDialog open cwd={startIn} onOpenChange={(o) => !o && setStartIn(null)} />}
+      {startIn !== null && <NewSessionDialog open cwd={startIn} onOpenChange={(o) => !o && setStartIn(null)} />}
       <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
     </div>
   )
@@ -375,6 +382,7 @@ function SessionRow({
             )}
           </span>
         </button>
+        <SessionActions session={s} />
         <button
           onClick={toggle}
           aria-label={expanded ? "Hide details" : "Show details"}

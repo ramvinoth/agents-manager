@@ -18,7 +18,7 @@ export function MobileNav() {
         </SheetTrigger>
         <SheetContent side="left" className="w-80 gap-0 p-0">
           <SheetHeader className="sr-only">
-            <SheetTitle>Projects, Settings, Stats</SheetTitle>
+            <SheetTitle>Projects, Files, Settings, Stats</SheetTitle>
           </SheetHeader>
           <div className="h-full pt-2">
             <LeftPanel />

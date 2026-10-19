@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
-  Folder,
-  File as FileIcon,
-  FileText,
-  FileCode,
-  FileImage,
-  FileVideo,
-  FileAudio,
-  FileArchive,
   ChevronRight,
   ArrowUp,
   Home,
@@ -37,29 +29,9 @@ import { fetchAndSave } from "@/lib/download"
 import { useStore } from "@/store"
 import type { Drive, FileEntry, FileListResponse } from "@/lib/types"
 import { userError } from "@/lib/errors"
+import { joinPath, sortEntries } from "@/lib/fileTree"
+import { iconFor } from "@/components/fileIcons"
 
-// ---- file-type → icon + accent color ---------------------------------------
-const EXT: Record<string, { Icon: typeof FileIcon; color: string }> = {}
-const reg = (icon: typeof FileIcon, color: string, exts: string[]) =>
-  exts.forEach((e) => (EXT[e] = { Icon: icon, color }))
-reg(FileImage, "text-violet-500", ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif", "heic"])
-reg(FileVideo, "text-rose-500", ["mp4", "mov", "webm", "mkv", "avi", "m4v"])
-reg(FileAudio, "text-pink-500", ["mp3", "wav", "flac", "ogg", "m4a", "aac"])
-reg(FileArchive, "text-amber-500", ["zip", "tar", "gz", "tgz", "bz2", "rar", "7z", "xz"])
-reg(FileCode, "text-emerald-500", [
-  "js", "jsx", "ts", "tsx", "py", "go", "rs", "c", "cpp", "h", "hpp", "java", "rb", "php",
-  "sh", "bash", "zsh", "json", "yaml", "yml", "toml", "html", "css", "scss", "sql", "lua",
-])
-reg(FileText, "text-sky-500", ["txt", "log", "csv", "tsv", "pdf", "doc", "docx", "rtf"])
-reg(FileText, "text-sky-400", ["md", "markdown", "mdx"])
-
-function iconFor(entry: FileEntry) {
-  if (entry.dir) return { Icon: Folder, color: "text-sky-500" }
-  const ext = entry.name.split(".").pop()?.toLowerCase() || ""
-  return EXT[ext] || { Icon: FileIcon, color: "text-muted-foreground" }
-}
-
-const joinPath = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name)
 
 type Menu = { x: number; y: number; entry: FileEntry | null }
 
@@ -285,7 +257,7 @@ export function FileBrowser() {
   }
 
   const entries = data?.entries
-    ? [...data.entries].sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+    ? sortEntries(data.entries)
     : []
   const segs = (data?.path || "").split("/").filter(Boolean)
 
@@ -768,7 +740,7 @@ function MenuItem({
   onClick,
   danger,
 }: {
-  icon: typeof FileIcon
+  icon: typeof Download
   children: React.ReactNode
   onClick: () => void
   danger?: boolean
