@@ -37,6 +37,7 @@ _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
 from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
+from viewer.sessions import last_cwd_in_file
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -2132,6 +2133,24 @@ def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_d
 
 
 
+def _session_project(jsonl_file):
+    """The folder a chat belongs to: the cwd its transcript records (the last
+    one, as resume uses). Claude's project-dir name is only a fallback: it
+    encodes '/', ' ' and other characters all as '-', so decoding it guesses
+    wrong for any folder with a space or a dash in its name."""
+    try:
+        with open(jsonl_file, "rb") as fh:
+            cwd = last_cwd_in_file(fh)
+        if cwd:
+            return cwd
+    except OSError:
+        pass
+    pdir = jsonl_file.parent.name
+    if pdir.startswith(_HOME_ENC + "-"):
+        pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
+    return pdir.replace("--", "/").replace("-", "/")
+
+
 def extract_cwd(session_file):
     """Find the working directory recorded in the session."""
     try:
@@ -2731,10 +2750,7 @@ class LocalHost(Host):
                             last_message = _newer(last_message, obj)
             except Exception:
                 pass
-            pdir = str(jsonl_file.parent.name)
-            if pdir.startswith(_HOME_ENC + "-"):
-                pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
-            project = pdir.replace("--", "/").replace("-", "/")
+            project = _session_project(jsonl_file)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,

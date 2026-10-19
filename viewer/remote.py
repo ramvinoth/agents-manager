@@ -272,7 +272,13 @@ for f in glob.glob(base + '/*/*.jsonl'):
     except Exception:
         pass
     rel = 'projects/' + os.path.relpath(f, base)
-    proj = os.path.basename(os.path.dirname(f)).replace('-home-', '~/').replace('--', '/').replace('-', '/')
+    try:
+        with open(f, 'rb') as fh:
+            proj = last_cwd_in_file(fh)
+    except OSError:
+        proj = None
+    # The dir name is a lossy fallback: '/', ' ' and '-' all encode as '-'.
+    proj = proj or os.path.basename(os.path.dirname(f)).replace('-home-', '~/').replace('--', '/').replace('-', '/')
     out.append({'id': os.path.splitext(os.path.basename(f))[0], 'path': rel,
                 'title': title or os.path.splitext(os.path.basename(f))[0][:8],
                 'project': proj, 'size': st.st_size, 'modified': st.st_mtime})
@@ -480,7 +486,9 @@ def remote_install_agent(hid, agent):
 
 
 def remote_list_sessions(hid):
-    txt = remote_run_python(hid, REMOTE_LIST_SCRIPT)
+    import inspect
+    from viewer.sessions import last_cwd_in_file
+    txt = remote_run_python(hid, inspect.getsource(last_cwd_in_file) + REMOTE_LIST_SCRIPT)
     try:
         return json.loads(txt.strip().splitlines()[-1])
     except Exception:
