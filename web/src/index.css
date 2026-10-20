@@ -157,6 +157,11 @@
 .markdown-content h1 { font-size: 1.15rem; }
 .markdown-content h2 { font-size: 1.05rem; padding-bottom: 0.2em; border-bottom: 1px solid var(--border); }
 .markdown-content h3 { font-size: 0.98rem; }
+/* A canvas slide: one idea per screen, read at a glance — a step up from chat text. */
+.canvas-slide .markdown-content { font-size: 1.125rem; }
+.canvas-slide .markdown-content h1 { font-size: 1.875rem; }
+.canvas-slide .markdown-content h2 { font-size: 1.5rem; border-bottom: 0; }
+.canvas-slide .markdown-content h3 { font-size: 1.25rem; }
 .markdown-content ul { padding-left: 1.25rem; list-style: disc; }
 .markdown-content ol { padding-left: 1.5rem; list-style: decimal; }
 .markdown-content li { margin: 0.25em 0; }
@@ -218,6 +223,9 @@ body {
   width: 10px;
   height: 10px;
 }
+/* Opt-out for strips that scroll by swipe/wheel (e.g. canvas tabs); unlayered so it beats `*` above. */
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -244,6 +252,8 @@ body {
 .mermaid-diagram > .mermaid-svg { display: flex; justify-content: center; padding: 0.25rem 0; overflow-x: auto; }
 .mermaid-diagram .mermaid-svg svg { max-width: 100%; height: auto; }
 .mermaid-diagram > .mermaid-svg { cursor: zoom-in; }
+/* In the canvas the diagram IS the content: fill the pane (mermaid pins an inline max-width). */
+.canvas-diagram .mermaid-svg svg { width: 100%; max-width: 100% !important; max-height: 75vh; }
 /* Full-screen viewer (ZoomViewer): the SVG or image is laid out at its natural size and
    moved by a transform, so diagram text stays vector-sharp at any zoom. */
 .zoom-viewer { display: flex; flex-direction: column; height: 100%; outline: none; }

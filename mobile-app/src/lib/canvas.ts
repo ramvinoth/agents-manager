@@ -40,6 +40,33 @@ export function shownTitles(steps: Block[]): string[] {
   return out
 }
 
+export const KIND_LABEL: Record<CanvasKind, string> = {
+  markdown: "Document",
+  mermaid: "Diagram",
+  html: "Interactive",
+  slides: "Slides",
+}
+
+/** The agent's HTML with app-matching defaults: phone-width viewport, the app's
+ *  font and colours, light/dark form controls. Inserted FIRST in <head> so any
+ *  style the agent wrote still wins; never before a doctype (that would flip the
+ *  page into quirks mode). */
+export function themedHtml(content: string, theme: { bg: string; fg: string; dark: boolean }): string {
+  const viewport = /<meta[^>]+name=["']?viewport/i.test(content)
+    ? "" : '<meta name="viewport" content="width=device-width, initial-scale=1">'
+  const base = `${viewport}<style>:root{color-scheme:${theme.dark ? "dark" : "light"}}` +
+    `body{margin:16px;font:15px/1.5 system-ui,-apple-system,sans-serif;background:${theme.bg};color:${theme.fg}}</style>`
+  const at = (re: RegExp) => {
+    const m = re.exec(content)
+    return m ? m.index + m[0].length : -1
+  }
+  let i = at(/<head\b[^>]*>/i)
+  if (i < 0) i = at(/<html\b[^>]*>/i)
+  if (i < 0) i = at(/<!doctype[^>]*>/i)
+  if (i < 0) i = 0
+  return content.slice(0, i) + base + content.slice(i)
+}
+
 /** Slides are markdown split on a line holding only `---` (code fences kept whole). */
 export function splitSlides(content: string): string[] {
   const slides: string[] = []

@@ -1198,12 +1198,15 @@ function buildStyles(t: Theme) {
 
     // CanvasScreen (canvas) — what an agent showed: tabs, the view, and its actions.
     canvasTabs: { gap: 6, paddingHorizontal: 12, paddingVertical: 8 },
-    canvasTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: t.chipBg, minHeight: 32, justifyContent: "center" },
+    canvasTab: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: t.chipBg, minHeight: 32, maxWidth: 240 },
     canvasTabOn: { backgroundColor: t.accent },
-    canvasTabText: { color: t.text, fontSize: 13, fontWeight: "600" },
+    canvasTabText: { color: t.text, fontSize: 13, fontWeight: "600", flexShrink: 1 },
     canvasTabTextOn: { color: t.bg },
     canvasBody: { padding: 12, paddingBottom: 24, gap: 12 },
     canvasMeta: { color: t.textMuted, fontSize: 12, paddingHorizontal: 12 },
+    canvasHead: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8, gap: 2, borderBottomWidth: 1, borderBottomColor: t.border },
+    canvasTitle: { color: t.text, fontSize: 17, fontWeight: "700" },
+    canvasSlide: { flexGrow: 1, justifyContent: "center", padding: 20 },
     canvasWeb: { flex: 1, backgroundColor: t.bg },
     canvasSlideNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 6 },
     canvasBar: { flexDirection: "row", justifyContent: "space-around", borderTopWidth: 1, borderTopColor: t.border, paddingVertical: 6 },

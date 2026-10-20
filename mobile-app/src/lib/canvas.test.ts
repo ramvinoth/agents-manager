@@ -1,4 +1,4 @@
-import { CANVAS_SHOW_TOOL, noteBody, queueReply, replyDraft, showSucceeded, shownTitles, splitSlides, takeReply, withReply } from "./canvas.ts"
+import { CANVAS_SHOW_TOOL, noteBody, queueReply, replyDraft, showSucceeded, shownTitles, splitSlides, takeReply, themedHtml, withReply } from "./canvas.ts"
 import type { Block } from "./thread.ts"
 
 let pass = 0, fail = 0

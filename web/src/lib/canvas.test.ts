@@ -1,4 +1,4 @@
-import { canvasShows, latestShow, replyDraft, showSucceeded, splitSlides, CANVAS_SHOW_TOOL } from "./canvas.ts"
+import { canvasShows, latestShow, replyDraft, showSucceeded, splitSlides, themedHtml, CANVAS_SHOW_TOOL } from "./canvas.ts"
 import type { Turn } from "./types.ts"
 
 let pass = 0, fail = 0
@@ -42,6 +42,20 @@ eq("empty content keeps one slide", splitSlides(""), [""])
 eq("plain", replyDraft({ title: "Flow", version: 3 }), 'About the canvas "Flow" (v3): ')
 eq("slide", replyDraft({ title: "Tour", version: 1 }, { index: 1, count: 4 }), 'About the canvas "Tour" (v1, slide 2 of 4): ')
 eq("single slide omits position", replyDraft({ title: "T", version: 1 }, { index: 0, count: 1 }), 'About the canvas "T" (v1): ')
+
+// --- themedHtml ---
+const T = { bg: "black", fg: "white", dark: true }
+const th = (s: string) => themedHtml(s, T)
+eq("fragment gets defaults first", th("<p>hi</p>").startsWith('<meta name="viewport"'), true)
+eq("fragment content kept", th("<p>hi</p>").endsWith("<p>hi</p>"), true)
+eq("doctype stays first", th("<!DOCTYPE html><html><head><title>x</title></head></html>").startsWith("<!DOCTYPE html><html><head><meta"), true)
+eq("no head: after <html>", th('<html lang="en"><body>x</body></html>').startsWith('<html lang="en"><meta'), true)
+eq("doctype only: after it", th("<!doctype html><p>x</p>").startsWith("<!doctype html><meta"), true)
+eq("agent's viewport kept, none added", (th('<head><meta name="viewport" content="width=500"></head>').match(/viewport/g) || []).length, 1)
+eq("agent's style comes after ours", th("<head><style>body{background:red}</style></head>").indexOf("background:black") < th("<head><style>body{background:red}</style></head>").indexOf("background:red"), true)
+eq("dark scheme", th("x").includes("color-scheme:dark"), true)
+eq("light scheme", themedHtml("x", { ...T, dark: false }).includes("color-scheme:light"), true)
+eq("<header> is not <head>", th("<header>h</header>").startsWith('<meta name="viewport"'), true)
 
 console.log(`canvas: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

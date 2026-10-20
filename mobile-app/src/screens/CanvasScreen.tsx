@@ -3,8 +3,8 @@
  * viewer/routes/canvas.py; the agent writes with the canvas_show MCP tool).
  * Opened from the thread's "Canvas" menu item or a "Shown: <title>" chip under
  * the agent's reply. Tabs pick a canvas; the view renders by kind: markdown,
- * mermaid, slides (prev/next) or html (a WebView with scripts, its own cookie
- * jar, no navigation away). Re-read every few seconds while focused, so an
+ * mermaid, slides (prev/next, dots, or a horizontal swipe) or html (a WebView with
+ * scripts, its own cookie jar, no navigation away, the app's colours as defaults). Re-read every few seconds while focused, so an
  * agent's revision replaces the old version in place.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -14,17 +14,22 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import { WebView } from "react-native-webview"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
-import { noteBody, queueReply, replyDraft, splitSlides, type Canvas, type CanvasMeta } from "../lib/canvas"
+import { KIND_LABEL, noteBody, queueReply, replyDraft, splitSlides, themedHtml, type Canvas, type CanvasKind, type CanvasMeta } from "../lib/canvas"
+import { fmtWaiting } from "../lib/decisions"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import MermaidView from "../components/MermaidView"
 import Markdown, { isDarkBg } from "../components/Markdown"
-import Icon from "../components/Icon"
+import Icon, { type IconName } from "../components/Icon"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Canvas">
 
 const POLL_MS = 5000
+const KIND_ICON: Record<CanvasKind, IconName> = { markdown: "file", mermaid: "fork", html: "code", slides: "play" }
+// A slide swipe: mostly horizontal and long enough not to be a tap or a scroll.
+const SWIPE_PX = 50
+const age = (at: number) => { const w = fmtWaiting(Date.now() / 1000 - at); return w === "now" ? "just now" : `${w} ago` }
 
 export default function CanvasScreen({ navigation, route }: Props) {
   const t = useTheme()
@@ -37,6 +42,7 @@ export default function CanvasScreen({ navigation, route }: Props) {
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
   const request = useRef(0)
+  const touch = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => { navigation.setOptions({ title: `Canvas · ${chatTitle}` }) }, [navigation, chatTitle])
 
@@ -77,6 +83,11 @@ export default function CanvasScreen({ navigation, route }: Props) {
 
   const slides = canvas?.kind === "slides" ? splitSlides(canvas.content) : null
   const at = slides ? Math.min(slide, slides.length - 1) : 0
+  const many = !!slides && slides.length > 1
+  function swipe(dx: number, dy: number) {
+    if (!slides || Math.abs(dx) < SWIPE_PX || Math.abs(dx) < 1.5 * Math.abs(dy)) return
+    setSlide(Math.max(0, Math.min(slides.length - 1, at + (dx < 0 ? 1 : -1))))
+  }
 
   function reply() {
     if (!canvas) return
@@ -150,6 +161,7 @@ export default function CanvasScreen({ navigation, route }: Props) {
                 <Pressable key={c.title} testID={`canvas-tab-${i}`} accessibilityRole="tab"
                   accessibilityState={{ selected: on }} onPress={() => { setSelected(c.title); setNotice("") }}
                   style={[styles.canvasTab, on ? styles.canvasTabOn : null]}>
+                  <Icon name={KIND_ICON[c.kind]} size={13} color={on ? t.bg : t.textMuted} />
                   <Text numberOfLines={1} style={[styles.canvasTabText, on ? styles.canvasTabTextOn : null]}>{c.title}</Text>
                 </Pressable>
               )
@@ -158,9 +170,12 @@ export default function CanvasScreen({ navigation, route }: Props) {
         </View>
       ) : null}
       {current ? (
-        <Text style={styles.canvasMeta} numberOfLines={1}>
-          {current.title} · v{current.version}{slides && slides.length > 1 ? ` · slide ${at + 1} of ${slides.length}` : ""}
-        </Text>
+        <View style={styles.canvasHead}>
+          <Text style={styles.canvasTitle} numberOfLines={2}>{current.title}</Text>
+          <Text style={[styles.canvasMeta, { paddingHorizontal: 0 }]} numberOfLines={1}>
+            {KIND_LABEL[current.kind]} · v{current.version} · {age(current.updated_at)}
+          </Text>
+        </View>
       ) : null}
 
       <View style={styles.flex1}>
@@ -171,7 +186,7 @@ export default function CanvasScreen({ navigation, route }: Props) {
             testID="canvas-html"
             style={styles.canvasWeb}
             originWhitelist={["about:*"]}
-            source={{ html: canvas.content }}
+            source={{ html: themedHtml(canvas.content, { bg: t.bg, fg: t.text, dark: isDarkBg(t.bg) }) }}
             javaScriptEnabled
             incognito
             // The page may run its own scripts but never navigates the view away;
@@ -183,7 +198,13 @@ export default function CanvasScreen({ navigation, route }: Props) {
             }}
           />
         ) : (
-          <ScrollView contentContainerStyle={styles.canvasBody}>
+          <ScrollView contentContainerStyle={[styles.canvasBody, slides ? styles.canvasSlide : null]}
+            onTouchStart={(e) => { touch.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY } }}
+            onTouchEnd={(e) => {
+              const s = touch.current
+              touch.current = null
+              if (s) swipe(e.nativeEvent.pageX - s.x, e.nativeEvent.pageY - s.y)
+            }}>
             {canvas.kind === "mermaid" ? (
               <MermaidView source={canvas.content} dark={isDarkBg(t.bg)} textColor={t.text} />
             ) : (
@@ -193,13 +214,15 @@ export default function CanvasScreen({ navigation, route }: Props) {
         )}
       </View>
 
-      {slides && slides.length > 1 ? (
+      {many && slides ? (
         <View style={styles.canvasSlideNav}>
           <Pressable testID="canvas-prev" accessibilityRole="button" accessibilityLabel="Previous slide"
             disabled={at === 0} onPress={() => setSlide(at - 1)} style={styles.canvasBarBtn}>
             <Icon name="chevronLeft" size={16} color={at === 0 ? t.textMuted : t.accent} />
             <Text style={[styles.canvasBarText, at === 0 ? { color: t.textMuted } : null]}>Previous</Text>
           </Pressable>
+          <Text testID="canvas-slide-pos" style={styles.canvasMeta}
+            accessibilityLabel={`Slide ${at + 1} of ${slides.length}`}>{at + 1} / {slides.length}</Text>
           <Pressable testID="canvas-next" accessibilityRole="button" accessibilityLabel="Next slide"
             disabled={at === slides.length - 1} onPress={() => setSlide(at + 1)} style={styles.canvasBarBtn}>
             <Text style={[styles.canvasBarText, at === slides.length - 1 ? { color: t.textMuted } : null]}>Next</Text>
