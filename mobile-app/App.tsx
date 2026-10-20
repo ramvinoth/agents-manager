@@ -49,7 +49,7 @@ export type RootStackParamList = {
   Server: { mode?: "initial" | "add" } | undefined
   Login: undefined
   Home: undefined
-  NewChat: { template?: import("./src/api/client").AgentTemplate } | undefined
+  NewChat: { template?: import("./src/api/client").AgentTemplate; cwd?: string } | undefined
   // `starting`: a chat that was just started and whose transcript isn't written
   // yet — the thread opens at once and resolves it (see ThreadScreen).
   Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }

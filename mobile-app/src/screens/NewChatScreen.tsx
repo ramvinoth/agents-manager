@@ -50,7 +50,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
 
   const [projects, setProjects] = useState<Project[]>([])
   const [projectsError, setProjectsError] = useState("")
-  const [cwd, setCwd] = useState("")
+  // Started from a project's header: that folder, not the most recent one.
+  const [cwd, setCwd] = useState(route.params?.cwd ?? "")
   const [customCwd, setCustomCwd] = useState(false)
   const [browsing, setBrowsing] = useState(false)
   const [message, setMessage] = useState("")

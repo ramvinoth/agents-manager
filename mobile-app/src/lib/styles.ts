@@ -134,6 +134,7 @@ function buildStyles(t: Theme) {
       borderBottomWidth: 1,
       borderBottomColor: t.border,
     },
+    projectHeaderToggle: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
     projectHeaderText: { flex: 1, fontSize: 13, fontWeight: "700", color: t.textMuted, textTransform: "uppercase", letterSpacing: 0.5 },
     projectHeaderCount: { fontSize: 13, fontWeight: "600", color: t.textMuted },
     // AskUserQuestion quick-reply card — attention family ("the agent is

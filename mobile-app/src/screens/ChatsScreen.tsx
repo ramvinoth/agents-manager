@@ -431,24 +431,37 @@ export default function ChatsScreen({ navigation }: Props) {
           renderItem={({ item: row }) => {
             if (row.kind === "header") {
               const open = !collapsed.has(row.project)
+              const named = row.project !== "No project"
               return (
-                <TouchableOpacity
-                  testID={`project-header-${row.project}`}
-                  style={styles.projectHeader}
-                  onPress={() =>
-                    setCollapsed((prev) => {
-                      const n = new Set(prev)
-                      n.has(row.project) ? n.delete(row.project) : n.add(row.project)
-                      return n
-                    })
-                  }
-                >
-                  <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
-                  <Text style={styles.projectHeaderText} numberOfLines={1}>
-                    {row.project === "No project" ? row.project : shortProject(row.project)}
-                  </Text>
-                  <Text style={styles.projectHeaderCount}>{row.count}</Text>
-                </TouchableOpacity>
+                <View style={styles.projectHeader}>
+                  <TouchableOpacity
+                    testID={`project-header-${row.project}`}
+                    style={styles.projectHeaderToggle}
+                    onPress={() =>
+                      setCollapsed((prev) => {
+                        const n = new Set(prev)
+                        n.has(row.project) ? n.delete(row.project) : n.add(row.project)
+                        return n
+                      })
+                    }
+                  >
+                    <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
+                    <Text style={styles.projectHeaderText} numberOfLines={1}>
+                      {named ? shortProject(row.project) : row.project}
+                    </Text>
+                    <Text style={styles.projectHeaderCount}>{row.count}</Text>
+                  </TouchableOpacity>
+                  {named && (
+                    <TouchableOpacity
+                      testID={`project-new-chat-${row.project}`}
+                      accessibilityLabel={`New chat in ${shortProject(row.project)}`}
+                      hitSlop={10}
+                      onPress={() => navigation.navigate("NewChat", { cwd: row.project })}
+                    >
+                      <Icon name="add" size={18} color={t.accent} />
+                    </TouchableOpacity>
+                  )}
+                </View>
               )
             }
             const item = row.s
