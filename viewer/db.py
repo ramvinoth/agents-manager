@@ -304,6 +304,23 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
             CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
+            -- Canvases: the on-demand visual pane a session opens to SHOW its
+            -- work (a diagram, a walkthrough, a small HTML app) when a picture
+            -- beats prose. One row per (session, title) — re-showing a title
+            -- replaces it and bumps `version`. Session output like the
+            -- transcript (not org state), so it is not audited; a deleted
+            -- session takes its canvases with it (routes/sessions).
+            CREATE TABLE IF NOT EXISTS canvases (
+              id         SERIAL PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              title      TEXT NOT NULL,
+              kind       TEXT NOT NULL,
+              content    TEXT NOT NULL DEFAULT '',
+              version    INTEGER NOT NULL DEFAULT 1,
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL,
+              UNIQUE (session_id, title)
+            );
             -- A note's discussion (the message board): Reddit-style threaded
             -- replies under any note — how agents and the owner talk ABOUT a
             -- piece of knowledge. `parent_id` NULL = top-level comment. `author`
@@ -619,7 +636,7 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send.
+Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.
 
 Authority: your power is the weaker of the human owner's role and this session's level: Own work (key ic: its own cards, notes, messages) < Workspace (lead: also projects, loops, columns) < Organization (manager: also org-wide settings). A session's level comes from the agent it was started from (Agents tab) or the owner's per-chat setting; with neither it runs at Own work, the least authority. To the owner say Own work/Workspace/Organization, never the key ic. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.
 
@@ -700,6 +717,21 @@ You run as `claude -p` (print mode), not the interactive CLI: no terminal watche
                 $o$detach it (nohup <cmd> > <log> 2>&1 &), then$o$, $n$detach it (nohup <cmd> > <log> 2>&1 & disown) — a tool's own background mode (run_in_background) is killed when your turn ends, so it is not detached — then$n$))
               WHERE key = 'system_preamble'
                 AND position('lsof -i :PORT' in value #>> '{}') > 0;
+            -- Canvas: name the tools, and the one rule that keeps the pane rare
+            -- (a picture only when it beats prose). Two idempotent edits — a
+            -- fresh seed already names the tools but still needs the section.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$inbox — inbox_list, inbox_send.$o$,
+                $n$inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.$n$))
+              WHERE key = 'system_preamble'
+                AND position('canvas_show' in value #>> '{}') = 0;
+            UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
+
+## Canvas (show, don't tell — only when a picture wins)
+canvas_show opens a visual pane beside the chat on the owner's screen: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update it at milestones, and say in chat what changed.$n$)
+              WHERE key = 'system_preamble'
+                AND position('## Canvas (' in value #>> '{}') = 0
+                AND position('## Work discipline' in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same
@@ -1671,6 +1703,62 @@ def notes_delete_for_session(session_id):
                     (session_id,))
         cur.execute("DELETE FROM notes WHERE session_id = %s RETURNING id", (session_id,))
         return [r["id"] for r in cur.fetchall()]
+
+
+# Canvases (the on-demand visual pane) ----------------------------------------
+
+def canvas_upsert(session_id, title, kind, content, max_per_session):
+    """Create or replace one canvas by title. Returns the row, or None when the
+    session already holds `max_per_session` canvases and this title is new.
+    The count check and insert share one transaction, under a per-session
+    advisory lock so two concurrent shows cannot both slip under the cap."""
+    now = _now()
+    with _db() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("canvas:" + session_id,))
+        cur.execute("SELECT 1 FROM canvases WHERE session_id = %s AND title = %s",
+                    (session_id, title))
+        if not cur.fetchone():
+            cur.execute("SELECT count(*) AS n FROM canvases WHERE session_id = %s", (session_id,))
+            if cur.fetchone()["n"] >= max_per_session:
+                return None
+        cur.execute(
+            "INSERT INTO canvases (session_id, title, kind, content, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (session_id, title) DO UPDATE SET kind = EXCLUDED.kind, "
+            "content = EXCLUDED.content, version = canvases.version + 1, "
+            "updated_at = EXCLUDED.updated_at RETURNING *",
+            (session_id, title, kind, content, now, now))
+        return dict(cur.fetchone())
+
+
+def canvas_list(session_id):
+    """A session's canvases (metadata, no content), most recently updated first."""
+    with _db() as cur:
+        cur.execute("SELECT id, session_id, title, kind, version, created_at, updated_at, "
+                    "length(content) AS size FROM canvases WHERE session_id = %s "
+                    "ORDER BY updated_at DESC",
+                    (session_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def canvas_get(session_id, title):
+    with _db() as cur:
+        cur.execute("SELECT * FROM canvases WHERE session_id = %s AND title = %s",
+                    (session_id, title))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def canvas_delete(session_id, title):
+    with _db() as cur:
+        cur.execute("DELETE FROM canvases WHERE session_id = %s AND title = %s RETURNING id",
+                    (session_id, title))
+        return cur.fetchone() is not None
+
+
+def canvas_delete_for_session(session_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM canvases WHERE session_id = %s", (session_id,))
 
 
 # Note discussions (the message board under every note) ----------------------

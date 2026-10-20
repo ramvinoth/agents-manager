@@ -2,6 +2,7 @@
 import type { StoreApi } from "zustand"
 import type { AgentsSlice } from "./agents"
 import type { AuthSlice } from "./auth"
+import type { CanvasSlice } from "./canvas"
 import type { ChatSlice } from "./chat"
 import type { DetailsSlice } from "./details"
 import type { LayoutSlice } from "./layout"
@@ -9,7 +10,7 @@ import type { OrchestrationSlice } from "./orchestration"
 import type { Runtime } from "./runtime"
 import type { SessionSlice } from "./session"
 
-export type AppState = AuthSlice & AgentsSlice & SessionSlice & ChatSlice & DetailsSlice & OrchestrationSlice & LayoutSlice
+export type AppState = AuthSlice & AgentsSlice & SessionSlice & ChatSlice & DetailsSlice & OrchestrationSlice & LayoutSlice & CanvasSlice
 export type SetState = StoreApi<AppState>["setState"]
 export type GetState = StoreApi<AppState>["getState"]
 

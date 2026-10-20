@@ -18,6 +18,7 @@ import {
   UserRound,
   PanelRight,
   PanelLeft,
+  Presentation,
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
@@ -64,6 +65,11 @@ export function Header() {
   const needsAuth = useStore((s) => s.needsAuth)
   const rhsOpen = useStore((s) => s.rhsOpen)
   const toggleRhs = useStore((s) => s.toggleRhs)
+  const canvases = useStore((s) => s.canvases)
+  const canvasOpen = useStore((s) => s.canvasOpen)
+  const canvasUnseen = useStore((s) => s.canvasUnseen)
+  const openCanvas = useStore((s) => s.openCanvas)
+  const closeCanvas = useStore((s) => s.closeCanvas)
   const lhsOpen = useStore((s) => s.lhsOpen)
   const toggleLhs = useStore((s) => s.toggleLhs)
 
@@ -221,6 +227,21 @@ export function Header() {
 
       {/* Skills · MCP · Plugins: a closed side panel on wide screens, a drawer
           (MobileRightNav) on narrow ones - both at the right edge. */}
+      {canvases.length > 0 && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={"relative size-7 shrink-0" + (canvasOpen ? " bg-accent" : "")}
+          onClick={() => (canvasOpen ? closeCanvas() : openCanvas())}
+          data-track="canvas toggle"
+          aria-label={canvasOpen ? "Hide canvas" : "Show canvas"}
+          aria-pressed={canvasOpen}
+          title={canvasOpen ? "Hide canvas" : canvasUnseen ? "The agent updated the canvas" : "Canvas"}
+        >
+          <Presentation className="size-4" />
+          {canvasUnseen > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-primary" />}
+        </Button>
+      )}
       <MobileRightNav />
       <Button
         variant="ghost"

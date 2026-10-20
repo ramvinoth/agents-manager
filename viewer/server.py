@@ -77,13 +77,14 @@ from viewer.routes.project_plugins import ProjectPluginsMixin
 from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
+from viewer.routes.canvas import CanvasMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin, ProjectPluginsMixin,
+    IntakeMixin, ProjectPluginsMixin, CanvasMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -457,6 +458,7 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
+        "/api/canvas": "_g_canvas",
         "/api/usage/report": "_g_usage_report",
         "/api/org/intake": "_g_org_intake",
     }
@@ -581,6 +583,8 @@ class SessionViewerHandler(
         "/api/org/loops/delete": "_p_org_loops_delete",
         "/api/org/skills/propose": "_p_org_skills_propose",
         "/api/inbox/send": "_p_inbox_send",
+        "/api/canvas/show": "_p_canvas_show",
+        "/api/canvas/delete": "_p_canvas_delete",
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
         "/api/org/intake": "_p_org_intake",

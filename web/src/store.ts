@@ -5,6 +5,7 @@
 import { create } from "zustand"
 import { createAgentsSlice } from "./store/agents"
 import { createAuthSlice } from "./store/auth"
+import { createCanvasSlice } from "./store/canvas"
 import { createChatSlice } from "./store/chat"
 import { createDetailsSlice } from "./store/details"
 import { createLayoutSlice } from "./store/layout"
@@ -26,6 +27,7 @@ export const useStore = create<AppState>((set, get) => {
     ...createDetailsSlice(set, get, rt),
     ...createOrchestrationSlice(set, get, rt),
     ...createLayoutSlice(set, get, rt),
+    ...createCanvasSlice(set, get, rt),
   }
 })
 

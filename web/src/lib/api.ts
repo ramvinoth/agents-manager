@@ -10,6 +10,7 @@ import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelecti
 import type { KeyAction } from "./providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
+import type { Canvas, CanvasMeta } from "./canvas"
 
 type Body = Record<string, unknown>
 
@@ -291,6 +292,16 @@ class ApiClient {
   // `note_delete` is Red like card_delete: an agent's delete queues for the owner.
   orgDeleteNote(noteId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/notes/delete", { note_id: noteId })
+  }
+  // ---- Canvas (the visual pane an agent opens; the owner reads and closes) ----
+  canvasList(session: string) {
+    return this.getStrict<{ canvases: CanvasMeta[] }>(`/api/canvas?session=${encodeURIComponent(session)}`)
+  }
+  canvasRead(session: string, title: string) {
+    return this.getStrict<Canvas>(`/api/canvas?session=${encodeURIComponent(session)}&title=${encodeURIComponent(title)}`)
+  }
+  canvasDelete(session: string, title: string) {
+    return this.postStrict<{ deleted: boolean }>("/api/canvas/delete", { session, title })
   }
   // ---- Inbox (the message ledger; decision rows ride in it — the deciding
   // tap stays on the per-session routes, this is the delivery surface) ----

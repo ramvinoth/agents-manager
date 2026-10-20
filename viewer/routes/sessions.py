@@ -709,6 +709,7 @@ class SessionsMixin:
             db.session_meta_delete(full.stem)
             discussion.purge_session_notes(full.stem)
             db.inbox_delete_for_session(full.stem)
+            db.canvas_delete_for_session(full.stem)
             from viewer import questions
             questions.clear(full.stem)
             questions.clear_plan(full.stem)
@@ -724,6 +725,7 @@ class SessionsMixin:
                 db.session_meta_delete(sid)
                 discussion.purge_session_notes(sid)
                 db.inbox_delete_for_session(sid)
+                db.canvas_delete_for_session(sid)
             self.send_json(r)
             return
         full = self.resolve_session_quiet(body.get("session", ""))
@@ -746,6 +748,7 @@ class SessionsMixin:
         db.session_meta_delete(sid)
         discussion.purge_session_notes(sid)
         db.inbox_delete_for_session(sid)
+        db.canvas_delete_for_session(sid)
         chatplugins.purge(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 

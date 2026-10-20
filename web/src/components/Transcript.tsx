@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react"
+import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,7 @@ import { Collapsible } from "./Collapsible"
 import { extractImages } from "@/lib/parser"
 import { ZoomViewer } from "./ZoomViewer"
 import { groupExchanges, stepsLabel, type Exchange } from "@/lib/exchange"
+import { CANVAS_SHOW_TOOL, showSucceeded } from "@/lib/canvas"
 import type { Block, ImagePart, SystemTurn, Turn, UserTurn } from "@/lib/types"
 
 // Click an image (a screenshot, a Read of a .png) to open it full screen with pan/zoom.
@@ -135,12 +136,30 @@ function BlockView({ block, live }: { block: Block; live?: boolean }) {
   if (block.type === "text") return <TextBlock text={block.text} live={live} />
   if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
   if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
+  if (block.name === CANVAS_SHOW_TOOL && showSucceeded(block.result, block.isError)) return <CanvasChip block={block} />
   return <ToolCall block={block} />
+}
+
+/** A successful canvas_show reads as what it did — "opened a canvas" — and reopens it. */
+function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
+  const openCanvas = useStore((s) => s.openCanvas)
+  const title = String((block.input as { title?: unknown } | null)?.title ?? "")
+  return (
+    <button
+      type="button"
+      onClick={() => openCanvas(title)}
+      className="flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground"
+      data-track="canvas chip"
+    >
+      <PanelRightOpen className="size-3.5 shrink-0" />
+      <span className="truncate">Canvas: {title}</span>
+    </button>
+  )
 }
 
 /** What an exchange shows with the Tools filter off: narration and image-bearing calls only. */
 function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
-  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || blockHasImages(b))
+  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
 }
 
 /**

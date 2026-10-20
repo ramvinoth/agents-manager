@@ -119,6 +119,11 @@ _TOOLS = {
     "session_mode_set": ("POST", "/api/session/mode"),
     "session_level_set": ("POST", "/api/session/level"),
     "inbox_send":    ("POST", "/api/inbox/send"),
+    # ── Canvas: the visual pane beside the chat (your own session's output)
+    "canvas_show":   ("POST", "/api/canvas/show"),
+    "canvas_list":   ("GET",  "/api/canvas"),
+    "canvas_read":   ("GET",  "/api/canvas"),
+    "canvas_delete": ("POST", "/api/canvas/delete"),
     # ── Schedule recurring work (writes; gated + self-mutation rail server-side)
     "session_create": ("POST", "/api/new-session"),
     "loop_create":   ("POST", "/api/org/loops"),
@@ -419,6 +424,24 @@ _TOOL_LIST = [
          "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session)."},
          "body": {"type": "string", "description": "The message — self-contained: the recipient has no context beyond this text."},
          "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
+    # ── Canvas: show the owner a picture when a picture beats prose ─────────
+    {"name": "canvas_show",
+     "description": "Open (or replace, by title) a canvas in the visual pane beside this chat — the owner's client opens it for them. Use it ONLY when a picture beats prose: a flow or architecture you are designing (mermaid), a comparison table or plan you will revise (markdown), a step-by-step walkthrough (slides: markdown split by lines of ---), or a small interactive mock (html: one self-contained page, scripts allowed, sandboxed — no network to the app, no cookies). Never for a simple answer. Re-show the same title to update it at milestones instead of opening new ones. Max 20 per session, 512 KB each.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title", "kind", "content"], "properties": {
+         "title": {"type": "string", "description": "Tab name, ≤120 chars; reuse it to update in place."},
+         "kind": {"type": "string", "enum": ["markdown", "mermaid", "html", "slides"]},
+         "content": {"type": "string", "description": "Markdown, mermaid source, a full HTML document, or slides (markdown with --- between slides)."}}}},
+    {"name": "canvas_list",
+     "description": "Your session's canvases: title, kind, version, size, updated_at (no content).",
+     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    {"name": "canvas_read",
+     "description": "Read one of your canvases in full by title — e.g. to revise it.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
+         "title": {"type": "string"}}}},
+    {"name": "canvas_delete",
+     "description": "Close one of your canvases for good (by title) when it no longer helps.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
+         "title": {"type": "string"}}}},
     # ── Schedule recurring work ─────────────────────────────────────────────
     {"name": "session_create",
      "description": "Start a NEW named worker session (e.g. a dedicated 'Trader' to host loops), the way the owner's New chat does: it gets Harman's tools, its project's board, and shows by its title in every list. Never start a session with a raw `claude -p` — that one is invisible to Harman's naming, board and audit. Needs Workspace level — below it the request queues for the owner's approval, so pass `reason`; runs start in acceptEdits (bypass is the owner's call via session_mode_set). Returns {session}; schedule its work with loop_create.",
