@@ -44,6 +44,7 @@ import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
+import { takeReply, withReply } from "../lib/canvas"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -155,6 +156,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const openMap = useCallback(() => {
     if (sessionId) navigation.navigate("Map", { session: sessionId, title: label })
   }, [navigation, sessionId, label])
+  const openCanvas = useCallback((initial?: string) => {
+    if (sessionId) navigation.navigate("Canvas", { session: sessionId, title: label, initial })
+  }, [navigation, sessionId, label])
+  // A Reply tapped on the Canvas screen lands in this chat's composer, after
+  // whatever the owner had already typed.
+  useFocusEffect(useCallback(() => {
+    const reply = sessionId ? takeReply(sessionId) : ""
+    if (reply) setInput((d) => withReply(d, reply))
+  }, [sessionId]))
   const openInbox = useCallback(() => {
     if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
     else navigation.navigate("Inbox")
@@ -541,13 +551,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
                 // A map needs the session's project; an unsent chat has none yet.
-                ...(sessionId ? [{ text: "Map", onPress: openMap }] : []),
+                ...(sessionId ? [{ text: "Map", onPress: openMap }, { text: "Canvas", onPress: () => openCanvas() }] : []),
               ])
             }} />
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openMap, isCurrentThread])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openMap, openCanvas, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
@@ -1086,6 +1096,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
               pinnedSet={pinned}
               onMessageAction={askMessageAction}
               onReply={setReplyTo}
+              onOpenCanvas={sessionId ? openCanvas : undefined}
             />
           )
         }

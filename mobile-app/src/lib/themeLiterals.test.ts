@@ -3,8 +3,8 @@
  * components/ and lib/ must come from a Theme token. The only files allowed to
  * spell a hex literal are the palette itself, identity tints that are
  * deliberately scheme-independent (avatar seeds, template categories), the
- * WebView HTML shells whose CSS cannot read a JS token, and the terminal and
- * pairing camera, which are fixed dark surfaces by design.
+ * WebView HTML shells whose CSS cannot read a JS token, and the terminal,
+ * pairing camera and full-screen image viewer, which are fixed dark surfaces by design.
  */
 import assert from "node:assert"
 import { readdirSync, readFileSync, statSync } from "node:fs"
@@ -21,6 +21,7 @@ const ALLOWED = new Set([
   "components/MathView.tsx",
   "screens/TerminalScreen.tsx",
   "components/PairScanner.tsx",
+  "components/ImageViewer.tsx",
 ])
 // Shadow black and translucent scrims are colour-neutral, not palette choices.
 const NEUTRAL = /shadowColor: "#000"|rgba\(0,0,0,/

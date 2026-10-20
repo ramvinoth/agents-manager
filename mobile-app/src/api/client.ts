@@ -10,6 +10,7 @@ import { normModel } from "../lib/model"
 import { isTransportError } from "../lib/errors"
 import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
+import type { Canvas, CanvasMeta } from "../lib/canvas"
 import type { NewChatJob } from "../lib/newChat"
 import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
@@ -946,6 +947,13 @@ export const api = {
     return req<{ notes: Note[] }>("GET", `/api/org/notes${q ? "?" + q : ""}`)
   },
   orgNote: (id: number) => req<{ note: Note }>("GET", `/api/org/note?id=${id}`),
+  // Canvases: what an agent showed in a session (viewer/routes/canvas.py).
+  canvasList: (session: string) =>
+    req<{ canvases: CanvasMeta[] }>("GET", `/api/canvas?session=${encodeURIComponent(session)}`),
+  canvasRead: (session: string, title: string) =>
+    req<Canvas>("GET", `/api/canvas?session=${encodeURIComponent(session)}&title=${encodeURIComponent(title)}`),
+  canvasDelete: (session: string, title: string) =>
+    req<{ deleted: boolean }>("POST", "/api/canvas/delete", { session, title }),
   orgCreateNote: (body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) =>
     req<Note>("POST", "/api/org/notes", body),
   orgUpdateNote: (body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) =>

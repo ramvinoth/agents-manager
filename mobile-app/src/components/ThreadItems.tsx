@@ -18,6 +18,7 @@ import Collapsible from "./Collapsible"
 import Icon from "./Icon"
 import ImageViewer from "./ImageViewer"
 import { useStyles } from "../lib/styles"
+import { shownTitles } from "../lib/canvas"
 
 // The live placeholder shown while a run is in flight. It names the step the
 // agent is on ("Running Bash…") and is replaced by the real response when the
@@ -71,12 +72,14 @@ export function ItemView({
   pinnedSet,
   onMessageAction,
   onReply,
+  onOpenCanvas,
 }: {
   item: ThreadItem
   isLatest?: boolean
   pinnedSet?: string[]
   onMessageAction?: (uuid: string | undefined, text: string, isUser: boolean) => void
   onReply?: (text: string) => void
+  onOpenCanvas?: (title: string) => void
 }) {
   const t = useTheme()
   const styles = useStyles()
@@ -134,6 +137,7 @@ export function ItemView({
           defaultOpen={isLatest}
           ts={item.ts}
           onLongPress={() => onMessageAction?.(item.uuid, item.finalText, false)}
+          onOpenCanvas={onOpenCanvas}
         />
       </View>
     </SwipeToReply>
@@ -185,6 +189,7 @@ export function ExchangeView({
   defaultOpen,
   ts,
   onLongPress,
+  onOpenCanvas,
 }: {
   finalText: string
   steps: Block[]
@@ -192,6 +197,7 @@ export function ExchangeView({
   defaultOpen?: boolean
   ts?: string
   onLongPress?: () => void
+  onOpenCanvas?: (title: string) => void
 }) {
   const t = useTheme()
   const styles = useStyles()
@@ -216,6 +222,8 @@ export function ExchangeView({
   // only use the actual reply. When there's no <think>, body === finalText.
   const { thinking: think, body } = useMemo(() => splitThinking(finalText), [finalText])
   const [thinkOpen, setThinkOpen] = useState(false)
+  // What the agent put on the canvas this turn stays visible even with the steps folded.
+  const shown = useMemo(() => (onOpenCanvas ? shownTitles(steps) : []), [steps, onOpenCanvas])
   return (
     <View testID="agent-bubble" style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
       {/* Steps (tool calls + narration) render ABOVE the final answer: the steps
@@ -245,6 +253,13 @@ export function ExchangeView({
       ) : null}
       {plans?.map((p) => (
         <PlanCard key={p.id} input={p.input} result={p.result} />
+      ))}
+      {shown.map((title, i) => (
+        <Pressable key={title} testID={`canvas-chip-${i}`} accessibilityRole="button"
+          accessibilityLabel={`Open canvas ${title}`} onPress={() => onOpenCanvas?.(title)} style={styles.canvasChip}>
+          <Icon name="eye" size={14} color={t.accent} />
+          <Text numberOfLines={1} style={styles.canvasChipText}>Shown: {title}</Text>
+        </Pressable>
       ))}
       {think ? (
         <Pressable onPress={() => setThinkOpen((o) => !o)} style={{ marginTop: steps.length ? 8 : 0 }}>

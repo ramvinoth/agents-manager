@@ -90,6 +90,7 @@ function screen(initial: Route) {
     "../lib/session": { resolveSessionPath: async () => undefined },
     "../lib/actionSheet": { showActions: (title: string, actions: any[]) => sheets.push([title, actions]) },
     "../lib/notify": { ensurePermission: async () => {} },
+    "../lib/canvas": { takeReply: () => "", withReply: (draft: string) => draft },
     "../state/config": { draftFor: () => "", composerPrefs: () => ({}), setDraft: async () => {}, activeServerId: () => "fixture" },
     "../api/offlineCache": { offlineCache: { saveThread: async () => {}, loadThread: async () => null } },
     "../components/OfflineBanner": { default: "OfflineBanner" },

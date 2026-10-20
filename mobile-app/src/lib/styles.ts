@@ -1196,6 +1196,22 @@ function buildStyles(t: Theme) {
     calActions: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 8 },
     calCancel: { color: t.textMuted, fontSize: 13, fontWeight: "600" },
 
+    // CanvasScreen (canvas) — what an agent showed: tabs, the view, and its actions.
+    canvasTabs: { gap: 6, paddingHorizontal: 12, paddingVertical: 8 },
+    canvasTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: t.chipBg, minHeight: 32, justifyContent: "center" },
+    canvasTabOn: { backgroundColor: t.accent },
+    canvasTabText: { color: t.text, fontSize: 13, fontWeight: "600" },
+    canvasTabTextOn: { color: t.bg },
+    canvasBody: { padding: 12, paddingBottom: 24, gap: 12 },
+    canvasMeta: { color: t.textMuted, fontSize: 12, paddingHorizontal: 12 },
+    canvasWeb: { flex: 1, backgroundColor: t.bg },
+    canvasSlideNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 6 },
+    canvasBar: { flexDirection: "row", justifyContent: "space-around", borderTopWidth: 1, borderTopColor: t.border, paddingVertical: 6 },
+    canvasBarBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, minHeight: 44 },
+    canvasBarText: { color: t.accent, fontSize: 14, fontWeight: "600" },
+    canvasChip: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: t.chipBg, marginTop: 6, maxWidth: "100%" },
+    canvasChipText: { color: t.accent, fontSize: 13, fontWeight: "600", flexShrink: 1 },
+
     // MapScreen (map) — code-map breadcrumbs, states and the node list.
     mapContent: { padding: 12, gap: 12, paddingBottom: 40 },
     mapCrumbs: { alignItems: "center", gap: 4 },
