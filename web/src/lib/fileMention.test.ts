@@ -20,6 +20,11 @@ test("hashTerm only looks left of the caret", () => {
   assert.deepEqual(hashTerm("#comp tail", 3), { start: 0, query: "co" })
 })
 
+test("hashTerm treats a caret past the end as the end", () => {
+  // The bug: caret 21 on "#fs" gave start 18 and the pick appended the mention.
+  assert.deepEqual(hashTerm("#fs", 21), { start: 0, query: "fs" })
+})
+
 test("mentionFor quotes paths with spaces", () => {
   assert.equal(mentionFor("src/a.ts"), "@src/a.ts")
   assert.equal(mentionFor("docs/My Notes.md"), '@"docs/My Notes.md"')

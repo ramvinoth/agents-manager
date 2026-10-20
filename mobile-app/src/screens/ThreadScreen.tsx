@@ -216,9 +216,20 @@ export default function ThreadScreen({ route, navigation }: Props) {
     return () => { live = false; clearTimeout(timer) }
   }, [hashQuery, cwd, host])
   const fileMatches = slashMatches.length || !hash ? [] : fileHits
+  // iOS can answer the pick with a change event still carrying the pre-pick
+  // text (the keyboard committing as the row is tapped); that echo would undo
+  // the mention. Until the user's next real edit, the old text maps back to
+  // the picked one.
+  const pickEcho = useRef<{ from: string; to: string } | null>(null)
+  const onComposerText = (text: string) => {
+    const echo = pickEcho.current
+    pickEcho.current = null
+    setInput(echo && text === echo.from ? echo.to : text)
+  }
   const pickFile = (p: string) => {
     if (!hash || caret === null) return
     const r = applyMention(input, hash, caret, p)
+    pickEcho.current = { from: input, to: r.text }
     setInput(r.text)
     setCaret(r.caret)
     setPlaceCaret(r.caret)
@@ -1307,7 +1318,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             placeholder={busy ? "Steer or queue a follow-up…" : "Message the agent…"}
             placeholderTextColor={t.textMuted}
             value={input}
-            onChangeText={setInput}
+            onChangeText={onComposerText}
             onSelectionChange={(e) => {
               const { start, end } = e.nativeEvent.selection
               setCaret(start === end ? start : null)

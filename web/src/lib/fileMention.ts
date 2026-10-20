@@ -11,8 +11,10 @@ export interface HashTerm {
 // The #word that ends at `caret`, or null. The "#" must start a word and be
 // followed by at least one non-space character, so a markdown "# Title" or a
 // lone "#" never opens the picker; all-digit words ("card #203") are
-// references, not file searches.
+// references, not file searches. A caret past the end (a stale selection
+// event from before the text shrank) counts as the end, never as an offset.
 export function hashTerm(text: string, caret: number): HashTerm | null {
+  caret = Math.min(caret, text.length)
   const m = text.slice(0, caret).match(/(^|\s)#([^\s#]+)$/)
   if (!m || /^\d+$/.test(m[2])) return null
   return { start: caret - m[2].length - 1, query: m[2] }

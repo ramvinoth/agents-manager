@@ -486,6 +486,11 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       const parent = abs === "/" ? null : abs.slice(0, abs.lastIndexOf("/")) || "/"
       return send({ path: abs, parent, home: FS_HOME, entries: FS_TREE[abs].map(([name, dir]) => ({ name, dir, size: dir ? 0 : 12, mtime: 1 })) })
     }
+    // Composer "#" file mentions: one file per query, mirroring viewer filesearch's shape.
+    if (route === "GET /api/fs/search") {
+      const q = (url.searchParams.get("q") || "").toLowerCase()
+      return send({ results: ["viewer/routes/fs.py", "viewer/filesearch.py"].filter(p => p.includes(q)).map(path => ({ path, dir: false })) })
+    }
     if (route === "GET /api/drives") return send({ drives: [], vendors: [] })
     return send({ error: `Unhandled fixture route: ${route}` }, 404)
   })
