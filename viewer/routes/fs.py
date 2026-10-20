@@ -27,6 +27,32 @@ _SECRET_BASENAMES = frozenset({
 })
 
 
+# Types the download route may serve inline (rendered in the page) when asked
+# with ?inline=1 — the preview's PDF viewer, which then range-fetches only the
+# pages it shows. Deliberately no HTML or SVG: those would run script on this
+# origin with the owner's cookie. Every other file stays an attachment.
+_INLINE_TYPES = {"pdf": "application/pdf"}
+_STREAM_CHUNK = 256 * 1024
+
+
+def _parse_range(header, size):
+    """One byte range from a Range header, as inclusive (start, end) within a
+    file of `size` bytes. None means "send it all" (no header, a malformed one,
+    or several ranges — a full 200 is always a valid answer); False means the
+    range lies wholly outside the file (416)."""
+    m = re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", header or "")
+    if not m or m.group(1) == m.group(2) == "":
+        return None
+    if m.group(1) == "":  # suffix: the last N bytes
+        n = int(m.group(2))
+        return (max(size - n, 0), size - 1) if n and size else False
+    start = int(m.group(1))
+    end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+    if m.group(2) and int(m.group(2)) < start:
+        return None
+    return (start, end) if start < size else False
+
+
 def _safe_name(name) -> bool:
     """A valid single path segment: a non-empty string with no separators, NUL, or
     dot-only names. Rejects traversal in every create/rename/zip handler (replaces
@@ -133,22 +159,66 @@ class FsMixin:
             self.send_json({"error": str(e)}, status=e.status)
             return None, None
 
-    def _begin_attachment(self, name, length, ctype="application/octet-stream"):
+    def _begin_attachment(self, name, length, ctype="application/octet-stream", inline=False):
         self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(length))
-        self.send_header("Content-Disposition", content_disposition(name))
+        self._file_headers(name, length, ctype, inline)
         self.end_headers()
 
-    def _send_attachment(self, data, name, ctype="application/octet-stream"):
-        self._begin_attachment(name, len(data), ctype)
+    def _file_headers(self, name, length, ctype, inline):
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(length))
+        disposition = content_disposition(name)
+        self.send_header("Content-Disposition", "inline" + disposition[len("attachment"):] if inline else disposition)
+        self.send_header("X-Content-Type-Options", "nosniff")
+
+    def _send_attachment(self, data, name, ctype="application/octet-stream", inline=False):
+        self._begin_attachment(name, len(data), ctype, inline)
         self.wfile.write(data)
+
+    def _send_file(self, target, ctype, inline):
+        """Stream a local file in chunks — never whole into memory — honouring
+        one Range so a PDF viewer fetches only the pages it shows."""
+        size = target.stat().st_size
+        rng = _parse_range(self.headers.get("Range"), size)
+        if rng is False:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = rng or (0, size - 1)
+        self.send_response(206 if rng else 200)
+        self._file_headers(target.name, end - start + 1 if size else 0, ctype, inline)
+        self.send_header("Accept-Ranges", "bytes")
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        left = end - start + 1 if size else 0
+        try:
+            with open(target, "rb") as f:
+                f.seek(start)
+                while left > 0:
+                    chunk = f.read(min(_STREAM_CHUNK, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the viewer cancelled a range it no longer needs — normal
 
     def _g_fs_download(self, req):
         fpath = (req.query.get("path") or [""])[0]
         if not fpath:
             self.send_json({"error": "Missing path"}, status=400)
             return
+        # ?inline=1 asks to render it in the page (the preview); honoured only
+        # for _INLINE_TYPES, so it can never turn a file into live HTML.
+        ctype = "application/octet-stream"
+        inline = False
+        if (req.query.get("inline") or [""])[0] == "1":
+            ext = os.path.splitext(fpath)[1].lstrip(".").lower()
+            if ext in _INLINE_TYPES:
+                ctype, inline = _INLINE_TYPES[ext], True
         ok, adapter = self._drive_target(req, None, fpath, "read")
         if ok:
             try:
@@ -156,7 +226,7 @@ class FsMixin:
             except DriveError as e:
                 self.send_json({"error": str(e)}, status=e.status)
                 return
-            self._send_attachment(data, name)
+            self._send_attachment(data, name, ctype, inline)
             return
         if ok is None:
             return
@@ -175,15 +245,14 @@ class FsMixin:
             if r.get("error"):
                 self.send_json({"error": r["error"]}, status=400)
                 return
-            data, name = r["bytes"], r["name"]
-            self._send_attachment(data, name)
+            self._send_attachment(r["bytes"], r["name"], ctype, inline)
             return
         try:
             target = Path(os.path.expanduser(fpath)).resolve()
             if not target.is_file():
                 self.send_json({"error": "File not found or is a directory"}, status=404)
                 return
-            self._send_attachment(target.read_bytes(), target.name)
+            self._send_file(target, ctype, inline)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 

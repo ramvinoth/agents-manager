@@ -8,9 +8,9 @@ import { api } from "@/lib/api"
 import { fmtBytes } from "@/lib/format"
 import { fetchAndSave } from "@/lib/download"
 import { userError } from "@/lib/errors"
-import { codeLanguage, HAS_SOURCE_VIEW, isolatedDocument, looksBinary, previewKind, type TreeRow } from "@/lib/fileTree"
+import { codeLanguage, HAS_SOURCE_VIEW, isolatedDocument, looksBinary, PDF_AUTOLOAD_MAX_BYTES, previewKind, type TreeRow } from "@/lib/fileTree"
 
-const MIME: Record<string, string> = { svg: "image/svg+xml", pdf: "application/pdf" }
+const MIME: Record<string, string> = { svg: "image/svg+xml" }
 
 /** Readable defaults for a converted Word document inside its isolated frame. */
 const DOCX_CSS =
@@ -25,7 +25,8 @@ type Loaded =
 
 /** Read-only preview of one file, rendered the way an editor would show it:
  *  Markdown and HTML rendered (with a Code view), code highlighted with line
- *  numbers, images, PDFs and Word documents drawn as documents. Anything else
+ *  numbers, images and Word documents drawn as documents, PDFs in the
+ *  browser's own (streaming) viewer. Anything else
  *  offers Download. */
 export function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => void }) {
   const kind = previewKind(row.entry)
@@ -34,12 +35,17 @@ export function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => voi
   const [copied, setCopied] = useState(false)
   const [source, setSource] = useState(false) // Code view of a rendered kind
   const href = api.fsDownload(row.path)
+  // A PDF goes straight to the browser's own viewer, which range-fetches only
+  // the pages on screen — never whole into this page's memory. A big one on a
+  // remote host (sent whole) waits for a tap.
+  const [pdfGo, setPdfGo] = useState(api.host === "local" || row.entry.size <= PDF_AUTOLOAD_MAX_BYTES)
 
   useEffect(() => {
     if (kind === "none") {
       setLoaded({ kind: "none", reason: row.entry.size > 0 ? "No preview for this file type or size." : "This file is empty." })
       return
     }
+    if (kind === "pdf") return
     let url = ""
     let live = true
     ;(async () => {
@@ -55,7 +61,7 @@ export function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => voi
           const mammoth = (await import("mammoth")).default
           const { value } = await mammoth.convertToHtml({ arrayBuffer: buf })
           if (live) setLoaded({ kind: "html", html: value })
-        } else if (kind === "image" || kind === "pdf") {
+        } else if (kind === "image") {
           const ext = row.entry.name.split(".").pop()?.toLowerCase() || ""
           url = URL.createObjectURL(new Blob([buf], { type: MIME[ext] || res.headers.get("content-type") || "" }))
           setLoaded({ kind: "url", url })
@@ -132,6 +138,17 @@ export function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => voi
         <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-muted/30">
           {error ? (
             <div className="p-4 text-sm text-destructive">{error}</div>
+          ) : kind === "pdf" ? (
+            pdfGo ? (
+              <iframe src={`${href}&inline=1`} title={row.entry.name} className="h-[70vh] w-full" />
+            ) : (
+              <div className="flex flex-col items-center gap-2 p-8 text-sm text-muted-foreground">
+                <span>This PDF is on another machine and loads whole.</span>
+                <Button variant="outline" size="sm" onClick={() => setPdfGo(true)}>
+                  <Eye className="size-3.5" /> Preview ({fmtBytes(row.entry.size)})
+                </Button>
+              </div>
+            )
           ) : !loaded ? (
             <Spinner />
           ) : loaded.kind === "text" ? (
@@ -146,8 +163,6 @@ export function FilePreview({ row, onClose }: { row: TreeRow; onClose: () => voi
             )
           ) : loaded.kind === "html" ? (
             <Frame title={row.entry.name} html={isolatedDocument(loaded.html, DOCX_CSS)} />
-          ) : loaded.kind === "url" && kind === "pdf" ? (
-            <iframe src={loaded.url} title={row.entry.name} className="h-[70vh] w-full" />
           ) : loaded.kind === "url" ? (
             <div className="flex justify-center p-3">
               <img src={loaded.url} alt={row.entry.name} className="max-h-[70vh] max-w-full object-contain" />

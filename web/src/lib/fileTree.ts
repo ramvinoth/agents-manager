@@ -52,8 +52,12 @@ const MARKDOWN_EXT = new Set(["md", "markdown", "mdx"])
 
 /** Largest text file the preview will fetch; bigger ones are downloaded instead. */
 export const PREVIEW_MAX_BYTES = 2 * 1024 * 1024
-/** Documents (images, PDF, Word) render whole, so they may be larger than text. */
+/** Documents (images, Word) render whole, so they may be larger than text. */
 export const DOC_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
+/** A PDF has no size cap: the browser's viewer streams it from the server
+ *  with range requests. Only a PDF this big on a remote host (whose leg sends
+ *  the whole file) waits for a tap instead of loading on open. */
+export const PDF_AUTOLOAD_MAX_BYTES = DOC_PREVIEW_MAX_BYTES
 
 export type PreviewKind = "markdown" | "html" | "code" | "image" | "pdf" | "docx" | "none"
 
@@ -71,7 +75,8 @@ function extOf(name: string): string {
 export function previewKind(entry: FileEntry): PreviewKind {
   if (entry.dir) return "none"
   const ext = extOf(entry.name)
-  const doc = IMAGE_EXT.has(ext) ? "image" : ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : null
+  if (ext === "pdf") return "pdf"
+  const doc = IMAGE_EXT.has(ext) ? "image" : ext === "docx" ? "docx" : null
   if (doc) return entry.size > DOC_PREVIEW_MAX_BYTES ? "none" : doc
   if (entry.size > PREVIEW_MAX_BYTES) return "none"
   if (MARKDOWN_EXT.has(ext)) return "markdown"
