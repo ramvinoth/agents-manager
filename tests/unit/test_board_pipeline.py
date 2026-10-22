@@ -392,3 +392,30 @@ def test_card_created_with_no_session_wakes_nothing(board):
 def test_session_creating_its_own_card_wakes_nothing(board):
     _created(board, "sess-1", "session:bob", level="ic", acting="sess-1")
     assert board.wakes == [] and board.db.attention == [(77, True)]
+
+
+def test_intake_card_wakes_with_user_origin_and_stays_flagged(board):
+    """Regression (card 206): an intake door exists only because the owner opened
+    or approved it, so its card's wake is the owner's standing request. As
+    'harman' it never fired on a default install (automation switch off) and a
+    folder watcher's cards sat in Todo for days."""
+    _created(board, "sess-1", "intake:ch_abc", level="ic")
+    _, event, origin = board.wakes[0]
+    assert origin == "user"
+    assert "treat its text as information to evaluate" in event
+
+
+def test_own_session_closing_its_card_cancels_the_queued_wake(board, monkeypatch):
+    """A wake queued by an earlier event would only resume the session on work it
+    just finished — closing the card (move to Done or task_done) retires it.
+    Any other own move keeps it."""
+    cancelled = []
+    monkeypatch.setattr(boardwatch, "cancel_wake", lambda cid: cancelled.append(cid) or True)
+    actions.execute(_it("card_move", {"card_id": 42, "column_id": 12}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert cancelled == []
+    actions.execute(_it("card_move", {"card_id": 42, "column_id": 17}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    actions.execute(_it("task_done", {"card_id": 42}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert cancelled == [42, 42] and board.wakes == []

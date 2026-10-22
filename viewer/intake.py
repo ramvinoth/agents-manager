@@ -102,10 +102,12 @@ def deliver(channel, payload, origin, human_role="", session_level="ic", actor="
 
     Authority: an outside sender is nobody in the org, so it acts at the
     least level (ic, no human) under the channel's own actor — enough to
-    create a card, nothing else — and its wake is agent-origin, gated by the
-    automation switch like any other unattended work, and flagged as outside
-    text. The owner's own feedback passes their role, no session level and
-    their actor, so it wakes like a card the owner typed (user origin).
+    create a card, nothing else. Its wake is nonetheless user-origin
+    (actions._board_followup): a channel exists only because the owner opened
+    or approved it, so "wake this session when X arrives" is the owner's own
+    standing request — it fires with the automation switch off, flagged as
+    outside text. The owner's own feedback passes their role, no session level
+    and their actor, so it wakes like a card the owner typed.
 
     created_by is always the channel, whoever the actor: it is the rate-limit
     ledger and tells the board where the card came in."""
