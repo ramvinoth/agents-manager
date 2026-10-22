@@ -35,6 +35,13 @@ HM_REPO_DIR="$(cd "$HM_LIB_DIR/.." && pwd)"
 
 OS="$(uname -s)"
 PORT="${PORT:-8091}"
+# An installed unit already names the service user: keep it. Defaulting to the
+# invoker made `sudo harman update` rewrite the unit to User=root, which has no
+# Postgres role — the viewer crash-looped and the rollback failed with it.
+hm_unit_user() {
+  sed -n 's/^User=//p' /etc/systemd/system/harman-viewer.service 2>/dev/null | head -1 || true
+}
+SERVICE_USER="${SERVICE_USER:-$(hm_unit_user)}"
 SERVICE_USER="${SERVICE_USER:-$(id -un)}"
 HM_APP_DIR="${HM_APP_DIR:-$HM_REPO_DIR}"
 HM_WORKDIR="${HM_WORKDIR:-$HM_APP_DIR}"
