@@ -4,6 +4,7 @@ import { GitSection } from "@/components/GitSection"
 import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
 import { Transcript } from "@/components/Transcript"
+import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
@@ -28,6 +29,7 @@ const FileBrowser = lazy(() =>
 function App() {
   const init = useStore((s) => s.init)
   const turns = useStore((s) => s.turns)
+  const sessionCwd = useStore((s) => s.meta?.cwd)
   const turnsLen = turns.length
   const loading = useStore((s) => s.loading)
   const error = useStore((s) => s.error)
@@ -305,7 +307,9 @@ function App() {
               <div className="flex h-64 items-center justify-center text-sm text-destructive">{error}</div>
             ) : (
               <ErrorBoundary key={currentSessionPath} label="Couldn't render this transcript">
-                <Transcript turns={turns} highlightId={searchOpen ? currentMatch : undefined} />
+                <FileLinkProvider cwd={sessionCwd}>
+                  <Transcript turns={turns} highlightId={searchOpen ? currentMatch : undefined} />
+                </FileLinkProvider>
               </ErrorBoundary>
             )}
             {chatRunning && !error && (

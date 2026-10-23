@@ -66,6 +66,11 @@ export default function Markdown({
 // threading a prop through each.
 const NotesContext = React.createContext<NoteLinkHandlers | undefined>(undefined)
 
+/** Opens a link that names a file rather than a web page ("[report](docs/r.md)"),
+ *  returning false when `href` is not a file link so it opens as a URL instead.
+ *  A chat screen provides it with the session's folder; elsewhere links are URLs. */
+export const FileLinkContext = React.createContext<((href: string) => boolean) | undefined>(undefined)
+
 function Inline({
   spans,
   style,
@@ -79,6 +84,7 @@ function Inline({
 }) {
   const styles = useStyles()
   const notes = useContext(NotesContext)
+  const openFile = useContext(FileLinkContext)
   const t = useTheme()
   return (
     <Text style={style} selectable={selectable} onLongPress={onLongPress}>
@@ -111,7 +117,7 @@ function Inline({
           )
         if (s.t === "link")
           return (
-            <Text key={i} style={styles.mdLink} onPress={() => { if (s.href) Linking.openURL(s.href).catch(() => {}) }}>
+            <Text key={i} style={styles.mdLink} onPress={() => { if (s.href && !openFile?.(s.href)) Linking.openURL(s.href).catch(() => {}) }}>
               {s.s}
             </Text>
           )

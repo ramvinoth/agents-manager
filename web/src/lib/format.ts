@@ -16,8 +16,18 @@ export function fmtTokens(n: number): string {
   return n + ""
 }
 
+/** 512 → "512 B", 9067 → "8.9 KB", 3e6 → "2.9 MB" — same rule as mobile's humanSize. */
 export function fmtBytes(b: number): string {
-  return (b / 1048576).toFixed(1) + " MB"
+  if (!Number.isFinite(b) || b < 0) return ""
+  if (b < 1024) return `${b} B`
+  const units = ["KB", "MB", "GB", "TB"]
+  let v = b / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
 }
 
 export function fmtDuration(ms: number): string {

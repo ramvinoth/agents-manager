@@ -30,5 +30,11 @@ ok("tag inside link text left alone", !h.includes("note-tag"), h)
 h = html("```\n[[Plan]]\n```")
 ok("fenced code untouched", !h.includes("wikilink"), h)
 
+h = html("[R](docs/a.md) [W](https://x.y) [J](javascript:x) [P](//evil.com) [F](file:///a.md)")
+ok("relative link is a file link", h.includes('class="file-link" data-file="docs/a.md"'), h)
+ok("file url is a file link", h.includes('data-file="file:///a.md"'), h)
+ok("web link opens a tab", h.includes('href="https://x.y" target="_blank"'), h)
+ok("javascript and protocol-relative inert", !h.includes("javascript:") && !h.includes("evil.com\""), h)
+
 console.log(`markdown: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

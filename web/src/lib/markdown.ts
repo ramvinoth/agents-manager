@@ -202,11 +202,17 @@ function renderInline(text: string, syntax?: NoteSyntax): string {
   h = h.replace(/^---$/gm, "<hr>")
   if (syntax) h = renderNoteSyntax(h, syntax)
   // Links: allowlist safe schemes (esc has already neutralised quotes/angle
-  // brackets, so no attribute breakout) — block javascript:/data:/etc.
+  // brackets, so no attribute breakout) — block javascript:/data:/etc. A link
+  // with no scheme, or file://, is a file an agent wrote ("docs/report.md"):
+  // it carries its raw href in data-file and the Markdown component opens it
+  // (resolved against the session's folder only when tapped — lib/fileLink).
   h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, text, href) => {
     const url = String(href).trim()
-    const safe = /^(https?:\/\/|mailto:|\/|#)/i.test(url) ? url : "#"
-    return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${text}</a>`
+    if (/^(https?:\/\/|mailto:)/i.test(url)) return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`
+    if (url.startsWith("#")) return `<a href="${url}">${text}</a>`
+    if (/^file:\/\//i.test(url) || !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(url))
+      return `<a href="#" class="file-link" data-file="${url}">${text}</a>`
+    return `<a href="#">${text}</a>`
   })
   h = h.replace(/^(\s*)[-*] (.+)$/gm, "$1<li>$2</li>")
   h = h.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>")

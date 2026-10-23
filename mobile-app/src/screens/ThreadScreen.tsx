@@ -29,6 +29,10 @@ import { offlineCache } from "../api/offlineCache"
 import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
 import { isTransportError, userError } from "../lib/errors"
+import { fileLinkPath } from "../lib/fileLink"
+import { downloadAndShare } from "../lib/fileDownloadNative"
+import { fsScope, HOST_LOCATION } from "../lib/location"
+import { FileLinkContext } from "../components/Markdown"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
 import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/gestures"
@@ -795,6 +799,21 @@ export default function ThreadScreen({ route, navigation }: Props) {
     setMsgAction({ uuid, text, isUser })
   }
 
+  // A reply's link to a file the agent wrote ("[report](docs/r.md)") opens that
+  // file from the session's machine, resolved against the chat's folder. Pure
+  // string work until tapped, so long transcripts pay nothing for it.
+  const openFileLink = useCallback((href: string): boolean => {
+    if (fileLinkPath(href, "/") === null) return false // a web/mail link: open as a URL
+    const file = fileLinkPath(href, cwd)
+    if (!file) {
+      setError("Can't open this file yet: the chat's folder is still loading. Try again in a moment.")
+      return true
+    }
+    setError("")
+    downloadAndShare(fsScope(host, HOST_LOCATION), file).catch((e) => setError(userError(e, "this file", "open")))
+    return true
+  }, [cwd, host])
+
   // Persist the pin list (optimistic) to server session meta.
   function savePins(next: string[]) {
     setPinned(next)
@@ -1037,6 +1056,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           onUnpin={(cur) => togglePin(cur.uuid)}
         />
       ) : null}
+      <FileLinkContext.Provider value={openFileLink}>
       <FlatList
         ref={listRef}
         testID="thread-list"
@@ -1101,6 +1121,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           )
         }
       />
+      </FileLinkContext.Provider>
 
       {/* WhatsApp-style floating day header: fades in while scrolling, shows the
           date of the topmost visible message, auto-hides ~1s after scrolling. */}

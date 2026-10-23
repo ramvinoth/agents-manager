@@ -2,8 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Dimensions, FlatList, PanResponder, RefreshControl, Text, TouchableOpacity, View } from "react-native"
 import * as DocumentPicker from "expo-document-picker"
 import * as ImagePicker from "expo-image-picker"
-import * as FileSystem from "expo-file-system"
-import * as Sharing from "expo-sharing"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Drive, type FileEntry } from "../api/client"
@@ -16,6 +14,7 @@ import { HOST_LOCATION, START_PATH, describeLocation, fsScope, isLiveLocation, t
 import { useHost } from "../lib/useHost"
 import { offerUndo } from "../lib/undo"
 import { userError } from "../lib/errors"
+import { downloadAndShare } from "../lib/fileDownloadNative"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import LocationPicker, { LocationHeaderButton } from "../components/LocationPicker"
 import Icon from "../components/Icon"
@@ -200,19 +199,7 @@ export default function FilesScreen({ navigation }: Props) {
     setBusy(true)
     setError("")
     try {
-      const full = joinPath(path, item.name)
-      const dest = FileSystem.cacheDirectory + encodeURIComponent(item.name)
-      const status = await api.fsDownload(scope, full, dest)
-      if (status >= 400) {
-        // The body on disk is the server's JSON error, not the file: surface
-        // its message and don't leave it in the cache under the file's name.
-        const body = await FileSystem.readAsStringAsync(dest).catch(() => "")
-        await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {})
-        let msg = `Download failed (HTTP ${status})`
-        try { msg = JSON.parse(body).error || msg } catch {}
-        throw new Error(msg)
-      }
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(dest)
+      await downloadAndShare(scope, joinPath(path, item.name))
     } catch (e) {
       setError(userError(e, "this file", "download"))
     } finally {

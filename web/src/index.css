@@ -295,3 +295,5 @@ body {
   background: transparent; color: var(--popover-foreground, #18181b); cursor: pointer;
 }
 .mermaid-dl-menu button:hover { background: var(--accent, #f4f4f5); }
+/* A file an agent linked (lib/fileLink): opens in the preview, not a new tab. */
+.markdown-content a.file-link { text-decoration-style: dotted; cursor: pointer; }
