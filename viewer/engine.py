@@ -1283,6 +1283,10 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
         job = CHAT_JOBS.get(session_id)
         if not job:
             return {"behavior": "deny", "message": "Session ended"}
+        # The owner granted this session bypass. In plan mode the CLI still routes
+        # tools here, but the grant holds: only the plan itself is a decision.
+        if job.get("mode") in ("bypass", "bypassPermissions"):
+            return {"behavior": "allow"}
         pid = secrets.token_hex(8)
         ev = threading.Event()
         job.setdefault("pending_approvals", []).append(
