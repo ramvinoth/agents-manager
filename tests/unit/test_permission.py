@@ -126,3 +126,18 @@ class TestDecidePermission:
             assert decide_permission("s6", "missing", "allow") is False
         finally:
             _teardown("s6")
+
+
+def test_permission_args_bypass_blocks_self_downgrade_to_plan():
+    # A bypass run must not be able to enter plan mode on its own — plan mode
+    # re-gates every tool and the owner's bypass grant stops holding.
+    args = engine.permission_args("bypass")
+    assert "--dangerously-skip-permissions" in args
+    assert "--disallowedTools=EnterPlanMode" in args
+    assert engine.permission_args("bypassPermissions") == args
+
+
+def test_permission_args_other_modes_keep_plan_mode():
+    for mode in ("default", "acceptEdits", "plan"):
+        assert engine.permission_args(mode) == ["--permission-mode", mode]
+    assert engine.permission_args("") == []

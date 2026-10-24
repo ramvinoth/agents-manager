@@ -1032,6 +1032,20 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
+def permission_args(mode):
+    """CLI flags for a run's permission mode.
+
+    Bypass also removes EnterPlanMode: the agent calling it switches the live run
+    into plan mode, where every non-read-only tool falls through to the permission
+    prompt — so an owner-granted bypass session would start asking again until it
+    called ExitPlanMode (seen in a real transcript). The owner's grant must hold."""
+    if mode in ("bypass", "bypassPermissions"):
+        return ["--dangerously-skip-permissions", "--disallowedTools=EnterPlanMode"]
+    if mode in ("acceptEdits", "plan", "default"):
+        return ["--permission-mode", mode]
+    return []
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -1059,12 +1073,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
-    if mode in ("bypass", "bypassPermissions"):
-        cmd.append("--dangerously-skip-permissions")
-    elif mode in ("acceptEdits", "plan"):
-        cmd += ["--permission-mode", mode]
-    elif mode == "default":
-        cmd += ["--permission-mode", "default"]
+    cmd += permission_args(mode)
     # Always attach the viewer permission tool. In "default" mode it gates each
     # tool call (Allow/Deny); in every mode it is ALSO how AskUserQuestion reaches
     # the user (the CLI routes AUQ's checkPermissions "ask" to this tool, even under
