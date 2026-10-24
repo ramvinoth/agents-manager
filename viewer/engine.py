@@ -1469,6 +1469,20 @@ def pending_approvals_all_public():
     return out
 
 
+def permission_args(mode):
+    """CLI flags for a run's permission mode.
+
+    Bypass also removes EnterPlanMode: the agent calling it switches the live run
+    into plan mode, where every non-read-only tool falls through to the permission
+    prompt — so an owner-granted bypass session would start asking again until it
+    called ExitPlanMode (seen in a real transcript). The owner's grant must hold."""
+    if mode in ("bypass", "bypassPermissions"):
+        return ["--dangerously-skip-permissions", "--disallowedTools=EnterPlanMode"]
+    if mode in ("acceptEdits", "plan", "default"):
+        return ["--permission-mode", mode]
+    return []
+
+
 def effective_permission_mode(session_id, requested):
     """The permission mode a run of `session_id` actually starts with.
 
@@ -1590,12 +1604,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
-    if mode in ("bypass", "bypassPermissions"):
-        cmd.append("--dangerously-skip-permissions")
-    elif mode in ("acceptEdits", "plan"):
-        cmd += ["--permission-mode", mode]
-    elif mode == "default":
-        cmd += ["--permission-mode", "default"]
+    cmd += permission_args(mode)
     if effort and effort in ("low", "medium", "high", "xhigh", "max") and not provider_env:
         cmd += ["--effort", effort]
     # Always attach the viewer permission tool. In "default" mode it gates each
