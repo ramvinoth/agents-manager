@@ -69,6 +69,27 @@ class TestRegisterPermission:
         finally:
             _teardown("s3")
 
+    def test_bypass_session_allows_without_asking(self):
+        _fresh_job("s5")
+        CHAT_JOBS["s5"]["mode"] = "bypass"
+        try:
+            res = register_permission("s5", "tok", "Bash", {"command": "ls"}, "u5")
+            assert res == {"behavior": "allow"}
+            assert pending_approvals_public("s5") == []
+        finally:
+            _teardown("s5")
+
+    def test_default_session_still_asks(self, monkeypatch):
+        _fresh_job("s6")
+        CHAT_JOBS["s6"]["mode"] = "default"
+        monkeypatch.setattr(engine, "PERM_TIMEOUT", 0.05)
+        try:
+            res = register_permission("s6", "tok", "Bash", {}, "u6")
+            assert res["behavior"] == "deny"
+            assert "timed out" in res["message"].lower()
+        finally:
+            _teardown("s6")
+
     def test_timeout_denies(self, monkeypatch):
         _fresh_job("s4")
         monkeypatch.setattr(engine, "PERM_TIMEOUT", 0.05)
