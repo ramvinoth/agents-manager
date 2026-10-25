@@ -18,10 +18,13 @@ import { useStyles } from "../lib/styles"
 export default function SheetModal({
   visible,
   onClose,
+  onClosed,
   children,
 }: {
   visible: boolean
   onClose: () => void
+  /** The close animation finished and the Modal is gone — the safe moment to present another one. */
+  onClosed?: () => void
   children: React.ReactNode
 }) {
   const styles = useStyles()
@@ -31,6 +34,8 @@ export default function SheetModal({
   // exit animation never renders (it pops shut). `mounted` outlives the close
   // animation and unmounts only when it finishes.
   const [mounted, setMounted] = useState(visible)
+  const onClosedRef = useRef(onClosed)
+  onClosedRef.current = onClosed
 
   useEffect(() => {
     if (visible) setMounted(true)
@@ -38,7 +43,7 @@ export default function SheetModal({
       toValue: visible ? 1 : 0,
       duration: visible ? 220 : 160,
       useNativeDriver: true,
-    }).start(({ finished }) => { if (finished && !visible) setMounted(false) })
+    }).start(({ finished }) => { if (finished && !visible) { setMounted(false); onClosedRef.current?.() } })
   }, [visible, anim])
 
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [600, 0] })

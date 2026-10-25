@@ -25,6 +25,7 @@ import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
 import ProvidersScreen from "./src/screens/ProvidersScreen"
 import UndoToast from "./src/components/UndoToast"
+import ActionSheetHost from "./src/components/ActionSheetHost"
 import IntegrationsScreen from "./src/screens/IntegrationsScreen"
 import CalendarScreen from "./src/screens/CalendarScreen"
 import KanbanScreen from "./src/screens/KanbanScreen"
@@ -290,6 +291,7 @@ export default function App() {
           </Stack.Navigator>
         </NavigationContainer>
         <UndoToast />
+        <ActionSheetHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   )

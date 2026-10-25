@@ -135,7 +135,7 @@ const MARKET_MCP = [
   { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
 ]
 
-async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, agents = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   // `reply` swaps the newest agent message, so a spec can render any markdown in a real bubble.
@@ -155,6 +155,14 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
   } : undefined
   const auditScenario = audit ? createAuditScenario() : null
   const marketCaps = { skills: [], mcp: [] }
+  // Mirrors viewer/agent_templates: one personal agent the owner may edit, with
+  // its own skill and MCP server; update writes are recorded and applied.
+  const agentRows = agents ? [{ id: 7, name: "Writing Coach", description: "Edits for clarity, keeps my voice", category: "personal", icon: "sparkle",
+    system_prompt: "Edit for clarity; keep my voice.", goal: "", ai: null, jobs: [{ prompt: "Summarise this week's drafts", cron: "0 9 * * 1" }],
+    plugin: "", lens: "", level: "ic", is_builtin: false, created_by: "fixture", created_at: 1, owner_user_id: 1, plugins: [], editable: true }] : []
+  const agentExtras = { catalog: [{ name: "github", description: "Issues and PRs" }],
+    skills: [{ name: "weekly-review", description: "Reviews the week's drafts", source: "agent", path: "/fixture/SKILL.md", editable: true }],
+    mcp: [{ name: "notes", scope: "agent", transport: "stdio", target: "npx", config: {}, editable: true }] }
   const state = {
     defaults: { revision: 0, configured: false, selection: clone(initialSelection), capabilities },
     sessions: { [SESSION]: { revision: 0, selection: clone(initialSelection), capabilities } },
@@ -353,6 +361,14 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       if (body.id !== "pdf") return send({ error: "No such skill" }, 404)
       marketCaps.skills.push({ name: "pdf", description: "PDF work", source: body.scope, path: "/fixture/skills/pdf/SKILL.md", editable: true })
       return send({ installed: "pdf", scope: body.scope })
+    }
+    if (agents && route === "GET /api/agent-templates") return send(agentRows)
+    if (agents && route === "GET /api/agent-templates/extras") return send(url.searchParams.get("id") ? agentExtras : { ...agentExtras, skills: [], mcp: [] })
+    if (agents && route === "POST /api/agent-templates/update") {
+      const row = agentRows.find(r => r.id === body.id)
+      if (!row) return send({ error: "No such agent" }, 404)
+      Object.assign(row, body)
+      return send({ template: row })
     }
     // Usage telemetry (src/lib/usage.ts) is the owner's own screen-open counter, not a mutation.
     if (route === "POST /api/usage") return send({ ok: true })
