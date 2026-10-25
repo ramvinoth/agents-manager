@@ -14,6 +14,7 @@ import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
 import { tap } from "../lib/haptics"
+import { showActions } from "../lib/actionSheet"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
@@ -167,7 +168,6 @@ export default function KanbanScreen({ route, navigation }: Props) {
 
   const cockpit = useDecisionCockpit(navigation, { onResolved: load, guard: isCurrent })
   const openCard = cockpit.openCard
-  // Open the cockpit at the tapped item over the queue as it stands now.
   // Delete this project's board. Same contract as the web dialog: its cards (and
   // notes) move to a project the owner picks, columns and intake channels go for
   // good, and a chat still working in the folder gets a fresh empty board.
@@ -212,6 +212,7 @@ export default function KanbanScreen({ route, navigation }: Props) {
     ])
   }, [projectId, cards.length, route.params?.title, navigation])
 
+  // Open the cockpit at the tapped item over the queue as it stands now.
   const openCockpit = useCallback((index: number) => cockpit.open(decisions, index), [cockpit.open, decisions])
 
   async function addCard(columnId: number) {
@@ -275,8 +276,14 @@ export default function KanbanScreen({ route, navigation }: Props) {
           </Pressable>
         ) : null}
         {projectId !== undefined ? (
-          <Pressable onPress={deleteBoard} hitSlop={8} testID="kanban-delete-board" accessibilityLabel="Delete board">
-            <Icon name="trash" size={14} color={t.textMuted} />
+          // A destructive action never sits bare beside search: it lives behind the board's menu.
+          <Pressable
+            onPress={() => showActions(route.params?.title || "Board", [{ text: "Delete board…", destructive: true, onPress: deleteBoard }])}
+            hitSlop={8}
+            testID="kanban-board-menu"
+            accessibilityLabel="Board actions"
+          >
+            <Icon name="more" size={14} color={t.textMuted} />
           </Pressable>
         ) : null}
       </View>
