@@ -15,9 +15,9 @@ async function reveal(id) {
 }
 const shot = async name => { if (process.env.E2E_SHOT_DIR) await browser.saveScreenshot(`${process.env.E2E_SHOT_DIR}/agent-edit-${name}.png`) }
 
-// Agents → Edit: the grouped-inset screen shows every setting as a row, the
-// level is a segmented control, a job's row offers Edit / Remove in one sheet,
-// and Save sends exactly the changed agent.
+// Agents → Edit: a short grouped-inset list of settings rows. Skills and MCP
+// tools drill into their own screen, Board access picks from the app sheet, a
+// job's row offers Edit / Remove in one sheet, and Save sends exactly the changed agent.
 describe("Edit agent — grouped settings rows", () => {
   let fixture
   const updates = () => fixture.requests.filter(r => r.route === "POST /api/agent-templates/update")
@@ -74,18 +74,31 @@ describe("Edit agent — grouped settings rows", () => {
     await browser.waitUntil(async () => /Category, Design/.test(await $("~agent-category").getAttribute("label")))
   })
 
-  it("lists the agent's own skill and MCP tool with an Add row each", async () => {
-    await reveal("agent-skill-weekly-review")
+  it("Skills and MCP tools drill into their own screen, each with an Add row", async () => {
+    await reveal("agent-skills-row")
+    await tap("agent-skills-row")
+    await $("~agent-skill-weekly-review").waitForDisplayed()
     await $("~agent-add-skill").waitForDisplayed()
-    await reveal("agent-mcp-notes")
+    assert.equal(await $("~agent-tools-retry").isExisting(), false, "Skills loaded")
+    await shot("skills")
+    await browser.back()
+    await reveal("agent-mcps-row")
+    await tap("agent-mcps-row")
+    await $("~agent-mcp-notes").waitForDisplayed()
     await $("~agent-add-mcp").waitForDisplayed()
-    await shot("uses")
+    await shot("mcp")
+    await browser.back()
+    await $("~agent-mcps-row").waitForDisplayed()
   })
 
-  it("level is a segmented control and a job row removes through its sheet, then Save writes once", async () => {
-    await reveal("agent-level-lead")
-    await tap("agent-level-lead")
-    assert.match(await $("~agent-level-reach").getText(), /^Workspace:/)
+  it("Board access picks from the sheet and a job row removes through its sheet, then Save writes once", async () => {
+    await reveal("agent-level")
+    await tap("agent-level")
+    await $("~action-sheet").waitForDisplayed()
+    await $("~Own work  ✓").waitForDisplayed()
+    await tap("Workspace")
+    await $("~action-sheet").waitForExist({ reverse: true })
+    await browser.waitUntil(async () => /Board access, Workspace/.test(await $("~agent-level").getAttribute("label")))
     await reveal("agent-job-0")
     await shot("level-jobs")
     await tap("agent-job-0")

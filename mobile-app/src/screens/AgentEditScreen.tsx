@@ -1,16 +1,14 @@
 import React, { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
-import { UNSTABLE_usePreventRemove as usePreventRemove, type NavigationAction } from "@react-navigation/native"
+import { UNSTABLE_usePreventRemove as usePreventRemove, useFocusEffect, type NavigationAction } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type AgentExtras, type McpServer, type Provider, type Skill } from "../api/client"
-import { McpEditor, SkillEditor } from "../components/CapabilitiesEditors"
-import MarketplaceSheet from "../components/MarketplaceSheet"
+import { api, type AgentExtras, type Provider } from "../api/client"
 import ProviderPicker from "../components/ProviderPicker"
 import HeaderButton from "../components/HeaderButton"
 import Icon, { type IconName } from "../components/Icon"
 import JobScheduler from "../components/JobScheduler"
-import { draftBlocker, draftFrom, draftPayload, pickable, pluginLabel, pluginRows, sameDraft, type AgentDraft } from "../lib/agentEdit"
+import { draftBlocker, draftFrom, draftPayload, pluginLabel, pluginRows, sameDraft, type AgentDraft } from "../lib/agentEdit"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { showActions } from "../lib/actionSheet"
 import { HARMAN_LEVELS, LEVEL_NAME, LEVEL_REACH } from "../lib/harmanLevel"
@@ -56,15 +54,12 @@ export default function AgentEditScreen({ route, navigation }: Props) {
   const blocker = draftBlocker(d)
   const [extras, setExtras] = useState<AgentExtras | null>(null)
   const [extrasError, setExtrasError] = useState("")
-  const [skillEdit, setSkillEdit] = useState<Skill | null | undefined>(undefined)
-  const [mcpEdit, setMcpEdit] = useState<McpServer | null | undefined>(undefined)
-  const [market, setMarket] = useState<"skills" | "mcp" | null>(null)
-  const [fromMac, setFromMac] = useState<"skill" | "mcp" | null>(null)
   const loadExtras = useCallback(() => {
     setExtrasError("")
     api.agentTemplateExtras(existing?.id).then(setExtras).catch((e) => setExtrasError(userError(e, "plugins, skills and MCP")))
   }, [existing?.id])
-  useEffect(loadExtras, [loadExtras])
+  // On focus: the tools screen changes the counts this shows.
+  useFocusEffect(loadExtras)
   const togglePlugin = (name: string) =>
     setD((prev) => ({ ...prev, plugins: prev.plugins.includes(name) ? prev.plugins.filter((p) => p !== name) : [...prev.plugins, name] }))
   const [pluginsOpen, setPluginsOpen] = useState(false)
@@ -145,11 +140,11 @@ export default function AgentEditScreen({ route, navigation }: Props) {
   // iOS grouped-inset building blocks, the same rows Profile → AI uses: a
   // header above a group, a footer below it, rows separated by hairlines.
   const head = (title: string) => <Text accessibilityRole="header" style={styles.aiSection}>{title}</Text>
-  const foot = (text: string, testID?: string) => <Text testID={testID} style={styles.aiSectionHint}>{text}</Text>
+  const foot = (text: string) => <Text style={styles.aiSectionHint}>{text}</Text>
   const sep = (first: boolean) => (first ? null : styles.aiRowSep)
   // A setting that opens somewhere else: label left, current value + chevron right.
   const valueRow = (o: { testID: string; title: string; value?: string; sub?: string; onPress: () => void; first?: boolean; disabled?: boolean }) => (
-    <TouchableOpacity testID={o.testID} activeOpacity={0.65} disabled={o.disabled} onPress={o.onPress}
+    <TouchableOpacity key={o.testID} testID={o.testID} activeOpacity={0.65} disabled={o.disabled} onPress={o.onPress}
       accessibilityRole="button" accessibilityLabel={`${o.title}${o.value ? `, ${o.value}` : ""}`}
       style={[styles.aiRow, sep(!!o.first), o.disabled && styles.faded]}>
       <View style={styles.flex1}>
@@ -160,34 +155,28 @@ export default function AgentEditScreen({ route, navigation }: Props) {
       <Icon name="chevronRight" size={14} color={t.textMuted} />
     </TouchableOpacity>
   )
-  // A verb at the end of a list ("Add skill…"), in the accent colour like iOS.
-  const actionRow = (testID: string, label: string, onPress: () => void, first: boolean) => (
-    <TouchableOpacity testID={testID} activeOpacity={0.65} onPress={onPress} accessibilityRole="button" style={[styles.aiRow, sep(first)]}>
-      <Icon name="add" size={16} color={t.accent} />
-      <Text style={styles.aeAction}>{label}</Text>
-    </TouchableOpacity>
-  )
-  // A field with its caption inside the row, for the longer text.
-  const field = (id: string, caption: string, k: "system_prompt" | "goal", placeholder: string, first: boolean, multiline = false) => (
-    <View style={[styles.aiRow, sep(first), { flexDirection: "column", alignItems: "stretch", gap: 0 }]}>
-      <Text style={styles.aeFieldLabel}>{caption}</Text>
-      <TextInput testID={id} accessibilityLabel={caption} style={[styles.aeInput, multiline ? { minHeight: 88, textAlignVertical: "top" } : null]}
-        placeholder={placeholder} placeholderTextColor={t.textMuted + "99"} multiline={multiline}
-        value={d[k]} onChangeText={(v) => set(k, v)} />
-    </View>
-  )
-  const [iconsOpen, setIconsOpen] = useState(!existing)
+  const [iconsOpen, setIconsOpen] = useState(false)
+  const [textEdit, setTextEdit] = useState<"system_prompt" | "goal" | null>(null)
   const category = TEMPLATE_CATEGORIES[d.category]
+  const count = (n: number | undefined) => (n === undefined ? "Loading…" : n ? `${n}` : "None")
+  const toolsRow = (kind: "skill" | "mcp") => {
+    const n = kind === "skill" ? extras?.skills.length : extras?.mcp.length
+    return valueRow({ testID: `agent-${kind}s-row`, title: kind === "skill" ? "Skills" : "MCP tools",
+      disabled: !existing,
+      value: existing ? count(n) : undefined,
+      sub: !existing ? "After you tap Create" : kind === "skill" ? "Instructions it can call by name" : "Databases, web APIs and other tools",
+      onPress: () => existing && navigation.navigate("AgentTools", { id: existing.id, name: existing.name, kind }) })
+  }
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
-      {created ? <Text testID="agent-created" style={styles.aeNotice}>Created. Add its own skills and MCP tools below, or go back and start a chat with it.</Text> : null}
+      {created ? <Text testID="agent-created" style={styles.aeNotice}>Created. You can now give it its own skills and MCP tools.</Text> : null}
       {error || (blocker && d.name) ? (
         <Text testID="agent-error" accessibilityRole="alert" style={[styles.error, { marginHorizontal: 30, marginTop: 12 }]}>{error || blocker}</Text>
       ) : null}
 
-      {/* Who it is: the big icon you recognise it by, then its name — like a contact card. */}
+      {/* Who it is, like a contact card: the icon you recognise it by (tap to change), its name, one line on what it's for. */}
       <View style={styles.aeHero}>
         <TouchableOpacity testID="agent-icon-change" accessibilityRole="button" accessibilityLabel={`Icon ${d.icon}. Change icon`}
           activeOpacity={0.7} onPress={() => setIconsOpen((o) => !o)} style={styles.aeHeroIcon}>
@@ -203,7 +192,7 @@ export default function AgentEditScreen({ route, navigation }: Props) {
             const on = d.icon === name
             return (
               <TouchableOpacity key={name} testID={`agent-icon-${name}`} accessibilityLabel={`Icon ${name}`} accessibilityState={{ selected: on }}
-                onPress={() => set("icon", name)} style={[styles.aeIconCell, { backgroundColor: on ? t.accent : t.chipBg }]}>
+                onPress={() => { set("icon", name); setIconsOpen(false) }} style={[styles.aeIconCell, { backgroundColor: on ? t.accent : t.chipBg }]}>
                 <Icon name={name} size={20} color={on ? t.onAccent : t.textMuted} />
               </TouchableOpacity>
             )
@@ -226,35 +215,29 @@ export default function AgentEditScreen({ route, navigation }: Props) {
             text: `${TEMPLATE_CATEGORIES[k].label}${k === d.category ? "  ✓" : ""}`, onPress: () => set("category", k),
           }))) })}
       </View>
-      {foot("How it shows on the Agents tab.")}
 
-      {head("HOW IT WORKS")}
+      {head("ROLE")}
       <View style={styles.aiGroup}>
-        {field("agent-system-prompt", "Instructions", "system_prompt", "How it should behave, e.g. \"Edit for clarity; keep my voice\"", true, true)}
-        {field("agent-goal", "Goal", "goal", "What counts as done — it checks this before stopping", false)}
-      </View>
-      <View style={styles.aiGroup}>
+        {valueRow({ testID: "agent-system-prompt-row", title: "Instructions", first: true, onPress: () => setTextEdit("system_prompt"),
+          sub: d.system_prompt.trim() || "How it should behave", value: d.system_prompt.trim() ? undefined : "Not set" })}
+        {valueRow({ testID: "agent-goal-row", title: "Goal", onPress: () => setTextEdit("goal"),
+          sub: d.goal.trim() || "What counts as done", value: d.goal.trim() ? undefined : "Not set" })}
         {aiErrorText ? (
-          <TouchableOpacity testID="agent-ai-retry" style={styles.aiRow} onPress={loadAI}>
+          <TouchableOpacity testID="agent-ai-retry" style={[styles.aiRow, styles.aiRowSep]} onPress={loadAI}>
             <Text style={[styles.error, styles.flex1]}>{aiErrorText} Tap to try again.</Text>
           </TouchableOpacity>
-        ) : valueRow({ testID: "agent-ai-row", title: "AI", first: true, disabled: !aiDefaults, onPress: () => setAIOpen(true),
+        ) : valueRow({ testID: "agent-ai-row", title: "AI", disabled: !aiDefaults, onPress: () => setAIOpen(true),
           value: !aiDefaults ? "Loading…" : aiSummary(d.ai ?? aiDefaults.selection, providers),
-          sub: !aiDefaults ? undefined : d.ai ? "Its own — changing your default won't change it." : "Follows your default in Profile → AI." })}
+          sub: !aiDefaults ? undefined : d.ai ? "Its own" : "Your default" })}
         {d.ai && !aiErrorText ? (
           <TouchableOpacity testID="agent-ai-default" activeOpacity={0.65} onPress={() => set("ai", null)} style={[styles.aiRow, styles.aiRowSep]}>
             <Text style={styles.aeAction}>Use my default AI</Text>
           </TouchableOpacity>
         ) : null}
       </View>
-      {foot("Every chat from this agent starts with these; a chat can still change its own copy.")}
-      {aiOpen && aiDefaults ? (
-        <ProviderPicker config={{ ...aiDefaults, selection: d.ai ?? aiDefaults.selection }} scope={{ host: "local" }} providers={providers}
-          title="AI for this agent" localOnly hint="Every new chat from this agent starts on this. Your default AI is unchanged."
-          onSave={(c) => set("ai", c.selection)} onClose={() => setAIOpen(false)} />
-      ) : null}
+      {foot("New chats start with these; a chat can change its own copy.")}
 
-      {head("WHAT IT CAN USE")}
+      {head("TOOLS")}
       <View style={styles.aiGroup}>
         {extrasError ? (
           <TouchableOpacity testID="agent-extras-retry" style={styles.aiRow} onPress={loadExtras}>
@@ -262,69 +245,19 @@ export default function AgentEditScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         ) : valueRow({ testID: "agent-plugins-row", title: "Plugins", first: true, disabled: !extras, onPress: () => setPluginsOpen(true),
           value: !extras ? "Loading…" : d.plugins.length ? `${d.plugins.length} on` : "None",
-          sub: !extras ? undefined : d.plugins.length ? d.plugins.map(pluginLabel).join(", ") : `Ready-made kits of skills and tools · ${extras.catalog.length} available` })}
+          sub: !extras ? undefined : d.plugins.length ? d.plugins.map(pluginLabel).join(", ") : "Ready-made kits of skills and tools" })}
+        {toolsRow("skill")}
+        {toolsRow("mcp")}
       </View>
-      {pluginsOpen && extras ? <PluginPicker catalog={extras.catalog} on={d.plugins} onToggle={togglePlugin} onClose={() => setPluginsOpen(false)} /> : null}
 
-      {(["skill", "mcp"] as const).map((kind) => {
-        const rows: (Skill | McpServer)[] = (kind === "skill" ? extras?.skills : extras?.mcp) ?? []
-        const noun = kind === "skill" ? "skill" : "MCP tool"
-        return (
-          <React.Fragment key={kind}>
-            {head(kind === "skill" ? "SKILLS" : "MCP TOOLS")}
-            {existing ? (
-              <View style={styles.aiGroup}>
-                {rows.map((r, i) => (
-                  <TouchableOpacity key={r.name} testID={`agent-${kind}-${r.name}`} activeOpacity={0.65} style={[styles.aiRow, sep(i === 0)]}
-                    onPress={() => (kind === "skill" ? setSkillEdit(r as Skill) : setMcpEdit(r as McpServer))}>
-                    <Icon name={kind === "skill" ? "sparkle" : "tool"} size={16} color={t.accent} />
-                    <View style={styles.flex1}>
-                      <Text style={styles.aiRowTitle} numberOfLines={1}>{kind === "skill" ? `/${r.name}` : r.name}</Text>
-                      {kind === "skill" ? ((r as Skill).description ? <Text style={styles.aiRowSub} numberOfLines={2}>{(r as Skill).description}</Text> : null)
-                        : <Text style={styles.aiRowSub} numberOfLines={1}>{(r as McpServer).transport}{(r as McpServer).target ? ` · ${(r as McpServer).target}` : ""}</Text>}
-                    </View>
-                    <Icon name="chevronRight" size={14} color={t.textMuted} />
-                  </TouchableOpacity>
-                ))}
-                {actionRow(`agent-add-${kind}`, `Add ${noun}…`, () => showActions(`Add ${kind === "skill" ? "a skill" : "an MCP tool"}`, [
-                  { text: kind === "skill" ? "Write a new skill" : "Add manually", onPress: () => (kind === "skill" ? setSkillEdit(null) : setMcpEdit(null)) },
-                  { text: "From this Mac", onPress: () => setFromMac(kind) },
-                  { text: "Marketplace", onPress: () => setMarket(kind === "skill" ? "skills" : "mcp") },
-                ]), !rows.length)}
-              </View>
-            ) : null}
-            {foot(!existing ? `Tap Create first; adding its own ${noun}s unlocks right after.`
-              : kind === "skill" ? "Instructions a chat can call by name, e.g. /weekly-review. Each new chat gets a copy."
-              : "Tools a chat can use, e.g. a database or a web API. Each new chat gets a copy.")}
-          </React.Fragment>
-        )
-      })}
-      {existing && skillEdit !== undefined ? <SkillEditor skill={skillEdit} host="local" agent={existing.id} onClose={() => setSkillEdit(undefined)} onSaved={loadExtras} /> : null}
-      {existing && mcpEdit !== undefined ? <McpEditor server={mcpEdit} host="local" agent={existing.id} onClose={() => setMcpEdit(undefined)} onSaved={loadExtras} /> : null}
-      {existing && market ? <MarketplaceSheet kind={market} agent={{ id: existing.id, name: existing.name }} onClose={() => setMarket(null)} onInstalled={loadExtras} /> : null}
-      {existing && fromMac && extras ? (
-        <FromThisMac kind={fromMac} agentId={existing.id} onAgent={fromMac === "skill" ? extras.skills : extras.mcp}
-          onClose={() => setFromMac(null)} onAdded={loadExtras} />
-      ) : null}
-
-      {head("ON THE BOARD, IT MAY CHANGE")}
-      <View style={styles.aiSeg} testID="agent-level">
-        {HARMAN_LEVELS.map((v) => {
-          const on = v === d.level
-          return (
-            <TouchableOpacity key={v} testID={`agent-level-${v}`} accessibilityRole="button" accessibilityState={{ selected: on }}
-              onPress={() => set("level", v)} style={[styles.aiSegItem, on && styles.aiSegItemActive]}>
-              <Text style={[styles.segText, on && styles.segTextActive]} numberOfLines={1}>{LEVEL_NAME[v]}</Text>
-            </TouchableOpacity>
-          )
-        })}
-      </View>
-      {foot(`${LEVEL_NAME[d.level]}: ${LEVEL_REACH[d.level]}. Anything beyond that waits for your approval.`, "agent-level-reach")}
-
-      {head("SCHEDULED JOBS")}
+      {head("ON ITS OWN")}
       <View style={styles.aiGroup}>
+        {valueRow({ testID: "agent-level", title: "Board access", first: true, value: LEVEL_NAME[d.level], sub: LEVEL_REACH[d.level],
+          onPress: () => showActions("Board access", HARMAN_LEVELS.map((v) => ({
+            text: `${LEVEL_NAME[v]}${v === d.level ? "  ✓" : ""}`, onPress: () => set("level", v),
+          }))) })}
         {d.jobs.map((job, i) => (
-          <TouchableOpacity key={i} testID={`agent-job-${i}`} activeOpacity={0.65} style={[styles.aiRow, sep(i === 0)]}
+          <TouchableOpacity key={i} testID={`agent-job-${i}`} activeOpacity={0.65} style={[styles.aiRow, styles.aiRowSep]}
             onPress={() => showActions(job.prompt, [
               { text: "Edit job", onPress: () => setJobForm(i) },
               { text: "Remove job", destructive: true, onPress: () => set("jobs", d.jobs.filter((_, j) => j !== i)) },
@@ -337,9 +270,33 @@ export default function AgentEditScreen({ route, navigation }: Props) {
             <Icon name="chevronRight" size={14} color={t.textMuted} />
           </TouchableOpacity>
         ))}
-        {actionRow("agent-add-job", "Add job", () => setJobForm(-1), !d.jobs.length)}
+        <TouchableOpacity testID="agent-add-job" activeOpacity={0.65} onPress={() => setJobForm(-1)} accessibilityRole="button" style={[styles.aiRow, styles.aiRowSep]}>
+          <Icon name="add" size={16} color={t.accent} />
+          <Text style={styles.aeAction}>Add scheduled job</Text>
+        </TouchableOpacity>
       </View>
-      {foot("Every chat started from this agent comes back on these schedules — e.g. a daily summary.")}
+      {foot("Beyond its access, it asks you first. Jobs bring each of its chats back on a schedule, e.g. a daily summary.")}
+
+      {existing ? (
+        <View style={[styles.aiGroup, { marginTop: 32 }]}>
+          <TouchableOpacity testID="agent-delete" accessibilityRole="button" style={[styles.aiRow, { justifyContent: "center" }]} onPress={remove} disabled={busy}>
+            <Text style={{ color: t.danger, fontSize: 16 }}>Delete agent</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {aiOpen && aiDefaults ? (
+        <ProviderPicker config={{ ...aiDefaults, selection: d.ai ?? aiDefaults.selection }} scope={{ host: "local" }} providers={providers}
+          title="AI for this agent" localOnly hint="Every new chat from this agent starts on this. Your default AI is unchanged."
+          onSave={(c) => set("ai", c.selection)} onClose={() => setAIOpen(false)} />
+      ) : null}
+      {pluginsOpen && extras ? <PluginPicker catalog={extras.catalog} on={d.plugins} onToggle={togglePlugin} onClose={() => setPluginsOpen(false)} /> : null}
+      {textEdit ? (
+        <TextSheet title={textEdit === "goal" ? "Goal" : "Instructions"} value={d[textEdit]} testID={textEdit === "goal" ? "agent-goal" : "agent-system-prompt"}
+          hint={textEdit === "goal" ? "What counts as done. It checks this before it stops."
+            : "How it should behave, e.g. \"Edit for clarity; keep my voice.\""}
+          onDone={(v) => set(textEdit, v)} onClose={() => setTextEdit(null)} />
+      ) : null}
       <JobScheduler
         visible={jobForm !== -2}
         styles={styles}
@@ -352,85 +309,30 @@ export default function AgentEditScreen({ route, navigation }: Props) {
           setJobForm(-2)
         }}
       />
-
-      {existing ? (
-        <View style={[styles.aiGroup, { marginTop: 32 }]}>
-          <TouchableOpacity testID="agent-delete" accessibilityRole="button" style={[styles.aiRow, { justifyContent: "center" }]} onPress={remove} disabled={busy}>
-            <Text style={{ color: t.danger, fontSize: 16 }}>Delete agent</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
     </ScrollView>
   )
 }
 
-/** The skills or MCP servers already set up on this Mac, to copy onto the agent
- *  in one tap. A skill is copied whole (scripts too); an MCP server by its config. */
-function FromThisMac({ kind, agentId, onAgent, onClose, onAdded }: {
-  kind: "skill" | "mcp"; agentId: number; onAgent: { name: string }[]; onClose: () => void; onAdded: () => void
+/** Long text gets the whole screen to write in; Cancel keeps what was there. */
+function TextSheet({ title, value, hint, testID, onDone, onClose }: {
+  title: string; value: string; hint: string; testID: string; onDone: (v: string) => void; onClose: () => void
 }) {
   const styles = useStyles()
   const t = useTheme()
-  const [rows, setRows] = useState<(Skill | McpServer)[] | null>(null)
-  const [error, setError] = useState("")
-  const [busy, setBusy] = useState("")
-  const what = kind === "skill" ? "skills" : "MCP tools"
-  const load = useCallback(() => {
-    setError(""); setRows(null)
-    api.capabilities("local")
-      .then((c) => setRows(kind === "skill" ? pickable(c.skills, onAgent) : pickable(c.mcp, onAgent)))
-      .catch((e) => setError(userError(e, `this Mac's ${what}`)))
-  }, [kind, onAgent, what])
-  useEffect(load, [load])
-
-  async function add(r: Skill | McpServer) {
-    setBusy(r.name); setError("")
-    try {
-      await api.agentTemplateExtra(kind === "skill"
-        ? { id: agentId, kind, name: r.name, from_path: (r as Skill).path }
-        : { id: agentId, kind, name: r.name, config: (r as McpServer).config })
-      onAdded(); onClose()
-    } catch (e) {
-      setError(userError(e, r.name, "add"))
-    } finally {
-      setBusy("")
-    }
-  }
-
+  const [text, setText] = useState(value)
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.page}>
         <View style={{ flexDirection: "row", alignItems: "center", padding: 16, paddingBottom: 8 }}>
-          <Text style={{ flex: 1, fontSize: 18, fontWeight: "700", color: t.text }}>{kind === "skill" ? "Skills" : "MCP tools"} on this Mac</Text>
-          <TouchableOpacity testID="frommac-close" onPress={onClose} hitSlop={10}><Icon name="close" size={22} color={t.textMuted} /></TouchableOpacity>
-        </View>
-        <Text style={[styles.hint, { paddingHorizontal: 16 }]}>Tap one to give this agent its own copy. Later changes on the Mac don't reach the copy.</Text>
-        {error ? (
-          <TouchableOpacity testID="frommac-retry" onPress={load} style={{ padding: 16 }}>
-            <Text testID="frommac-error" style={styles.error}>{error} Tap to try again.</Text>
+          <TouchableOpacity testID={`${testID}-cancel`} onPress={onClose} hitSlop={10}><Text style={{ color: t.accent, fontSize: 17 }}>Cancel</Text></TouchableOpacity>
+          <Text style={{ flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600", color: t.text }}>{title}</Text>
+          <TouchableOpacity testID={`${testID}-done`} onPress={() => { onDone(text); onClose() }} hitSlop={10}>
+            <Text style={{ color: t.accent, fontSize: 17, fontWeight: "600" }}>Done</Text>
           </TouchableOpacity>
-        ) : null}
-        {!rows && !error ? <ActivityIndicator color={t.textMuted} style={{ marginTop: 24 }} /> : rows ? (
-          <FlatList
-            testID="frommac-list"
-            data={rows}
-            keyExtractor={(r) => r.name}
-            contentContainerStyle={{ paddingBottom: 40 }}
-            ListEmptyComponent={<Text style={styles.capEmpty}>No other {what} on this Mac. Try the Marketplace.</Text>}
-            renderItem={({ item: r }) => (
-              <TouchableOpacity testID={`frommac-${r.name}`} style={styles.capRow} disabled={!!busy} onPress={() => add(r)}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.capRowName, { color: t.text }]} numberOfLines={1}>{kind === "skill" ? `/${r.name}` : r.name}</Text>
-                  <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>
-                    {kind === "skill" ? (r as Skill).description || "" : `${(r as McpServer).transport}${(r as McpServer).target ? ` · ${(r as McpServer).target}` : ""}`}
-                  </Text>
-                </View>
-                {busy === r.name ? <ActivityIndicator color={t.textMuted} />
-                  : <Text style={styles.capBadge}>{kind === "skill" ? (r as Skill).source : (r as McpServer).scope}</Text>}
-              </TouchableOpacity>
-            )}
-          />
-        ) : null}
+        </View>
+        <Text style={[styles.hint, { paddingHorizontal: 16 }]}>{hint}</Text>
+        <TextInput testID={testID} accessibilityLabel={title} autoFocus multiline value={text} onChangeText={setText}
+          style={[styles.aeInput, { flex: 1, margin: 16, textAlignVertical: "top" }]} />
       </View>
     </Modal>
   )

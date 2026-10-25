@@ -34,6 +34,7 @@ import NotesScreen from "./src/screens/NotesScreen"
 import FilesScreen from "./src/screens/FilesScreen"
 import AgentsScreen from "./src/screens/AgentsScreen"
 import AgentEditScreen from "./src/screens/AgentEditScreen"
+import AgentToolsScreen from "./src/screens/AgentToolsScreen"
 import InboxScreen from "./src/screens/InboxScreen"
 import NoteEditorScreen from "./src/screens/NoteEditorScreen"
 import OrgScreen from "./src/screens/OrgScreen"
@@ -69,6 +70,7 @@ export type RootStackParamList = {
   Agents: undefined
   /** Create (no template) or edit one of the caller's own agents. */
   AgentEdit: { template?: import("./src/api/client").AgentTemplate } | undefined
+  AgentTools: { id: number; name: string; kind: "skill" | "mcp" }
   NoteEditor: { id: number }
   Inbox: { session?: string; host?: string; path?: string; title?: string } | undefined
   Org: undefined
@@ -278,6 +280,8 @@ export default function App() {
             <Stack.Screen name="Agents" component={AgentsScreen} options={{ title: "Agents" }} />
             <Stack.Screen name="AgentEdit" component={AgentEditScreen}
               options={({ route }) => ({ title: route.params?.template ? "Edit agent" : "New agent" })} />
+            <Stack.Screen name="AgentTools" component={AgentToolsScreen}
+              options={({ route }) => ({ title: route.params.kind === "skill" ? "Skills" : "MCP tools" })} />
             <Stack.Screen name="NoteEditor" component={NoteEditorScreen} options={{ title: "Note" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />
