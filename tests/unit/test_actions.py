@@ -447,3 +447,52 @@ def test_card_update_hands_card_to_another_session(monkeypatch):
     monkeypatch.setattr(actions, "db", _RehomeDB())
     actions._card_update({"card_id": 5, "session_id": "abc"})
     assert actions.db.updated == {"session_id": "abc"}
+
+
+# ── project_delete: a board never strands its cards ──────────────────────────
+
+class _ProjectDB:
+    def __init__(self, cards):
+        self.projects = {1: {"id": 1}, 2: {"id": 2}}
+        self.cards = cards
+        self.deleted = []
+
+    def project_get(self, pid):
+        return self.projects.get(pid)
+
+    def project_card_count(self, pid):
+        return self.cards
+
+    def project_delete(self, pid, move_to=None):
+        self.deleted.append((pid, move_to))
+        return self.projects.pop(pid)
+
+
+@pytest.mark.parametrize("args,cards,err", [
+    ({"project_id": 9}, 0, "not found"),
+    ({"project_id": 1}, 3, "still has cards"),
+    ({"project_id": 1, "move_to": 1}, 3, "another existing project"),
+    ({"project_id": 1, "move_to": 9}, 3, "another existing project"),
+    ({"project_id": "x"}, 0, "must be project ids"),
+])
+def test_project_delete_refuses_and_deletes_nothing(monkeypatch, args, cards, err):
+    f = _ProjectDB(cards)
+    monkeypatch.setattr(actions, "db", f)
+    assert err in actions._project_delete(args)["error"]
+    assert f.deleted == []
+
+
+def test_project_delete_moves_cards_or_deletes_an_empty_board(monkeypatch):
+    f = _ProjectDB(3)
+    monkeypatch.setattr(actions, "db", f)
+    assert actions._project_delete({"project_id": 1, "move_to": "2"}) == {"deleted": True, "moved_to": 2}
+    f = _ProjectDB(0)
+    monkeypatch.setattr(actions, "db", f)
+    assert actions._project_delete({"project_id": 1})["deleted"] is True
+    assert f.deleted == [(1, None)]
+
+
+def test_project_delete_is_red_and_lead_scoped():
+    assert orglogic.classify_action("project_delete") == "red"
+    assert orglogic.allowed("project_delete", "ic") is False
+    assert orglogic.allowed("project_delete", "lead") is True

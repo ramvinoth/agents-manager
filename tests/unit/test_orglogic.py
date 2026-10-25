@@ -101,7 +101,7 @@ def test_classify_by_kind_dict():
 
 
 def test_classify_dict_falls_back_to_action_name():
-    assert orglogic.classify_action({"action": "delete_project"}) == "red"
+    assert orglogic.classify_action({"action": "project_delete"}) == "red"
     assert orglogic.classify_action({"action": "create_card"}) == "green"
 
 

@@ -152,9 +152,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   )
 
   // The card resolves to NO board (no project of its own, and its session has
-  // none bound — e.g. a card created before project binding existed, or whose
-  // project was deleted): it cannot be moved. Fetch the project list once so
-  // the owner can attach it; card_update is green, the attach lands at once.
+  // none bound — e.g. a legacy card from before project binding, or one left
+  // behind before project deletes moved cards): it cannot be moved. Fetch the
+  // project list once so the owner can attach it; card_update is green, the attach lands at once.
   useEffect(() => {
     if (!card || columns.length) return
     api.orgProjects().then((r) => setProjects(r.projects || [])).catch(() => {})

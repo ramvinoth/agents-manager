@@ -12,7 +12,7 @@ import { api } from "@/lib/api"
 import { fmtAgo } from "@/lib/format"
 import { decisionActions, formatActor, nextPosition, type DecisionAction } from "@/lib/board"
 import { ActorName } from "@/components/ActorName"
-import type { BoardColumn, Card, CardComment, CardDep } from "@/lib/types"
+import type { BoardColumn, Card, CardComment, CardDep, OrgProject } from "@/lib/types"
 
 const POLL_MS = 5000
 
@@ -39,7 +39,7 @@ const POLL_MS = 5000
 export function CardDetail({
   card: initial,
   allCards,
-  columns,
+  columns: boardColumns,
   selfUsername,
   sessionTitle,
   onOpenSession,
@@ -64,6 +64,12 @@ export function CardDetail({
   const [busy, setBusy] = useState<string | null>(null) // which write is in flight
   const [error, setError] = useState("")
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // A card that resolves to NO board (created before project binding, or whose
+  // session has none) cannot be moved; the owner attaches it to a project
+  // here, and that board's columns replace the empty ones it was opened with.
+  const [attached, setAttached] = useState<BoardColumn[] | null>(null)
+  const [projects, setProjects] = useState<OrgProject[]>([])
+  const columns = attached ?? boardColumns
 
   const apply = useCallback(
     (updated: Card) => {
@@ -137,6 +143,19 @@ export function CardDetail({
       setDeps, "The dependency was not removed.")
   }
 
+  useEffect(() => {
+    if (columns.length) return
+    api.orgProjects().then((r) => setProjects((r.projects || []).filter((p) => !p.missing))).catch(() => {})
+  }, [columns.length])
+
+  function attach(projectId: number) {
+    write("move", async () => {
+      await api.orgUpdateCard({ card_id: card.id, project_id: projectId })
+      return api.orgCard(card.id)
+    }, (r) => { if (r.card) apply(r.card); setAttached(r.columns || []) },
+    "The card was not attached to that project.")
+  }
+
   const column = columns.find((c) => c.id === card.column_id)
   const actions = decisionActions(columns, card.column_id)
   const creator = formatActor(card.created_by, selfUsername)
@@ -204,6 +223,16 @@ export function CardDetail({
 
           {/* ── Sidebar: the card's facts ── */}
           <aside className="flex flex-col gap-4 border-t border-border bg-card/40 px-4 py-4 text-xs sm:min-h-0 sm:overflow-y-auto sm:border-t-0 sm:border-l">
+            {!columns.length && projects.length > 0 && (
+              <Field label="Board">
+                <Select value="" onValueChange={(v) => attach(Number(v))} disabled={busy === "move"}>
+                  <SelectTrigger size="sm" className="w-full"><SelectValue placeholder="Attach to a project…" /></SelectTrigger>
+                  <SelectContent>
+                    {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Field label="Status">
               <Select value={card.column_id != null ? String(card.column_id) : ""} onValueChange={(v) => move(Number(v))} disabled={busy === "move" || !columns.length}>
                 <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={columns.length ? "No column" : "Not on a board"} /></SelectTrigger>

@@ -69,6 +69,9 @@ class OrchestratorMixin:
         self._org_send(req, "project_create",
                        {**body, "created_by": req.principal["actor"]})
 
+    def _p_org_projects_delete(self, req):
+        self._org_send(req, "project_delete", self.read_body() or {})
+
     # ── board + cards (columns are per project) ───────────────────────────────
     def _board_project(self, project=None, session=None):
         """The one board-resolution rule (orglogic.resolve_board_project) over

@@ -338,6 +338,24 @@ def _project_create(a):
                              a.get("host", "local"), a.get("cwd", ""), a.get("created_by", ""))
 
 
+def _project_delete(a):
+    """Delete a board. Its cards never end up on no board: when it has any, the
+    caller names the project they move to (db.project_delete maps columns)."""
+    try:
+        pid = int(a.get("project_id"))
+        move_to = int(a["move_to"]) if a.get("move_to") not in (None, "") else None
+    except (TypeError, ValueError):
+        return {"error": "project_id and move_to must be project ids"}
+    if not db.project_get(pid):
+        return {"error": "not found"}
+    if move_to is not None and (move_to == pid or not db.project_get(move_to)):
+        return {"error": "move_to must be another existing project"}
+    if move_to is None and db.project_card_count(pid):
+        return {"error": "this board still has cards — say which project they move to (move_to)"}
+    row = db.project_delete(pid, move_to)
+    return {"deleted": bool(row), "moved_to": move_to}
+
+
 def _project_ensure(a):
     """Find-or-create the project for a directory. Distinct from project_create:
     it is idempotent and keys on a NORMALIZED cwd, so the web entry point and a
@@ -651,6 +669,7 @@ ACTIONS = {
     "column_update": _column_update,
     "column_delete": _column_delete,
     "project_create": _project_create,
+    "project_delete": _project_delete,
     "project_ensure": _project_ensure,
     "automation_pause": _automation_pause,
     "automation_resume": _automation_resume,

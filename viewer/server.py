@@ -566,6 +566,7 @@ class SessionViewerHandler(
         "/api/org/cards/update": "_p_org_cards_update",
         "/api/org/cards/done": "_p_org_cards_done",
         "/api/org/cards/delete": "_p_org_cards_delete",
+        "/api/org/projects/delete": "_p_org_projects_delete",
         "/api/org/card_comment": "_p_org_card_comment",
         "/api/org/note_comment": "_p_org_note_comment",
         "/api/org/note_vote": "_p_org_note_vote",

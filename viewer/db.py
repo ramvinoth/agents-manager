@@ -1355,6 +1355,46 @@ def project_ensure(host, cwd, name, created_by=""):
     return project_create(name or cwd, "", host, cwd, created_by)
 
 
+def project_delete(project_id, move_to=None):
+    """Delete a project (its board) in one transaction. With `move_to`, its cards
+    and notes join that project first — each card into the column of the same
+    name, else the target's first column — and sessions bound to it rebind there,
+    so no work item is left on no board. Without it the FKs decide: cards and
+    notes keep their rows with project NULL, columns/intake/code index cascade.
+    Returns the deleted row, or None if it did not exist."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        if move_to is not None:
+            cur.execute(
+                "UPDATE cards c SET project_id = %(to)s, column_id = COALESCE("
+                "  (SELECT t.id FROM board_columns s JOIN board_columns t "
+                "     ON t.project_id = %(to)s AND lower(t.name) = lower(s.name) "
+                "   WHERE s.id = c.column_id ORDER BY t.position LIMIT 1),"
+                "  (SELECT id FROM board_columns WHERE project_id = %(to)s "
+                "   ORDER BY position, id LIMIT 1)) "
+                "WHERE c.project_id = %(from)s",
+                {"to": move_to, "from": project_id})
+            cur.execute("UPDATE notes SET project_id = %s WHERE project_id = %s",
+                        (move_to, project_id))
+            cur.execute("UPDATE session_meta SET data = data || jsonb_build_object("
+                        "'kanbanProject', %s::text) WHERE data->>'kanbanProject' = %s",
+                        (str(move_to), str(project_id)))
+        else:
+            cur.execute("UPDATE session_meta SET data = data - 'kanbanProject' "
+                        "WHERE data->>'kanbanProject' = %s", (str(project_id),))
+        cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+    return dict(row)
+
+
+def project_card_count(project_id):
+    with _db() as cur:
+        cur.execute("SELECT count(*) AS n FROM cards WHERE project_id = %s", (project_id,))
+        return cur.fetchone()["n"]
+
+
 # Lenses: views over a project that an agent turns on (Software Engineer → the
 # code Map). A closed set — each needs its own server code and UI.
 LENSES = ("map",)

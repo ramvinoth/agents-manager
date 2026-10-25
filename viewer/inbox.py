@@ -210,6 +210,11 @@ def red_subject(intent):
         if action == "card_delete":
             c = db.card_get(int(args.get("card_id")))
             return f"#{c['id']} {c.get('title') or ''}".strip() if c else f"card #{args.get('card_id')} (already gone)"
+        if action == "project_delete":
+            p = db.project_get(int(args.get("project_id")))
+            to = db.project_get(int(args["move_to"])) if args.get("move_to") else None
+            name = f"project \"{p['name']}\"" if p else f"project {args.get('project_id')} (already gone)"
+            return name + (f" — its cards move to \"{to['name']}\"" if to else "")
         if action == "note_delete":
             n = db.note_get(int(args.get("note_id")))
             return f"note \"{n.get('title') or ''}\"" if n else f"note {args.get('note_id')} (already gone)"

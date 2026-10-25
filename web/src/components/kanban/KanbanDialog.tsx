@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { groupByColumn, orderColumn, nextPosition, findCardSession, matchesQuery } from "@/lib/board"
@@ -75,6 +76,7 @@ export function KanbanDialog({
     | null
     | { kind: "card"; card: Card }
     | { kind: "column"; column: BoardColumn; count: number }
+    | { kind: "project"; count: number; targets: OrgProject[]; moveTo?: number; busy?: boolean; error?: string }
   >(null)
   const authUser = useStore((s) => s.authUser)
   const sessions = useStore((s) => s.sessions)
@@ -204,8 +206,25 @@ export function KanbanDialog({
     const count = cards.filter((c) => c.column_id === column.id).length
     setConfirm({ kind: "column", column, count })
   }
+  async function requestDeleteProject() {
+    if (!project) return
+    const all = await api.orgProjects().then((r) => r.projects || []).catch(() => [] as OrgProject[])
+    setConfirm({ kind: "project", count: cards.length, targets: all.filter((p) => p.id !== project.id && !p.missing) })
+  }
+  // The board goes only on the server's word: a refusal or a queued approval
+  // keeps the dialog open with the reason, since nothing was deleted yet.
+  async function deleteProject(moveTo?: number) {
+    if (!project || confirm?.kind !== "project") return
+    setConfirm({ ...confirm, busy: true, error: undefined })
+    const r = await api.orgDeleteProject(project.id, moveTo).catch((e) => ({ error: userError(e, "the board") }))
+    if (isQueued(r)) return setConfirm({ ...confirm, busy: false, error: "Sent to you for approval — the board stays until you approve it in your inbox." })
+    if ("error" in r && r.error) return setConfirm({ ...confirm, busy: false, error: r.error })
+    setConfirm(null)
+    onClose()
+  }
   function confirmDelete() {
     if (!confirm) return
+    if (confirm.kind === "project") return void deleteProject(confirm.moveTo)
     if (confirm.kind === "card") deleteCard(confirm.card.id)
     else deleteColumn(confirm.column.id)
     setConfirm(null)
@@ -251,6 +270,9 @@ export function KanbanDialog({
             </div>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAuditOpen(true)} title="Who did what, and when">
               <History className="size-3.5" /> Activity
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 text-muted-foreground hover:text-destructive" onClick={requestDeleteProject} disabled={!project} title="Delete this board">
+              <Trash2 className="size-3.5" /> Delete board
             </Button>
           </div>
           <DialogDescription>
@@ -357,19 +379,42 @@ export function KanbanDialog({
               <DialogTitle>
                 {confirm.kind === "card"
                   ? `Delete card “${confirm.card.title}”?`
-                  : `Delete column “${confirm.column.name}”?`}
+                  : confirm.kind === "project"
+                    ? `Delete the board “${name}”?`
+                    : `Delete column “${confirm.column.name}”?`}
               </DialogTitle>
               <DialogDescription>
                 {confirm.kind === "card"
                   ? "The card and its comment thread are removed from the board. This can't be undone."
+                  : confirm.kind === "project"
+                    ? `${confirm.count ? `Its ${confirm.count} card${confirm.count === 1 ? "" : "s"} and its notes move to the project you pick, comments intact.` : "It has no cards; pick a project to keep its notes, or they stay with their chats."} Its columns and intake channels are removed for good. If a chat still works in this folder, a new empty board appears the next time one starts.`
                   : confirm.count
                     ? `Its ${confirm.count} card${confirm.count === 1 ? "" : "s"} move to Unsorted with their comments intact; only the column itself is removed.`
                     : "The column is empty; only the column itself is removed."}
               </DialogDescription>
             </DialogHeader>
+            {confirm.kind === "project" && (
+              <div className="space-y-2 text-sm">
+                {confirm.targets.length ? (
+                  <Select value={confirm.moveTo != null ? String(confirm.moveTo) : ""} onValueChange={(v) => setConfirm({ ...confirm, moveTo: Number(v), error: undefined })}>
+                    <SelectTrigger aria-label="Move its cards to"><SelectValue placeholder={confirm.count ? "Move its cards to…" : "Keep its notes in… (optional)"} /></SelectTrigger>
+                    <SelectContent>
+                      {confirm.targets.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : confirm.count ? (
+                  <p className="text-muted-foreground">There is no other project to move its cards to, so this board can't be deleted yet.</p>
+                ) : null}
+                {confirm.error && <p className="text-destructive">{confirm.error}</p>}
+              </div>
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
-              <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+              <Button
+                variant="destructive"
+                onClick={confirmDelete}
+                disabled={confirm.kind === "project" && (confirm.busy || (confirm.count > 0 && confirm.moveTo == null))}
+              >Delete</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

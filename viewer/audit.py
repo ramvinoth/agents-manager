@@ -93,6 +93,7 @@ _ACTIONS = {
     "card_update": ("Update card", ("Card", "card_id", None)),
     "card_move": ("Move card", ("Card", "card_id", None)),
     "card_delete": ("Delete card", ("Card", "card_id", None)),
+    "project_delete": ("Delete project", ("Project", "project_id", None)),
     "card_comment": ("Comment on card", ("Card", "card_id", None)),
     "note_comment": ("Comment on note", ("Note", "note_id", None)),
     "note_vote": ("Vote on note comment", None),

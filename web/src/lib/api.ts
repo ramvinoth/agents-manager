@@ -242,13 +242,19 @@ class ApiClient {
   orgMoveCard(body: { card_id: number; column_id: number; position: number }) {
     return this.postJSON<Card>("/api/org/cards/move", body)
   }
-  orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; position?: number }) {
+  orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; position?: number; project_id?: number }) {
     return this.postJSON<Card>("/api/org/cards/update", body)
   }
   // `card_delete` is Red (viewer/orglogic): a caller who can't self-approve gets
   // an approval back, not a deletion — hence the union.
   orgDeleteCard(cardId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/cards/delete", { card_id: cardId })
+  }
+  // `project_delete` is Red too. A board with cards needs `moveTo` (the server
+  // refuses otherwise): its cards and notes join that project, never no board.
+  orgDeleteProject(projectId: number, moveTo?: number) {
+    return this.postJSON<{ deleted?: boolean; moved_to?: number | null; error?: string } | Queued>(
+      "/api/org/projects/delete", { project_id: projectId, move_to: moveTo ?? null })
   }
   orgNotes(filter: NoteFilter = {}) {
     const p = new URLSearchParams()

@@ -209,7 +209,7 @@ export type AgentExtras = { catalog: { name: string; description: string }[]; sk
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
-export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[] }
+export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
 export type BoardColumn = { id: number; name: string; position: number }
 /** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
  *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
@@ -922,6 +922,10 @@ export const api = {
   // two can come back queued instead of done — the union makes the caller say so.
   orgDeleteCard: (body: { card_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/cards/delete", body),
+  // project_delete is Red too. A board with cards needs move_to (the server
+  // refuses to orphan them); action errors come back as {error}.
+  orgDeleteProject: (body: { project_id: number; move_to?: number | null }) =>
+    req<{ deleted?: boolean; moved_to?: number | null; error?: string } | Queued>("POST", "/api/org/projects/delete", body),
   // The card's detail read: the card itself, its full comment thread, and its
   // move options — the columns of the board it can move on (its own project,
   // else its session's bound one; the server resolves, so an empty list means

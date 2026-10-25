@@ -85,7 +85,7 @@ PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
 _RED_ACTIONS = {
     # irreversible data loss
     "delete_session", "delete_transcript", "git_reset_hard", "git_force_push",
-    "delete_provider", "delete_file", "delete_project", "card_delete",
+    "delete_provider", "delete_file", "project_delete", "card_delete",
     "note_delete",
     # overwriting shared team knowledge: skill_propose writes a NEW skill (green);
     # skill_promote overwrites one the team already relies on (red). The same write,
@@ -141,6 +141,8 @@ _RED_ACTIONS = {
 RED_RISK = {
     "card_delete": "The card and its whole comment thread are deleted for good.",
     "note_delete": "The note and its discussion are deleted for good.",
+    "project_delete": "The board and its columns are deleted for good; its cards and notes "
+                      "move to the project named, and its intake channels close.",
     "loop_delete": "The scheduled work and its run history are deleted for good.",
     "skill_promote": "Overwrites a skill every session already relies on.",
     "automation_resume": "Agents may start running unattended work again.",
@@ -241,6 +243,7 @@ _MIN_LEVEL = {
     # lead: shape projects and the board
     "project_create": "lead",
     "project_ensure": "lead",        # find-or-create for a cwd; same authority to create
+    "project_delete": "lead",        # remove a board (also red → queued for MCP)
     "card_delete": "lead",           # remove a work item (also red → queued for MCP)
     "approval_resolve": "lead",
     "column_create": "lead",         # the board's SHAPE, not an item on it

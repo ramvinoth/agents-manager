@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type BoardColumn, type Card, type CardFilter, type OpenDecision } from "../api/client"
+import { api, isQueued, type BoardColumn, type Card, type CardFilter, type OpenDecision, type OrgProject } from "../api/client"
 import { boardScopeFilter, groupByColumn, matchesQuery, nextPosition } from "../lib/board"
 import { fmtWaiting } from "../lib/decisions"
 import { setToken } from "../state/config"
@@ -168,6 +168,50 @@ export default function KanbanScreen({ route, navigation }: Props) {
   const cockpit = useDecisionCockpit(navigation, { onResolved: load, guard: isCurrent })
   const openCard = cockpit.openCard
   // Open the cockpit at the tapped item over the queue as it stands now.
+  // Delete this project's board. Same contract as the web dialog: its cards (and
+  // notes) move to a project the owner picks, columns and intake channels go for
+  // good, and a chat still working in the folder gets a fresh empty board.
+  // project_delete is Red, so it may come back queued for the owner's approval.
+  const projectId = scope.filter && !scope.filter.session ? scope.filter.project : undefined
+  const deleteBoard = useCallback(async () => {
+    if (projectId === undefined) return
+    const name = route.params?.title || "this board"
+    const count = cards.length
+    let targets: OrgProject[]
+    try {
+      targets = (await api.orgProjects()).projects.filter(p => p.id !== projectId && !p.missing)
+    } catch (e) {
+      Alert.alert("Could not load projects", userError(e, "your projects"))
+      return
+    }
+    const run = async (moveTo: OrgProject | null) => {
+      try {
+        const r = await api.orgDeleteProject({ project_id: projectId, move_to: moveTo?.id ?? null })
+        if (isQueued(r)) Alert.alert("Sent for approval", "The board stays until the owner approves the deletion.")
+        else if (r.error) Alert.alert("Not deleted", r.error)
+        else if (r.deleted) navigation.goBack()
+      } catch (e) {
+        if ((e as { status?: number })?.status === 401) { setToken(null); navigation.replace("Login"); return }
+        Alert.alert("Not deleted", userError(e, "the board", "delete"))
+      }
+    }
+    const confirm = (moveTo: OrgProject | null) => Alert.alert(
+      `Delete the board “${name}”?`,
+      (moveTo ? `Its ${count} card${count === 1 ? "" : "s"} and its notes move to “${moveTo.name}”. ` : "") +
+        "Its columns and intake channels are removed for good. If a chat still works in this folder, a new empty board appears.",
+      [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => run(moveTo) }],
+    )
+    if (!count) return confirm(null)
+    if (!targets.length) {
+      Alert.alert("Can't delete yet", "This board has cards and there is no other project to move them to.")
+      return
+    }
+    Alert.alert(`Move ${count} card${count === 1 ? "" : "s"} where?`, "Pick the project that keeps this board's cards and notes.", [
+      ...targets.map(p => ({ text: p.name, onPress: () => confirm(p) })),
+      { text: "Cancel", style: "cancel" as const },
+    ])
+  }, [projectId, cards.length, route.params?.title, navigation])
+
   const openCockpit = useCallback((index: number) => cockpit.open(decisions, index), [cockpit.open, decisions])
 
   async function addCard(columnId: number) {
@@ -228,6 +272,11 @@ export default function KanbanScreen({ route, navigation }: Props) {
         {query ? (
           <Pressable onPress={() => setQuery("")} hitSlop={8} testID="kanban-find-clear">
             <Icon name="close" size={14} color={t.textMuted} />
+          </Pressable>
+        ) : null}
+        {projectId !== undefined ? (
+          <Pressable onPress={deleteBoard} hitSlop={8} testID="kanban-delete-board" accessibilityLabel="Delete board">
+            <Icon name="trash" size={14} color={t.textMuted} />
           </Pressable>
         ) : null}
       </View>
