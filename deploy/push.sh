@@ -13,11 +13,16 @@
 #   poll /healthz until it reports the new version (or time out and show the log).
 #
 # Why a git bundle, not rsync: the bundle is one self-contained file that needs
-# NO GitHub credentials or network on the box, and it carries the tag + history,
-# so `VERSION` and `git rev-parse HEAD` are self-verifying — git re-hashes every
+# NO GitHub credentials or network on the box, and `VERSION` and
+# `git rev-parse HEAD` are self-verifying — git re-hashes every
 # object on unbundle, and the box checks out the exact --expect-sha. web/dist and
 # node_modules are gitignored, so the bundle is small and the box builds its own
 # (correct-arch) artifacts.
+#
+# The bundle carries a SNAPSHOT, not history: one parentless commit holding the
+# release tree. Old commits (with whatever they once contained) never leave this
+# Mac; this repo keeps its full history and the vX.Y.Z tag. The box clones each
+# release into its own dir, so it never needs the previous release's commits.
 #
 # Config (env or flags):
 #   HARMAN_HOST          ssh target for the box, e.g. user@100.x or an ssh alias   (required)
@@ -109,14 +114,15 @@ if [[ -n "$DRY_RUN" ]]; then
   log "DRY RUN — no git changes, box untouched. Would run:"
   echo "    git commit VERSION  (release $TAG)   # new HEAD, then:"
   echo "    git tag $TAG"
-  echo "    git bundle create <tmp> $BRANCH $TAG"
+  echo "    git commit-tree $TAG^{tree}   # parentless snapshot, then:"
+  echo "    git bundle create <tmp> main $TAG   # snapshot only, no history"
   [[ -n "$PUBLISH" ]] && echo "    deploy/release-feed.sh publish $NEW_VER <new-sha> <tmp>"
   if [[ -n "$HARMAN_HOST" ]]; then
     echo "    scp <tmp> $HARMAN_HOST:$BUNDLE_PREVIEW"
     echo "    ssh $HARMAN_HOST 'setsid $REMOTE_HARMAN update $NEW_VER --from $BUNDLE_PREVIEW --expect-sha <new-sha> </dev/null >…log 2>&1'"
     echo "    poll $HEALTH_URL until \"version\":\"$NEW_VER\"  (≤ ${HARMAN_DEPLOY_TIMEOUT}s)"
   fi
-  echo "    (expect-sha would be the NEW release commit, not current $SHA_PREVIEW)"
+  echo "    (expect-sha would be the NEW snapshot commit, not current $SHA_PREVIEW)"
   exit 0
 fi
 
@@ -126,20 +132,29 @@ printf '%s\n' "$NEW_VER" > VERSION
 git add VERSION
 git commit -q -m "release $TAG"
 git tag "$TAG"
-SHA="$(git rev-parse HEAD)"
-log "Release commit $SHA tagged $TAG"
+log "Release commit $(git rev-parse HEAD) tagged $TAG"
 
 # ── 4. build the bundle (source only; box rebuilds web/dist + node_modules) ─────
+# Snapshot: a parentless commit of the tagged tree, bundled from a throwaway repo
+# that borrows this repo's objects (alternates), so no ref is added here and the
+# bundle holds only the snapshot's objects.
+SHA="$(git commit-tree "$TAG^{tree}" -m "Harman $NEW_VER")"
+SHIP_DIR="$(mktemp -d -t harman-ship-XXXXXX)"
 BUNDLE_LOCAL="$(mktemp -t harman-XXXXXX).bundle"
 REMOTE_BUNDLE="$HARMAN_REMOTE_TMP/harman-$NEW_VER.bundle"
 REMOTE_LOG="$HARMAN_REMOTE_TMP/harman-update-$NEW_VER.log"
 cleanup() {
-  rm -f "$BUNDLE_LOCAL"
+  rm -rf "$BUNDLE_LOCAL" "$SHIP_DIR"
   [[ -n "${DEPLOY_STARTED:-}" ]] && ssh "$HARMAN_HOST" "rm -f '$REMOTE_BUNDLE'" 2>/dev/null || true
 }
 trap cleanup EXIT
-log "Building git bundle…"
-git bundle create "$BUNDLE_LOCAL" "$BRANCH" "$TAG" >/dev/null
+log "Building snapshot bundle ($SHA)…"
+git init -q "$SHIP_DIR"
+git rev-parse --path-format=absolute --git-common-dir | sed 's|$|/objects|' > "$SHIP_DIR/.git/objects/info/alternates"
+git -C "$SHIP_DIR" update-ref refs/heads/main "$SHA"
+git -C "$SHIP_DIR" symbolic-ref HEAD refs/heads/main
+git -C "$SHIP_DIR" tag "$TAG" "$SHA"
+git -C "$SHIP_DIR" bundle create "$BUNDLE_LOCAL" main "$TAG" >/dev/null 2>&1
 
 if [[ -n "$PUBLISH" ]]; then
   log "Publishing $TAG to the private release feed…"
