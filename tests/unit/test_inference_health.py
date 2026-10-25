@@ -129,7 +129,7 @@ def test_probe_classifies_by_http_answer(monkeypatch):
     answers = {"/upstream/m/metrics": (200, METRICS.replace("qwen3.8-27b", "m"))}
     asked = []
 
-    def get(url):
+    def get(url, api_key=""):
         path = url.split("example")[1]
         asked.append(path)
         return answers.get(path, (404, ""))
@@ -144,6 +144,15 @@ def test_probe_classifies_by_http_answer(monkeypatch):
     assert h.probe("https://example", "m")["state"] == h.ORIGIN_DOWN
     answers["/"] = (503, "")  # warming up, not gone
     assert h.probe("https://example", "m")["state"] == h.REACHABLE
+
+
+def test_probe_sends_the_key_to_a_keyed_gateway(monkeypatch):
+    # A gateway with apiKeys answers 401 to /metrics without the key; load would
+    # then read as unknown and the idle watch could never catch a dropped request.
+    seen = []
+    monkeypatch.setattr(h, "_get", lambda url, api_key="": (seen.append(api_key), (200, METRICS.replace("qwen3.8-27b", "m")))[1])
+    assert h.probe("https://example", "m", "k1")["load"] == (1, 2)
+    assert seen[1:] == ["k1"]  # metrics carry the key
 
 
 def test_diagnose_names_a_context_overflow_as_not_temporary():

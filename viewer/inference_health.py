@@ -66,9 +66,12 @@ def parse_load(metrics_text, model=""):
     return (int(load["running"]), int(load["waiting"])) if found else None
 
 
-def _get(url):
+def _get(url, api_key=""):
     """(status, body) for a GET; status 0 = no HTTP answer at all."""
-    req = urllib.request.Request(url, headers={"user-agent": "harman-viewer/health"})
+    headers = {"user-agent": "harman-viewer/health"}
+    if api_key:  # a keyed gateway (llama-swap apiKeys) answers 401 to /metrics without it
+        headers["x-api-key"] = api_key
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT) as r:
             return r.status, r.read(1 << 20).decode("utf-8", "replace")
@@ -78,7 +81,7 @@ def _get(url):
         return 0, ""
 
 
-def probe(base_url, model=""):
+def probe(base_url, model="", api_key=""):
     """{"state": reachable|unreachable|origin_down, "load": (running, waiting)|None}."""
     base = (base_url or "").rstrip("/")
     # Liveness is "does it answer HTTP at all", read at the root. Not /health:
@@ -91,7 +94,7 @@ def probe(base_url, model=""):
     if status in _ORIGIN_DOWN:
         return {"state": ORIGIN_DOWN, "load": None}
     for path in ([f"/upstream/{model}/metrics"] if model else []) + ["/metrics"]:
-        s, body = _get(base + path)
+        s, body = _get(base + path, api_key)
         load = parse_load(body, model) if s == 200 else None
         if load is not None:
             return {"state": REACHABLE, "load": load}

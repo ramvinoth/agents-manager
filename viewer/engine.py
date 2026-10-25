@@ -1773,7 +1773,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             stream_user_message(proc, message)
             if watch_url:
                 threading.Thread(target=_watch_endpoint, args=(job, proc, watch_url,
-                                 provider_env.get("ANTHROPIC_MODEL", "")), daemon=True).start()
+                                 provider_env.get("ANTHROPIC_MODEL", ""),
+                                 provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
             # Map lens: when this project has it on, a file the agent writes
             # lights up on the map while the agent works (code_index.touched).
@@ -1967,7 +1968,7 @@ def _resume_cut_turn(session_id, job, leftovers):
     return resume.resume_one(row, reason=job.get("stderr", ""))
 
 
-def _watch_endpoint(job, proc, base_url, model):
+def _watch_endpoint(job, proc, base_url, model, api_key=""):
     """Liveness watch for a run on a custom model endpoint: while the CLI waits
     on the model, probe the endpoint every POLL_INTERVAL; stop the turn only on
     the Watch's verdict (unreachable, or no longer working on our request), and
@@ -1982,7 +1983,8 @@ def _watch_endpoint(job, proc, base_url, model):
         if since is None:
             watch.reset()
             continue
-        verdict = watch.observe(inference_health.probe(base_url, model), time.time() - since)
+        verdict = watch.observe(inference_health.probe(base_url, model, api_key),
+                                time.time() - since)
         if verdict and job["running"] and job["model_wait"].since is not None:
             job["endpoint_issue"] = verdict
             try:
