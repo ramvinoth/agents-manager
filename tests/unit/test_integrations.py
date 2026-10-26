@@ -771,3 +771,28 @@ def test_a_revoked_exchanged_token_is_traded_again_once(rows, monkeypatch):
     h._p_integrations_api(_Req(human=False))
     assert h.sent == ({"status": 200, "body": {}}, 200) and len(fake.calls) == 2
     assert not I.expired(rows["c1"])
+
+
+def test_a_short_429_is_waited_out_once_and_a_long_one_is_returned(rows, monkeypatch):
+    from viewer import drives
+    waits = []
+    monkeypatch.setattr(I, "_sleep", waits.append)
+
+    def run(replies):
+        it = iter(replies)
+
+        class Http(_FakeHTTP):
+            def __call__(self, method, url, headers=None, data=None, timeout=60):
+                super().__call__(method, url, headers, data, timeout)
+                return next(it)
+        fake = Http()
+        monkeypatch.setattr(drives, "_http", fake)
+        rows["c1"] = _conn(kind="cloudflare", **I.token_config("cloudflare", "T", "", {}))
+        h = _H({"connection": "c1", "path": "/zones"})
+        h._p_integrations_api(_Req(human=False))
+        return h.sent[0]["status"], len(fake.calls)
+
+    assert run([(429, {"Retry-After": "2"}, b"{}"), (200, {}, b"{}")]) == (200, 2) and waits == [2.0]
+    assert run([(429, {}, b"{}"), (429, {}, b"{}")]) == (429, 2)          # only once
+    assert run([(429, {"retry-after": "3600"}, b"{}")]) == (429, 1)       # too long: the agent paces
+    assert I._retry_after({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}) is None

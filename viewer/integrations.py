@@ -106,6 +106,7 @@ client spells a vendor console step.
 """
 import json
 import re
+import time
 
 from viewer import cloudauth
 
@@ -821,6 +822,20 @@ def api_request(conn, method, path, body=None):
     return op, method, _url(p, fields, path), h, data
 
 
+RETRY_AFTER_CAP = 10     # seconds a 429 may hold a call before the agent is told instead
+_sleep = time.sleep      # seam: tests skip the wait
+
+
+def _retry_after(headers):
+    """Seconds a 429 asks to wait (Retry-After in seconds), 1 when it names
+    none, None when it names a date or garbage — then the agent decides."""
+    v = next((v for k, v in (headers or {}).items() if k.lower() == "retry-after"), "1")
+    try:
+        return max(0.0, float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 API_TEXT_CAP = 200_000   # a non-JSON vendor reply, trimmed before it reaches an agent's context
 
 
@@ -829,17 +844,26 @@ def api_call(conn, method, path, body, http):
     the one path both the api_call route and an approved queued change take.
     `http` is the network seam (drives._http). A 401 on an exchanged token
     (GitHub App, Google, Azure) first drops the cached token and retries once:
-    a revoked or rotated exchange is not yet a dead key. A JSON reply is
-    parsed; anything else is text, capped before it reaches an agent."""
+    a revoked or rotated exchange is not yet a dead key. A 429 waits out a
+    short Retry-After once (longer, it returns to the agent to pace itself).
+    A JSON reply is parsed; anything else is text, capped before it reaches
+    an agent."""
     p = provider(conn["kind"])
     cfg = conn.get("config") or {}
     secret, fields = cfg.get("api_token") or "", cfg.get("fields") or {}
     _, method, url, headers, data = api_request(conn, method, path, body)
-    for attempt in (0, 1):
+    retried = set()
+    while True:
         h = cloudauth.authorize(p, secret, fields, method, url, headers, data, http)
-        status, _, raw = http(method, url, h, data, timeout=60)
-        if status != 401 or attempt or not cloudauth.forget(p, secret, fields):
+        status, rh, raw = http(method, url, h, data, timeout=60)
+        if status == 401 and 401 not in retried and cloudauth.forget(p, secret, fields):
+            retried.add(401)
+            continue
+        wait = _retry_after(rh) if status == 429 and 429 not in retried else None
+        if wait is None or wait > RETRY_AFTER_CAP:
             break
+        retried.add(429)
+        _sleep(wait)
     text = (raw or b"").decode("utf-8", "replace")
     try:
         return status, json.loads(text)
