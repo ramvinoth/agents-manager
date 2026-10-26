@@ -120,7 +120,7 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
       return (
         <View style={[styles.mdLi, { marginLeft: 4 + b.depth * 16 }]}>
           <Text style={[styles.mdText, styles.mdBullet, color ? { color } : null]}>{b.marker}</Text>
-          <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[base, { flex: 1 }]} />
+          <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[base, { flexShrink: 1 }]} />
         </View>
       )
     case "table":
