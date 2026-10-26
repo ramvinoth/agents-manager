@@ -4,6 +4,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
+import { groupByProject } from "../lib/chatList"
 import {
   currentHost,
   setToken,
@@ -77,17 +78,11 @@ export default function ChatsScreen({ navigation }: Props) {
     if (filter === "unread") return pool.filter((s) => s.unread).map((s) => ({ kind: "chat", s }))
     if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
     if (filter === "projects") {
-      // Group by project (chats without one fall under "No project"), each group a
-      // collapsible header. Groups + chats keep the modified-desc order from `load`.
-      const groups = new Map<string, Session[]>()
-      for (const s of pool) {
-        const key = s.project || "No project"
-        ;(groups.get(key) || groups.set(key, []).get(key)!).push(s)
-      }
+      // Collapsible project headers, the newest-chat project first (lib/chatList).
       const out: Row[] = []
-      for (const [proj, list] of Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-        out.push({ kind: "header", project: proj, count: list.length })
-        if (!collapsed.has(proj)) for (const s of list) out.push({ kind: "chat", s })
+      for (const { project, chats } of groupByProject(pool)) {
+        out.push({ kind: "header", project, count: chats.length })
+        if (!collapsed.has(project)) for (const s of chats) out.push({ kind: "chat", s })
       }
       return out
     }
