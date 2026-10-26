@@ -1,7 +1,7 @@
 """Unit tests for viewer.orglogic — the pure org/Kanban logic (no db/server).
 
 Covers the "one canonical board → filtered views" rules (filter_cards, order_column,
-next_position fractional indexing), Harman's Green/Red approval gate (classify_action),
+next_position fractional indexing), Orchestrator's Green/Red approval gate (classify_action),
 and the learned-skill dedup (dedupe_skill). Hermetic; runs under `make unit`.
 """
 from viewer import orglogic
@@ -276,7 +276,7 @@ def test_scheduling_loops_needs_lead_authority():
 
 
 def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
-    # Create/update stay green: a harman loop cannot FIRE until the owner licenses
+    # Create/update stay green: an agent loop cannot FIRE until the owner licenses
     # its origin via the loop-control mode, so authoring one is not itself risky.
     # Delete is irreversible (takes its run history with it) → red → queued.
     assert orglogic.is_red("loop_create") is False
@@ -286,7 +286,7 @@ def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
 
 def test_setting_the_loop_mode_is_manager_scoped_and_green():
     # The loop-control dropdown is an org-wide panel — manager tier, same as
-    # harman_config. Green in both directions: de-escalating ('none'/'user') must
+    # orchestrator_config. Green in both directions: de-escalating ('none'/'user') must
     # be cheap, and licensing already-authored loops only decides WHETHER they run.
     assert orglogic.allowed("loop_mode_set", "lead") is False
     assert orglogic.allowed("loop_mode_set", "manager") is True
@@ -324,7 +324,7 @@ def test_a_human_at_the_ui_is_never_caught_by_the_rail():
     assert orglogic.mutates_own_session("sX", "") is False
 
 
-# ── Harman planning (project_columns / suitable_employee / plan_assignments) ──
+# ── Orchestrator planning (project_columns / suitable_employee / plan_assignments) ──
 
 COLS = [
     {"id": 1, "name": "Todo", "position": 0},
@@ -356,7 +356,7 @@ def test_suitable_employee_role_match_then_first():
 def test_suitable_employee_excludes_manager_and_ceo():
     # The CEO/manager (first in the list) must NOT be picked to work a card — only doers.
     emps = [{"id": 1, "name": "Ram", "role": "Founder/CEO", "status": "active"},
-            {"id": 2, "name": "Harman", "role": "Manager", "status": "active"},
+            {"id": 2, "name": "Orchestrator", "role": "Manager", "status": "active"},
             {"id": 3, "name": "Ada", "role": "Engineer", "status": "active"}]
     assert orglogic.suitable_employee({"title": "do the thing"}, emps)["id"] == 3
 

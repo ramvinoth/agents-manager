@@ -49,7 +49,7 @@ def segment(audio: bytes, speaker_id: str = "default",
     """Transcribe one audio window on the box. Returns the service's
     {speech, wake, match, score, text}. With no_wake=True (call mode) the full
     transcript comes back for any speech, wake word or not; without it the text
-    is only filled after "Harman …" and `match` reports speaker verification."""
+    is only filled after "Orchestrator …" and `match` reports speaker verification."""
     if not audio:
         return {"speech": False, "wake": False, "match": False, "score": 0.0, "text": ""}
     params = {"speaker_id": speaker_id or "default"}
@@ -67,7 +67,7 @@ def wakeguard(audio: bytes, content_type: str = "audio/wav") -> dict:
     """Barge-in wake check for a window captured WHILE the assistant is speaking.
     The audio is echo-cancelled on the device (voiceProcessingIO), so this only
     gates on the wake word — no speaker verify. Returns {wake, text}: wake=True
-    with the command tail when the user said "Harman …" over the assistant."""
+    with the command tail when the user said "Orchestrator …" over the assistant."""
     if not audio:
         return {"wake": False, "text": ""}
     raw = _post_q("/wakeguard", "", audio, content_type or "application/octet-stream")

@@ -1,4 +1,4 @@
-"""viewer.orchestrator — "Harman", the autonomous manager.
+"""viewer.orchestrator — "Orchestrator", the autonomous manager.
 
 Runs one cheap survey of the ONE canonical Kanban board each tick (hooked into the
 existing loop_scheduler, NOT a new thread) and executes the intents that
@@ -13,12 +13,12 @@ SAFETY (auto-run → these are hard rails, not optional):
     engine.loop_scheduler.
   - budget: max concurrent auto-run employee sessions (config, but bounded by HARD_CAP).
   - in-progress guard: a card already being worked is never re-spawned.
-  - self-throttle: the 5s scheduler only runs Harman every `interval`s.
+  - self-throttle: the 5s scheduler only runs Orchestrator every `interval`s.
   - red never executes — it becomes a db approval for the human.
-Everything Harman does is written to audit_log.
+Everything Orchestrator does is written to audit_log.
 
-Config: the `harman` row of the Postgres `settings` table (seeded by init_db).
-Empty `projects` = manage nothing, so an enabled Harman is still inert until the
+Config: the `orchestrator` row of the Postgres `settings` table (seeded by init_db).
+Empty `projects` = manage nothing, so an enabled Orchestrator is still inert until the
 CEO points it at a project.
 """
 import time
@@ -34,7 +34,7 @@ _last_run = 0.0
 
 def _load_config():
     cfg = dict(_DEFAULT)
-    stored = db.setting_get("harman", {})
+    stored = db.setting_get("orchestrator", {})
     # Defensive: only a dict row may override the defaults. A malformed value
     # (wrong shape, or a read that returns something other than a dict) leaves the
     # fail-safe defaults intact — automation stays OFF rather than crashing here.
@@ -61,14 +61,14 @@ def automation_enabled():
     because `setting_get` falls back to `{}` and the default stands — the fail-safe
     direction for "is it safe to leave the machine alone" is off.
 
-    Distinct from `enabled`, which scopes only Harman's own manager tick. This one
+    Distinct from `enabled`, which scopes only Orchestrator's own manager tick. This one
     covers every unattended path, so a path added later is paused by default too.
     """
     return _load_config()["automation_enabled"]
 
 
 def get_config():
-    """Public: the effective config (for the /api/org/harman route)."""
+    """Public: the effective config (for the /api/org/orchestrator route)."""
     return _load_config()
 
 
@@ -80,9 +80,9 @@ _PATCH_KEYS = ("enabled", "interval", "budget", "projects", "default_provider")
 
 
 def _write(patch):
-    cur = db.setting_get("harman", {}) or {}
+    cur = db.setting_get("orchestrator", {}) or {}
     cur.update(patch)
-    db.setting_set("harman", cur)
+    db.setting_set("orchestrator", cur)
     return _load_config()
 
 
@@ -197,7 +197,7 @@ def _spawn_employee_session(employee, card, project, default_provider=""):
     return sid
 
 
-def harman_tick(*, dry_run=False):
+def orchestrator_tick(*, dry_run=False):
     """One survey→decide→act pass. Called from loop_scheduler every 5s; self-throttles
     to the configured interval. Whole body is exception-safe so a bad tick never kills
     the scheduler."""
@@ -236,7 +236,7 @@ def harman_tick(*, dry_run=False):
 
             for a in actions:
                 if dry_run:
-                    db.audit_append("harman", "tick_dryrun", a, "planned")
+                    db.audit_append("orchestrator", "tick_dryrun", a, "planned")
                     continue
                 try:
                     if a["kind"] == "assign":
@@ -245,24 +245,24 @@ def harman_tick(*, dry_run=False):
                         if doing:
                             doing_cards = [c for c in db.card_list(column_id=doing)]
                             db.card_move(cid, doing, orglogic.next_position(doing_cards, len(doing_cards)))
-                        db.audit_append("harman", "card_assign", {"card": cid, "employee": eid}, "ok")
+                        db.audit_append("orchestrator", "card_assign", {"card": cid, "employee": eid}, "ok")
                         if a.get("spawn"):
                             emp = emps_by_id.get(eid)
                             card = cards_by_id.get(cid)
                             proj = db.project_get(card.get("project_id")) if card else None
                             sid = _spawn_employee_session(emp, card, proj, cfg["default_provider"]) if emp and card else None
-                            db.audit_append("harman", "spawn_session",
+                            db.audit_append("orchestrator", "spawn_session",
                                             {"card": cid, "employee": eid, "session": sid},
                                             "ok" if sid else "no_provider")
                     elif a["kind"] == "advance":
                         db.card_move(a["card_id"], a["to_column"], 1.0)
-                        db.audit_append("harman", "card_advance",
+                        db.audit_append("orchestrator", "card_advance",
                                         {"card": a["card_id"], "to": a["to_column"]}, "ok")
                     elif a["kind"] == "escalate":
                         ap = db.approval_open(a.get("approval_kind", "infra"), a.get("summary", ""),
-                                              a.get("detail", {}), created_by="harman")
-                        db.audit_append("harman", "escalate", {"approval": ap["id"]}, "pending")
+                                              a.get("detail", {}), created_by="orchestrator")
+                        db.audit_append("orchestrator", "escalate", {"approval": ap["id"]}, "pending")
                 except Exception as e:  # one bad action shouldn't abort the rest
-                    db.audit_append("harman", a.get("kind", "action"), {"error": str(e)[:200]}, "error")
+                    db.audit_append("orchestrator", a.get("kind", "action"), {"error": str(e)[:200]}, "error")
     except Exception:
         pass

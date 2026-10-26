@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# deploy/install.sh — idempotent fresh-machine install for the Harman viewer.
+# deploy/install.sh — idempotent fresh-machine install for the Orchestrator viewer.
 #
 # Cross-platform (Linux + macOS). Brings a clean checkout to a running,
 # reboot-surviving instance on :8091:
 #   system deps → Postgres `viewer` DB → bootstrap → web build → service.
 # Every step is a no-op when already done, so it is safe to re-run.
 #
-#   Linux : apt + `sudo -u postgres` DB + systemd unit (harman-viewer.service)
-#   macOS : Homebrew + `brew services` DB + launchd agent (com.harman.viewer)
+#   Linux : apt + `sudo -u postgres` DB + systemd unit (agents-viewer.service)
+#   macOS : Homebrew + `brew services` DB + launchd agent (com.agents.viewer)
 #
 # Usage:
 #   deploy/install.sh                 # full install as the invoking user
@@ -94,23 +94,23 @@ if [[ -n "${NO_SERVICE:-}" ]]; then
 fi
 
 if [[ "$OS" == "Darwin" ]]; then
-  PLIST="$HOME/Library/LaunchAgents/com.harman.viewer.plist"
+  PLIST="$HOME/Library/LaunchAgents/com.agents.viewer.plist"
   PYTHON_BIN="$(command -v python3)"
-  log "Installing launchd agent 'com.harman.viewer' (port=$PORT)…"
+  log "Installing launchd agent 'com.agents.viewer' (port=$PORT)…"
   mkdir -p "$HOME/Library/LaunchAgents"
   sed \
     -e "s|__PYTHON__|$PYTHON_BIN|g" \
     -e "s|__WORKDIR__|$REPO_DIR|g" \
     -e "s|__PORT__|$PORT|g" \
-    "$REPO_DIR/deploy/com.harman.viewer.plist" > "$PLIST"
+    "$REPO_DIR/deploy/com.agents.viewer.plist" > "$PLIST"
   # Reload cleanly if it was already loaded.
-  launchctl bootout "gui/$(id -u)/com.harman.viewer" 2>/dev/null || true
+  launchctl bootout "gui/$(id -u)/com.agents.viewer" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$PLIST"
   log "Done. Instance should be live at http://localhost:$PORT"
-  log "  status:  launchctl print gui/$(id -u)/com.harman.viewer"
-  log "  logs:    tail -f $REPO_DIR/deploy/harman-viewer.log"
+  log "  status:  launchctl print gui/$(id -u)/com.agents.viewer"
+  log "  logs:    tail -f $REPO_DIR/deploy/agents-viewer.log"
 else
-  UNIT_NAME="harman-viewer.service"
+  UNIT_NAME="agents-viewer.service"
   log "Installing systemd unit '$UNIT_NAME' (User=$SERVICE_USER, port=$PORT)…"
   sed \
     -e "s|^User=.*|User=$SERVICE_USER|" \

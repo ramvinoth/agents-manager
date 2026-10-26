@@ -18,8 +18,8 @@
       "bundleIdentifier": "com.suhai.agents",
       "buildNumber": "1790518237",
       "infoPlist": {
-        "CFBundleDisplayName": "Harman",
-        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode.",
+        "CFBundleDisplayName": "Agents",
+        "NSMicrophoneUsageDescription": "Agents uses the microphone so you can talk to the agent in voice mode.",
         "UIBackgroundModes": [
           "audio"
         ]
@@ -46,13 +46,13 @@
       [
         "@config-plugins/react-native-callkeep",
         {
-          "appName": "Harman"
+          "appName": "Agents"
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode."
+          "microphonePermission": "Agents uses the microphone so you can talk to the agent in voice mode."
         }
       ],
       [

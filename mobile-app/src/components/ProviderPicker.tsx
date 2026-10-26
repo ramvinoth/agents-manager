@@ -110,7 +110,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       </View>
       <FlatList data={modelChoices(discovery, draft.model, search)} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
-          <Text style={styles.sheetHint}>{localOnly ? "Only this unsent chat. Defaults are unchanged." : scope.id ? "Changes apply to future runs, not a response already in progress." : "For new chats on this Harman server. Existing chats are unchanged."}</Text>
+          <Text style={styles.sheetHint}>{localOnly ? "Only this unsent chat. Defaults are unchanged." : scope.id ? "Changes apply to future runs, not a response already in progress." : "For new chats on this Orchestrator server. Existing chats are unchanged."}</Text>
           {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.sheetHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This selection is unsupported on this host or runner. Choose supported settings.")}</Text> : null}
           {config.issue ? <Text style={styles.sheetHint}>{config.issue}</Text> : null}
           <Text style={styles.sheetSection}>PROVIDER</Text>

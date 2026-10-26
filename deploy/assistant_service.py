@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Harman assistant voice service — the hands-free tool-capable assistant brain.
+Orchestrator assistant voice service — the hands-free tool-capable assistant brain.
 
 Given a user utterance (already transcribed + wake/verify-gated upstream by the
 :8095 speech service), this service:
@@ -23,12 +23,12 @@ Endpoints (mirror pocket_service so the viewer can proxy either):
   GET  /health                : {"ok", "voice", "step", "qwen"}
 
 Env:
-  HARMAN_ASSISTANT_PORT   (default 8099)
-  HARMAN_STEP_URL      (default http://127.0.0.1:8000/v1/chat/completions)
-  HARMAN_QWEN_URL      (default http://100.115.120.89:8081/v1/chat/completions)
-  HARMAN_QWEN_KEY      (default sk-llama-suhai-2026)
-  HARMAN_ASSISTANT_VOICE    (default <model>/voices/assistant.wav)
-  HARMAN_ASSISTANT_DEVICE (default cuda:0 for token2wav)
+  AGENTS_ASSISTANT_PORT   (default 8099)
+  AGENTS_STEP_URL      (default http://127.0.0.1:8000/v1/chat/completions)
+  AGENTS_QWEN_URL      (default http://100.115.120.89:8081/v1/chat/completions)
+  AGENTS_QWEN_KEY      (default sk-llama-suhai-2026)
+  AGENTS_ASSISTANT_VOICE    (default <model>/voices/assistant.wav)
+  AGENTS_ASSISTANT_DEVICE (default cuda:0 for token2wav)
 """
 import io
 import json
@@ -45,26 +45,26 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 # --- config ---------------------------------------------------------------
-PORT = int(os.environ.get("HARMAN_ASSISTANT_PORT", "8099"))
-STEP_URL = os.environ.get("HARMAN_STEP_URL", "http://127.0.0.1:8000/v1/chat/completions")
-STEP_MODEL = os.environ.get("HARMAN_STEP_MODEL", "step-audio-2-mini")
-QWEN_URL = os.environ.get("HARMAN_QWEN_URL", "http://100.115.120.89:8081/v1/chat/completions")
-QWEN_KEY = os.environ.get("HARMAN_QWEN_KEY", "sk-llama-suhai-2026")
-MODEL_DIR = os.environ.get("HARMAN_STEP_MODEL_DIR",
+PORT = int(os.environ.get("AGENTS_ASSISTANT_PORT", "8099"))
+STEP_URL = os.environ.get("AGENTS_STEP_URL", "http://127.0.0.1:8000/v1/chat/completions")
+STEP_MODEL = os.environ.get("AGENTS_STEP_MODEL", "step-audio-2-mini")
+QWEN_URL = os.environ.get("AGENTS_QWEN_URL", "http://100.115.120.89:8081/v1/chat/completions")
+QWEN_KEY = os.environ.get("AGENTS_QWEN_KEY", "sk-llama-suhai-2026")
+MODEL_DIR = os.environ.get("AGENTS_STEP_MODEL_DIR",
                            "/home/suhai/Documents/vllm-models/step-audio-2-mini")
-VOICE_WAV = os.environ.get("HARMAN_ASSISTANT_VOICE", MODEL_DIR + "/voices/assistant.wav")
-DEVICE = os.environ.get("HARMAN_ASSISTANT_DEVICE", "cuda:0")
+VOICE_WAV = os.environ.get("AGENTS_ASSISTANT_VOICE", MODEL_DIR + "/voices/assistant.wav")
+DEVICE = os.environ.get("AGENTS_ASSISTANT_DEVICE", "cuda:0")
 
 # TTS backend for speaking Qwen's answer. Step-Audio's token2wav is ~3.4s/turn on
 # this GPU; Pocket TTS (same cloned "george" voice, same /synthesize_stream_aac
 # contract) is ~0.8s — ~4x faster. Since Qwen is the brain (Step-Audio was only the
 # mouth, and its own tool-calling was unreliable anyway), we speak via Pocket and
-# skip Step-Audio + token2wav entirely. Set HARMAN_ASSISTANT_TTS=step to force the
+# skip Step-Audio + token2wav entirely. Set AGENTS_ASSISTANT_TTS=step to force the
 # old path.
-POCKET_URL = os.environ.get("HARMAN_POCKET_URL", "http://127.0.0.1:8097/synthesize_stream_aac")
-TTS_BACKEND = os.environ.get("HARMAN_ASSISTANT_TTS", "pocket").strip().lower()
+POCKET_URL = os.environ.get("AGENTS_POCKET_URL", "http://127.0.0.1:8097/synthesize_stream_aac")
+TTS_BACKEND = os.environ.get("AGENTS_ASSISTANT_TTS", "pocket").strip().lower()
 
-SYSTEM = ("You are Harman, a warm, concise voice assistant on a phone call. "
+SYSTEM = ("You are Orchestrator, a warm, concise voice assistant on a phone call. "
           "Answer in ONE short spoken sentence — 15 words or fewer — in natural "
           "spoken English, no markdown, no lists, no preamble. Get straight to the "
           "answer; the person can always ask a follow-up. Use tools for time or weather.")
@@ -101,7 +101,7 @@ def _post_json(url, payload, key=None, timeout=120):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "harman-assistant/1.0")
+    req.add_header("User-Agent", "orchestrator-assistant/1.0")
     if key:
         req.add_header("Authorization", f"Bearer {key}")
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -249,7 +249,7 @@ def _step_tts_token_stream(text):
 _t2w_lock = threading.Lock()
 # Tokens per vocoder chunk: ~25 tok ≈ 0.5s of audio. Small enough for a fast first
 # chunk, large enough that per-chunk flow overhead stays amortized.
-_CHUNK_TOKS = int(os.environ.get("HARMAN_TTS_CHUNK_TOKS", "25"))
+_CHUNK_TOKS = int(os.environ.get("AGENTS_TTS_CHUNK_TOKS", "25"))
 
 
 def _voice_pcm_stream(text):
@@ -326,7 +326,7 @@ async def synthesize_stream_aac(request: Request):
 
     Default TTS = Pocket (:8097): ~4x faster than Step-Audio's token2wav and the
     same cloned "george" voice. Qwen is the brain; Pocket is the mouth. Set
-    HARMAN_ASSISTANT_TTS=step to fall back to the local Step-Audio vocoder."""
+    AGENTS_ASSISTANT_TTS=step to fall back to the local Step-Audio vocoder."""
     body = await request.json()
     utterance = (body.get("text") or "").strip()
     if not utterance:

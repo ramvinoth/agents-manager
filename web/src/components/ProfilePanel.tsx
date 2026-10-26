@@ -13,7 +13,7 @@ import { AuditDialog } from "./AuditDialog"
 const LOOP_OPTS: { v: LoopMode; label: string }[] = [
   { v: "none", label: "None" },
   { v: "user", label: "Yours" },
-  { v: "harman", label: "Agent" },
+  { v: "agent", label: "Agent" },
   { v: "both", label: "Both" },
 ]
 
@@ -61,11 +61,11 @@ function Toggle({
  * Profile tab (web control point) — mirrors mobile ProfileScreen's orchestration
  * controls: the AUTOMATION master switch and the SCHEDULED LOOPS mode picker.
  * Both read/write the ONE shared store cache, so toggling here immediately
- * updates the session-list pinned Harman entry. Server is the source of truth;
+ * updates the session-list pinned Orchestrator entry. Server is the source of truth;
  * every write re-syncs from it.
  */
 export function ProfilePanel() {
-  const harman = useStore((s) => s.harman)
+  const orchestrator = useStore((s) => s.orchestrator)
   const loopControl = useStore((s) => s.loopControl)
   const setAutomation = useStore((s) => s.setAutomation)
   const setLoopMode = useStore((s) => s.setLoopMode)
@@ -110,13 +110,13 @@ export function ProfilePanel() {
   // Three states, not two. A server older than the switch omits the key, and
   // rendering that as "off" would claim the machine is paused when that build
   // has no gate at all and still fires jobs. "Unknown" says so.
-  const autoKnown = harman ? typeof harman.automation_enabled === "boolean" : false
+  const autoKnown = orchestrator ? typeof orchestrator.automation_enabled === "boolean" : false
 
   async function toggleAutomation() {
-    if (!harman || autoBusy) return
+    if (!orchestrator || autoBusy) return
     setAutoBusy(true)
     setAutoErr("")
-    const msg = await setAutomation(!(harman.automation_enabled === true))
+    const msg = await setAutomation(!(orchestrator.automation_enabled === true))
     setAutoErr(msg)
     setAutoBusy(false)
   }
@@ -141,11 +141,11 @@ export function ProfilePanel() {
 
   const autoHint = autoErr
     ? autoErr
-    : !harman
+    : !orchestrator
       ? "Can't reach the server — state unknown."
       : !autoKnown
         ? "This server is too old to have the switch — it still runs jobs on their own. Update it."
-        : harman.automation_enabled
+        : orchestrator.automation_enabled
           ? "On — scheduled jobs and the autonomous manager can start work on their own."
           : "Off — nothing runs unless you ask. Scheduled jobs and the manager are paused."
 
@@ -157,7 +157,7 @@ export function ProfilePanel() {
         ? "Paused — no scheduled loops fire, yours or the agents'."
         : loopControl.mode === "user"
           ? "Only your own scheduled loops fire. Agent-created loops stay paused."
-          : loopControl.mode === "harman"
+          : loopControl.mode === "agent"
             ? "Only agent-created loops fire. Your own scheduled loops stay paused."
             : "Every scheduled loop fires — yours and the agents'."
 
@@ -169,12 +169,12 @@ export function ProfilePanel() {
           <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">Run work on its own</div>
-              <div className={cn("text-[11px]", autoErr || (harman && !autoKnown) ? "text-destructive" : "text-muted-foreground")}>
+              <div className={cn("text-[11px]", autoErr || (orchestrator && !autoKnown) ? "text-destructive" : "text-muted-foreground")}>
                 {autoHint}
               </div>
             </div>
             <Toggle
-              on={harman?.automation_enabled === true}
+              on={orchestrator?.automation_enabled === true}
               disabled={!autoKnown || autoBusy}
               onClick={toggleAutomation}
             />

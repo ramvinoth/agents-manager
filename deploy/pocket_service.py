@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Harman Pocket-TTS service — fast neural TTS (kyutai/pocket-tts), the successor
+Orchestrator Pocket-TTS service — fast neural TTS (kyutai/pocket-tts), the successor
 to the Qwen experiment. Runs in ~/pocket-tts-env on its own port (default 8097).
 
   POST /synthesize : {"text": ...} -> audio/wav
@@ -8,7 +8,7 @@ to the Qwen experiment. Runs in ~/pocket-tts-env on its own port (default 8097).
   GET  /health     : {"ok": true, "tts": bool, "engine": "pocket", "voice": ...}
 
 Pocket generates faster than real-time (RTF ~0.5), so this is meant to be the
-default conversational voice. The viewer just points HARMAN_SPEECH_URL here.
+default conversational voice. The viewer just points AGENTS_SPEECH_URL here.
 """
 import io
 import os
@@ -22,9 +22,9 @@ import numpy as np
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-VOICE = os.environ.get("HARMAN_POCKET_VOICE", "george")  # US English male
-STT_FORWARD_URL = os.environ.get("HARMAN_STT_URL", "http://127.0.0.1:8095/transcribe")
-DEVICE = os.environ.get("HARMAN_POCKET_DEVICE", "cuda")  # "cuda" (GPU) or "cpu"
+VOICE = os.environ.get("AGENTS_POCKET_VOICE", "george")  # US English male
+STT_FORWARD_URL = os.environ.get("AGENTS_STT_URL", "http://127.0.0.1:8095/transcribe")
+DEVICE = os.environ.get("AGENTS_POCKET_DEVICE", "cuda")  # "cuda" (GPU) or "cpu"
 
 app = FastAPI()
 
@@ -187,5 +187,5 @@ async def transcribe(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("HARMAN_POCKET_PORT", "8097"))
+    port = int(os.environ.get("AGENTS_POCKET_PORT", "8097"))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

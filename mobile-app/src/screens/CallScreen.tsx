@@ -1,5 +1,5 @@
 /**
- * CallScreen — a WhatsApp-style voice CALL with Harman.
+ * CallScreen — a WhatsApp-style voice CALL with Orchestrator.
  *
  * CallKit shows the system call UI, and the conversation keeps running with the
  * screen locked or the app backgrounded. `useAssistantTurn` owns the listen /
@@ -36,7 +36,7 @@ export default function CallScreen({ route, navigation }: Props) {
   const { path, label } = route.params
   const t = useTheme()
   const insets = useSafeAreaInsets()
-  // Barge-in "Harman, end the call" reaches hangUp via this ref (hangUp is defined
+  // Barge-in "Orchestrator, end the call" reaches hangUp via this ref (hangUp is defined
   // below the hook, so the hook gets a stable indirection instead of the closure).
   const hangUpRef = useRef<null | (() => void)>(null)
   const { phase, engine, model, heard, reply, error, startHandsFree, stopHandsFree } = useAssistantTurn(path, {
@@ -128,7 +128,7 @@ export default function CallScreen({ route, navigation }: Props) {
         >
           <Icon name="sparkle" size={48} color={t.accent} />
         </View>
-        <Text style={{ color: t.text, fontSize: 24, fontWeight: "700" }}>Harman</Text>
+        <Text style={{ color: t.text, fontSize: 24, fontWeight: "700" }}>Orchestrator</Text>
         <Text style={{ color: t.textMuted, fontSize: 14 }} numberOfLines={1}>{label}</Text>
         {/* The server's own name for what is answering — so a tester can tell a
             Nemotron call from the STT/brain/TTS path without guessing. */}

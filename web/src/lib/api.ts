@@ -2,7 +2,7 @@
 // Ported from the vanilla api.js: endpoint URLs + host-threading live here.
 // `host` is set once (by the store) and injected centrally.
 
-import type { Provider, Employee, HarmanConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, InboxFilter, InboxMessage } from "./types"
+import type { Provider, Employee, OrchestratorConfig, LoopControl, LoopMode, OrgProject, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteFilter, NoteKind, Queued, SessionDetail, OpenDecision, InboxFilter, InboxMessage } from "./types"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 
@@ -168,17 +168,17 @@ class ApiClient {
   }
 
   // ---- org / Kanban (project-scoped board) ----
-  /** Harman orchestrator config — the single server-side source of truth for
+  /** Orchestrator config — the single server-side source of truth for
    *  the master automation switch. Read on both apps; writable from the web
    *  Profile tab and the mobile Profile screen (they mirror each other). */
-  orgHarman() {
-    return this.getJSON<HarmanConfig>("/api/org/harman")
+  orgOrchestrator() {
+    return this.getJSON<OrchestratorConfig>("/api/org/orchestrator")
   }
-  /** Patch the Harman config. Turning automation ON is a Red action (manager
+  /** Patch the Orchestrator config. Turning automation ON is a Red action (manager
    *  scope) — a caller who can't self-approve gets an approval back, not the
    *  config — hence the `| Queued` union. Other keys apply green. */
-  orgSetHarman(patch: Partial<HarmanConfig>) {
-    return this.postJSON<HarmanConfig | Queued>("/api/org/harman", patch)
+  orgSetOrchestrator(patch: Partial<OrchestratorConfig>) {
+    return this.postJSON<OrchestratorConfig | Queued>("/api/org/orchestrator", patch)
   }
   /** Loop-firing mode — which loop origins may run, orthogonal to automation.
    *  Green (manager scope, never queues): the write returns the applied config. */

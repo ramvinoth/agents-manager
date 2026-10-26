@@ -1,5 +1,5 @@
 {
-  "name": "harman-audio",
+  "name": "agents-audio",
   "version": "0.1.0",
   "description": "Echo-cancelled full-duplex mic capture (voiceProcessingIO) for barge-in",
   "main": "src/index.ts",

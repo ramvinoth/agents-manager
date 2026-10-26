@@ -1,5 +1,5 @@
 [Unit]
-Description=Harman viewer server (agents) on :8091
+Description=Orchestrator viewer server (agents) on :8091
 # The Cloudflare tunnel (agents-tunnel.service) forwards agents.suhai.ai here.
 After=network-online.target postgresql.service
 Wants=network-online.target

@@ -126,9 +126,9 @@ class VoiceMixin:
         per-utterance speaker match (a biometric match every turn was both
         overkill and, in practice, what blocked calls: live scores sat below
         threshold).
-        mode=wakeguard: barge-in while Harman speaks. The device sends
-        echo-cancelled windows; only "Harman …" matters (AEC already removed
-        Harman's own voice), and the tail after the wake word is the command."""
+        mode=wakeguard: barge-in while Orchestrator speaks. The device sends
+        echo-cancelled windows; only "Orchestrator …" matters (AEC already removed
+        Orchestrator's own voice), and the tail after the wake word is the command."""
         from viewer.browser import WSServer
         speaker_id = (req.query.get("speaker_id") or ["default"])[0]
         wakeguard_mode = (req.query.get("mode") or ["call"])[0] == "wakeguard"

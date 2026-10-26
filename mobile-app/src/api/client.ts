@@ -174,19 +174,19 @@ export type Queued = { queued: true; approval: number }
 export const isQueued = (r: unknown): r is Queued =>
   !!r && (r as Queued).queued === true
 /** `automation_enabled` is the master switch (default off): while it is off NOTHING
- *  runs unattended — not Harman's manager tick, not scheduled loops. `enabled`
+ *  runs unattended — not Orchestrator's manager tick, not scheduled loops. `enabled`
  *  scopes only the manager tick, so it is meaningless while the master is off.
  *
  *  OPTIONAL on purpose: a server older than the switch omits the key entirely, and
  *  `undefined` must not collapse to `false` there — that server has no gate at all,
  *  so showing "off" would promise a pause that isn't happening. Callers must treat a
  *  missing value as *unknown*, never as off. */
-export type HarmanConfig = { automation_enabled?: boolean; enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
+export type OrchestratorConfig = { automation_enabled?: boolean; enabled: boolean; interval: number; budget: number; projects: number[]; default_provider: string }
 /** WHICH loop origins may fire, orthogonal to the automation master switch:
- *  user = the owner's own scheduled loops only (the default), harman = agent-created
+ *  user = the owner's own scheduled loops only (the default), orchestrator = agent-created
  *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
- *  NOT start Harman's manager tick (that is `automation_enabled`). */
-export type LoopMode = "user" | "harman" | "both" | "none"
+ *  NOT start Orchestrator's manager tick (that is `automation_enabled`). */
+export type LoopMode = "user" | "agent" | "both" | "none"
 export type LoopControl = { mode: LoopMode }
 /** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
  *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
@@ -387,7 +387,7 @@ export const api = {
   chatStatus: (id: string) => req<ChatStatus>("GET", `/api/chat/status?id=${encodeURIComponent(id)}`),
   // One spoken exchange with the fast call brain. It answers in ~1-2 s: small talk
   // itself, real work handed to the session at `path` as a background turn (the
-  // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
+  // brain's ask_orchestrator/check_orchestrator/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
@@ -610,7 +610,7 @@ export const api = {
 
   // Barge-in wake-guard WS: a lightweight keyword-spotting stream that runs WHILE
   // the assistant is speaking. The server uses a cheap KWS pass (not full STT) so
-  // it can loop continuously; it fires only when the wake word "Harman" is heard,
+  // it can loop continuously; it fires only when the wake word "Orchestrator" is heard,
   // returning the transcript tail for command parsing (stop / end / new question).
   voiceWakeguardWsUrl: (speakerId = "default"): { url: string; headers: Record<string, string> } => {
     const base = serverUrl().replace(/^http/, "ws")
@@ -749,9 +749,9 @@ export const api = {
     req<Approval>("POST", "/api/org/approvals/resolve", body),
   orgAudit: async (result: AuditFilter = "all", before?: number) =>
     parseAuditPage(await req("GET", auditPath(result, before)), before),
-  orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
-  orgSetHarman: (patch: Partial<HarmanConfig>) =>
-    req<HarmanConfig | Queued>("POST", "/api/org/harman", patch),
+  orgOrchestrator: () => req<OrchestratorConfig>("GET", "/api/org/orchestrator"),
+  orgSetOrchestrator: (patch: Partial<OrchestratorConfig>) =>
+    req<OrchestratorConfig | Queued>("POST", "/api/org/orchestrator", patch),
   // Loop-firing mode. Manager-scoped and green (setting it never queues), so the
   // response is always the applied config — no Queued union, unlike the Red resume.
   orgLoopControl: () => req<LoopControl>("GET", "/api/org/loop-control"),

@@ -14,7 +14,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Audit">
 
 /**
  * The activity feed: who did what, to which card, grouped by day. Reads as a
- * sentence per row ("Harman moved “Ship the editor” → Review · 14:07"), with a
+ * sentence per row ("Orchestrator moved “Ship the editor” → Review · 14:07"), with a
  * result chip only when the result is worth a glance (an approval, a denial, a
  * failure). Plain successes stay quiet so the exceptions stand out.
  */

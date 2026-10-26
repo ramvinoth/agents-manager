@@ -3,7 +3,7 @@ import { ScrollView, Switch, Text, TextInput, TouchableOpacity, useColorScheme, 
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
+import { api, isQueued, type OrchestratorConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
 import {
   currentHost,
   notifyEveryReply,
@@ -38,7 +38,7 @@ const THEME_OPTS: { v: ThemePref; label: string }[] = [
 const LOOP_OPTS: { v: LoopMode; label: string }[] = [
   { v: "none", label: "None" },
   { v: "user", label: "Yours" },
-  { v: "harman", label: "Agent" },
+  { v: "agent", label: "Agent" },
   { v: "both", label: "Both" },
 ]
 
@@ -56,18 +56,18 @@ export default function ProfileScreen({ navigation }: Props) {
   // server is unreachable) — the row renders disabled rather than guessing,
   // because a switch showing "off" that never reached the server would be the
   // one lie this control must not tell.
-  const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  const [orchestrator, setOrchestrator] = useState<OrchestratorConfig | null>(null)
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
   // The loop-firing mode — WHICH loop origins may run, independent of the master
-  // switch above. Null while unknown (same reasoning as `harman`): a mode picker
+  // switch above. Null while unknown (same reasoning as `orchestrator`): a mode picker
   // that guessed would misstate which of the owner's schedules are live.
   const [loop, setLoop] = useState<LoopControl | null>(null)
   const [loopBusy, setLoopBusy] = useState(false)
   const [loopErr, setLoopErr] = useState("")
   // The global system-awareness preamble prepended to every session's system
   // prompt. `preamble` is the server's value (null while unknown, same reasoning
-  // as harman/loop above); `draft` is the local edit buffer so typing doesn't
+  // as orchestrator/loop above); `draft` is the local edit buffer so typing doesn't
   // fight the fetched value. preMsg carries the save result ("Saved." or an error).
   const [preamble, setPreamble] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
@@ -149,9 +149,9 @@ export default function ProfileScreen({ navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       let alive = true
-      api.orgHarman()
-        .then((h) => alive && setHarman(h))
-        .catch(() => alive && setHarman(null))
+      api.orgOrchestrator()
+        .then((h) => alive && setOrchestrator(h))
+        .catch(() => alive && setOrchestrator(null))
       api.orgLoopControl()
         .then((l) => alive && setLoop(l))
         .catch(() => alive && setLoop(null))
@@ -172,26 +172,26 @@ export default function ProfileScreen({ navigation }: Props) {
   }, [preamble])
 
   async function toggleAutomation(v: boolean) {
-    if (!harman || autoBusy) return
+    if (!orchestrator || autoBusy) return
     setAutoBusy(true)
     setAutoErr("")
     try {
       // Deliberately NOT optimistic. Everywhere else a snapped-back switch is a
       // cosmetic annoyance; here it would claim the machine is paused when the
       // request never landed. The switch moves only once the server confirms.
-      const res = await api.orgSetHarman({ automation_enabled: v })
+      const res = await api.orgSetOrchestrator({ automation_enabled: v })
       // Resuming is Red (viewer/orglogic), so a non-owner's request is QUEUED as
       // an approval rather than applied — a 200 that changed nothing. Say so, or
       // the switch snapping back looks like a bug instead of the gate working.
       if (isQueued(res)) {
         setAutoErr("Sent for approval — only the owner can turn automation on.")
-        setHarman(await api.orgHarman().catch(() => harman))
+        setOrchestrator(await api.orgOrchestrator().catch(() => orchestrator))
       } else {
-        setHarman(res)
+        setOrchestrator(res)
       }
     } catch (e) {
       setAutoErr((e as Error).message || "Couldn't change it.")
-      setHarman(await api.orgHarman().catch(() => null))
+      setOrchestrator(await api.orgOrchestrator().catch(() => null))
     } finally {
       setAutoBusy(false)
     }
@@ -239,14 +239,14 @@ export default function ProfileScreen({ navigation }: Props) {
   // Three states, not two. A server older than the switch omits the key, and
   // rendering that as "off" would tell you the machine is paused when that build
   // has no gate at all and is still firing scheduled jobs. Unknown says so.
-  const autoKnown = harman ? typeof harman.automation_enabled === "boolean" : false
+  const autoKnown = orchestrator ? typeof orchestrator.automation_enabled === "boolean" : false
   const autoHint = autoErr
     ? autoErr
-    : !harman
+    : !orchestrator
       ? "Can't reach the server — state unknown."
       : !autoKnown
         ? "This server is too old to have the switch — it still runs jobs on their own. Update it."
-        : harman.automation_enabled
+        : orchestrator.automation_enabled
           ? "On — scheduled jobs and the autonomous manager can start work on their own."
           : "Off — nothing runs unless you ask. Scheduled jobs and the manager are paused."
 
@@ -260,7 +260,7 @@ export default function ProfileScreen({ navigation }: Props) {
         ? "Paused — no scheduled loops fire, yours or the agents'."
         : loop.mode === "user"
           ? "Only your own scheduled loops fire. Agent-created loops stay paused."
-          : loop.mode === "harman"
+          : loop.mode === "agent"
             ? "Only agent-created loops fire. Your own scheduled loops stay paused."
             : "Every scheduled loop fires — yours and the agents'."
 
@@ -270,13 +270,13 @@ export default function ProfileScreen({ navigation }: Props) {
       <View style={styles.ssRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.ssRowLabel}>Run work on its own</Text>
-          <Text style={[styles.ssRowHint, autoErr || (harman && !autoKnown) ? { color: t.danger } : null]}>
+          <Text style={[styles.ssRowHint, autoErr || (orchestrator && !autoKnown) ? { color: t.danger } : null]}>
             {autoHint}
           </Text>
         </View>
         <Switch
           testID="profile-automation"
-          value={harman?.automation_enabled === true}
+          value={orchestrator?.automation_enabled === true}
           disabled={!autoKnown || autoBusy}
           onValueChange={toggleAutomation}
           trackColor={{ true: t.accent, false: t.border }}
@@ -313,7 +313,7 @@ export default function ProfileScreen({ navigation }: Props) {
         </View>
         <Icon name="chevronRight" size={18} color={t.textMuted}/>
       </TouchableOpacity>
-      <Text style={styles.sheetHint}>For new chats on this Harman server. Existing chats are unchanged.</Text>
+      <Text style={styles.sheetHint}>For new chats on this Orchestrator server. Existing chats are unchanged.</Text>
       <TouchableOpacity
         testID="open-providers"
         style={styles.profileInfoRow}

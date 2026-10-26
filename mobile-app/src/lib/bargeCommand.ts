@@ -1,12 +1,12 @@
 /**
  * bargeCommand — pure parser for spoken barge-in commands in call mode.
  *
- * During barge-in the user talks over Harman with the wake word "Harman" followed
+ * During barge-in the user talks over the agent with the wake word "Agent" followed
  * by an instruction. This turns a raw transcript into a typed command so the call
  * state machine can act:
- *   - "Harman, stop"            → { kind: "stop" }        (halt speech, keep listening)
- *   - "Harman, end the call"    → { kind: "end" }         (hang up)
- *   - "Harman, what's the time" → { kind: "ask", tail }   (new turn with `tail`)
+ *   - "Agent, stop"            → { kind: "stop" }        (halt speech, keep listening)
+ *   - "Agent, end the call"    → { kind: "end" }         (hang up)
+ *   - "Agent, what's the time" → { kind: "ask", tail }   (new turn with `tail`)
  *   - anything without the wake word (or wake word alone with no clear intent that
  *     isn't stop) → { kind: "none" }
  *
@@ -21,8 +21,8 @@ export type BargeCommand =
   | { kind: "end" }
   | { kind: "ask"; tail: string }
 
-/** Wake-word spellings STT commonly produces for "Harman". */
-const WAKE_VARIANTS = ["harman", "harmon", "herman", "hardman", "harmony", "harmen"]
+/** Wake-word spellings STT commonly produces for "Agent". */
+const WAKE_VARIANTS = ["agent", "agents", "aged", "agend", "aging"]
 
 /** Phrases (after the wake word) that mean "stop talking". */
 const STOP_PHRASES = ["stop", "stop it", "be quiet", "quiet", "shut up", "shush", "cancel", "nevermind", "never mind", "enough"]
@@ -43,7 +43,7 @@ function normalize(s: string): string {
 export function stripWake(text: string): { hadWake: boolean; tail: string } {
   const words = normalize(text).split(" ").filter(Boolean)
   if (!words.length) return { hadWake: false, tail: "" }
-  // Wake word must be the first token (barge-in always leads with "Harman").
+  // Wake word must be the first token (barge-in always leads with "Agent").
   if (WAKE_VARIANTS.includes(words[0])) {
     return { hadWake: true, tail: words.slice(1).join(" ") }
   }
@@ -57,8 +57,8 @@ function matchesAny(tail: string, phrases: string[]): boolean {
 
 /**
  * Parse a transcript into a barge-in command. Requires the wake word to lead
- * (during barge-in the mic is hot while Harman speaks, so we only act on an
- * explicit "Harman …" to avoid false triggers on stray speech / residual echo).
+ * (during barge-in the mic is hot while the agent speaks, so we only act on an
+ * explicit "Agent …" to avoid false triggers on stray speech / residual echo).
  */
 export function parseBargeCommand(text: string): BargeCommand {
   const { hadWake, tail } = stripWake(text)
@@ -69,7 +69,7 @@ export function parseBargeCommand(text: string): BargeCommand {
 /**
  * Classify the command tail AFTER the wake word has already been stripped — used
  * for the server `/wakeguard` path, where the box returns `{wake:true, text:tail}`
- * with "Harman" already removed. `parseBargeCommand` (on-device path) strips the
+ * with "Agent" already removed. `parseBargeCommand` (on-device path) strips the
  * wake word itself and then defers here, so both paths share one classifier.
  */
 export function parseBargeTail(tail: string): BargeCommand {

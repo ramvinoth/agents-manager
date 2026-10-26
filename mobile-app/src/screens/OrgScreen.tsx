@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type Approval, type Employee, type HarmanConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
+import { api, isQueued, type Approval, type Employee, type OrchestratorConfig, type LearnedSkill, type OrgProject, type Provider } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -12,7 +12,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
 /**
  * OrgScreen — the CEO dashboard for the "empire": the employee roster, projects
- * (each opens its board), the open Approvals queue Harman feeds (Approve/Deny),
+ * (each opens its board), the open Approvals queue Orchestrator feeds (Approve/Deny),
  * and an entry into the read-only audit log. Read-heavy; mutations are limited to
  * approving/denying and creating employees/projects (manager authority,
  * enforced server-side).
@@ -22,7 +22,7 @@ export default function OrgScreen({ navigation }: Props) {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [projects, setProjects] = useState<OrgProject[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
-  const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  const [orchestrator, setOrchestrator] = useState<OrchestratorConfig | null>(null)
   const [skills, setSkills] = useState<LearnedSkill[]>([])
   // The library route returns every skill on disk; this section is about what the
   // TEAM learned, so it shows only rows with ledger provenance (an id).
@@ -39,14 +39,14 @@ export default function OrgScreen({ navigation }: Props) {
         api.orgEmployees(),
         api.orgProjects(),
         api.orgApprovals(),
-        api.orgHarman().catch(() => null),
+        api.orgOrchestrator().catch(() => null),
         api.orgSkills().catch(() => ({ skills: [] as LearnedSkill[] })),
         api.providers().catch(() => ({ providers: [] as Provider[] })),
       ])
       setEmployees(e.employees || [])
       setProjects(p.projects || [])
       setApprovals(a.approvals || [])
-      setHarman(h)
+      setOrchestrator(h)
       setSkills(sk.skills || [])
       setProviders(pr.providers || [])
     } catch (err) {
@@ -66,7 +66,7 @@ export default function OrgScreen({ navigation }: Props) {
 
   // Create employee / project via a cross-platform sheet (Alert.prompt is iOS-only,
   // so the old inline prompt silently no-opped on Android). A project needs a real
-  // workspace dir — without a cwd a Harman-spawned session falls back to $HOME, which
+  // workspace dir — without a cwd an Orchestrator-spawned session falls back to $HOME, which
   // is wrong — so we offer recent dirs as suggestions.
   const [creating, setCreating] = useState<null | "employee" | "project">(null)
   const [dirs, setDirs] = useState<string[]>([])
@@ -97,25 +97,25 @@ export default function OrgScreen({ navigation }: Props) {
     } catch { load() }
   }
 
-  async function patchHarman(patch: Partial<HarmanConfig>) {
-    if (!harman) return
-    const next = { ...harman, ...patch }
-    setHarman(next) // optimistic
+  async function patchOrchestrator(patch: Partial<OrchestratorConfig>) {
+    if (!orchestrator) return
+    const next = { ...orchestrator, ...patch }
+    setOrchestrator(next) // optimistic
     try {
-      const saved = await api.orgSetHarman(patch)
+      const saved = await api.orgSetOrchestrator(patch)
       // A queued response means the write became an approval, so the optimistic
       // state is now a lie — reload rather than paint a change that didn't land.
       // This screen never sends the master switch (that's Profile), so today only
       // a policy change could route it here; handling it keeps that safe.
       if (isQueued(saved)) load()
-      else setHarman(saved)
+      else setOrchestrator(saved)
     } catch { load() }
   }
 
   function toggleManaged(projectId: number) {
-    if (!harman) return
-    const has = harman.projects.includes(projectId)
-    patchHarman({ projects: has ? harman.projects.filter((p) => p !== projectId) : [...harman.projects, projectId] })
+    if (!orchestrator) return
+    const has = orchestrator.projects.includes(projectId)
+    patchOrchestrator({ projects: has ? orchestrator.projects.filter((p) => p !== projectId) : [...orchestrator.projects, projectId] })
   }
 
   if (loading) {
@@ -156,8 +156,8 @@ export default function OrgScreen({ navigation }: Props) {
             "Open the project board and add a card or two describing the work.",
             // The autonomous-manager step only exists when automation is on —
             // with the master switch off the app is the plain task system.
-            ...(harman?.automation_enabled === true
-              ? ["Point Harman at the project in the manager panel above — it assigns and runs the work."]
+            ...(orchestrator?.automation_enabled === true
+              ? ["Point Orchestrator at the project in the manager panel above — it assigns and runs the work."]
               : []),
           ].map((step, i) => (
             <View key={i} style={{ flexDirection: "row", gap: 8, marginBottom: 6 }}>
@@ -173,29 +173,29 @@ export default function OrgScreen({ navigation }: Props) {
           on purpose — the server always returns the switch (missing → OFF), so
           anything but an explicit true keeps the panel hidden. The switch
           itself stays visible in Profile (the one control point). */}
-      {harman && harman.automation_enabled === true ? (
-        <Section title="Harman (manager)">
+      {orchestrator && orchestrator.automation_enabled === true ? (
+        <Section title="Orchestrator (manager)">
           <Row>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: t.text, fontWeight: "600" }}>Autonomous manager</Text>
                 <Text style={{ color: t.textMuted, fontSize: 12, marginTop: 2 }}>
-                  {harman.enabled
-                    ? (harman.projects.length ? `Managing ${harman.projects.length} project(s) · up to ${harman.budget} at once` : "On, but no projects assigned — inert")
+                  {orchestrator.enabled
+                    ? (orchestrator.projects.length ? `Managing ${orchestrator.projects.length} project(s) · up to ${orchestrator.budget} at once` : "On, but no projects assigned — inert")
                     : "Off"}
                 </Text>
               </View>
-              <Switch value={harman.enabled} onValueChange={(v) => patchHarman({ enabled: v })} />
+              <Switch value={orchestrator.enabled} onValueChange={(v) => patchOrchestrator({ enabled: v })} />
             </View>
-            {/* Which projects Harman manages (auto-assign + spawn). Empty = does nothing. */}
+            {/* Which projects Orchestrator manages (auto-assign + spawn). Empty = does nothing. */}
             {projects.length ? (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
                 {projects.map((p) => {
-                  const on = harman.projects.includes(p.id)
+                  const on = orchestrator.projects.includes(p.id)
                   return (
                     <TouchableOpacity
                       key={p.id}
-                      testID={`harman-proj-${p.id}`}
+                      testID={`orchestrator-proj-${p.id}`}
                       onPress={() => toggleManaged(p.id)}
                       style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
                     >
@@ -211,12 +211,12 @@ export default function OrgScreen({ navigation }: Props) {
                 <Text style={{ color: t.textMuted, fontSize: 12, marginBottom: 6 }}>Default employee model</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                   {providers.map((pr) => {
-                    const on = harman.default_provider === pr.id
+                    const on = orchestrator.default_provider === pr.id
                     return (
                       <TouchableOpacity
                         key={pr.id}
-                        testID={`harman-provider-${pr.id}`}
-                        onPress={() => patchHarman({ default_provider: on ? "" : pr.id })}
+                        testID={`orchestrator-provider-${pr.id}`}
+                        onPress={() => patchOrchestrator({ default_provider: on ? "" : pr.id })}
                         style={{ borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: on ? t.accent : t.chipBg }}
                       >
                         <Text style={{ color: on ? t.onAccent : t.text, fontSize: 12 }}>{pr.name}</Text>
@@ -288,7 +288,7 @@ export default function OrgScreen({ navigation }: Props) {
                       </>
                     ) : null}
                     {/* Archive is a reversible soft-delete: an archived employee is
-                        skipped by Harman's planner but keeps its card/skill history. */}
+                        skipped by Orchestrator's planner but keeps its card/skill history. */}
                     <TouchableOpacity
                       testID={`emp-${e.id}-archive`}
                       onPress={async () => {
@@ -361,7 +361,7 @@ export default function OrgScreen({ navigation }: Props) {
             key: "provider",
             label: "Model",
             options: providers.map((p) => ({ value: p.id, label: p.name })),
-            defaultValue: harman?.default_provider || undefined,
+            defaultValue: orchestrator?.default_provider || undefined,
           }] : []),
         ]}
         onSubmit={submitCreate}

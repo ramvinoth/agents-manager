@@ -2,9 +2,9 @@ import ExpoModulesCore
 import AVFoundation
 
 /**
- * HarmanAudioModule — full-duplex, echo-cancelled mic capture for barge-in.
+ * AgentsAudioModule — full-duplex, echo-cancelled mic capture for barge-in.
  *
- * The problem this solves: in call mode we want to hear the user say "Harman …"
+ * The problem this solves: in call mode we want to hear the user say "Orchestrator …"
  * WHILE the assistant (TTS) is speaking. A naive open mic hears the assistant's own
  * voice and self-triggers. iOS's `voiceProcessingIO` audio unit does hardware
  * acoustic echo cancellation (AEC) — the same path FaceTime uses — so the mic
@@ -20,14 +20,14 @@ import AVFoundation
  * only set the category to playAndRecord + voiceChat and start the engine, so we
  * cooperate with, rather than fight, the call's session.
  */
-public class HarmanAudioModule: Module {
+public class AgentsAudioModule: Module {
   private let engine = AVAudioEngine()
   private var converter: AVAudioConverter?
   private var targetFormat: AVAudioFormat?
   private var running = false
 
   public func definition() -> ModuleDefinition {
-    Name("HarmanAudio")
+    Name("AgentsAudio")
 
     Events("onFrame", "onError")
 
@@ -64,7 +64,7 @@ public class HarmanAudioModule: Module {
 
     let inFormat = input.inputFormat(forBus: 0)
     guard inFormat.sampleRate > 0 else {
-      throw Exception(name: "HarmanAudio", description: "input format unavailable")
+      throw Exception(name: "AgentsAudio", description: "input format unavailable")
     }
 
     // The server STT wants 16 kHz mono PCM16. Build a converter from the hardware
@@ -73,7 +73,7 @@ public class HarmanAudioModule: Module {
                                         sampleRate: sampleRate,
                                         channels: 1,
                                         interleaved: true) else {
-      throw Exception(name: "HarmanAudio", description: "cannot build output format")
+      throw Exception(name: "AgentsAudio", description: "cannot build output format")
     }
     self.targetFormat = outFormat
     self.converter = AVAudioConverter(from: inFormat, to: outFormat)

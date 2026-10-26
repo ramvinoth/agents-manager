@@ -91,7 +91,7 @@ _ACTIONS = {
     "project_ensure": ("Find or create project", None),
     "employee_create": ("Create employee", None),
     "employee_update": ("Update employee", ("Employee", "id", None)),
-    "harman_config": ("Change manager configuration", None),
+    "orchestrator_config": ("Change manager configuration", None),
     "automation_pause": ("Pause automation", None),
     "automation_resume": ("Resume automation", None),
     "approval_resolve": ("Resolve approval", ("Approval", "id", "id")),

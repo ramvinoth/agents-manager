@@ -1,11 +1,11 @@
-"""viewer.orglogic — pure org/Kanban logic for the orchestrator ("Harman").
+"""viewer.orglogic — pure org/Kanban logic for the orchestrator ("Orchestrator").
 
 The empire runs on ONE canonical board: a single `cards` list. Every "board" the UI
 shows (per session / project / employee / the CEO dashboard) is that same data through
 a filtered VIEW. The filter + ordering rules that turn one list into a view live here,
 kept PURE (no db, no I/O) so they run under `make unit` and are trivially testable.
 
-Also here: the Green/Red action classifier (Harman's approval gate, from the
+Also here: the Green/Red action classifier (Orchestrator's approval gate, from the
 orchestrator charter) and a near-duplicate check for the org's learned-skill library.
 
 Nothing in this module imports viewer.db or touches the network — callers pass plain
@@ -81,7 +81,7 @@ PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
 
 # ── Approval gate: classify an action Green (auto) vs Red (needs Ram) ─────────
 # The charter's rule: escalate only what can irreversibly destroy work, spend money
-# or leak a secret, or hit a shared service. Everything else Harman does and logs.
+# or leak a secret, or hit a shared service. Everything else Orchestrator does and logs.
 # Table-driven so the policy is one obvious place to read/audit.
 
 _RED_ACTIONS = {
@@ -114,7 +114,7 @@ _RED_ACTIONS = {
     "session_mode_set",
     # destroying a scheduled loop takes its run history with it — same
     # irreversible-removal class as card_delete. Creating/editing a loop stays
-    # green: a harman-origin loop cannot FIRE until the owner licenses that origin
+    # green: an agent-origin loop cannot FIRE until the owner licenses that origin
     # via the loop_control dropdown, so creation alone is contained and reversible.
     "loop_delete",
     # secrets / keys
@@ -217,18 +217,18 @@ _MIN_LEVEL = {
     # manager: hire / change the org
     "employee_create": "manager",
     "employee_update": "manager",
-    "harman_config": "manager",      # who may act autonomously, and with what budget
+    "orchestrator_config": "manager",      # who may act autonomously, and with what budget
     # WHICH loop origins may fire (the loop_control dropdown) is an org-wide control
-    # panel, same authority tier as harman_config. Not risk-split like the master
+    # panel, same authority tier as orchestrator_config. Not risk-split like the master
     # switch: setting it to 'none' or 'user' is a de-escalation, and licensing agent
-    # loops ('harman'/'both') only decides WHETHER already-authored loops run — the
-    # authoring of a harman loop was itself gated (loop_create, lead+).
+    # loops ('agent'/'both') only decides WHETHER already-authored loops run — the
+    # authoring of an agent loop was itself gated (loop_create, lead+).
     "loop_mode_set": "manager",
     # The global system-awareness preamble is org-wide config (it shapes every
-    # session), so it is manager scope like harman_config. It is ALSO Red (above):
+    # session), so it is manager scope like orchestrator_config. It is ALSO Red (above):
     # scope says who may initiate, risk says whether it runs unattended.
     "system_preamble_set": "manager",
-    # Same authority as any other Harman config write; the two differ only in RISK
+    # Same authority as any other Orchestrator config write; the two differ only in RISK
     # (automation_resume is Red, automation_pause is not), which is the orthogonal
     # gate. Pausing is deliberately NOT restricted to manager: an ic session that
     # notices something wrong should be able to stop the machine without a
@@ -335,7 +335,7 @@ def mutates_own_session(acting_session, target_session):
     """True if a request would change the settings of the very session that is
     making it — the self-mutation rail for the agent execution-control tier.
 
-    The charter's shape is "Workers only; Harman plan-only", and a worker session
+    The charter's shape is "Workers only; Orchestrator plan-only", and a worker session
     may reschedule/retune OTHER work under RBAC — but never its OWN. A session that
     could edit or delete the loop that drives it (or retarget it at itself) would
     be rewriting its own supervision from inside the loop: exactly the escalation
@@ -352,7 +352,7 @@ def mutates_own_session(acting_session, target_session):
         and acting_session == target_session
 
 
-# ── Harman's autonomous planning: board state → intended actions (PURE) ───────
+# ── Orchestrator's autonomous planning: board state → intended actions (PURE) ───────
 # Deterministic list→list so the manager's decisions are unit-tested without a DB
 # or spawning any model. The orchestrator (viewer/orchestrator.py) executes the
 # returned intents; NOTHING here has side effects.
@@ -461,7 +461,7 @@ def _emp_level(emp):
 
 
 def _spawnable(emp, default_provider):
-    """Can Harman actually start a session for this employee? True if the employee has
+    """Can Orchestrator actually start a session for this employee? True if the employee has
     its own provider preset, or the org supplies a default one to fall back on. (Mirrors
     _spawn_employee_session's `preset_id = employee.provider or default_provider`.)"""
     return bool((emp.get("provider") or "").strip() or (default_provider or "").strip())
@@ -491,9 +491,9 @@ def suitable_employee(card, employees, *, default_provider=""):
 
 def plan_assignments(cards, employees, columns, running, *, projects, budget,
                      default_provider=""):
-    """Given the board, return a list of intended Action dicts for Harman to execute.
+    """Given the board, return a list of intended Action dicts for Orchestrator to execute.
     PURE — no side effects. `running` is the set of card ids already in flight (the
-    in-progress guard); `projects` is the set of project ids Harman manages (empty =
+    in-progress guard); `projects` is the set of project ids Orchestrator manages (empty =
     manage nothing); `budget` caps how many NEW spawns this plan may emit.
 
     Action shapes:

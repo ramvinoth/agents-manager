@@ -30,7 +30,7 @@ lint:  ## Ruff (real defects only) + Python & JS syntax
 unit:  ## Fast hermetic unit tests (pure functions; no server/DB/SSH)
 	python3 -m pytest tests/unit -q
 
-bootstrap:  ## Idempotent fresh-install: DB tables + seed CEO/Harman + skills dir + config
+bootstrap:  ## Idempotent fresh-install: DB tables + seed CEO/Orchestrator + skills dir + config
 	python3 -m viewer.bootstrap
 
 web:  ## Type-check + build the React app (web/ → web/dist)

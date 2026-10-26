@@ -11,7 +11,7 @@ is not model readiness. There is no STT → text-provider → TTS fallback.
 Run in its own virtual environment with FastAPI, Uvicorn and a WebSocket backend.
 The initial verified environment uses FastAPI 0.141.1, Uvicorn 0.52.0 and
 websockets 15.0.1. Do not install into another speech service's environment.
-`harman-voicechat.service` expects the venv and script under `~/harman-voicechat/`.
+`agents-voicechat.service` expects the venv and script under `~/agents-voicechat/`.
 Its `service.env` must define:
 
 - `VOICECHAT_ROOT`: existing experiment directory containing `models/` and
@@ -73,7 +73,7 @@ stopped to make room.
 
 Service creation/start, shared infrastructure changes, production viewer
 configuration/restart and TestFlight publishing have separate authorization
-boundaries. To roll back this new service, stop only `harman-voicechat.service`;
+boundaries. To roll back this new service, stop only `agents-voicechat.service`;
 leave existing speech/model services untouched. The initial deployment was
 started, not enabled at boot.
 

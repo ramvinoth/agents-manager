@@ -331,17 +331,17 @@ class OrchestratorMixin:
         self.send_json({"view": "display-v1", "audit": entries,
                         "next_before": page[-1]["id"] if len(rows) > limit else None})
 
-    # ── Harman autonomous-manager config (owner surface) ─────────────────────
-    def _g_org_harman(self, req):
+    # ── Orchestrator autonomous-manager config (owner surface) ─────────────────────
+    def _g_org_orchestrator(self, req):
         from viewer.orchestrator import get_config
         self.send_json(get_config())
 
-    def _p_org_harman(self, req):
-        """Write Harman config. The master switch takes its own path.
+    def _p_org_orchestrator(self, req):
+        """Write Orchestrator config. The master switch takes its own path.
 
         `automation_enabled` is deliberately NOT one of the patch keys below: it is
         its own pair of actions so that resuming can be Red while pausing stays
-        cheap. Folding it into the `harman_config` patch would make un-pausing a
+        cheap. Folding it into the `orchestrator_config` patch would make un-pausing a
         plain `manager` write — and a session running at manager level would be able
         to restore its own supervision.
         """
@@ -361,7 +361,7 @@ class OrchestratorMixin:
             patch["projects"] = [int(x) for x in (body["projects"] or [])]
         if "default_provider" in body:
             patch["default_provider"] = str(body["default_provider"] or "")
-        self._org_send(req, "harman_config", {"patch": patch})
+        self._org_send(req, "orchestrator_config", {"patch": patch})
 
     # ── Organizational learning: an employee/CEO proposes a skill ─────────────
     def _g_org_skills(self, req):
@@ -423,7 +423,7 @@ class OrchestratorMixin:
         self.send_json(get_loop_control())
 
     def _p_org_loop_control(self, req):
-        """Set the loop-firing mode (user/harman/both/none). Manager-scoped,
+        """Set the loop-firing mode (user/agent/both/none). Manager-scoped,
         green — a de-escalation ('none'/'user') must always be cheap, and licensing
         agent loops only decides WHETHER already-authored loops run."""
         body = self.read_body() or {}
@@ -460,10 +460,10 @@ class OrchestratorMixin:
             return
         self.send_json(doc)
 
-    # ── Agent-scheduled loops (origin='harman', gated) ────────────────────────
+    # ── Agent-scheduled loops (origin='agent', gated) ────────────────────────
     # The AGENT path to scheduling recurring work. The human UI keeps its own
     # ungated loop routes (routes.sessions): a person editing their own schedules
-    # is not an org action. These run through the org gate and stamp origin='harman'
+    # is not an org action. These run through the org gate and stamp origin='agent'
     # server-side, and every one is guarded by the self-mutation rail below.
     def _self_mutation_denied(self, req, target_session,
                               what="its own loop",
@@ -487,7 +487,7 @@ class OrchestratorMixin:
         return False
 
     def _p_org_loops(self, req):
-        """Create a harman-origin loop for a session OTHER than the caller's own.
+        """Create a agent-origin loop for a session OTHER than the caller's own.
 
         The target session travels as `for_session`, NOT `session`: the MCP transport
         mirrors the CALLER's own session id into the body's `session` field as a
@@ -507,7 +507,7 @@ class OrchestratorMixin:
             "provider": body.get("provider", "")})
 
     def _p_org_loops_update(self, req):
-        """Edit a harman-origin loop. The rail resolves the loop's OWN session (not a
+        """Edit a agent-origin loop. The rail resolves the loop's OWN session (not a
         body field) so a caller cannot dodge it by omitting/spoofing the session."""
         body = self.read_body() or {}
         loop = db.loop_get(body.get("id", ""))

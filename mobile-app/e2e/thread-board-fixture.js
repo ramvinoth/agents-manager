@@ -166,7 +166,7 @@ async function startFixture({ ai = false, audit = false, boardIsolation = false,
     if (url.pathname === "/api/git/status") return send({ repo: false })
     if (url.pathname === "/api/chat/status") return send({ running: false, pending_approvals: [] })
     if (url.pathname === "/api/resolve" && ai) return send({ found: true, path: `/fixture/${NEW_SESSION}.jsonl` })
-    if (url.pathname === "/api/org/harman") return send({ enabled: false, automation_enabled: false, projects: [] })
+    if (url.pathname === "/api/org/orchestrator") return send({ enabled: false, automation_enabled: false, projects: [] })
     if (url.pathname === "/api/org/loop-control") return send({ mode: "none" })
     if (url.pathname === "/api/org/system-preamble") return send({ preamble: "Isolated native fixture" })
     if (boardIsolation && ["/api/org/board", "/api/org/cards"].includes(url.pathname)) {

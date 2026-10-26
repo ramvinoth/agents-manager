@@ -421,7 +421,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {agent === "claude" ? renderCard("behaviour", "settings", "Behaviour", modeLabel, <>
         <Text style={styles.sheetSection}>PERMISSION POLICY · THIS SESSION</Text>
         <Text style={styles.sheetHint}>Saved on the server for future chat and scheduled runs, across devices. Does not change a run already in progress.</Text>
-        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. Harman authorization is unchanged.</Text>
+        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. Orchestrator authorization is unchanged.</Text>
         {!mode && modeTarget ? <Text style={styles.sheetHint}>No saved policy. Each launch uses its requested mode; scheduled runs request Accept edits.</Text> : null}
         {!sessionId && !path ? <Text style={styles.sheetHint}>Start the chat before setting its permission policy.</Text> : null}
         {renderPill(MODES, mode, setMode, "sp-mode")}

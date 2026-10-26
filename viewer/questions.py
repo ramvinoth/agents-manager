@@ -95,10 +95,10 @@ def record(session_id, pending, host="local", run_id=""):
         pass
     # A question became durable for the owner: the sessions that own OPEN cards
     # are the ones that can surface it to the owner (the source is the one
-    # waiting). Harman-origin wake, so it obeys the mode + the master switch.
+    # waiting). Orchestrator-origin wake, so it obeys the mode + the master switch.
     try:
         from viewer.orchestrator import loop_mode, automation_enabled
-        if automation_enabled() and loop_mode() in ("harman", "both"):
+        if automation_enabled() and loop_mode() in ("agent", "both"):
             from viewer import board_wake
             qs = pending.get("questions") or []
             summary = "; ".join((q.get("question") or q.get("header") or "")
@@ -155,7 +155,7 @@ def record_plan(session_id, pending, host="local"):
     # on the owner, and the open-card sessions are the ones that can surface it.
     try:
         from viewer.orchestrator import loop_mode, automation_enabled
-        if automation_enabled() and loop_mode() in ("harman", "both"):
+        if automation_enabled() and loop_mode() in ("agent", "both"):
             from viewer import board_wake
             plan = (pending.get("plan") or "").replace("\n", " ")
             if plan:

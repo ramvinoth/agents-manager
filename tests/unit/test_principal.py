@@ -53,10 +53,10 @@ class TestHuman:
 class TestMcpEmployee:
     def test_linked_session_names_the_employee(self, monkeypatch):
         p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": {"name": "Harman", "id": 6},
+                     {"employee": {"name": "Orchestrator", "id": 6},
                       "level": "ic", "label": "RSI"})
         assert p["kind"] == "mcp"
-        assert p["actor"] == "employee:Harman"
+        assert p["actor"] == "employee:Orchestrator"
         assert p["session"] == SID
 
     def test_empty_employee_name_falls_back_to_id(self, monkeypatch):
@@ -66,7 +66,7 @@ class TestMcpEmployee:
 
     def test_level_still_the_only_gate_value(self, monkeypatch):
         p = _resolve(monkeypatch, None, SID, "tok",
-                     {"employee": {"name": "Harman"}, "level": "ic"})
+                     {"employee": {"name": "Orchestrator"}, "level": "ic"})
         assert p["level"] == "ic"
         assert p["human_role"] == "owner"
 

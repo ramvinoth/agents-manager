@@ -35,9 +35,9 @@ def parse_interval(text):
 
 # Loop origins — who authored the schedule:
 #   user   → a human scheduled it (their explicit consent; a person asking)
-#   harman → an agent session scheduled it (autonomous, plan-ahead work)
+#   orchestrator → an agent session scheduled it (autonomous, plan-ahead work)
 USER_ORIGIN = "user"
-AGENT_ORIGIN = "harman"
+AGENT_ORIGIN = "agent"
 
 # Loop-firing control. WHO may run scheduled loops right now, keyed off the
 # loop_control setting's `mode`. `mode` LICENSES origins; the automation master
@@ -48,17 +48,17 @@ AGENT_ORIGIN = "harman"
 #
 #   user   → only human-scheduled loops fire (the default; a fresh install runs
 #            the owner's own loops but nothing an agent created)
-#   harman → only agent-scheduled loops fire
+#   orchestrator → only agent-scheduled loops fire
 #   both   → every loop fires
 #   none   → nothing fires
 #
 # Pure (no db) so it unit-tests standalone and there is ONE definition of the
 # mapping. An unknown/missing mode falls back to 'user' — the safe default that
 # still honours the human's own schedules without licensing agent-made ones.
-LOOP_MODES = ("user", "harman", "both", "none")
+LOOP_MODES = ("user", "agent", "both", "none")
 _MODE_ORIGINS = {
     "user": frozenset({USER_ORIGIN}),
-    "harman": frozenset({AGENT_ORIGIN}),
+    "agent": frozenset({AGENT_ORIGIN}),
     "both": frozenset({USER_ORIGIN, AGENT_ORIGIN}),
     "none": frozenset(),
 }

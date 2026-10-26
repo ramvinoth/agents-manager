@@ -34,7 +34,7 @@ createdb viewer
 # 2. Build the web UI
 cd web && npm install && npm run build && cd ..
 
-# 3. Bootstrap the empire (idempotent: tables + seed CEO/Harman + skills dir)
+# 3. Bootstrap the empire (idempotent: tables + seed CEO/Orchestrator + skills dir)
 make bootstrap
 
 # 4. Run the server (defaults to :8091)
@@ -52,7 +52,7 @@ database over the Unix socket.
 `deploy/install.sh` does the whole thing idempotently and leaves a **reboot-surviving**
 service running on `:8091` — system deps, the `viewer` database, bootstrap, the web build,
 and the service. It is cross-platform: **Linux** installs a systemd unit
-(`harman-viewer.service`), **macOS** installs a launchd agent (`com.harman.viewer`).
+(`agents-viewer.service`), **macOS** installs a launchd agent (`com.agents.viewer`).
 
 ```bash
 git clone <repo-url> ~/Documents/projects/agents

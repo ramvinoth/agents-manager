@@ -300,7 +300,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
   const assignee = employees.find((e) => e.id === card.assignee)?.name
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
-  // Principal strings ("user:ram", "session:Harman", "employee:?") rendered for a
+  // Principal strings ("user:ram", "session:Orchestrator", "employee:?") rendered for a
   // person — the same rule the web card detail uses (lib/board.ts).
   const self = username()
   const creator = formatActor(card.created_by, self)

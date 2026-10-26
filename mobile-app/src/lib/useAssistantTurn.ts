@@ -36,7 +36,7 @@ import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
 import { audioSession } from "./audioSessionNative"
 
-// While the user speaks over Harman (before a command is confirmed), duck the TTS
+// While the user speaks over Orchestrator (before a command is confirmed), duck the TTS
 // to this fraction of full volume so they can hear themselves. Restored to 1.0 on
 // silence; a confirmed command halts playback entirely.
 const DUCK_VOLUME = 0.25
@@ -58,7 +58,7 @@ export interface UseAssistantTurn {
   /** What the caller last said (transcribed). Always "" on Nemotron — the
    *  service never returns the caller's words. */
   heard: string
-  /** What Harman last said back. */
+  /** What Orchestrator last said back. */
   reply: string
   error: string
   /** Run one brain turn from already-transcribed text: ask the call brain, speak its reply. */
@@ -90,7 +90,7 @@ export function useAssistantTurn(
   const busyRef = useRef(false)
   const handsFreeRef = useRef(false)
   // Barge-in: while speaking, a concurrent echo-cancelled wakeguard mic lets
-  // "Harman stop / end the call / <new question>" interrupt playback. Kept in a
+  // "Orchestrator stop / end the call / <new question>" interrupt playback. Kept in a
   // ref so the latest onEndCall is always reachable from the async speak.
   const onEndCallRef = useRef(opts.onEndCall)
   onEndCallRef.current = opts.onEndCall
@@ -115,7 +115,7 @@ export function useAssistantTurn(
   /**
    * Run `play` (a TTS stream or a reply file), and — on a build with the native
    * AEC module — run a concurrent echo-cancelled "wakeguard" mic so the user can
-   * barge in with "Harman …":
+   * barge in with "Orchestrator …":
    *   - stop      → halt playback, settle to waiting (no new turn).
    *   - end       → halt playback and end the CallKit call (via onEndCall).
    *   - ask(tail) → halt playback and stash the new question for runTurn to pick up.
@@ -155,7 +155,7 @@ export function useAssistantTurn(
         },
         {
           speakerId: "default",
-          // Duck Harman's TTS the instant the user starts talking — well before
+          // Duck Orchestrator's TTS the instant the user starts talking — well before
           // the server round-trip confirms the wake word — so they can hear
           // themselves over it. Restore to full on silence (a false start that
           // wasn't a command). A real command halts playback entirely above.

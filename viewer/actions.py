@@ -263,7 +263,7 @@ def _employee_update(a):
     return updated
 
 
-def _harman_config(a):
+def _orchestrator_config(a):
     from viewer.orchestrator import set_config
     return set_config(a.get("patch") or {})
 
@@ -294,11 +294,11 @@ def _approval_resolve(a):
         or {"error": "not found"}
 
 
-# ── Agent-scheduled loops (origin='harman') ──────────────────────────────────
+# ── Agent-scheduled loops (origin='agent') ──────────────────────────────────
 # The human UI writes loops through routes.sessions (origin='user', ungated — a
 # person editing their own schedules). These three are the AGENT path: an employee
-# session asks Harman's org gate to schedule recurring work, so they run through
-# execute() like every other org action and carry origin='harman'.
+# session asks Orchestrator's org gate to schedule recurring work, so they run through
+# execute() like every other org action and carry origin='agent'.
 #
 # Origin is stamped HERE, server-side, never taken from args: an intent is
 # persisted and replayed, so a caller-supplied origin could forge a 'user' loop to
@@ -328,16 +328,16 @@ def _loop_create(a):
              "runs": 0, "created": time.time(), "enabled": True,
              "model": (a.get("model") or "").strip(),
              "provider": (a.get("provider") or "").strip(),
-             "origin": "harman", **sched}
+             "origin": "agent", **sched}
     db.loop_upsert(lid, entry)
-    return {"created": lid, "origin": "harman",
+    return {"created": lid, "origin": "agent",
             "kind": sched.get("kind", "recurring"),
             "interval": sched.get("interval") or 0, "cron": sched.get("cron"),
             "nextRun": sched.get("nextRun")}
 
 
 def _loop_update(a):
-    """Patch a harman-origin loop's prompt/schedule/model/enabled. Refuses to touch
+    """Patch an agent-origin loop's prompt/schedule/model/enabled. Refuses to touch
     a user-origin loop: the two paths own disjoint sets, so an agent can never edit
     a schedule a human authored (and vice-versa the human route ignores origin
     because a person may edit anything they can see)."""
@@ -346,7 +346,7 @@ def _loop_update(a):
     loop = db.loop_get(lid)
     if not loop:
         return {"error": "not found"}
-    if (loop.get("origin") or "user") != "harman":
+    if (loop.get("origin") or "user") != "agent":
         return {"error": "not an agent loop"}
     fields = {}
     if "prompt" in a:
@@ -383,13 +383,13 @@ def _loop_update(a):
 
 
 def _loop_delete(a):
-    """Delete a harman-origin loop (Red → queued for the owner). Same origin guard
+    """Delete an agent-origin loop (Red → queued for the owner). Same origin guard
     as _loop_update: the agent path cannot remove a human's schedule."""
     lid = a.get("id", "")
     loop = db.loop_get(lid)
     if not loop:
         return {"error": "not found"}
-    if (loop.get("origin") or "user") != "harman":
+    if (loop.get("origin") or "user") != "agent":
         return {"error": "not an agent loop"}
     return {"deleted": bool(db.loop_delete(lid))}
 
@@ -483,7 +483,7 @@ ACTIONS = {
     "project_ensure": _project_ensure,
     "employee_create": _employee_create,
     "employee_update": _employee_update,
-    "harman_config": _harman_config,
+    "orchestrator_config": _orchestrator_config,
     "automation_pause": _automation_pause,
     "automation_resume": _automation_resume,
     "approval_resolve": _approval_resolve,
@@ -571,7 +571,7 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
       came from OUTSIDE that session (a human, or another session). The
       card's own session acting on its own card already knows; a self-wake
       would be a loop. Origin mirrors the cause (boardwatch's contract):
-      a human made it → 'user', a foreign agent made it → 'harman'.
+      a human made it → 'user', a foreign agent made it → 'agent'.
     - the PUSH goes to the owner (a person), so it fires even when the
       card's own session comments — that is exactly how a worker reports
       status ("stuck on X") without a self-wake.

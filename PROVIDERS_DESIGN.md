@@ -121,7 +121,7 @@ The box services are just endpoints the user MAY point a custom provider at — 
 viewer no longer has built-in knowledge of them. Still worth trimming the box:
 - `deploy/speech_service.py` currently does STT + speaker-verify + Kokoro TTS.
   **Remove the Kokoro `/synthesize` route + its model load** so the box's STT
-  service is STT+verify only (frees its VRAM). Redeploy + restart harman-speech.
+  service is STT+verify only (frees its VRAM). Redeploy + restart agents-speech.
   (Sherpa STT, wake, /segment stay.)
 - Pocket (:8097) keeps its `/synthesize_stream_aac`. After this, the box exposes an
   STT endpoint (:8095) and a TTS endpoint (:8097) that a user CAN add as custom

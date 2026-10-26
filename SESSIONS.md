@@ -25,11 +25,11 @@ still sees the whole system.
 
 ## Every session can see every other session
 
-Create a new chat and Harman — and every other session/agent — can see it
+Create a new chat and Orchestrator — and every other session/agent — can see it
 immediately, with full detail. Nothing is private between sessions. This is the
 point: without total visibility, agents could not see the big picture,
 collaborate, or plan. Visibility is delivered in two tiers (progressive
-disclosure), both through the built-in Harman MCP:
+disclosure), both through the built-in Orchestrator MCP:
 
 **Tier 1 — the thin list** (`session_list` → `/api/sessions`): every session on
 the host, each row carrying `id, title, project, provider, harness, running,

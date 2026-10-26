@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Harman Qwen-TTS service — an alternate voice backend for A/B testing against
+Orchestrator Qwen-TTS service — an alternate voice backend for A/B testing against
 Kokoro. Runs in ~/qwen3-tts-env on its own port (default 8096).
 
   POST /synthesize : {"text": ...} -> audio/wav   (Qwen3-TTS-1.7B CustomVoice)
@@ -8,7 +8,7 @@ Kokoro. Runs in ~/qwen3-tts-env on its own port (default 8096).
                      Parakeet service on 8095 — Qwen is TTS only)
   GET  /health     : {"ok": true, "tts": bool, "engine": "qwen"}
 
-So the viewer only needs to repoint HARMAN_SPEECH_URL at this port; STT keeps
+So the viewer only needs to repoint AGENTS_SPEECH_URL at this port; STT keeps
 using the fast Parakeet model transparently. Qwen TTS is ~5s/sentence, so this
 is for judging QUALITY, not latency.
 """
@@ -22,11 +22,11 @@ import torch
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-QWEN_MODEL = os.environ.get("HARMAN_QWEN_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
-QWEN_SPEAKER = os.environ.get("HARMAN_QWEN_SPEAKER", "vivian")
-QWEN_LANG = os.environ.get("HARMAN_QWEN_LANG", "English")
+QWEN_MODEL = os.environ.get("AGENTS_QWEN_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+QWEN_SPEAKER = os.environ.get("AGENTS_QWEN_SPEAKER", "vivian")
+QWEN_LANG = os.environ.get("AGENTS_QWEN_LANG", "English")
 # STT is forwarded here (the existing sherpa Parakeet service).
-STT_FORWARD_URL = os.environ.get("HARMAN_STT_URL", "http://127.0.0.1:8095/transcribe")
+STT_FORWARD_URL = os.environ.get("AGENTS_STT_URL", "http://127.0.0.1:8095/transcribe")
 
 app = FastAPI()
 
@@ -87,5 +87,5 @@ async def transcribe(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("HARMAN_QWEN_PORT", "8096"))
+    port = int(os.environ.get("AGENTS_QWEN_PORT", "8096"))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

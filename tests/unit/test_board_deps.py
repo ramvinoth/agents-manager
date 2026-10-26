@@ -10,7 +10,7 @@ covers what that file does not:
   foreign event (someone other than the card's session acted last — a board
   where every session has answered costs nothing), never a running session,
   never a session the scheduler could not resume (no transcript), always
-  harman-origin, and walks the pending cards round-robin so the per-sweep cap
+  agent-origin, and walks the pending cards round-robin so the per-sweep cap
   reaches every one; an open question wakes the sessions that own open cards
   — never the source.
 - actions: the follow-up stamps that ledger — a foreign write marks the card,
@@ -68,7 +68,7 @@ def test_deps_batch_done_follows_the_name_contract(monkeypatch):
 
 def test_coalesced_wake_updates_origin_to_the_latest_cause(monkeypatch):
     """Regression: the update path used to drop `origin`, so a human comment
-    merged into an agent-caused pending wake kept origin='harman' and never
+    merged into an agent-caused pending wake kept origin='agent' and never
     fired in 'user' mode (and vice versa). The mode filter acts on the latest
     cause, so the patch must carry it."""
 
@@ -185,13 +185,13 @@ def test_sweep_nothing_pending_no_wake(fdb):
     assert fdb.db.stamp > 0, "the stamp moves even when nothing is pending"
 
 
-def test_sweep_wakes_pending_card_with_harman_origin_and_deps(fdb):
+def test_sweep_wakes_pending_card_with_agent_origin_and_deps(fdb):
     fdb.db.stamp = 0
     fdb.db.pending = [PENDING_CARD]
     fired = board_wake.sweep()
     assert fired == ["sess-9"]
     card, event, origin = fdb.wakes[0]
-    assert origin == loops.AGENT_ORIGIN, "autonomous wakes are harman-origin"
+    assert origin == loops.AGENT_ORIGIN, "autonomous wakes are agent-origin"
     assert card["session_id"] == "sess-9"
     assert "board sweep" in event and "someone else acted on this card" in event
     assert "you are in 'Review'" in event

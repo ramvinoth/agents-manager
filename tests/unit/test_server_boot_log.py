@@ -1,7 +1,7 @@
 """The launchd log must show the boot banner and print() diagnostics while the
 server is alive. Under launchd stdout is a regular file, so Python block-buffers
 it; `launchctl kickstart -k` then SIGKILLs the process and the whole buffer is
-lost. Regression for ~/Library/Logs/com.harman.viewer.log holding three boot
+lost. Regression for ~/Library/Logs/com.agents.viewer.log holding three boot
 banners across weeks of restarts: main() must switch stdout to line buffering.
 
 Run in a child process with stdout redirected to a file, exactly as launchd does,

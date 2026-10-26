@@ -65,7 +65,7 @@ action, blast radius, and rollback in one shot — batched, not drip-fed.
 Authoritative list lives in memory (`ssh-hosts-setup.md`) + `viewer/config.py`. As of charter:
 - **HQ**: this dev box (viewer on :8091; `agents.suhai.ai` tunnels here — prod == local).
 - **suha-ai** (4×3090): the model foundry — Qwen LLM (llama-swap :8080), STT/TTS
-  (harman-speech :8095, harman-pocket :8097). Consolidated to voice on GPU 2; 0/1/3 free.
+  (agents-speech :8095, agents-pocket :8097). Consolidated to voice on GPU 2; 0/1/3 free.
 - **Macs** (build/loopback): iOS build (`ship-native.sh`), remote-vs-local test targets.
 
 I never assume a host — I read it from config/memory. Off-perimeter = out of bounds.

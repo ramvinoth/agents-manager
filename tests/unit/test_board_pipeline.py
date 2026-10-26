@@ -9,7 +9,7 @@ session):
   are untouched.
 - boardwatch.schedule_wake — an event on a card becomes AT MOST ONE one-shot
   wake for the card's own session; the wake's origin is the CAUSE (a human →
-  'user', a foreign agent → 'harman').
+  'user', a foreign agent → 'agent').
 - actions.execute's follow-up — which board events wake, which ones push the
   owner, and when the card's own session (the actor) is not woken.
 
@@ -148,8 +148,8 @@ def test_first_event_creates_a_one_shot_wake(floops):
 
 
 def test_origin_is_passed_through_never_guessed(floops):
-    boardwatch.schedule_wake(CARD, "updated by employee:bob", "harman")
-    assert floops.loops["bw7"]["origin"] == "harman"
+    boardwatch.schedule_wake(CARD, "updated by employee:bob", "agent")
+    assert floops.loops["bw7"]["origin"] == "agent"
 
 
 def test_events_on_one_card_coalesce_into_a_single_wake(floops):
@@ -279,13 +279,13 @@ def test_followup_keeps_the_sweep_ledger(board):
         "human → pending, own session → cleared, foreign agent → pending"
 
 
-def test_foreign_agent_move_wakes_with_harman_origin(board):
+def test_foreign_agent_move_wakes_with_agent_origin(board):
     actions.execute(_it("card_move", {"card_id": 42, "column_id": 12},
                         "employee:bob"),
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
-    assert origin == "harman" and "employee:bob" in event
+    assert origin == "agent" and "employee:bob" in event
     assert board.pushes == []
 
 
@@ -311,7 +311,7 @@ def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
-    assert origin == "harman"
+    assert origin == "agent"
     assert "new comment by employee:bob" in event
     assert board.pushes == [("Card 42 · Fix login", "employee:bob: needs your call",
                              {"card": 42})]
