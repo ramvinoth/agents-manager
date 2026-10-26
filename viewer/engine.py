@@ -114,10 +114,25 @@ def _session_title(session_id):
         return ""
 
 
+def _project_label(session_id):
+    """The project the session's transcript lives in, read off the CLAUDE_DIR
+    layout (the project dir is the cwd with '/' -> '-', so its last segment is
+    the project folder). The last resolvable name before a raw id: a session
+    with no title, no goal and no cwd still gets a project name."""
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        return os.path.basename(matches[0].parent.name.replace("-", "/").rstrip("/"))
+    except Exception:
+        return ""
+
+
 def _push_label(session_id, cwd=""):
     """A short human title for a push notification: the session's display name
     (matching the chat list), else its goal, else the working-directory basename,
-    else a short session id."""
+    else the project the transcript lives in, else a short session id. The raw
+    id is the LAST resort: a bare 'Chat <id>' can't tell the owner who asks."""
     name = _session_title(session_id)
     if name:
         return name
@@ -129,6 +144,9 @@ def _push_label(session_id, cwd=""):
         base = os.path.basename(cwd.rstrip("/"))
         if base:
             return base
+    proj = _project_label(session_id)
+    if proj:
+        return proj
     return f"Chat {str(session_id)[:8]}"
 
 
@@ -953,7 +971,7 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
     try:
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
-                   f"Approve {tool_name}? The agent needs your permission to continue.",
+                   _perm_push_body(tool_name, tinput, host),
                    data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
@@ -1030,6 +1048,60 @@ def pending_approvals_public(session_id):
         return [{"id": e["id"], "tool_name": e["tool_name"], "input": e["input"]}
                 for e in job.get("pending_approvals", [])
                 if not e.get("question") and not e.get("plan")]
+
+
+def _redact_secrets(text):
+    """Redact obvious credential material before it reaches a LOCK-SCREEN
+    notification: Bearer tokens and token/key/password/api-key assignments.
+    The command's shape stays readable; only the value goes."""
+    return re.sub(
+        r"(?i)((?:bearer|token|secret|api[_-]?key|access[_-]?key|password|passwd|pwd)\s*[=:]?\s+)\S+",
+        r"\1***",
+        text,
+    )
+
+
+def _perm_preview(tool_name, tinput):
+    """A bounded, secret-safe one-liner for what a gated tool call would do.
+    The CLI sends the tool input as a dict or a JSON string, so parse
+    leniently. Only identity fields are previewed (command / file path / url /
+    name / pattern / query / question), never payload fields (content,
+    message, data), which may hold the work itself."""
+    if isinstance(tinput, str):
+        try:
+            tinput = json.loads(tinput)
+        except Exception:
+            tinput = {}
+    if not isinstance(tinput, dict):
+        tinput = {}
+    if tool_name == "Bash":
+        raw = str(tinput.get("command") or "")
+    else:
+        raw = ""
+        for key in ("file_path", "path", "url", "name", "pattern", "query",
+                    "question", "header"):
+            v = tinput.get(key)
+            if v is None or v == "":
+                continue
+            raw = str(v) if key in ("question", "header") else f"{key}={v}"
+            break
+    return _redact_secrets(re.sub(r"\s+", " ", raw).strip())
+
+
+def _perm_push_body(tool_name, tinput, host):
+    """The push body for a gated tool call: WHAT is being asked, so the owner
+    can judge from the notification alone. A capped, redacted preview of the
+    command (or the tool's identity field), plus the host when remote."""
+    body = f"Approve {tool_name}?"
+    try:
+        preview = _perm_preview(tool_name, tinput)
+    except Exception:
+        preview = ""
+    if preview:
+        body += f" — {preview[:79]}…" if len(preview) > 80 else f" — {preview}"
+    if host and host != "local":
+        body += f" (on {host})"
+    return body
 
 
 def permission_args(mode):
