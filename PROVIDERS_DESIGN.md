@@ -14,7 +14,7 @@ common providers ship as *seed presets*, not as code branches.
 3. Ship a common providers list (OpenAI, Anthropic, Google, Grok, DeepSeek,
    OpenRouter) **as selectable seeds**, plus **Custom endpoint** with a type.
 4. If a custom **STT/TTS** endpoint is configured, use it (else fall back to the
-   built-in sherpa STT + Pocket TTS on suha-ai).
+   built-in sherpa STT + Pocket TTS on the GPU box).
 5. Voice/Call mode in the app wires to the STT + TTS the settings page selects.
 
 ## 1. Current state (what we're replacing)

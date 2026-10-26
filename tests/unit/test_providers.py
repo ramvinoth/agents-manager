@@ -45,10 +45,10 @@ def store(monkeypatch):
 
 class TestProviderStore:
     def test_upsert_mints_id_and_list_hides_key(self, store):
-        saved = store.upsert_preset("", "BrainTwin", "https://inference.braintwin.ai/", "gemma-2b", "sk-secret")
-        assert saved["id"] and saved["name"] == "BrainTwin"
+        saved = store.upsert_preset("", "Example", "https://llm.example.com/", "gemma-2b", "sk-secret")
+        assert saved["id"] and saved["name"] == "Example"
         # Base URL is normalised (trailing slash trimmed).
-        assert saved["baseUrl"] == "https://inference.braintwin.ai"
+        assert saved["baseUrl"] == "https://llm.example.com"
         # The public views (save return + list) NEVER contain the key.
         assert "apiKey" not in saved
         listed = store.list_presets()

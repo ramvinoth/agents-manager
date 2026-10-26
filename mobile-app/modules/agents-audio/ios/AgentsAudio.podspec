@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Full-duplex mic capture with hardware echo cancellation (voiceProcessingIO) for barge-in.'
   s.description    = 'Captures echo-cancelled microphone PCM via AVAudioEngine + the voiceProcessingIO audio unit, so the app can listen for the "Orchestrator" wake word WHILE TTS is playing, without the mic self-triggering on the assistant\'s own voice.'
   s.author         = 'Orchestrator'
-  s.homepage       = 'https://agents.suhai.ai'
+  s.homepage       = 'https://example.com/agents'
   s.platforms      = { :ios => '15.1' }
   s.source         = { git: '' }
   s.static_framework = true

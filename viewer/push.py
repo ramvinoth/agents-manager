@@ -9,7 +9,7 @@ Config comes from the environment (set in the systemd unit / launch env):
   APNS_KEY_PATH   path to the .p8 auth key         (e.g. ~/private_keys/AuthKey_XXXX.p8)
   APNS_KEY_ID     the key's 10-char Key ID         (e.g. WY9L32JV8P)
   APNS_TEAM_ID    the Apple Developer team id       (e.g. 38C6HVZQSV)
-  APNS_TOPIC      the app bundle id                 (e.g. com.suhai.agents)
+  APNS_TOPIC      the app bundle id                 (e.g. com.example.agents)
   APNS_HOST       api.push.apple.com (prod, default) or api.sandbox.push.apple.com
 
 Sending is best-effort on a daemon thread — a push must never delay a run. The
@@ -27,7 +27,7 @@ from viewer import db
 _APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "")
 _APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
 _APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
-_APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.suhai.agents")
+_APNS_TOPIC = os.environ.get("APNS_TOPIC", "")
 _APNS_HOST = os.environ.get("APNS_HOST", "api.push.apple.com")
 
 _jwt_cache = {"token": None, "made": 0.0}
@@ -35,7 +35,7 @@ _jwt_lock = threading.Lock()
 
 
 def _configured():
-    return bool(_APNS_KEY_PATH and _APNS_KEY_ID and _APNS_TEAM_ID and os.path.exists(_APNS_KEY_PATH))
+    return bool(_APNS_KEY_PATH and _APNS_KEY_ID and _APNS_TEAM_ID and _APNS_TOPIC and os.path.exists(_APNS_KEY_PATH))
 
 
 def push_preview(text, maxlen=178):

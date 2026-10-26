@@ -20,15 +20,15 @@ IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 \tinet 192.168.1.23 netmask 0xffffff00 broadcast 192.168.1.255
 utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
-\tinet 100.76.141.120 --> 100.76.141.120 netmask 0xffffffff
+\tinet 100.64.0.7 --> 100.64.0.7 netmask 0xffffffff
 """
 IP_ADDR = "2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0\n" \
           "5: tailscale0    inet 100.101.102.103/32 scope global tailscale0\n"
 
 
 def test_parser_picks_only_the_cgnat_address():
-    assert remote.tailnet_ipv4_from_text("100.76.141.120\n") == "100.76.141.120"
-    assert remote.tailnet_ipv4_from_text(IFCONFIG) == "100.76.141.120"
+    assert remote.tailnet_ipv4_from_text("100.64.0.7\n") == "100.64.0.7"
+    assert remote.tailnet_ipv4_from_text(IFCONFIG) == "100.64.0.7"
     assert remote.tailnet_ipv4_from_text(IP_ADDR) == "100.101.102.103"
     assert remote.tailnet_ipv4_from_text("192.168.1.23 10.0.0.5 fd7a:115c::1\n") is None
     assert remote.tailnet_ipv4_from_text("") is None
@@ -41,8 +41,8 @@ def test_cli_failure_falls_through_to_interface_table():
         if cmd[-1] == "addr":
             raise FileNotFoundError(cmd[0])
         return IFCONFIG
-    assert remote.tailnet_ipv4(_run=run) == "100.76.141.120"
-    assert remote.viewer_tailnet_base(8091) == "http://100.76.141.120:8091"
+    assert remote.tailnet_ipv4(_run=run) == "100.64.0.7"
+    assert remote.viewer_tailnet_base(8091) == "http://100.64.0.7:8091"
 
 
 def test_cli_answer_wins_when_present():
@@ -57,7 +57,7 @@ def test_failed_lookup_is_not_cached():
     assert remote.tailnet_ipv4(_run=failing) is None
     monkeypatched_calls = len(calls)
     assert monkeypatched_calls == len(remote._TAILNET_PROBES)
-    assert remote.tailnet_ipv4(_run=lambda cmd: IFCONFIG) == "100.76.141.120"
+    assert remote.tailnet_ipv4(_run=lambda cmd: IFCONFIG) == "100.64.0.7"
     # ...and a success IS cached: a later probe that would fail is never asked.
-    assert remote.tailnet_ipv4(_run=failing) == "100.76.141.120"
+    assert remote.tailnet_ipv4(_run=failing) == "100.64.0.7"
     assert len(calls) == monkeypatched_calls

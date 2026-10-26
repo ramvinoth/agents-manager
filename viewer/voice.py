@@ -1,7 +1,7 @@
 """viewer.voice — the call's speech services, delegated to the GPU box.
 
 Utterance segmentation/transcription and barge-in wake spotting run as a
-persistent service on suha-ai (see deploy/speech_service.py); this module is a
+persistent service on the GPU box (see deploy/speech_service.py); this module is a
 thin client the viewer calls. Audio never leaves the user's own machines (viewer
 host + the tailnet GPU box) — no cloud provider.
 

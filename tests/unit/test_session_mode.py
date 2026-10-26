@@ -177,8 +177,8 @@ def test_long_bash_is_truncated():
 
 
 def test_remote_host_is_named():
-    assert engine._perm_push_body("Bash", {"command": "ls"}, "suha-ai") == \
-        "Approve Bash? — ls (on suha-ai)"
+    assert engine._perm_push_body("Bash", {"command": "ls"}, "gpu-box") == \
+        "Approve Bash? — ls (on gpu-box)"
 
 
 def test_non_bash_tools_show_their_identity():

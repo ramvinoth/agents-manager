@@ -72,11 +72,11 @@ test("nested list depth", () => {
 })
 
 test("table with header + rows", () => {
-  const b = parseMarkdown("| Item | Status |\n|---|---|\n| suha-ai | Back online |\n| UI | Healthy |")
+  const b = parseMarkdown("| Item | Status |\n|---|---|\n| gpu-box | Back online |\n| UI | Healthy |")
   assert.equal(b[0].t, "table")
   assert.deepEqual((b[0] as any).header, ["Item", "Status"])
   assert.equal((b[0] as any).rows.length, 2)
-  assert.deepEqual((b[0] as any).rows[0], ["suha-ai", "Back online"])
+  assert.deepEqual((b[0] as any).rows[0], ["gpu-box", "Back online"])
 })
 
 test("blockquote and hr", () => {
@@ -99,7 +99,7 @@ test("real agent reply from the thread screenshot", () => {
     "",
     "| Item | Status |",
     "|---|---|",
-    "| suha-ai | ✅ Back online after ~1.5 h outage |",
+    "| gpu-box | ✅ Back online after ~1.5 h outage |",
     "| Observatory UI | ✅ Healthy and serving |",
     "",
     "- 600 steps, single GPU",

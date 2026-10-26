@@ -1,5 +1,5 @@
 #!/bin/bash
-# Watchdog for the work.suhai.ai tunnel.
+# Watchdog for the public Cloudflare tunnel.
 #
 # launchd's KeepAlive only sees whether the cloudflared process is alive. Twice
 # now the process stayed up while its edge connectors silently went away, so the
@@ -9,9 +9,9 @@
 # The origin is checked first: if localhost is down the tunnel is not the
 # problem and restarting it would only mask the real fault.
 
-PUBLIC_URL="${PUBLIC_URL:-https://work.suhai.ai/}"
+PUBLIC_URL="${PUBLIC_URL:?set PUBLIC_URL to the tunnel public URL}"
 ORIGIN_URL="${ORIGIN_URL:-http://localhost:8091/}"
-AGENT="${AGENT:-gui/$(id -u)/ai.suhai.agents-tunnel}"
+AGENT="${AGENT:-gui/$(id -u)/com.agents.tunnel}"
 STATE="${STATE:-/tmp/tunnel-healthcheck.state}"
 LOG="${LOG:-/tmp/tunnel-healthcheck.log}"
 THRESHOLD="${THRESHOLD:-3}"   # consecutive failures before restarting

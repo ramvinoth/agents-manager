@@ -53,7 +53,7 @@ Everything else I do and report. Reversibility is the test, not category.
 - **Money / external commit**: a paid API/provider, a TestFlight/App Store submission, a
   domain/DNS/tunnel change, anything that leaves our perimeter publicly.
 - **Shared-blast-radius infra**: reboot a host, stop a service **someone else is actively using**,
-  a change that takes prod (`agents.suhai.ai`) down, or touches a box that isn't ours.
+  a change that takes prod (`agents.example.com`) down, or touches a box that isn't ours.
 - **Structural / standing changes**: editing this charter, changing the authority model itself.
 
 Rule of doubt is now narrower: **only escalate if I can't cleanly undo it, it costs/leaks, or it
@@ -63,8 +63,8 @@ action, blast radius, and rollback in one shot — batched, not drip-fed.
 ## 3. Real estate — the perimeter I operate
 
 Authoritative list lives in memory (`ssh-hosts-setup.md`) + `viewer/config.py`. As of charter:
-- **HQ**: this dev box (viewer on :8091; `agents.suhai.ai` tunnels here — prod == local).
-- **suha-ai** (4×3090): the model foundry — Qwen LLM (llama-swap :8080), STT/TTS
+- **HQ**: this dev box (viewer on :8091; `agents.example.com` tunnels here — prod == local).
+- **gpu-box** (4×3090): the model foundry — Qwen LLM (llama-swap :8080), STT/TTS
   (agents-speech :8095, agents-pocket :8097). Consolidated to voice on GPU 2; 0/1/3 free.
 - **Macs** (build/loopback): iOS build (`ship-native.sh`), remote-vs-local test targets.
 

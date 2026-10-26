@@ -46,14 +46,14 @@ def test_goal_second(label_env):
 
 
 def test_cwd_third(label_env):
-    assert engine._push_label(SID, "/Users/rponnarasu/srv/tim/agents/") == "agents"
+    assert engine._push_label(SID, "/Users/me/src/agents/") == "agents"
 
 
 def test_project_beats_raw_id(label_env):
     """The reported 'Chat s2' class: nothing but a transcript. The label must
     resolve to the project name, not a raw id."""
     label_env["transcript"] = (
-        Path("/x/-Users-rponnarasu-srv-tim-agents") / f"{SID}.jsonl"
+        Path("/x/-Users-me-src-agents") / f"{SID}.jsonl"
     )
     assert engine._push_label(SID, "") == "agents"
 
@@ -103,8 +103,8 @@ def test_long_preview_is_capped():
 
 
 def test_remote_host_is_named():
-    body = engine._perm_push_body("Bash", {"command": "ls"}, "suha-ai")
-    assert body == "Approve Bash? — ls (on suha-ai)"
+    body = engine._perm_push_body("Bash", {"command": "ls"}, "gpu-box")
+    assert body == "Approve Bash? — ls (on gpu-box)"
 
 
 def test_exact_apns_payload_shape(label_env):

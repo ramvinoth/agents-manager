@@ -323,7 +323,7 @@ class SessionViewerHandler(
 
     def request_origin(self):
         """The origin the client reached this server on — scheme + host as the
-        browser sees it, e.g. 'https://life.suhai.ai' through the Cloudflare
+        browser sees it, e.g. 'https://app.example.com' through the Cloudflare
         tunnel or 'http://localhost:8091' on the dev box. The tunnel forwards
         the browser's Host and sets X-Forwarded-Proto; without that header
         only a loopback host is plain http (a public hostname is never served

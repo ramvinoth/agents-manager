@@ -166,7 +166,7 @@ export default function ProvidersScreen({ navigation }: Props) {
             style={styles.ssInput}
             value={editing.baseUrl}
             onChangeText={(baseUrl) => changeDraft({baseUrl})}
-            placeholder="Base URL (https://inference.braintwin.ai)"
+            placeholder="Base URL (https://llm.example.com)"
             placeholderTextColor={t.textMuted}
             autoCapitalize="none"
             autoCorrect={false}

@@ -111,22 +111,22 @@ QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answe
                                   # human may take a while; the CLI holds the turn)
 
 # ===== Voice (speech-to-text + text-to-speech) =====
-# STT + TTS run on the GPU box (suha-ai) as a persistent sherpa-onnx service —
+# STT + TTS run on the GPU box as a persistent sherpa-onnx service —
 # Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
 # The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
-SPEECH_SERVICE_URL = os.environ.get("AGENTS_SPEECH_URL", "http://100.115.120.89:8095")
+SPEECH_SERVICE_URL = os.environ.get("AGENTS_SPEECH_URL", "")
 SPEECH_TIMEOUT = int(os.environ.get("AGENTS_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
                                      # (Qwen synthesizes a whole reply in one
                                      # pass — a long paragraph can take 30s+)
 # TTS streaming uses Pocket (:8097), which serves /synthesize_stream_aac.
 # The main speech service (:8095) handles STT + non-streaming TTS but NOT
 # streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
-TTS_STREAM_URL = os.environ.get("AGENTS_TTS_STREAM_URL", "http://100.115.120.89:8097")
+TTS_STREAM_URL = os.environ.get("AGENTS_TTS_STREAM_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from AGENTS_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
 VERIFY_SERVICE_URL = os.environ.get(
-    "AGENTS_VERIFY_URL", "http://100.115.120.89:8095")
+    "AGENTS_VERIFY_URL", SPEECH_SERVICE_URL)
 VERIFY_TIMEOUT = int(os.environ.get("AGENTS_VERIFY_TIMEOUT", "20"))  # per segment
 
 # ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====

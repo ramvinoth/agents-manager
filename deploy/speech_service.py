@@ -13,7 +13,7 @@ Exposes two endpoints backed by sherpa-onnx, using models already on disk under
 Models load once at startup and are reused across requests. Runs under systemd
 on its own port (default 8095) so it never touches the existing .paseo daemon.
 
-This file is deployed to ~/agents-speech/speech_service.py on suha-ai and run
+This file is deployed to ~/agents-speech/speech_service.py on the GPU box and run
 inside ~/voiceagent-env (which already has sherpa_onnx, fastapi, uvicorn,
 soundfile, numpy).
 """

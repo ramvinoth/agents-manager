@@ -26,7 +26,7 @@ starts Appium, and runs the suite.
 ```bash
 cd mobile-app/e2e
 nvm use 20                                   # Node >= 18 (see notes below)
-export E2E_SERVER_URL="https://agents.suhai.ai"
+export E2E_SERVER_URL="https://agents.example.com"
 export E2E_USERNAME="<owner account>"        # env only — never commit creds
 export E2E_PASSWORD="<password>"
 ./run-ios.sh                                 # SIM_NAME / IOS_VERSION overridable

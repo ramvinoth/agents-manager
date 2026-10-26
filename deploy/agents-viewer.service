@@ -1,6 +1,6 @@
 [Unit]
 Description=Orchestrator viewer server (agents) on :8091
-# The Cloudflare tunnel (agents-tunnel.service) forwards agents.suhai.ai here.
+# The Cloudflare tunnel (agents-tunnel.service) forwards your public hostname here.
 After=network-online.target postgresql.service
 Wants=network-online.target
 

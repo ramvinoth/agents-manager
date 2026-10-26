@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$(cd "$HERE/.." && pwd)"
-TARGET="${1:-rponnarasu@100.76.141.120}"
+TARGET="${1:?usage: sync-mac.sh user@host}"
 SSHOPT="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=25"
 
 exec rsync -az --delete \

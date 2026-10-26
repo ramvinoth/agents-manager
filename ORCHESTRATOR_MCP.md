@@ -65,8 +65,8 @@ Two consequences worth stating plainly, because they shrink the build:
    (`db.py:187`); the body lives at `~/.claude/skills/<n>/SKILL.md`. A skill learned on
    the Mac does not exist on a remote host. Same root cause as "not installable."
 4. **Topology is hardcoded, and facts the nodes publish are re-typed by hand.**
-   `config.py:67-87` names `100.115.120.89` four times; `push.py:30` defaults to
-   `com.suhai.agents`. Separately, `providers.py:55` hand-types `contextLimit` while the
+   `config.py:67-87` names `gpu-box.internal` four times; `push.py:30` defaults to
+   `com.example.agents`. Separately, `providers.py:55` hand-types `contextLimit` while the
    engine already reports `max_model_len` and the discovery route
    (`routes/providers.py:84`) discards it. Same shape twice: a fact that lives on the node,
    copied into our source. §7A.
@@ -601,9 +601,9 @@ fail for the same reason: **the topology is hardcoded.**
 `config.py` hardcodes one machine three times:
 
 ```python
-SPEECH_SERVICE_URL    = env("AGENTS_SPEECH_URL",    "http://100.115.120.89:8095")
-TTS_STREAM_URL        = env("AGENTS_TTS_STREAM_URL","http://100.115.120.89:8097")
-VERIFY_SERVICE_URL    = env("AGENTS_VERIFY_URL",    "http://100.115.120.89:8095")
+SPEECH_SERVICE_URL    = env("AGENTS_SPEECH_URL",    "http://gpu-box.internal:8095")
+TTS_STREAM_URL        = env("AGENTS_TTS_STREAM_URL","http://gpu-box.internal:8097")
+VERIFY_SERVICE_URL    = env("AGENTS_VERIFY_URL",    "http://gpu-box.internal:8095")
 ```
 
 That is not configuration, it is a topology baked into source. Move the GPU box's IP and
@@ -617,7 +617,7 @@ Hosts are already stored, with credentials, in `~/.claude/.viewer-hosts.json`
 gains one field — no new store, no new file:
 
 ```jsonc
-"suha-ai": {
+"gpu-box": {
   "label": "...", "host": "...", "user": "...",        // existing
   "capabilities": {
     "llm":   [{"url": "http://…:18020", "model": "qwen3.8-27b"}],
@@ -646,7 +646,7 @@ The capability block should be **probed**, not hand-written. An `/v1/models` res
 already carries everything needed. Verified live just now against GPU0:
 
 ```
-$ curl -s http://100.115.120.89:18020/v1/models
+$ curl -s http://gpu-box.internal:18020/v1/models
 {"data":[{"id":"qwen3.8-27b", "max_model_len":245760, "owned_by":"vllm", …}]}
 ```
 

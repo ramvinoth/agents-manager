@@ -26,7 +26,7 @@ type Draft = {
 
 /**
  * The GLOBAL provider library editor — add / edit / delete the custom model
- * endpoints (Qwen, LiteLLM, BrainTwin, …) any chat can then pick from. This is
+ * endpoints (Qwen, LiteLLM, vLLM, …) any chat can then pick from. This is
  * the single home for provider CRUD; a session only SELECTS from this list (see
  * SettingsPanel). Backed entirely by /api/providers (server-side source of truth
  * in ~/.claude/.viewer-providers.json) — nothing is cached or hardcoded here.
@@ -207,7 +207,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
             />
             <Input
               className="h-8 font-mono text-xs"
-              placeholder="Base URL (https://inference.braintwin.ai)"
+              placeholder="Base URL (https://llm.example.com)"
               value={editing.baseUrl}
               onChange={(e) => setEditing((d) => (d ? { ...d, baseUrl: e.target.value } : d))}
               spellCheck={false}
