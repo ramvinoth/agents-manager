@@ -1,5 +1,5 @@
-import { useMemo } from "react"
-import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, AlertTriangle } from "lucide-react"
+import { useMemo, useState } from "react"
+import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, Archive } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +10,8 @@ import { PlanBlock } from "./PlanBlock"
 import { MessageActions } from "./MessageActions"
 import { Collapsible } from "./Collapsible"
 import { extractImages } from "@/lib/parser"
-import type { AssistantTurn, Block, ImagePart, Turn } from "@/lib/types"
+import { groupExchanges, stepsLabel, type Exchange } from "@/lib/exchange"
+import type { Block, ImagePart, SystemTurn, Turn, UserTurn } from "@/lib/types"
 
 function Images({ images }: { images: ImagePart[] }) {
   if (!images.length) return null
@@ -125,33 +126,98 @@ function TextBlock({ text, live }: { text: string; live?: boolean }) {
   )
 }
 
-function AssistantBlocks({ turn, live }: { turn: AssistantTurn; live?: boolean }) {
-  const showTools = useStore((s) => s.visible.tools)
-  // Even with the Tools filter off, keep tool-calls that carry images (e.g.
-  // screenshots) so they don't vanish — the image renders, the details stay
-  // collapsed.
-  const blocks = showTools
-    ? turn.blocks
-    : turn.blocks.filter((b) => b.type === "text" || blockHasImages(b))
+/** One block of an exchange: text, a compaction, a surfaced question/plan card, or a tool call. */
+function BlockView({ block, live }: { block: Block; live?: boolean }) {
+  if (block.type === "text") return <TextBlock text={block.text} live={live} />
+  if (block.type === "compact") return <CompactStep summary={block.summary} />
+  if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
+  if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
+  return <ToolCall block={block} />
+}
+
+/** A mid-reply compaction: one quiet line, the summary behind it. */
+function CompactStep({ summary }: { summary: string }) {
   return (
-    <div className="space-y-2">
-      {blocks.map((b, i) =>
-        b.type === "text" ? (
-          <TextBlock key={i} text={b.text} live={live} />
-        ) : b.name === "AskUserQuestion" ? (
-          <AuqBlock key={i} block={b} />
-        ) : b.name === "ExitPlanMode" ? (
-          <PlanBlock key={i} block={b} />
+    <details className="group rounded-md border border-dashed border-border text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+        <Archive className="size-3.5" />
+        <span>Conversation compacted</span>
+        <ChevronDown className="ml-auto size-3.5 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="max-h-96 overflow-auto border-t border-border px-3 py-2">
+        <Markdown text={summary} />
+      </div>
+    </details>
+  )
+}
+
+/** What an exchange shows with the Tools filter off: narration, compactions and image-bearing calls only. */
+function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
+  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || blockHasImages(b))
+}
+
+/**
+ * One agent reply: every API turn of the run folded into a single message, like
+ * the mobile thread. The work (tool calls + narration) sits behind an "N steps"
+ * toggle above the answer — open on the latest reply (and while a search hit is
+ * in it), collapsed on older ones so scrolling history reads as answers.
+ */
+function ExchangeRow({ ex, latest, live, highlighted }: { ex: Exchange; latest: boolean; live: boolean; highlighted: boolean }) {
+  const agentLabel = useAgentLabel()
+  const showTools = useStore((s) => s.visible.tools)
+  const [open, setOpen] = useState<boolean | null>(null)
+  const isOpen = open ?? (latest || highlighted)
+  const steps = visibleSteps(ex, showTools)
+  // Tools hidden: no toggle, just the narration and screenshots inline.
+  const toggle = showTools && steps.length > 0
+  const stepImages = useMemo(() => ex.steps.flatMap((b) => (b.type === "tool_use" ? extractImages(b.result) : [])), [ex.steps])
+  return (
+    <div className="flex gap-3">
+      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <Bot className="size-3.5" />
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{agentLabel}</span>
+          {ex.model && <span className="font-mono">{ex.model.replace("claude-", "")}</span>}
+        </div>
+        {toggle ? (
+          <div>
+            <button
+              type="button"
+              onClick={() => setOpen(!isOpen)}
+              aria-expanded={isOpen}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-accent"
+            >
+              <ChevronRight className={cn("size-3.5 transition-transform", isOpen && "rotate-90")} />
+              {stepsLabel(ex.steps)}
+            </button>
+            {isOpen ? (
+              <div className="mt-1.5 space-y-2 border-l-2 border-border pl-3">
+                {steps.map((b, i) => (
+                  <BlockView key={i} block={b} />
+                ))}
+              </div>
+            ) : (
+              // Screenshots stay on screen even with the steps folded away.
+              <Images images={stepImages} />
+            )}
+          </div>
         ) : (
-          <ToolCall key={i} block={b} />
-        )
-      )}
+          steps.map((b, i) => <BlockView key={i} block={b} />)
+        )}
+        {ex.surfaced.map((b, i) => (
+          <BlockView key={"s" + i} block={b} />
+        ))}
+        {ex.answer.map((b, i) => (
+          <BlockView key={"a" + i} block={b} live={live} />
+        ))}
+      </div>
     </div>
   )
 }
 
-function TurnRow({ turn, live }: { turn: Turn; live?: boolean }) {
-  const agentLabel = useAgentLabel()
+function TurnRow({ turn }: { turn: UserTurn | SystemTurn }) {
   const currentAgent = useStore((s) => s.currentAgent)
   const currentHost = useStore((s) => s.currentHost)
   // Fork/restore work for Claude (local or remote) and local Codex; other
@@ -175,24 +241,6 @@ function TurnRow({ turn, live }: { turn: Turn; live?: boolean }) {
       </div>
     )
   }
-  if (turn.type === "assistant") {
-    return (
-      <div className="flex gap-3">
-        <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Bot className="size-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">{agentLabel}</span>
-            {turn.model && (
-              <span className="font-mono">{turn.model.replace("claude-", "")}</span>
-            )}
-          </div>
-          <AssistantBlocks turn={turn} live={live} />
-        </div>
-      </div>
-    )
-  }
   return (
     <div className="flex items-start gap-2 text-xs text-muted-foreground">
       <TerminalIcon className="mt-0.5 size-3 shrink-0" />
@@ -212,40 +260,66 @@ export function Transcript({
 }) {
   const visible = useStore((s) => s.visible)
   const chatRunning = useStore((s) => s.chatRunning)
-  const shown = turns.filter((t) => {
-    if (t.type === "user") return visible.user
-    if (t.type === "system") return visible.system
-    if (t.type === "assistant") {
-      if (!visible.assistant) return false
-      // hide tool-only assistant turns when tools are hidden
-      if (!visible.tools && !t.blocks.some((b) => b.type === "text")) return false
-      return true
-    }
-    return true
-  })
-  if (!shown.length) {
+  // Tool-only turns are NOT dropped here even with the Tools filter off: they
+  // belong to an exchange, which keeps their screenshots (see visibleSteps).
+  const shown = useMemo(
+    () =>
+      turns.filter((t) =>
+        t.type === "user" ? visible.user : t.type === "system" ? visible.system : visible.assistant
+      ),
+    [turns, visible.user, visible.system, visible.assistant]
+  )
+  const items = useMemo(() => groupExchanges(shown), [shown])
+  // An exchange with nothing left to show (tool-only, Tools filter off) takes no row.
+  const rows = items.filter(
+    (it) =>
+      it.type !== "exchange" ||
+      it.answer.length > 0 ||
+      it.surfaced.length > 0 ||
+      visibleSteps(it, visible.tools).length > 0
+  )
+  if (!rows.length) {
     return (
       <div className={cn("flex h-full items-center justify-center text-sm text-muted-foreground", className)}>
         {turns.length ? "No messages match the current filter." : "No messages in this session."}
       </div>
     )
   }
+  const lastExchange = rows.findLastIndex((it) => it.type === "exchange")
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6", className)}>
-      {shown.map((t, i) => (
-        <div
-          key={t.domId}
-          id={`turn-${t.domId}`}
-          className={cn(
-            "scroll-mt-6 rounded-lg transition-shadow",
-            t.domId === highlightId && "ring-2 ring-primary ring-offset-4 ring-offset-background"
-          )}
-        >
-          {/* Only the last turn can still be growing, and only while the agent
-              is running — that one renders uncollapsed. */}
-          <TurnRow turn={t} live={chatRunning && i === shown.length - 1} />
-        </div>
-      ))}
+    <div className={cn("mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6", className)}>
+      {rows.map((it, i) => {
+        const ids = it.type === "exchange" ? it.memberIds : [it.domId]
+        const highlighted = !!highlightId && ids.includes(highlightId)
+        return (
+          <div
+            key={it.domId}
+            id={`turn-${it.domId}`}
+            className={cn(
+              "scroll-mt-6 rounded-lg transition-shadow",
+              highlighted && "ring-2 ring-primary ring-offset-4 ring-offset-background"
+            )}
+          >
+            {/* Search scrolls to "turn-<id>" of ANY member turn; the folded
+                ones keep an anchor here. */}
+            {ids.slice(1).map((id) => (
+              <span key={id} id={`turn-${id}`} className="block scroll-mt-6" />
+            ))}
+            {it.type === "exchange" ? (
+              // Only the last reply can still be growing, and only while the
+              // agent is running — that one renders uncollapsed.
+              <ExchangeRow
+                ex={it}
+                latest={i === lastExchange}
+                live={chatRunning && i === rows.length - 1}
+                highlighted={highlighted}
+              />
+            ) : (
+              <TurnRow turn={it} />
+            )}
+          </div>
+        )
+      })}
       <div className="pt-2 text-center">
         <Badge variant="outline" className="text-muted-foreground">
           {turns.length} turns

@@ -43,6 +43,14 @@ class TestComputeSessionSummary:
     def test_meta_user_skipped(self):
         assert _summary([{"type": "user", "isMeta": True, "message": {"content": "m"}}])["userMessages"] == 0
 
+    def test_compaction_summary_not_counted(self):
+        # A compaction writes its summary as a user record; nobody typed it.
+        objs = [
+            {"type": "user", "message": {"content": "real question"}},
+            {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued"}},
+        ]
+        assert _summary(objs)["userMessages"] == 1
+
     def test_title_and_deduped_summaries(self):
         objs = [
             {"type": "custom-title", "customTitle": "My Session"},
