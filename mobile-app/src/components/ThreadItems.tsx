@@ -312,7 +312,29 @@ function StepView({ block }: { block: Block }) {
       </View>
     )
   }
+  if (block.kind === "compact") return <CompactStep text={block.text} />
   return <ToolStep block={block} />
+}
+
+// A context compaction inside the reply: one folded line, the summary on tap.
+function CompactStep({ text }: { text: string }) {
+  const t = useTheme()
+  const [open, setOpen] = useState(false)
+  return (
+    <View style={{ marginVertical: 4 }}>
+      <Pressable testID="compact-step" accessibilityRole="button" accessibilityLabel="Conversation compacted"
+        onPress={() => setOpen((o) => !o)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Icon name="archive" size={13} color={t.textMuted} />
+        <Text style={{ color: t.textMuted, fontSize: 12 }}>Conversation compacted</Text>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
+      </Pressable>
+      {open ? (
+        <View style={{ marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: t.border }}>
+          <Markdown text={text} color={t.textMuted} selectable />
+        </View>
+      ) : null}
+    </View>
+  )
 }
 
 // Inline thumbnails; tap one to open it full screen with pinch-zoom and pan.

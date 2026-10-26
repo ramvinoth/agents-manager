@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen } from "lucide-react"
+import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -134,10 +134,27 @@ function TextBlock({ text, live }: { text: string; live?: boolean }) {
 /** One block of an exchange: text, a surfaced question/plan card, or a tool call. */
 function BlockView({ block, live }: { block: Block; live?: boolean }) {
   if (block.type === "text") return <TextBlock text={block.text} live={live} />
+  if (block.type === "compact") return <CompactStep summary={block.summary} />
   if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
   if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
   if (block.name === CANVAS_SHOW_TOOL && showSucceeded(block.result, block.isError)) return <CanvasChip block={block} />
   return <ToolCall block={block} />
+}
+
+/** A mid-reply compaction: one quiet line, the summary behind it. */
+function CompactStep({ summary }: { summary: string }) {
+  return (
+    <details className="group rounded-md border border-dashed border-border text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+        <Archive className="size-3.5" />
+        <span>Conversation compacted</span>
+        <ChevronDown className="ml-auto size-3.5 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="max-h-96 overflow-auto border-t border-border px-3 py-2">
+        <Markdown text={summary} />
+      </div>
+    </details>
+  )
 }
 
 /** A successful canvas_show reads as what it did — "opened a canvas" — and reopens it. */
@@ -157,9 +174,9 @@ function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) 
   )
 }
 
-/** What an exchange shows with the Tools filter off: narration and image-bearing calls only. */
+/** What an exchange shows with the Tools filter off: narration, compactions and image-bearing calls only. */
 function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
-  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
+  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
 }
 
 /**

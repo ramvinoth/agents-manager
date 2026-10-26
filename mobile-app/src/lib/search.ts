@@ -9,7 +9,7 @@ import type { ThreadItem } from "./thread"
 export function itemText(item: ThreadItem): string {
   if (item.kind === "user" || item.kind === "system") return item.text || ""
   if (item.kind === "exchange") {
-    const steps = (item.steps || []).map((b) => (b.kind === "text" ? b.text : b.name)).join(" ")
+    const steps = (item.steps || []).map((b) => (b.kind === "tool" ? b.name : b.text)).join(" ")
     return `${item.finalText || ""} ${steps}`.trim()
   }
   return "" // unknown/sentinel rows are not searchable

@@ -66,7 +66,13 @@ export interface ToolUseBlock {
   result: unknown | null
   isError?: boolean
 }
-export type Block = TextBlock | ToolUseBlock
+/** A context compaction mid-reply: Claude Code summarised the conversation so
+ *  far and carried on. It is a step of the reply, not a message from the user. */
+export interface CompactBlock {
+  type: "compact"
+  summary: string
+}
+export type Block = TextBlock | ToolUseBlock | CompactBlock
 
 export interface ImagePart {
   mime: string

@@ -34,7 +34,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
-import { describeHost } from "@/lib/host"
 import { EnvDialog, IntegrationsDialog, ProfileDialog } from "@/components/lazyDialogs"
 
 function useTheme() {
@@ -52,8 +51,6 @@ export function Header() {
   const [intOpen, setIntOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const hosts = useStore((s) => s.hosts)
-  const currentHost = useStore((s) => s.currentHost)
   const auth = useStore((s) => s.auth)
   const openPanel = useStore((s) => s.openPanel)
   const panel = useStore((s) => s.panel)
@@ -98,8 +95,6 @@ export function Header() {
       </header>
     )
   }
-
-  const hostLabel = describeHost(currentHost, hosts)
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
@@ -163,7 +158,7 @@ export function Header() {
             <Plug className="size-3.5" /> Integrations
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setEnvOpen(true)}>
-            <KeyRound className="size-3.5" /> Environment variables · {hostLabel}
+            <KeyRound className="size-3.5" /> Env variables
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -422,7 +422,7 @@ def compute_session_summary(line_iter, cwd):
         elif t == "summary" and obj.get("summary"):
             if obj["summary"] not in data["summaries"]:
                 data["summaries"].append(obj["summary"])
-        elif t == "user" and not obj.get("isMeta"):
+        elif t == "user" and not obj.get("isMeta") and not obj.get("isCompactSummary"):
             c = (obj.get("message") or {}).get("content")
             if not (isinstance(c, list) and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c)):
                 data["userMessages"] += 1
@@ -472,7 +472,7 @@ def session_digest_from_lines(lines, max_chars=55000):
         except Exception:
             continue
         t = o.get("type")
-        if t == "user" and not o.get("isMeta"):
+        if t == "user" and not o.get("isMeta") and not o.get("isCompactSummary"):
             c = (o.get("message") or {}).get("content")
             if isinstance(c, list):
                 if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
