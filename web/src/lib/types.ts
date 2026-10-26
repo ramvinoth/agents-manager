@@ -454,28 +454,3 @@ export interface FileListResponse {
   home: string
   truncated?: boolean
 }
-
-/** A cloud drive in the file browser's location picker — the sanitized view
- *  the server returns (no tokens, no client secret). `authorized` is the
- *  "has a usable token" presence flag; an unauthorized drive still lists but
- *  selecting it re-runs the consent flow. */
-export interface Drive {
-  id: string
-  label: string
-  kind: string
-  status: string
-  hidden: boolean
-  authorized: boolean
-}
-
-/** One vendor's OAuth client as the Integrations dialog sees it — the secret
- *  itself is never returned; `has_secret` is a presence flag. `public` marks a
- *  PKCE public client (Dropbox, OneDrive) that needs no secret at all. */
-export interface DriveClient {
-  kind: string
-  label: string
-  public: boolean
-  client_id: string
-  has_secret: boolean
-  configured: boolean
-}

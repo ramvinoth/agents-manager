@@ -7,9 +7,8 @@ Two tiers, one transport:
   happening on this machine without being able to change any of it.
 - **Act on the board** (writes): create/move/assign cards, mark work done, propose
   a learned skill.
-- **Files**: list/read/write on this machine, SSH hosts and the owner's connected
-  cloud drives — the same /api/fs the file browser uses, so a drive connected in
-  the app is usable by every session at once.
+- **Files**: list/read/write on this machine and SSH hosts — the same /api/fs
+  the file browser uses.
 
 Runs as a SEPARATE process — possibly on a remote host over an SSH reverse tunnel —
 so it CANNOT import viewer.db. Every tool is dumb transport: it calls the matching
@@ -71,12 +70,10 @@ _TOOLS = {
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
     "inbox_list":       ("GET", "/api/inbox"),
-    # ── Files: this machine, SSH hosts, and the owner's connected cloud drives.
-    # The same /api/fs the file browser uses, so a drive connected in the app is
-    # visible to every session at once. Rename/delete/compress are deliberately
+    # ── Files: this machine and SSH hosts, through the same /api/fs the file
+    # browser uses. Rename/delete/compress are deliberately
     # not exposed: a file delete is Red (orglogic._RED_ACTIONS) and the fs routes
     # do not run through the approval queue — ask the owner on a card instead.
-    "drive_list":       ("GET", "/api/drives"),
     "fs_list":          ("GET", "/api/fs"),
     "fs_read":          ("GET", "/api/fs/download"),
     "fs_write":         ("POST", "/api/fs/write"),
@@ -120,8 +117,6 @@ _PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list"
 
 _HOST_ARG = {"type": "string",
              "description": "Host id from host_list; omit for this machine."}
-_DRIVE_ARG = {"type": "string",
-              "description": "Cloud drive id from drive_list; omit for a machine. Never together with host."}
 
 _TOOL_LIST = [
     # ── See everything ──────────────────────────────────────────────────────
@@ -221,34 +216,31 @@ _TOOL_LIST = [
     {"name": "note_delete", "description": "Delete a note. Irreversible, so it queues for the owner's approval; prefer note_update archived=true.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["note_id"], "properties": {
          "note_id": {"type": "integer"}}}},
-    # ── Files (this machine, SSH hosts, connected cloud drives) ─────────────
-    {"name": "drive_list",
-     "description": "The owner's connected cloud drives (Google Drive, Dropbox, OneDrive) — id, label, kind, whether it is authorized. Pass a drive id as `drive` to the fs_* tools to work in that drive; every session on this server sees the same drives.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
+    # ── Files (this machine, SSH hosts) ─────────────────────────────────────
     {"name": "fs_list",
-     "description": "List a directory: entries with name/type/size/modified. Scope with EXACTLY ONE of `drive` (a cloud drive id from drive_list) or `host` (an SSH host from host_list); neither means this machine. Paths on a drive start at '/'; on a machine '~' is home.",
+     "description": "List a directory: entries with name/type/size/modified. Pass `host` (an SSH host from host_list) for a remote machine; omit it for this machine. '~' is home.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "path": {"type": "string", "description": "Directory to list (default '~' on a machine, '/' on a drive)."},
-         "drive": _DRIVE_ARG, "host": _HOST_ARG,
+         "path": {"type": "string", "description": "Directory to list (default '~')."},
+         "host": _HOST_ARG,
          "hidden": {"type": "string", "enum": ["0", "1"], "description": "\"1\" to include dotfiles."}}}},
     {"name": "fs_read",
-     "description": "Read one file's contents as text (same drive/host scoping as fs_list). Meant for text and documents you can reason about; a binary file comes back as replacement-character noise. Files holding this machine's credentials are refused (403).",
+     "description": "Read one file's contents as text (same host scoping as fs_list). Meant for text and documents you can reason about; a binary file comes back as replacement-character noise. Files holding this machine's credentials are refused (403).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["path"], "properties": {
          "path": {"type": "string", "description": "Full path of the file."},
-         "drive": _DRIVE_ARG, "host": _HOST_ARG}}},
+         "host": _HOST_ARG}}},
     {"name": "fs_write",
-     "description": "Create or overwrite ONE file `name` inside directory `path` with `content` (same drive/host scoping as fs_list). Text by default; pass encoding=\"base64\" for binary. Overwrites silently — fs_list first if the name may already exist. To share a result with the owner, write it into a connected drive folder and name the path in your card comment.",
+     "description": "Create or overwrite ONE file `name` inside directory `path` with `content` (same host scoping as fs_list). Text by default; pass encoding=\"base64\" for binary. Overwrites silently — fs_list first if the name may already exist. To share a result with the owner, name the path in your card comment.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["path", "name", "content"], "properties": {
          "path": {"type": "string", "description": "Target directory."},
          "name": {"type": "string", "description": "File name only (no slashes)."},
          "content": {"type": "string"},
          "encoding": {"type": "string", "enum": ["base64"]},
-         "drive": _DRIVE_ARG, "host": _HOST_ARG}}},
+         "host": _HOST_ARG}}},
     {"name": "fs_mkdir",
-     "description": "Create folder `name` inside directory `path` (same drive/host scoping as fs_list). 409 if it already exists.",
+     "description": "Create folder `name` inside directory `path` (same host scoping as fs_list). 409 if it already exists.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["path", "name"], "properties": {
          "path": {"type": "string"}, "name": {"type": "string"},
-         "drive": _DRIVE_ARG, "host": _HOST_ARG}}},
+         "host": _HOST_ARG}}},
     # ── Act on the board ────────────────────────────────────────────────────
     {"name": "card_create", "description": "Create a card on the board (title required). Board cards are the durable work ledger: park deferred, handed-off, or follow-up work here so it survives this session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {

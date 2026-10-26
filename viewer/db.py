@@ -393,21 +393,6 @@ def init_db():
               value TEXT NOT NULL,
               PRIMARY KEY (host, key)
             );
-            -- Cloud-storage drives: the third leg of the file layer (local /
-            -- SSH host / cloud drive). The bytes live on the vendor; this row
-            -- holds only the OAuth tokens (`config`) and the plugin lifecycle
-            -- (status active|paused, hidden). `kind` selects the adapter in
-            -- viewer/drives.py — a new vendor is one adapter class + one
-            -- registry entry, nothing else.
-            CREATE TABLE IF NOT EXISTS drives (
-              id         TEXT PRIMARY KEY,
-              label      TEXT NOT NULL DEFAULT '',
-              kind       TEXT NOT NULL,
-              config     JSONB NOT NULL DEFAULT '{}'::jsonb,
-              status     TEXT NOT NULL DEFAULT 'active',
-              hidden     BOOLEAN NOT NULL DEFAULT FALSE,
-              created_at DOUBLE PRECISION NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS providers (
               id            TEXT PRIMARY KEY,
               name          TEXT NOT NULL DEFAULT '',
@@ -2254,85 +2239,6 @@ def host_delete(hid):
         return cur.fetchone() is not None
 
 
-# Drives (cloud storage registry) --------------------------------------------
-# A drive is a cloud account (Google Drive, Dropbox, OneDrive) that the file
-# routes serve as just one more disk. The bytes live on the vendor; these
-# columns hold only the OAuth tokens (`config`, JSONB) and the plugin
-# lifecycle (status active|paused, hidden). The list route must strip `config`
-# before returning to a client, exactly as the hosts list route strips
-# password/key_file.
-def _drive_row(r):
-    return {
-        "id": r["id"],
-        "label": r["label"],
-        "kind": r["kind"],
-        "config": r["config"] or {},
-        "status": r["status"],
-        "hidden": bool(r["hidden"]),
-        "created_at": r["created_at"],
-    }
-
-
-def drives_load():
-    """{id: {label, kind, config, status, hidden, created_at}} for every drive."""
-    with _db() as cur:
-        cur.execute("SELECT * FROM drives ORDER BY created_at")
-        return {r["id"]: _drive_row(r) for r in cur.fetchall()}
-
-
-def drive_get(did):
-    with _db() as cur:
-        cur.execute("SELECT * FROM drives WHERE id = %s", (did,))
-        r = cur.fetchone()
-        return None if r is None else _drive_row(r)
-
-
-def drive_upsert(did, entry):
-    """Create or update one drive row. `entry` uses the JSON keys the API
-    uses: label, kind, config, status, hidden."""
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO drives (id, label, kind, config, status, hidden, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (id) DO UPDATE SET "
-            "label = EXCLUDED.label, kind = EXCLUDED.kind, config = EXCLUDED.config, "
-            "status = EXCLUDED.status, hidden = EXCLUDED.hidden",
-            (
-                did,
-                entry.get("label") or did,
-                entry.get("kind") or "",
-                Json(entry.get("config") or {}),
-                entry.get("status") or "active",
-                bool(entry.get("hidden")),
-                _now(),
-            ),
-        )
-
-
-def drive_delete(did):
-    with _db() as cur:
-        cur.execute("DELETE FROM drives WHERE id = %s RETURNING id", (did,))
-        return cur.fetchone() is not None
-
-
-def drive_set_status(did, status=None, hidden=None):
-    """Plugin lifecycle: pause/resume (`status`) and hide/show (`hidden`)
-    from the file UI. Either may be given; a paused or hidden drive is
-    refused by viewer.drives.adapter_for."""
-    sets, vals = [], []
-    if status is not None:
-        sets.append("status = %s")
-        vals.append(status)
-    if hidden is not None:
-        sets.append("hidden = %s")
-        vals.append(bool(hidden))
-    if not sets:
-        return
-    vals.append(did)
-    with _db() as cur:
-        cur.execute(f"UPDATE drives SET {', '.join(sets)} WHERE id = %s", vals)
-
-
 # Per-host env vars -----------------------------------------------------------
 
 def host_env_load(hid):
@@ -2429,42 +2335,6 @@ def setting_set(key, value):
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             (key, Json(value)),
         )
-
-
-# Cloud-drive OAuth CLIENTS: the viewer's own identity to each vendor (a
-# vendor's per-user tokens live in the drives table). settings['drive_clients']
-# = {kind: {client_id, client_secret?}}. Edited from the app's Integrations
-# dialog; the secret is read only by the token exchange/refresh, never listed.
-
-def drive_clients_load():
-    return setting_get("drive_clients", {}) or {}
-
-
-def drive_client_get(kind):
-    return drive_clients_load().get(kind)
-
-
-def drive_client_set(kind, client_id, client_secret=None):
-    """Store one vendor client. `client_secret=None` keeps the secret already
-    on record (the UI never has it to send back); '' clears it."""
-    clients = drive_clients_load()
-    prev = clients.get(kind) or {}
-    entry = {"client_id": client_id}
-    secret = prev.get("client_secret") if client_secret is None else client_secret
-    if secret:
-        entry["client_secret"] = secret
-    clients[kind] = entry
-    setting_set("drive_clients", clients)
-    return entry
-
-
-def drive_client_delete(kind):
-    clients = drive_clients_load()
-    if kind not in clients:
-        return False
-    del clients[kind]
-    setting_set("drive_clients", clients)
-    return True
 
 
 # Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
@@ -2579,12 +2449,3 @@ def migrate_legacy_files():
             setting_set("harman", merged)
         _retire(p)
 
-    # cloud-drive vendor clients -> settings['drive_clients']
-    p = _LEGACY_DIR / ".viewer-drives-oauth.json"
-    data = _read_json(p)
-    if isinstance(data, dict):
-        if not drive_clients_load():
-            for kind, c in data.items():
-                if isinstance(c, dict) and c.get("client_id"):
-                    drive_client_set(kind, c["client_id"], c.get("client_secret") or "")
-        _retire(p)

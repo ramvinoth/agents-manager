@@ -66,14 +66,13 @@ from viewer.routes.push import PushMixin
 from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
 from viewer.routes.orchestrator import OrchestratorMixin
-from viewer.routes.drives import DrivesMixin
 from viewer.routes.inbox import InboxMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
-    OrchestratorMixin, DrivesMixin, InboxMixin,
+    OrchestratorMixin, InboxMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -85,15 +84,12 @@ class SessionViewerHandler(
     # Authority is min(human ceiling, session level) — orglogic.effective_level.
     #
     # PUBLIC_API is ONLY for endpoints that must work with no credential at all:
-    # signing up/in, a device dropping its own push token on logout (which
-    # must succeed even though the session is already gone), and the OAuth
-    # callback a cloud-drive vendor redirects the browser to (a cross-site
-    # top-level redirect carries no SameSite=Strict cookie; that route is bound
-    # to its consent by the one-time `state` instead). Everything else
+    # signing up/in, and a device dropping its own push token on logout (which
+    # must succeed even though the session is already gone). Everything else
     # authenticates. A handler must never re-derive the caller — read
     # req.principal.
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
-                  "/api/push/unregister", "/api/drive/oauth/callback"}
+                  "/api/push/unregister"}
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -368,10 +364,6 @@ class SessionViewerHandler(
         "/api/fs": "_g_fs",
         "/api/fs/download": "_g_fs_download",
         "/api/fs/download-zip": "_g_fs_download_zip",
-        "/api/drives": "_g_drives",
-        "/api/drive/clients": "_g_drive_clients",
-        "/api/drive/oauth/status": "_g_drive_oauth_status",
-        "/api/drive/oauth/callback": "_g_drive_oauth_callback",
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
@@ -447,11 +439,6 @@ class SessionViewerHandler(
         "/api/fs/write": "_p_fs_write",
         "/api/fs/rename": "_p_fs_rename",
         "/api/fs/compress": "_p_fs_compress",
-        "/api/drives": "_p_drives_create",
-        "/api/drives/delete": "_p_drives_delete",
-        "/api/drive/clients": "_p_drive_clients",
-        "/api/drive/clients/delete": "_p_drive_clients_delete",
-        "/api/drive/oauth/start": "_p_drive_oauth_start",
         "/api/auth/signup": "_p_auth_signup",
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",

@@ -51,15 +51,8 @@ export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
 export type FileList = { path: string; parent?: string; entries: FileEntry[]; home?: string; truncated?: boolean }
-/** Where a file call looks: an SSH host, a cloud drive, or (empty) this machine. */
-export type FsScope = { drive: string } | { host: string } | {}
-/** A connected (or connectable) cloud drive. `authorized` is a "has a usable
- *  token" flag; an unauthorized drive still lists, picking it runs consent. */
-export type Drive = { id: string; label: string; kind: string; status: string; hidden: boolean; authorized: boolean }
-/** One vendor's OAuth client as Integrations sees it — never the secret itself.
- *  `public` marks a PKCE client (Dropbox, OneDrive) that needs no secret. */
-export type DriveClient = { kind: string; label: string; public: boolean; client_id: string; has_secret: boolean; configured: boolean }
-export type DriveClientList = { clients: DriveClient[]; redirect_uri: string }
+/** Where a file call looks: an SSH host, or (empty) this machine. */
+export type FsScope = { host: string } | {}
 export type SessionSummary = {
   lines: number
   userMessages: number
@@ -537,10 +530,8 @@ export const api = {
       `/api/agents${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
     ),
 
-  // ---- filesystem browser (local / SSH host / cloud drive) ----
-  // Every call is scoped by `scope` — {host} for an SSH host, {drive} for a
-  // cloud drive, {} for this machine — built by lib/location.ts#fsScope so the
-  // "exactly one of host/drive" rule the server enforces lives in one place.
+  // ---- filesystem browser (local / SSH host) ----
+  // Every call is scoped by `scope` — {host} for an SSH host, {} for this machine.
   fs: (scope: FsScope, path: string, hidden = false) =>
     req<FileList>(
       "GET",
@@ -551,8 +542,7 @@ export const api = {
   fsMkdir: (scope: FsScope, body: { path: string; name: string }) =>
     req<{ error?: string }>("POST", "/api/fs/mkdir", { ...body, ...scope }),
 
-  // Delete a file/folder (server moves it to a reversible trash dir; a drive
-  // adapter trashes it vendor-side).
+  // Delete a file/folder (server moves it to a reversible trash dir).
   fsDelete: (scope: FsScope, body: { path: string }) =>
     req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", { ...body, ...scope }),
 
@@ -583,34 +573,6 @@ export const api = {
     const q = new URLSearchParams({ path, ...scope })
     return { url: `${serverUrl()}/api/fs/download?${q.toString()}`, headers: authHeaders() }
   },
-
-  // ---- cloud drives (the Files tab's third location) ----
-  // Every drive the location picker can offer (sanitized — no tokens) plus the
-  // vendors a NEW drive may be created for.
-  drives: () => req<{ drives: Drive[]; vendors: string[] }>("GET", "/api/drives"),
-  // Create an empty drive row, then connect it via driveOAuthStart.
-  driveCreate: (body: { label: string; kind: string }) =>
-    req<{ drive: Drive }>("POST", "/api/drives", body),
-  // Remove a drive and its stored tokens; the vendor-side files are untouched.
-  driveDelete: (id: string) => req<{ ok?: boolean; error?: string }>("POST", "/api/drives/delete", { drive: id }),
-  // Begin the hosted consent flow: the vendor URL to open in the system browser
-  // and the pending handle to poll. The vendor sends the browser back to the
-  // server's /api/drive/oauth/callback, which finishes the exchange, so the
-  // app only waits for `status` to flip.
-  driveOAuthStart: (drive: string) =>
-    req<{ url: string; pending: string } | { error: string }>("POST", "/api/drive/oauth/start", { drive }),
-  driveOAuthStatus: (pending: string) =>
-    req<{ status: "waiting" | "authorized" | "failed" | "expired"; error?: string }>(
-      "GET", `/api/drive/oauth/status?pending=${encodeURIComponent(pending)}`
-    ),
-  // Harman's own OAuth client per vendor (Integrations). The secret is
-  // write-only: the list reports has_secret, never the value; a save without
-  // client_secret keeps the stored one.
-  driveClients: () => req<DriveClientList>("GET", "/api/drive/clients"),
-  driveClientSave: (body: { kind: string; client_id: string; client_secret?: string }) =>
-    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients", body),
-  driveClientDelete: (kind: string) =>
-    req<DriveClientList & { error?: string }>("POST", "/api/drive/clients/delete", { kind }),
 
   // ---- voice (call listening + text-to-speech) ----
   // Streaming TTS URL for react-native-track-player: a GET that returns a live

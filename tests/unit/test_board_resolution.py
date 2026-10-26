@@ -8,7 +8,7 @@ session-filtered board (no project named) was born with no project, and its
 detail screen (which re-derived the board from the card's project alone) had
 no columns to move it into — a dead card.
 
-No Postgres: the db module is monkeypatched (test_drives.py pattern) and the
+No Postgres: the db module is monkeypatched and the
 mixins are driven through a bare fake that captures what they would send.
 """
 from types import SimpleNamespace

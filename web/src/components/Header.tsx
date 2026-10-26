@@ -179,7 +179,7 @@ export function Header() {
         size="icon"
         className="size-7"
         onClick={openFs}
-        title={`Browse files on ${hostLabel} or a cloud drive`}
+        title={`Browse files on ${hostLabel}`}
       >
         <FolderOpen className="size-4 text-muted-foreground" />
       </Button>
