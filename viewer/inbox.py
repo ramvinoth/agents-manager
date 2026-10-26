@@ -223,6 +223,11 @@ def red_subject(intent):
             if not lp:
                 return f"loop {args.get('id')} (already gone)"
             return f"\"{(lp.get('prompt') or '')[:80]}\" in {_label(lp.get('session') or '')}"
+        if action == "integration_api_call":
+            conn = db.drive_get(args.get("connection") or "")
+            call = f"{(args.get('method') or 'GET').upper()} {args.get('path') or ''}"
+            return (f"{call} on {conn.get('label') or conn['kind']} ({conn['kind']})" if conn
+                    else f"{call} on account {args.get('connection')} (already gone)")
         if action == "session_mode_set":
             return f"{_label(str(args.get('session') or ''))} → {args.get('mode') or '?'}"
         if action == "session_level_set":

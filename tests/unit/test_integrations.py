@@ -1,9 +1,11 @@
 """Tests for the Integrations catalog (viewer.integrations, pure) and its
 routes (viewer.routes.integrations). No Postgres, no network: db helpers and
 drive_oauth.start are faked; the catalog functions take plain dicts."""
+import json
+
 import pytest
 
-from viewer import db, drive_oauth, integrations as I, server
+from viewer import cloudauth, db, drive_oauth, integrations as I, server
 from viewer.routes.integrations import IntegrationsMixin
 from viewer.routes.drives import DrivesMixin
 
@@ -152,6 +154,10 @@ class _H(IntegrationsMixin, DrivesMixin):
 
     def request_origin(self):
         return "https://h.example.test"
+
+    def _org_send(self, req, action, args):
+        # The real one executes under the caller's authority; here, record it.
+        self.queued = (action, args)
 
 
 class _Req:
@@ -532,29 +538,92 @@ def test_token_catalog_shape():
             assert p["base"].startswith("https://") and p["verify"].startswith("/") and p["docs"]
             assert I.services_of(pid)[0]["ops"]["change"]["default"] is False   # changes can spend money
     assert "cloudflare" in I.PROVIDERS and "hetzner" in I.PROVIDERS and "tailscale" in I.PROVIDERS
-    assert not I.services_of("aws")[0]["available"]
+    assert I.services_of("aws")[0]["available"] and not I.services_of("oracle")[0]["available"]
     assert "cloudflare" not in drive_oauth.available_vendors() and "google" in drive_oauth.available_vendors()
+
+
+def _signed(pid, tok, fields):
+    """The probe as it leaves: verify_request's request plus cloudauth's credential."""
+    m, url, h, data, f = I.verify_request(pid, tok, fields)
+    return m, url, cloudauth.authorize(I.provider(pid), tok.strip(), f, m, url, h, data, None), data, f
 
 
 def test_verify_request_builds_each_auth_style():
     m, url, h, data, _ = I.verify_request("cloudflare", " T ", {})
+    assert "Authorization" not in h            # the credential is cloudauth's, added last
+    m, url, h, data, _ = _signed("cloudflare", " T ", {})
     assert (m, url, h["Authorization"], data) == ("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", "Bearer T", None)
-    assert I.verify_request("discord", "B", {})[2]["Authorization"] == "Bot B"
-    assert I.verify_request("discord", "B", {})[2]["User-Agent"].startswith("DiscordBot (")
-    assert I.verify_request("mixpanel", "s", {"username": "u"})[2]["Authorization"] == "Basic dTpz"
+    assert _signed("discord", "B", {})[2]["Authorization"] == "Bot B"
+    assert _signed("discord", "B", {})[2]["User-Agent"].startswith("DiscordBot (")
+    assert _signed("mixpanel", "s", {"username": "u"})[2]["Authorization"] == "Basic dTpz"
     m, url, h, data, f = I.verify_request("odoo", "k", {"host": "https://Acme.odoo.com/", "db": "prod"})
     assert (m, url, data, h["X-Odoo-Database"]) == ("POST", "https://acme.odoo.com/json/2/res.users/context_get", b"{}", "prod")
     for pid, tok, fields, status in (("mixpanel", "s", {}, 400), ("odoo", "k", {"host": "a/b"}, 400),
-                                     ("cloudflare", "", {}, 400), ("aws", "x", {}, 409), ("google", "x", {}, 400)):
+                                     ("cloudflare", "", {}, 400), ("oracle", "x", {}, 409), ("google", "x", {}, 400),
+                                     ("github", "k", {"app_id": "1"}, 400), ("gcp", "{}", {}, 400),
+                                     ("azure", "s", {"tenant": "t", "client_id": "c"}, 400)):
         with pytest.raises(I.IntegrationError) as e:
             I.verify_request(pid, tok, fields)
         assert e.value.status == status
 
 
+def test_cloud_probes_go_where_each_vendor_answers():
+    m, url, h, data, f = I.verify_request("aws", "S", {"access_key_id": "AKIA1"})
+    assert (m, url, f["region"]) == ("GET", "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15", "us-east-1")
+    h = _signed("aws", "S", {"access_key_id": "AKIA1", "region": "eu-west-1"})[2]
+    assert h["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIA1/") and "/eu-west-1/sts/" in h["Authorization"]
+    m, url, h, data, f = I.verify_request("railway", "T", {})
+    assert (m, url, json.loads(data)) == ("POST", "https://backboard.railway.com/graphql/v2", {"query": "query { me { name email } }"})
+    assert h["Content-Type"] == "application/json"
+    m, url, h, data, f = I.verify_request("github", "k", {"app_id": "1", "installation_id": "2"})
+    assert url == "https://api.github.com/installation/repositories" and h["X-GitHub-Api-Version"] == "2022-11-28"
+    m, url, h, data, f = I.verify_request("azure", "s", {"tenant": "t", "client_id": "c", "subscription": "S1"})
+    assert url == "https://management.azure.com/subscriptions/S1?api-version=2022-12-01"
+    key = json.dumps({"type": "service_account", "private_key": "k", "client_email": "a@p.iam", "project_id": "p-1"})
+    m, url, h, data, f = I.verify_request("gcp", key, {})
+    assert url == "https://cloudresourcemanager.googleapis.com/v1/projects/p-1" and f["project"] == "p-1"
+    assert I.verify_request("gcp", key, {"project": "other"})[1].endswith("/projects/other")
+
+
+def test_cloud_replies_name_the_account_or_refuse_it():
+    assert I.account_from("github", {"repositories": [{"owner": {"login": "acme"}}]}, {}) == "acme"
+    assert I.account_from("github", {"repositories": []}, {"name": "Work"}) == "Work"
+    xml = "<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>arn:aws:iam::1:user/h</Arn></GetCallerIdentityResult></GetCallerIdentityResponse>"
+    assert I.account_from("aws", xml, {}) == "arn:aws:iam::1:user/h"
+    assert I.account_from("railway", {"data": {"me": {"email": "a@x"}}}, {}) == "a@x"
+    assert I.verify_problem("aws", xml) == ""
+    assert "root" in I.verify_problem("aws", xml.replace("user/h", "root"))
+    assert "Not Authorized" in I.verify_problem("railway", {"errors": [{"message": "Not Authorized"}], "data": None})
+    assert I.verify_problem("railway", {"data": {"me": {}}}) == ""
+
+
+def test_cloud_calls_route_by_service_and_split_read_from_change():
+    aws = _conn(kind="aws", **I.token_config("aws", "S", "", {"access_key_id": "A", "region": "us-west-2"}))
+    op, m, url, h, data = I.api_request(aws, "GET", "/ec2/?Action=DescribeInstances&Version=2016-11-15")
+    assert (op, url) == ("read", "https://ec2.us-west-2.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15")
+    assert I.api_request(aws, "GET", "/ec2/?Action=RunInstances&ImageId=x")[0] == "change"   # AWS mutates over GET
+    assert I.api_request(aws, "GET", "/iam/?Action=ListUsers&Version=2010-05-08")[2].startswith("https://iam.amazonaws.com/")
+    assert I.api_request(aws, "GET", "/s3/")[0:3] == ("read", "GET", "https://s3.us-west-2.amazonaws.com/")
+    op, m, url, h, data = I.api_request(aws, "GET", "/logs/?X-Amz-Target=Logs_20140328.DescribeLogGroups")
+    assert (op, m, url, h["X-Amz-Target"], data) == ("read", "POST", "https://logs.us-west-2.amazonaws.com/",
+                                                     "Logs_20140328.DescribeLogGroups", b"{}")
+    assert h["Content-Type"] == "application/x-amz-json-1.1"
+    assert I.api_request(aws, "POST", "/logs/?X-Amz-Target=Logs_20140328.DeleteLogGroup", {"logGroupName": "g"})[0] == "change"
+    with pytest.raises(I.IntegrationError):
+        I.api_request(aws, "GET", "/EC2.evil/")
+    gcp = _conn(kind="gcp", **I.token_config("gcp", "{}", "", {"project": "p"}))
+    assert I.api_request(gcp, "GET", "/compute/v1/projects/p/aggregated/instances")[2] == \
+        "https://compute.googleapis.com/v1/projects/p/aggregated/instances"
+    assert I.api_op("railway", "POST", "/v2", {"query": "query { projects { edges { node { id } } } }"}) == "read"
+    assert I.api_op("railway", "POST", "/v2", {"query": "# hi\n mutation { serviceDelete(id: 1) }"}) == "change"
+    assert I.api_op("railway", "POST", "/v2", {"query": "{ me { id } }"}) == "read"
+    assert I.api_op("github", "POST", "/repos/a/b/issues") == "change"
+
+
 def test_api_request_is_pinned_to_the_vendor_and_split_into_read_and_change():
     c = _conn(kind="hetzner", api_token="T", scopes=["hetzner.api"])
     op, m, url, h, data = I.api_request(c, "get", "/servers?per_page=5")
-    assert (op, m, url, h["Authorization"]) == ("read", "GET", "https://api.hetzner.cloud/v1/servers?per_page=5", "Bearer T")
+    assert (op, m, url, "Authorization" in h) == ("read", "GET", "https://api.hetzner.cloud/v1/servers?per_page=5", False)
     assert I.api_request(c, "POST", "/servers", {"name": "x"})[0] == "change"
     assert I.api_request(c, "POST", "/servers", {"name": "x"})[4] == b'{"name": "x"}'
     assert I.api_request(c, "GET", "//evil.example/x")[2].startswith("https://api.hetzner.cloud/v1/")
@@ -628,9 +697,12 @@ def test_api_proxy_checks_the_owners_switch(rows, monkeypatch):
     h = _H({"connection": "c1", "path": "/servers"})
     h._p_integrations_api(_Req(human=False))
     assert h.sent == ({"status": 200, "body": {"servers": []}}, 200)
-    h = _H({"connection": "c1", "method": "POST", "path": "/servers", "body": {"name": "x"}})
+    h = _H({"connection": "c1", "method": "POST", "path": "/servers", "body": {"name": "x"}, "reason": "r"})
     h._p_integrations_api(_Req(human=False))
-    assert h.sent[1] == 403 and len(fake.calls) == 1          # change is off by default for agents
+    # change is off by default for agents: not run, queued as a one-time approval
+    assert h.sent is None and len(fake.calls) == 1
+    assert h.queued == ("integration_api_call", {"connection": "c1", "method": "POST", "path": "/servers",
+                                                 "body": {"name": "x"}, "reason": "r"})
     rows["c1"] = dict(rows["c1"], config=I.with_op(rows["c1"]["config"], "hetzner.api", "change", True))
     h._p_integrations_api(_Req(human=False))
     assert h.sent[1] == 200 and fake.calls[-1][0] == "POST"
@@ -666,3 +738,36 @@ def test_a_refused_token_marks_the_account_and_a_new_token_keeps_the_switches(ro
     h = _H({"provider": "cloudflare", "token": "X", "connection": "c1"})   # another provider's account
     h._p_integrations_token(_Req())
     assert h.sent[1] == 404 and rows["c1"]["config"]["api_token"] == "NEW"
+
+
+def test_an_approved_change_runs_once_and_is_red(rows, monkeypatch):
+    from viewer import actions, drives, orglogic
+    fake = _FakeHTTP(body=b'{"server": {"id": 1}}')
+    monkeypatch.setattr(drives, "_http", fake)
+    rows["c1"] = _conn(kind="hetzner", **I.token_config("hetzner", "T", "", {}))
+    assert orglogic.is_red("integration_api_call") and not orglogic.self_approves("owner", "ic")
+    out = actions.ACTIONS["integration_api_call"](
+        {"connection": "c1", "method": "POST", "path": "/servers", "body": {"name": "x"}})
+    assert out == {"status": 200, "body": {"server": {"id": 1}}} and fake.calls[0][0] == "POST"
+    assert I.op_state(rows["c1"], "hetzner.api", "change") == "off"   # the switch stays off
+    rows.pop("c1")
+    assert "no longer connected" in actions.ACTIONS["integration_api_call"]({"connection": "c1"})["error"]
+
+
+def test_a_revoked_exchanged_token_is_traded_again_once(rows, monkeypatch):
+    from viewer import cloudauth, drives
+    tokens = iter(["old", "new"])
+    monkeypatch.setitem(cloudauth._EXCHANGES, "github_app", lambda k, f, http: (next(tokens), 3600))
+    monkeypatch.setattr(cloudauth, "_CACHE", {})
+
+    class Http(_FakeHTTP):
+        def __call__(self, method, url, headers=None, data=None, timeout=60):
+            super().__call__(method, url, headers, data, timeout)
+            return (401 if headers["Authorization"] == "Bearer old" else 200), {}, b"{}"
+    fake = Http()
+    monkeypatch.setattr(drives, "_http", fake)
+    rows["c1"] = _conn(kind="github", **I.token_config("github", "KEY", "", {"app_id": "1", "installation_id": "2"}))
+    h = _H({"connection": "c1", "path": "/installation/repositories"})
+    h._p_integrations_api(_Req(human=False))
+    assert h.sent == ({"status": 200, "body": {}}, 200) and len(fake.calls) == 2
+    assert not I.expired(rows["c1"])

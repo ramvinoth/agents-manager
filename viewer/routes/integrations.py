@@ -27,13 +27,10 @@ Local disk: the owner's rules for what agents may touch on this machine
 import json
 import secrets
 
-from viewer import db, drive_oauth, integrations, workspace
+from viewer import cloudauth, db, drive_oauth, integrations, workspace
 from viewer import drives as drives_mod
 from viewer.drives import ADAPTERS, DriveError
 from viewer.routes import require_human
-
-
-_API_TEXT_CAP = 200_000   # a non-JSON vendor reply, trimmed before it reaches an agent's context
 
 
 def _q(req, name, default=""):
@@ -112,19 +109,28 @@ class IntegrationsMixin:
             if cid and (old is None or old["kind"] != pid):
                 raise integrations.IntegrationError("Unknown %s account %r" % (pid, cid), 404)
             method, url, headers, data, fields = integrations.verify_request(pid, body.get("token"), body.get("fields"))
+            token = body["token"].strip()
+            headers = cloudauth.authorize(integrations.provider(pid), token, fields, method, url, headers, data,
+                                          drives_mod._http)
             status, _, raw = drives_mod._http(method, url, headers, data, timeout=20)
-            if status != 200:
+            if not 200 <= status < 300:
                 raise integrations.IntegrationError(
                     "%s refused this token (HTTP %d) — check it was copied whole and has not expired"
                     % (integrations.provider(pid)["label"], status), 400)
             try:
                 reply = json.loads(raw or b"{}")
             except ValueError:
-                reply = {}
+                reply = raw.decode("utf-8", "replace")
+            problem = integrations.verify_problem(pid, reply)
+            if problem:
+                raise integrations.IntegrationError(problem, 400)
+        except cloudauth.AuthError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return
         except (DriveError, integrations.IntegrationError) as e:
             self._err(e)
             return
-        cfg = integrations.token_config(pid, body["token"], integrations.account_from(pid, reply, fields), fields)
+        cfg = integrations.token_config(pid, token, integrations.account_from(pid, reply, fields), fields)
         if old is not None:
             keep = old.get("config") or {}
             cfg.update({k: keep[k] for k in ("off", "ops") if k in keep})
@@ -134,11 +140,14 @@ class IntegrationsMixin:
         self._g_integrations(req)
 
     def _p_integrations_api(self, req):
-        """Body: {connection, method, path, body?}. An AGENT's call to a
-        token provider's API (MCP api_call): the server adds the credential
+        """Body: {connection, method, path, body?, reason?}. An AGENT's call to
+        a token provider's API (MCP api_call): the server adds the credential
         and pins the request to that provider's host. GET (and a provider's
         listed read POSTs) need the owner's `read`; anything else `change`,
-        off by default because it can spend money or move DNS."""
+        off by default because it can spend money or move infrastructure. An
+        agent's change with the switch off is not refused: it queues as a
+        one-time red approval (needs a `reason`) that runs only this call."""
+        from viewer import actions
         b = self.read_body() or {}
         agent = (getattr(req, "principal", None) or {}).get("kind") == "mcp"
         try:
@@ -146,22 +155,21 @@ class IntegrationsMixin:
             if conn is None:
                 raise integrations.IntegrationError("Unknown connection %r — see integrations_list" % b.get("connection"), 404)
             sid = conn["kind"] + ".api"
-            op, method, url, headers, data = integrations.api_request(conn, b.get("method"), b.get("path"), b.get("body"))
+            op = integrations.api_request(conn, b.get("method"), b.get("path"), b.get("body"))[0]
+            if agent and op == "change" and integrations.op_state(conn, sid, op) == "off":
+                self._org_send(req, "integration_api_call", {
+                    "connection": conn["id"], "method": b.get("method"), "path": b.get("path"),
+                    "body": b.get("body"), "reason": b.get("reason")})
+                return
             integrations.pick_connection([conn], sid, conn["id"], op if agent else None)
-            status, _, raw = drives_mod._http(method, url, headers, data, timeout=60)
+            out = actions.integration_call(conn, b.get("method"), b.get("path"), b.get("body"))
+        except cloudauth.AuthError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return
         except (DriveError, integrations.IntegrationError) as e:
             self._err(e)
             return
-        if status == 401 and not integrations.expired(conn):
-            # The vendor no longer takes this token (revoked, or a Tailscale key
-            # past its 90 days): the owner sees it on the account and replaces it.
-            db.drive_upsert(conn["id"], dict(conn, config=dict(conn.get("config") or {}, expired=True)))
-        text = raw.decode("utf-8", "replace")
-        try:
-            out = json.loads(text)
-        except ValueError:
-            out = text[:_API_TEXT_CAP]
-        self.send_json({"status": status, "body": out})
+        self.send_json(out)
 
     def _p_integrations_client(self, req):
         """Save a provider's OAuth client (Harman's own identity to that

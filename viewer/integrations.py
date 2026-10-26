@@ -73,7 +73,10 @@ so no OAuth refresh ever touches it), and agents reach the API through ONE
 proxy (api_call): the server adds the credential, pins the request to the
 provider's own host, and maps the HTTP method to an op — `read` (GET, or a
 POST the provider lists as a read) on by default, `change` off by default
-because a change can spend money or move DNS. A provider whose every service
+because a change can spend money or move DNS. An agent's change on an account
+whose switch is off is not refused: it queues as ONE approval for that exact
+call (actions "integration_api_call"); approving runs it once and leaves the
+switch off. A provider whose every service
 is unavailable is catalog-only: listed with the reason, never connectable.
 
 Token vendor facts (VERIFIED 2026-10-07 against each vendor's API docs):
@@ -87,10 +90,10 @@ Token vendor facts (VERIFIED 2026-10-07 against each vendor's API docs):
   - Mixpanel service accounts use HTTP Basic (username:secret), GET /api/app/me.
   - Odoo's JSON-2 API: POST https://<host>/json/2/<model>/<method>, Bearer API
     key, X-Odoo-Database when the server hosts several; reads are POSTs too.
-  - Not connectable yet, with the vendor's reason: AWS/Lightsail (SigV4
-    signing not built; the Free plan gives $100–200 credits for 6 months),
-    Azure (Entra service principal), Google Cloud (Always Free = one e2-micro
-    in us-west1/us-central1/us-east1), X (pay-per-use credits), Reddit
+  - GitHub (App installation token), AWS (SigV4 per request), Google Cloud
+    (service-account key) and Azure (service-principal secret) prove
+    themselves through cloudauth; Railway takes a bearer team token.
+  - Not connectable yet, with the vendor's reason: X (pay-per-use credits), Reddit
     (Responsible Builder approval), Meta (App Review), TikTok (unaudited apps
     post privately), IRS e-file (authorized providers only, no consumer API).
 HYPOTHESIS: YouTube and Google Ads will ride the Google sign-in (youtube.*,
@@ -101,8 +104,10 @@ the vendor's console, with deep links; a step marked `redirect` is where the
 page shows this deployment's callback address. Clients render the list — no
 client spells a vendor console step.
 """
-import base64
 import json
+import re
+
+from viewer import cloudauth
 
 
 _ENABLE = "https://console.cloud.google.com/flows/enableapi?apiid="
@@ -182,13 +187,19 @@ _TOKEN = []      # (provider id, service entry), turned into SERVICES below
 
 
 def _token(pid, label, category, base, verify, setup, agent, try_, docs, account="",
-           auth="bearer", fields=(), headers=None, reads=(), verify_method="GET"):
+           auth="bearer", fields=(), headers=None, reads=(), verify_method="GET", verify_body=None,
+           secret="API token"):
+    """`auth` is how cloudauth proves the token (bearer, bot, basic,
+    github_app, google_sa, azure, aws); `secret` names what the owner pastes.
+    `base` and `verify` may name a field as {field}; a base with {service}
+    takes the service from the path's first segment (/ec2/… → ec2.…)."""
     PROVIDERS[pid] = {"label": label, "via": "token", "category": category, "public": False,
                       "base": base, "verify": verify, "verify_method": verify_method,
+                      "verify_body": verify_body, "secret": secret,
                       "account": account, "header": auth, "headers": dict({"User-Agent": _UA}, **(headers or {})),
                       "fields": (_NAME,) + tuple(fields), "reads": tuple(reads), "docs": docs,
-                      "setup": tuple(setup) + ({"text": "Paste the token below. Harman checks it with "
-                                                        + label + " before saving."},)}
+                      "setup": tuple(setup) + ({"text": "Paste the %s below. Harman checks it with %s before saving."
+                                                        % (secret[0].lower() + secret[1:], label)},)}
     _TOKEN.append({"id": pid + ".api", "provider": pid, "label": label, "kind": "api",
                    "scopes": (pid + ".api",),
                    "ops": {"read": {"scopes": (), "default": True},
@@ -245,19 +256,88 @@ _token("linode", "Akamai (Linode)", "compute", "https://api.linode.com/v4", "/pr
        "See Linodes, volumes, domains and invoices; create or change them only if you allow it.",
        "List my Linodes with their plan, region and status.",
        "https://techdocs.akamai.com/linode-api/reference/api", account="username")
-_planned("aws", "Amazon Web Services", "compute",
-         "Needs AWS request signing, which Harman doesn't do yet. New AWS accounts get $100–200 of credits for 6 months.",
-         ("AWS Free Tier", "https://aws.amazon.com/free/"))
-_planned("lightsail", "AWS Lightsail", "compute",
-         "Uses the same AWS request signing, which Harman doesn't do yet.",
-         ("Lightsail", "https://aws.amazon.com/lightsail/"))
-_planned("azure", "Microsoft Azure", "compute",
-         "Needs a Microsoft Entra service principal, which Harman doesn't set up yet.",
-         ("Azure free account", "https://azure.microsoft.com/free/"))
-_planned("gcp", "Google Cloud", "compute",
-         "Will connect through your Google sign-in; not built yet. Always Free includes one e2-micro VM "
-         "in us-west1, us-central1 or us-east1.",
-         ("Free tier", "https://cloud.google.com/free"))
+_token("github", "GitHub", "compute", "https://api.github.com", "/installation/repositories",
+       ({"text": "Create a GitHub App (Settings → Developer settings → GitHub Apps → New). No webhook is "
+                 "needed. Under Permissions give only what agents should touch — e.g. Contents and Actions: "
+                 "Read, or Read and write if agents should push or run workflows.",
+         "links": (("New GitHub App", "https://github.com/settings/apps/new"),)},
+        {"text": "Copy its App ID, then Install App on the account and pick the repositories. The number "
+                 "at the end of the installation's address (…/installations/12345) is the Installation ID."},
+        {"text": "Under Private keys, generate a key; GitHub downloads a .pem file. Open it in a text "
+                 "editor and copy everything, BEGIN and END lines included."}),
+       "Read code, issues, pull requests and Actions runs in the repositories you picked; push, open "
+       "pull requests or run workflows only if you allow it.",
+       "List the repositories I gave you and any failing GitHub Actions runs this week.",
+       "https://docs.github.com/en/rest", account="repositories.0.owner.login", auth="github_app",
+       secret="Private key", headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+       fields=({"id": "app_id", "label": "App ID", "placeholder": "e.g. 123456", "required": True},
+               {"id": "installation_id", "label": "Installation ID", "placeholder": "e.g. 12345678",
+                "required": True}))
+_token("railway", "Railway", "compute", "https://backboard.railway.com/graphql", "/v2",
+       ({"text": "Create an account token under Account Settings → Tokens. Leave Workspace on No workspace "
+                 "so it can see every project you can.",
+         "links": (("Tokens", "https://railway.com/account/tokens"),)},),
+       "See projects, services, deployments and usage; deploy, restart or change variables only if you "
+       "allow it (that can cost money).",
+       "List my Railway projects, their services and the status of each latest deployment.",
+       "https://docs.railway.com/reference/public-api", account="data.me.email", verify_method="POST",
+       verify_body={"query": "query { me { name email } }"})
+_token("aws", "Amazon Web Services", "compute", "https://{service}.{region}.amazonaws.com",
+       "/sts/?Action=GetCallerIdentity&Version=2011-06-15",
+       ({"text": "In IAM, create a user for Harman (never use the root account's keys). Attach "
+                 "ReadOnlyAccess unless agents should create or change resources — that costs money. "
+                 "New AWS accounts get $100–200 of credits for 6 months.",
+         "links": (("IAM users", "https://console.aws.amazon.com/iam/home#/users"),
+                   ("AWS Free Tier", "https://aws.amazon.com/free/"))},
+        {"text": "On the user, open Security credentials → Create access key → Application running outside "
+                 "AWS. Copy the access key ID and the secret access key (shown once)."}),
+       "See EC2, S3, Lambda, Route 53 and billing in your account; create or change resources only if you "
+       "allow it (that costs money).",
+       "List my EC2 instances in every region I use, with their type and state.",
+       "https://docs.aws.amazon.com/", auth="aws", secret="Secret access key",
+       account="GetCallerIdentityResponse.GetCallerIdentityResult.Arn",
+       fields=({"id": "access_key_id", "label": "Access key ID", "placeholder": "AKIA…", "required": True},
+               {"id": "region", "label": "Region", "placeholder": "us-east-1", "required": False,
+                "default": "us-east-1"}))
+_token("gcp", "Google Cloud", "compute", "https://{service}.googleapis.com",
+       "/cloudresourcemanager/v1/projects/{project}",
+       ({"text": "In IAM → Service accounts, create one for Harman in your project and grant it Viewer "
+                 "(or Editor if agents should create resources — that costs money). Always Free includes "
+                 "one e2-micro VM in us-west1, us-central1 or us-east1.",
+         "links": (("Service accounts", "https://console.cloud.google.com/iam-admin/serviceaccounts"),
+                   ("Free tier", "https://cloud.google.com/free"))},
+        {"text": "Turn on the Cloud Resource Manager API (Harman checks the key with it), plus any API "
+                 "agents should use, such as Compute Engine.",
+         "links": (("Resource Manager API", _ENABLE + "cloudresourcemanager.googleapis.com"),
+                   ("Compute Engine API", _ENABLE + "compute.googleapis.com"))},
+        {"text": "On the service account, open Keys → Add key → JSON. Open the downloaded file and copy all "
+                 "of it."}),
+       "See Compute Engine, Cloud Storage, Cloud Run and networking in one project; create or change them "
+       "only if you allow it (that costs money).",
+       "List my Compute Engine VMs and Cloud Storage buckets with their region.",
+       "https://cloud.google.com/apis/docs/overview", account="projectId", auth="google_sa",
+       secret="Service-account key (JSON)",
+       fields=({"id": "project", "label": "Project ID", "placeholder": "Optional — taken from the key",
+                "required": False},))
+_token("azure", "Microsoft Azure", "compute", "https://management.azure.com",
+       "/subscriptions/{subscription}?api-version=2022-12-01",
+       ({"text": "In Microsoft Entra ID → App registrations, register an app for Harman. Copy its "
+                 "Directory (tenant) ID and Application (client) ID.",
+         "links": (("App registrations", "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps"),
+                   ("Azure free account", "https://azure.microsoft.com/free/"))},
+        {"text": "Under Certificates & secrets, add a client secret and copy its Value (shown once)."},
+        {"text": "In your subscription → Access control (IAM), give the app the Reader role (Contributor "
+                 "if agents should create resources — that costs money). Copy the Subscription ID.",
+         "links": (("Subscriptions", "https://portal.azure.com/#view/Microsoft_Azure_Billing/SubscriptionsBladeV2"),)}),
+       "See virtual machines, storage, networks and costs in one subscription; create or change them only if "
+       "you allow it (that costs money).",
+       "List my Azure virtual machines with their size, region and power state.",
+       "https://learn.microsoft.com/rest/api/azure/", account="displayName", auth="azure",
+       secret="Client secret",
+       fields=({"id": "tenant", "label": "Directory (tenant) ID", "placeholder": "xxxxxxxx-…", "required": True},
+               {"id": "client_id", "label": "Application (client) ID", "placeholder": "xxxxxxxx-…",
+                "required": True},
+               {"id": "subscription", "label": "Subscription ID", "placeholder": "xxxxxxxx-…", "required": True}))
 _planned("oracle", "Oracle Cloud", "compute",
          "Needs Oracle's request signing, which Harman doesn't do yet.",
          ("Always Free", "https://www.oracle.com/cloud/free/"))
@@ -562,7 +642,7 @@ def _clean_fields(p, fields):
     out = {}
     for f in p.get("fields", ()):
         v = fields.get(f["id"])
-        v = v.strip() if isinstance(v, str) else ""
+        v = (v.strip() if isinstance(v, str) else "") or f.get("default", "")
         if f["required"] and not v:
             raise IntegrationError("%s is required" % f["label"], 400)
         if v:
@@ -575,24 +655,44 @@ def _clean_fields(p, fields):
     return out
 
 
-def _headers(p, token, fields):
-    if p["header"] == "basic":
-        auth = "Basic " + base64.b64encode(("%s:%s" % (fields.get("username", ""), token)).encode()).decode()
-    else:
-        auth = ("Bot " if p["header"] == "bot" else "Bearer ") + token
-    h = dict(p["headers"], Authorization=auth, Accept="application/json")
+def _headers(p, fields):
+    """The request's headers WITHOUT the credential — cloudauth.authorize adds
+    that last, right before the request leaves."""
+    h = dict({"Accept": "application/json"}, **p["headers"])
     if fields.get("db"):
         h["X-Odoo-Database"] = fields["db"]
     return h
 
 
-def _base(p, fields):
-    return p["base"].replace("{host}", fields.get("host", ""))
+_SERVICE = re.compile(r"^/([a-z0-9-]+)(/.*|\?.*|)$")
+_AWS_GLOBAL = ("iam", "route53", "cloudfront")
+
+
+def _url(p, fields, path):
+    """The provider's base with the owner's {fields} filled in, plus `path`.
+    A base with {service} (AWS, Google Cloud) takes the service from the
+    path's first segment: /ec2/?Action=… → https://ec2.<region>.amazonaws.com/?Action=…"""
+    base = p["base"]
+    if "{service}" in base:
+        m = _SERVICE.match(path)
+        if not m:
+            raise IntegrationError("path must start with the service, e.g. /ec2/… or /compute/v1/…", 400)
+        svc, path = m.group(1), m.group(2) or "/"
+        if path.startswith("?"):
+            path = "/" + path
+        base = base.replace("{service}", svc)
+        if svc in _AWS_GLOBAL:
+            base = base.replace(".{region}", "")
+    for k, v in fields.items():
+        base = base.replace("{%s}" % k, v)
+    return base + path
 
 
 def verify_request(pid, token, fields):
     """(method, url, headers, data, fields) for the probe that proves a token
-    works before it is saved. Raises 400/404/409 for what the owner must fix."""
+    works before it is saved — headers without the credential (the caller
+    adds it with cloudauth.authorize). Raises 400/404/409 for what the owner
+    must fix."""
     p = provider(pid)
     if p["via"] != "token":
         raise IntegrationError("%s connects with a sign-in, not an API token" % p["label"], 400)
@@ -600,23 +700,59 @@ def verify_request(pid, token, fields):
         raise IntegrationError("%s can't be connected yet: %s" % (p["label"], services_of(pid)[0]["unavailable"]), 409)
     token = token.strip() if isinstance(token, str) else ""
     if not token:
-        raise IntegrationError("Paste the token first", 400)
+        raise IntegrationError("Paste the %s first" % (p["secret"][0].lower() + p["secret"][1:]), 400)
     fields = _clean_fields(p, fields)
-    data = b"{}" if p["verify_method"] == "POST" else None
-    h = _headers(p, token, fields)
+    if p["header"] == "google_sa":
+        try:
+            key = cloudauth.service_account(token)
+        except cloudauth.AuthError as e:
+            raise IntegrationError(str(e), 400)
+        fields.setdefault("project", key.get("project_id") or "")
+        if not fields["project"]:
+            raise IntegrationError("Project ID is required — this key names none", 400)
+    data = None
+    if p["verify_method"] == "POST":
+        data = json.dumps(p["verify_body"] or {}).encode()
+    h = _headers(p, fields)
     if data is not None:
         h["Content-Type"] = "application/json"
-    return p["verify_method"], _base(p, fields) + p["verify"], h, data, fields
+    verify = p["verify"]
+    for k, v in fields.items():
+        verify = verify.replace("{%s}" % k, v)
+    return p["verify_method"], _url(p, fields, verify), h, data, fields
+
+
+def verify_problem(pid, body):
+    """Why a probe the vendor ANSWERED still must not be saved, or "": AWS
+    root keys (all-powerful, never for an agent) and a GraphQL reply that is
+    only errors (Railway answers a bad token with 200 + errors)."""
+    text = body if isinstance(body, str) else json.dumps(body)
+    if pid == "aws" and re.search(r"arn:aws:iam::\d+:root", text):
+        return ("These are the AWS root account's keys, which can do anything. Create an IAM user for "
+                "Harman and paste its keys instead")
+    if isinstance(body, dict) and body.get("errors") and not body.get("data"):
+        msg = (body["errors"][0] or {}).get("message", "") if isinstance(body["errors"], list) else ""
+        return "%s refused this token%s" % (provider(pid)["label"], ": " + msg if msg else "")
+    return ""
 
 
 def account_from(pid, body, fields):
-    """A readable account name from the probe's JSON (DigitalOcean's
-    account.email, Linode's username…), else the owner's name for it, else
-    the host, else ""."""
+    """A readable account name from the probe's reply (DigitalOcean's
+    account.email, GitHub's repositories.0.owner.login…), else the owner's
+    name for it, else the host, else "". An XML reply (AWS) is read by the
+    path's last tag."""
     path = provider(pid).get("account") or ""
-    v = body if path else None
-    for k in path.split(".") if path else ():
-        v = v.get(k) if isinstance(v, dict) else None
+    v = None
+    if path and isinstance(body, str):
+        m = re.search(r"<%s>([^<]+)</%s>" % ((re.escape(path.split(".")[-1]),) * 2), body)
+        v = m.group(1).strip() if m else None
+    elif path:
+        v = body
+        for k in path.split("."):
+            if isinstance(v, list) and k.isdigit():
+                v = v[int(k)] if int(k) < len(v) else None
+            else:
+                v = v.get(k) if isinstance(v, dict) else None
     if isinstance(v, str) and v:
         return "%s (%s)" % (fields["name"], v) if fields.get("name") else v
     return fields.get("name") or fields.get("host") or ""
@@ -625,19 +761,39 @@ def account_from(pid, body, fields):
 API_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 
-def api_op(pid, method, path):
-    """'read' or 'change': GETs read; a POST the provider lists in `reads`
-    (Odoo's search_read…) reads too; anything else changes something."""
+
+
+def api_op(pid, method, path, body=None):
+    """'read' or 'change'. GETs read — except an AWS query Action that is not
+    Describe*/List*/Get* (AWS takes RunInstances as a GET). A POST reads when
+    the provider lists it in `reads` (Odoo's search_read…), when it is a
+    GraphQL query (Railway; a mutation changes), or an AWS JSON call whose
+    X-Amz-Target is Describe*/List*/Get*. Anything else changes something."""
     p = provider(pid)
-    if method == "GET" or (method == "POST" and any(path.split("?")[0].endswith(r) for r in p.get("reads", ()))):
+    if p.get("header") == "aws":
+        q = path.split("?", 1)[1] if "?" in path else ""
+        acts = re.findall(r"(?:^|&)(?:Action|X-Amz-Target)=([^&]*)", q)
+        if acts:
+            return "read" if all(re.match(r"(?:[\w.]*\.)?(Describe|List|Get)[A-Z]", a) for a in acts) else "change"
+        return "read" if method == "GET" else "change"
+    if method == "GET":
         return "read"
+    if method == "POST" and any(path.split("?")[0].endswith(r) for r in p.get("reads", ())):
+        return "read"
+    if method == "POST" and "graphql" in p.get("base", "") and isinstance(body, dict):
+        q = body.get("query")
+        if isinstance(q, str) and not re.search(r"^\s*(mutation|subscription)\b", re.sub(r"#[^\n]*", "", q)):
+            return "read"
     return "change"
 
 
 def api_request(conn, method, path, body=None):
     """(op, method, url, headers, data) for an agent's call through a token
-    connection. The path is pinned under the provider's own base URL — no
-    scheme, host, `..` or fragment may steer the credential elsewhere."""
+    connection — headers without the credential (the caller adds it with
+    cloudauth.authorize). The path is pinned under the provider's own base
+    URL — no scheme, host, `..` or fragment may steer the credential
+    elsewhere. AWS JSON services take their operation as X-Amz-Target=…
+    in the query, moved into the header AWS expects."""
     p = provider(conn["kind"])
     if p["via"] != "token" or "base" not in p:
         raise IntegrationError("%s is not an API-token connection" % account_of(conn), 400)
@@ -646,16 +802,49 @@ def api_request(conn, method, path, body=None):
         raise IntegrationError("method must be one of %s" % ", ".join(API_METHODS), 400)
     path = path if isinstance(path, str) else ""
     if not path.startswith("/") or "://" in path or ".." in path or "#" in path or "\\" in path \
-            or any(ord(ch) < 33 for ch in path):
+            or "@" in path.split("?")[0] or any(ord(ch) < 33 for ch in path):
         raise IntegrationError("path must be an API path such as /zones, relative to %s" % p["label"], 400)
     cfg = conn.get("config") or {}
     fields = cfg.get("fields") or {}
-    h = _headers(p, cfg.get("api_token") or "", fields)
+    op = api_op(conn["kind"], method, path, body)
+    h = _headers(p, fields)
     data = None
-    if body is not None and method != "GET":
+    m = re.search(r"([?&])X-Amz-Target=([^&]*)", path) if p.get("header") == "aws" else None
+    if m:
+        path = (path[:m.start()] + m.group(1) + path[m.end():]).replace("?&", "?").rstrip("?&")
+        h["X-Amz-Target"] = m.group(2)
+        h["Content-Type"] = "application/x-amz-json-1.1"
+        method, data = "POST", json.dumps(body if body is not None else {}).encode()
+    elif body is not None and method != "GET":
         data = json.dumps(body).encode()
         h["Content-Type"] = "application/json"
-    return api_op(conn["kind"], method, path), method, _base(p, fields) + path, h, data
+    return op, method, _url(p, fields, path), h, data
+
+
+API_TEXT_CAP = 200_000   # a non-JSON vendor reply, trimmed before it reaches an agent's context
+
+
+def api_call(conn, method, path, body, http):
+    """(status, reply) for one authorized call through a token connection —
+    the one path both the api_call route and an approved queued change take.
+    `http` is the network seam (drives._http). A 401 on an exchanged token
+    (GitHub App, Google, Azure) first drops the cached token and retries once:
+    a revoked or rotated exchange is not yet a dead key. A JSON reply is
+    parsed; anything else is text, capped before it reaches an agent."""
+    p = provider(conn["kind"])
+    cfg = conn.get("config") or {}
+    secret, fields = cfg.get("api_token") or "", cfg.get("fields") or {}
+    _, method, url, headers, data = api_request(conn, method, path, body)
+    for attempt in (0, 1):
+        h = cloudauth.authorize(p, secret, fields, method, url, headers, data, http)
+        status, _, raw = http(method, url, h, data, timeout=60)
+        if status != 401 or attempt or not cloudauth.forget(p, secret, fields):
+            break
+    text = (raw or b"").decode("utf-8", "replace")
+    try:
+        return status, json.loads(text)
+    except ValueError:
+        return status, text[:API_TEXT_CAP]
 
 
 def token_config(pid, token, account, fields):
@@ -682,6 +871,7 @@ def view(conns, clients, redirect_uri):
             "auth": p["via"],
             "category": p["category"],
             "fields": [dict(f) for f in p.get("fields", ())],
+            "secret": p.get("secret", ""),
             "public": p["public"],
             "setup": [{"text": st["text"], "redirect": bool(st.get("redirect")),
                        "links": [{"label": l, "url": u} for l, u in st.get("links", ())]}

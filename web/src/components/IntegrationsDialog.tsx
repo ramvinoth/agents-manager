@@ -494,7 +494,7 @@ function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
           aria-label={f.label} value={draft.fields[f.id] || ""} spellCheck={false} autoCapitalize="none"
           onChange={(e) => onChange({ ...draft, fields: { ...draft.fields, [f.id]: e.target.value } })} />
       ))}
-      <Input className="h-8 font-mono text-xs" type="password" placeholder="API token" aria-label={`${p.label} API token`}
+      <Input className="h-8 font-mono text-xs" type="password" placeholder={p.secret || "API token"} aria-label={`${p.label} ${p.secret || "API token"}`}
         value={draft.token} onChange={(e) => onChange({ ...draft, token: e.target.value })}
         spellCheck={false} autoCapitalize="none" autoComplete="off" autoFocus />
       <div className="flex items-center justify-end gap-2">

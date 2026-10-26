@@ -98,6 +98,10 @@ _RED_ACTIONS = {
     # Without this, a session running at manager level could restore its own
     # supervision; now that request queues for a human.
     "automation_resume",
+    # a change on a connected cloud/vendor account the owner has not switched
+    # on: it can spend money or move live infrastructure, so each call is one
+    # owner approval (the account's switch stays off)
+    "integration_api_call",
     # restarting the server outside the maintenance window cuts every running
     # agent turn off at a moment nobody planned (viewer.maintenance). Queueing a
     # restart for the window is green (restart_request); doing it NOW is the
@@ -217,6 +221,7 @@ _ROLE_CEILING = {
 # action -> minimum level required. Unlisted actions are denied by scope (return
 # False) — deny-by-default; add here to grant.
 _MIN_LEVEL = {
+    "integration_api_call": "ic",  # red: every call queues for the owner anyway
     # individual contributor: manage cards on one's own board
     "card_create": "ic",
     "card_move": "ic",

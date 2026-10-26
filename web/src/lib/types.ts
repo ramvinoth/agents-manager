@@ -601,6 +601,8 @@ export interface IntegrationProvider {
   /** A CATEGORIES id ("workspace", "compute"…); absent on older servers. */
   category?: string
   fields?: IntegrationField[]
+  /** What the pasted secret is called on this vendor ("Private key"…); absent on older servers. */
+  secret?: string
   /** A PKCE public client — no secret is issued or needed. */
   public: boolean
   /** The vendor-console checklist for creating the OAuth client, in order. */

@@ -778,7 +778,7 @@ function TokenForm({ p, draft, busy, onChange, onCancel, onSave }: {
           placeholder={`${f.label}: ${f.placeholder}`} placeholderTextColor={t.textMuted} autoCapitalize="none" autoCorrect={false} />
       ))}
       <TextInput testID={`token-input-${p.id}`} style={styles.ssInput} value={draft.token}
-        onChangeText={(token) => onChange({ ...draft, token })} placeholder="API token" placeholderTextColor={t.textMuted}
+        onChangeText={(token) => onChange({ ...draft, token })} placeholder={p.secret || "API token"} placeholderTextColor={t.textMuted}
         autoCapitalize="none" autoCorrect={false} secureTextEntry returnKeyType="done" onSubmitEditing={() => ready && onSave()} />
       <View style={styles.igFormActions}>
         <TouchableOpacity testID={`token-save-${p.id}`} style={[styles.ssAddBtn, !ready && styles.faded]} disabled={!ready} onPress={onSave}>

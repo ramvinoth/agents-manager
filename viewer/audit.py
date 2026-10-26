@@ -89,6 +89,7 @@ def outcome_filter(result):
 # References are action-specific: (label, intent arg key, direct-writer key).
 # actions.ACTIONS owns intent keys; board_wake / questions / inbox own direct keys.
 _ACTIONS = {
+    "integration_api_call": ("Change a connected cloud account", None),
     "card_create": ("Create card", ("Project", "project_id", None)),
     "card_update": ("Update card", ("Card", "card_id", None)),
     "card_move": ("Move card", ("Card", "card_id", None)),

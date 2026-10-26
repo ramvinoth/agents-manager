@@ -639,6 +639,32 @@ def _skill_write(a):
     return {"promoted": True, "path": str(path), "skill": rec["id"]}
 
 
+def integration_call(conn, method, path, body):
+    """One vendor API call on a token connection — the proxy route's direct
+    path and the approved red action share it. A 401 marks the token expired
+    so the owner sees it on the account and replaces it."""
+    from viewer import drives, integrations
+    status, out = integrations.api_call(conn, method, path, body, drives._http)
+    if status == 401 and not integrations.expired(conn):
+        db.drive_upsert(conn["id"], dict(conn, config=dict(conn.get("config") or {}, expired=True)))
+    return {"status": status, "body": out}
+
+
+def _integration_api_call(a):
+    # Runs only after the owner approved this one change (it is red); the
+    # account's change switch stays off. The connection is re-read here: it may
+    # have been disconnected while the approval waited.
+    from viewer import cloudauth, integrations
+    from viewer.drives import DriveError
+    conn = db.drive_get(a.get("connection") or "")
+    if conn is None:
+        return {"error": "That account is no longer connected"}
+    try:
+        return integration_call(conn, a.get("method"), a.get("path"), a.get("body"))
+    except (cloudauth.AuthError, DriveError, integrations.IntegrationError) as e:
+        return {"error": str(e)}
+
+
 def _session_create(a):
     # The route already refused what an agent may never ask for (bypass mode,
     # human-origin jobs, a nameless worker); this only launches. Imported
@@ -651,6 +677,7 @@ def _session_create(a):
 # action name -> handler. An action missing here cannot be executed at all, which
 # keeps the registry and orglogic._MIN_LEVEL honest (see the invariant test).
 ACTIONS = {
+    "integration_api_call": _integration_api_call,
     "card_create": _card_create,
     "card_update": _card_update,
     "card_move": _card_move,
