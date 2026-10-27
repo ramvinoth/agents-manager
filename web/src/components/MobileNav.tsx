@@ -8,10 +8,11 @@ import { RhsPanel } from "./RhsPanel"
 // below md/lg). Each trigger sits on the side its drawer opens from, where the
 // wide-screen toggle for the same panel sits in the Header.
 
-/** < md: opens Projects/Settings/Stats from the left. */
-export function MobileLeftNav() {
+/** < md: opens Projects/Settings/Stats from the left. Controlled by the
+ *  Header so its chat-context label can open the same drawer. */
+export function MobileLeftNav({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon" className="size-7 shrink-0 md:hidden" aria-label="Open projects">
           <Menu className="size-4" />
