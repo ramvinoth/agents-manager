@@ -17,7 +17,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from viewer import db
+from viewer import db, integrations
 
 
 @pytest.fixture(autouse=True)
@@ -25,3 +25,10 @@ def no_database_or_network(monkeypatch):
     monkeypatch.setattr(db, "_get_pool", Mock(side_effect=AssertionError("Live DB forbidden in unit tests")))
     monkeypatch.setattr(urllib.request.OpenerDirector, "open",
                         Mock(side_effect=AssertionError("Network forbidden in unit tests")))
+
+
+@pytest.fixture(autouse=True)
+def full_integrations_catalog(monkeypatch):
+    """The edition offers no providers (integrations.OFFERED); the catalog code is
+    still the trunk's, so its tests run against every provider."""
+    monkeypatch.setattr(integrations, "OFFERED", frozenset(integrations.PROVIDERS))

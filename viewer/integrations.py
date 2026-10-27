@@ -462,8 +462,15 @@ class IntegrationError(Exception):
         self.status = status
 
 
+# This edition offers no third-party accounts yet: the catalog above stays as on
+# the trunk so merges stay clean, and only what is listed here is ever shown,
+# connectable or reachable by an agent. The local-disk rules below are not a
+# provider and are unaffected.
+OFFERED = frozenset()
+
+
 def provider(pid):
-    p = PROVIDERS.get(pid)
+    p = PROVIDERS.get(pid) if pid in OFFERED else None
     if p is None:
         raise IntegrationError("Unknown provider %r" % pid, 404)
     return p
@@ -471,7 +478,7 @@ def provider(pid):
 
 def service(sid):
     s = _BY_ID.get(sid)
-    if s is None:
+    if s is None or s["provider"] not in OFFERED:
         raise IntegrationError("Unknown service %r" % sid, 404)
     return s
 
@@ -886,6 +893,8 @@ def view(conns, clients, redirect_uri):
     account and per-service state."""
     out = []
     for pid, p in PROVIDERS.items():
+        if pid not in OFFERED:
+            continue
         c = clients.get(pid) or {}
         svcs = services_of(pid)
         token = p["via"] == "token"
@@ -931,7 +940,7 @@ def agent_view(conns, rules):
     redirect URIs — those are the owner's page (view())."""
     out = []
     for conn in conns:
-        if conn.get("hidden") or conn.get("kind") not in PROVIDERS:
+        if conn.get("hidden") or conn.get("kind") not in OFFERED:
             continue
         for s in services_of(conn["kind"]):
             if not s["available"] or state(conn, s["id"]) != "on":
@@ -953,7 +962,8 @@ def agent_view(conns, rules):
     have = {e["service"] for e in out}
     return {"services": out,
             "not_connected": [s["label"] for s in SERVICES
-                              if s["available"] and s["id"] not in have],
+                              if s["available"] and s["provider"] in OFFERED
+                              and s["id"] not in have],
             "this_machine": {"folders": rules["roots"], "may": rules["ops"]}}
 
 

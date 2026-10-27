@@ -213,9 +213,13 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
             {error ? <span className="text-destructive">{error}</span> : <><Loader2 className="size-4 animate-spin" /> Loading…</>}
           </div>
         ) : (
-          <Tabs defaultValue="accounts" className="min-h-0 flex-1">
+          // No provider offered (this edition's catalog is empty): no Accounts tab
+          // rather than an empty "Connect an account" list.
+          <Tabs defaultValue={view.providers.length ? "accounts" : "local"} className="min-h-0 flex-1">
             <TabsList>
-              <TabsTrigger value="accounts">Accounts{accounts.length ? ` · ${accounts.length}` : ""}</TabsTrigger>
+              {view.providers.length > 0 && (
+                <TabsTrigger value="accounts">Accounts{accounts.length ? ` · ${accounts.length}` : ""}</TabsTrigger>
+              )}
               <TabsTrigger value="local">This machine</TabsTrigger>
               <TabsTrigger value="intake">Intake channels</TabsTrigger>
             </TabsList>

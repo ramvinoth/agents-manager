@@ -34,6 +34,8 @@ def _public_view(d):
 
 
 def _is_drive(d):
+    if d.get("kind") not in integrations.OFFERED:
+        return False
     files = integrations.FILES_SERVICE.get(d.get("kind"))
     return not integrations.granted(d) or bool(files and integrations.usable(d, files))
 

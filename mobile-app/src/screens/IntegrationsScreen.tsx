@@ -306,7 +306,10 @@ export default function IntegrationsScreen() {
         </View>
       ))}
 
-      <Text style={styles.sheetSection}>{accounts.length ? "ADD AN ACCOUNT" : "CONNECT AN ACCOUNT"}</Text>
+      {/* No provider offered (an empty catalog): no heading over nothing. */}
+      {view.providers.length ? (
+        <Text style={styles.sheetSection}>{accounts.length ? "ADD AN ACCOUNT" : "CONNECT AN ACCOUNT"}</Text>
+      ) : null}
       {groups.map((g, gi) => {
         const shown = cats === null ? gi === 0 : cats.has(g.id)
         return (
