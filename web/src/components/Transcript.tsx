@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react"
-import { Wrench, User, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive } from "lucide-react"
+import { useMemo, useState, type ReactNode } from "react"
+import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -55,44 +55,35 @@ function ToolCall({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
   const isError = !!block.isError
   return (
     <div className="space-y-1.5">
-      <details
-        className={cn(
-          "group rounded-md border text-sm",
-          isError ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/40"
-        )}
+      <QuietStep
+        icon={isError ? <AlertTriangle className="size-3.5 text-destructive" /> : <Wrench className="size-3.5" />}
+        label={
+          <>
+            <span className={cn(isError && "text-destructive")}>{block.name}</span>
+            {isError && (
+              <Badge variant="destructive" className="h-4 px-1.5 text-[10px] font-normal">
+                error
+              </Badge>
+            )}
+          </>
+        }
       >
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2">
-          {isError ? (
-            <AlertTriangle className="size-3.5 text-destructive" />
-          ) : (
-            <Wrench className="size-3.5 text-muted-foreground" />
-          )}
-          <span className={cn("font-medium", isError && "text-destructive")}>{block.name}</span>
-          {isError && (
-            <Badge variant="destructive" className="h-4 px-1.5 text-[10px] font-normal">
-              error
-            </Badge>
-          )}
-          <ChevronDown className="ml-auto size-3.5 text-muted-foreground transition-transform group-open:rotate-180" />
-        </summary>
-        <div className={cn("space-y-2 border-t px-3 py-2", isError ? "border-destructive/30" : "border-border")}>
-          {block.input != null && (
-            <pre className="overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-muted-foreground">
-              {typeof block.input === "string" ? block.input : JSON.stringify(block.input, null, 2)}
-            </pre>
-          )}
-          {result && (
-            <pre
-              className={cn(
-                "max-h-80 overflow-auto rounded p-2 font-mono text-xs",
-                isError ? "bg-destructive/10 text-destructive" : "bg-background/60"
-              )}
-            >
-              {result.length > 4000 ? result.slice(0, 4000) + "\n… (truncated)" : result}
-            </pre>
-          )}
-        </div>
-      </details>
+        {block.input != null && (
+          <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs text-muted-foreground">
+            {typeof block.input === "string" ? block.input : JSON.stringify(block.input, null, 2)}
+          </pre>
+        )}
+        {result && (
+          <pre
+            className={cn(
+              "max-h-80 overflow-auto rounded-md p-2 font-mono text-xs",
+              isError ? "bg-destructive/10 text-destructive" : "bg-muted"
+            )}
+          >
+            {result.length > 4000 ? result.slice(0, 4000) + "\n… (truncated)" : result}
+          </pre>
+        )}
+      </QuietStep>
       {/* Images render OUTSIDE the collapsible details so screenshots are always
           visible without expanding the tool-call. */}
       <Images images={images} />
@@ -140,19 +131,31 @@ function BlockView({ block, latest }: { block: Block; latest?: boolean }) {
   return <ToolCall block={block} />
 }
 
+/**
+ * A step of the work as one quiet line — icon, label, chevron; no box. The detail
+ * opens beneath it. Tool calls and compactions share it so the steps read alike.
+ */
+function QuietStep({ icon, label, children }: { icon: ReactNode; label: ReactNode; children: ReactNode }) {
+  return (
+    <details className="group text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+        {icon}
+        {label}
+        <ChevronDown className="size-3.5 opacity-0 transition group-open:rotate-180 group-open:opacity-100 group-hover:opacity-100" />
+      </summary>
+      <div className="mt-1.5 space-y-2">{children}</div>
+    </details>
+  )
+}
+
 /** A mid-reply compaction: one quiet line, the summary behind it. */
 function CompactStep({ summary }: { summary: string }) {
   return (
-    <details className="group rounded-md border border-dashed border-border text-sm">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
-        <Archive className="size-3.5" />
-        <span>Conversation compacted</span>
-        <ChevronDown className="ml-auto size-3.5 transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="max-h-96 overflow-auto border-t border-border px-3 py-2">
+    <QuietStep icon={<Archive className="size-3.5" />} label={<span>Conversation compacted</span>}>
+      <div className="max-h-96 overflow-auto rounded-md bg-muted px-3 py-2">
         <Markdown text={summary} />
       </div>
-    </details>
+    </QuietStep>
   )
 }
 
@@ -248,19 +251,20 @@ function TurnRow({ turn }: { turn: UserTurn | SystemTurn }) {
   const canEdit = currentAgent === "claude" || (currentAgent === "codex" && currentHost === "local")
   if (turn.type === "user") {
     return (
-      <div className="group flex justify-end">
-        <div className="max-w-[85%] rounded-lg border border-border bg-card px-4 py-2.5 shadow-xs">
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <User className="size-3" /> You
-            {canEdit && turn.uuid && <MessageActions uuid={turn.uuid} />}
-          </div>
+      <div className="group flex flex-col items-end gap-1">
+        <div className="max-w-[70%] rounded-[22px] bg-muted px-4 py-2.5 [&_.markdown-content]:leading-6">
           {turn.content && (
-            <Collapsible text={turn.content} fadeTo="var(--card)">
+            <Collapsible text={turn.content} fadeTo="var(--muted)">
               {(shown) => <Markdown text={shown} />}
             </Collapsible>
           )}
           {turn.images?.length ? <Images images={turn.images} /> : null}
         </div>
+        {canEdit && turn.uuid && (
+          <div className="flex">
+            <MessageActions uuid={turn.uuid} />
+          </div>
+        )}
       </div>
     )
   }
@@ -309,7 +313,7 @@ export function Transcript({
   }
   const lastExchange = rows.findLastIndex((it) => it.type === "exchange")
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6", className)}>
+    <div className={cn("transcript mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6", className)}>
       {rows.map((it, i) => {
         const ids = it.type === "exchange" ? it.memberIds : [it.domId]
         const highlighted = !!highlightId && ids.includes(highlightId)
