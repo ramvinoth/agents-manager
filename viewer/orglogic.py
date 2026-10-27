@@ -414,8 +414,9 @@ def mutates_own_session(acting_session, target_session):
         and acting_session == target_session
 
 
-# Transport fields every agent request carries, never part of what it asks to change.
-_TRANSPORT_KEYS = {"id", "session"}
+# Transport fields every agent request carries, never part of what it asks to change:
+# the MCP client (viewer_mcp._call) stamps `session` and `token` into every body.
+_TRANSPORT_KEYS = {"id", "session", "token"}
 
 
 def self_loop_change_allowed(op, args):
@@ -437,7 +438,7 @@ def self_loop_change_allowed(op, args):
             and not str(args.get("cron") or "").strip() \
             and not str(args.get("interval") or "").strip()
     if op == "update":
-        changed = {k for k in args if k not in _TRANSPORT_KEYS}
+        changed = {k for k, v in args.items() if k not in _TRANSPORT_KEYS and v is not None}
         return changed == {"enabled"} and args.get("enabled") is False
     return False
 

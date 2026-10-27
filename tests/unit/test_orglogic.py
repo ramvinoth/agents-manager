@@ -347,6 +347,12 @@ def test_a_session_may_not_give_itself_a_recurring_schedule():
 
 def test_a_session_may_pause_its_own_loop_but_never_resume_or_retune_it():
     assert orglogic.self_loop_change_allowed("update", {"id": "L", "session": "s", "enabled": False})
+    # The body exactly as viewer_mcp._call sends it (session + token stamped in),
+    # and a client that sends unset fields as null: still only a pause.
+    assert orglogic.self_loop_change_allowed(
+        "update", {"id": "L", "enabled": False, "session": "s", "token": "t"})
+    assert orglogic.self_loop_change_allowed(
+        "update", {"id": "L", "enabled": False, "prompt": None, "cron": None})
     assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": True})
     # A falsy non-bool is not a pause the caller meant.
     assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": 0})
