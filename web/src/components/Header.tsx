@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useStore } from "@/store"
+import { projectName } from "@/lib/format"
 import { EnvDialog, IntegrationsDialog, ProfileDialog } from "@/components/lazyDialogs"
 import { prefersDark, applyTheme, writeThemeChoice } from "@/lib/theme"
 
@@ -57,6 +58,9 @@ function useTheme() {
       }),
   }
 }
+
+// The page's own <title> (brand), read once so each edition keeps its name.
+const baseTitle = typeof document !== "undefined" ? document.title : ""
 
 export function Header() {
   const { dark, toggle } = useTheme()
@@ -83,6 +87,13 @@ export function Header() {
   const closeCanvas = useStore((s) => s.closeCanvas)
   const lhsOpen = useStore((s) => s.lhsOpen)
   const toggleLhs = useStore((s) => s.toggleLhs)
+  const [navOpen, setNavOpen] = useState(false)
+  const cur = useStore((s) => s.sessions.find((x) => x.path === s.currentSessionPath))
+  const chat = cur ? { title: cur.title || "Untitled chat", project: projectName(cur.project) } : null
+  // The browser tab names the chat too, so several open tabs tell apart.
+  useEffect(() => {
+    document.title = chat ? `${chat.title} · ${chat.project} — ${baseTitle}` : baseTitle
+  }, [chat?.title, chat?.project])
 
   // Logged out: a bare header — just the brand and theme toggle (plus the file
   // name when viewing a public dropped session). Every other control needs auth,
@@ -112,7 +123,7 @@ export function Header() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-3">
-      <MobileLeftNav />
+      <MobileLeftNav open={navOpen} onOpenChange={setNavOpen} />
       {/* The left rail's toggle on wide screens; narrow ones use the MobileLeftNav drawer. */}
       <Button
         variant="ghost"
@@ -129,13 +140,27 @@ export function Header() {
       <Brand compact />
 
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        {droppedFile && (
+        {droppedFile ? (
           <>
             <Badge variant="outline" className="shrink-0 gap-1 text-[10px] font-normal">
               <FolderOpen className="size-3" /> file
             </Badge>
             <span className="min-w-0 truncate text-sm text-muted-foreground">{droppedFile}</span>
           </>
+        ) : chat && (
+          // Which project and chat this is, when the left rail that says so is
+          // out of sight (narrow window, or rail hidden). Tap opens the rail.
+          <button
+            type="button"
+            onClick={() => (window.matchMedia("(min-width: 768px)").matches ? toggleLhs() : setNavOpen(true))}
+            className={"flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-sm hover:bg-accent" + (lhsOpen ? " md:hidden" : "")}
+            title={`${chat.project} › ${chat.title}`}
+            data-track="header chat context"
+          >
+            <span className="min-w-[2.5rem] max-w-48 shrink-[4] truncate text-muted-foreground">{chat.project}</span>
+            <span className="shrink-0 text-muted-foreground">›</span>
+            <span className="min-w-[3rem] shrink truncate font-medium">{chat.title}</span>
+          </button>
         )}
       </div>
 
