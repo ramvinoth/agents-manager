@@ -83,6 +83,8 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
             "summary": str(r.get("preview") or r.get("tool_name") or "")[:120],
             "tool_name": r.get("tool_name") or "",
             "id": r.get("id") or "",
+            # The tool call it gates, so a client can point at that message.
+            "tool_use_id": r.get("tool_use_id") or "",
         })
     for r in card_rows or []:
         # A board card left in Review / Needs-info: the owner's call is the

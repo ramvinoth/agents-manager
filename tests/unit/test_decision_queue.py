@@ -41,7 +41,7 @@ def _p(sid, created, plan="Do the migration in three steps", host="local"):
 
 def _a(sid, created, tool="Bash", preview="Approve Bash? — ls", host="local"):
     return {"session": sid, "host": host, "id": "pid1", "tool_name": tool,
-            "preview": preview, "created": created}
+            "preview": preview, "created": created, "tool_use_id": "tu1"}
 
 
 class TestOpenDecisions:
@@ -94,7 +94,7 @@ class TestOpenDecisions:
         assert appr == {"kind": "approval", "session": "s3", "host": "local",
                         "label": "", "waiting_s": 5,
                         "summary": "Approve Bash? — git status",
-                        "tool_name": "Bash", "id": "pid1"}
+                        "tool_name": "Bash", "id": "pid1", "tool_use_id": "tu1"}
 
     def test_card_waits_from_its_last_write(self):
         (d,) = decisions.open_decisions([], [], [], {}, NOW, card_rows=[

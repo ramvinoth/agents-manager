@@ -1475,6 +1475,7 @@ def pending_approvals_all_public():
                     continue
                 out.append({"session": sid, "host": host, "id": e["id"],
                             "tool_name": e["tool_name"],
+                            "tool_use_id": e.get("tool_use_id") or "",
                             "preview": _perm_preview(e["tool_name"], e["input"]),
                             "created": float(e.get("created") or time.time())})
     return out

@@ -150,11 +150,15 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
       localStorage.setItem("rhsTab", t)
       localStorage.setItem("rhsOpen", "1")
       set({ rhsTab: t, rhsOpen: true })
+      // The canvas and the right panel share the right edge: asking for the panel closes the canvas.
+      if (get().canvasOpen) get().closeCanvas()
     },
     toggleRhs: () => {
-      const v = !get().rhsOpen
+      // Shown = open and not covered by the canvas; a click on a covered panel brings it back.
+      const v = !(get().rhsOpen && !get().canvasOpen)
       localStorage.setItem("rhsOpen", v ? "1" : "0")
       set({ rhsOpen: v })
+      if (v && get().canvasOpen) get().closeCanvas()
     },
     toggleLhs: () => {
       const v = !get().lhsOpen
