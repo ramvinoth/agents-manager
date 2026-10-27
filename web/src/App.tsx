@@ -9,7 +9,7 @@ import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
 import { CanvasPane } from "@/components/CanvasPane"
-import { latestShow } from "@/lib/canvas"
+import { canvasDragWidth, latestShow, storedCanvasWidth } from "@/lib/canvas"
 import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
 import { api } from "@/lib/api"
 import type { OpenDecision } from "@/lib/types"
@@ -31,6 +31,7 @@ const FileBrowser = lazy(() =>
 
 /** How long a "Show in chat" jump holds its place and rings the target. */
 const JUMP_RING_MS = 4000
+const CANVAS_W_KEY = "canvasWidth"
 
 function App() {
   const init = useStore((s) => s.init)
@@ -65,6 +66,10 @@ function App() {
   const loadCanvases = useStore((s) => s.loadCanvases)
   const resetCanvases = useStore((s) => s.resetCanvases)
   const canvasShown = useStore((s) => s.canvasShown)
+  const closeCanvas = useStore((s) => s.closeCanvas)
+  // The owner's chosen canvas width (wide screens), kept across reloads; null = default layout.
+  const [canvasW, setCanvasW] = useState(() => storedCanvasWidth(localStorage.getItem(CANVAS_W_KEY)))
+  const [canvasResizing, setCanvasResizing] = useState(false)
   const loadNeeds = useStore((s) => s.loadNeeds)
   const agentLabel = useAgentLabel()
 
@@ -225,6 +230,38 @@ function App() {
     document.body.classList.add("select-none")
     document.addEventListener("mousemove", onMove)
     document.addEventListener("mouseup", onUp)
+  }
+
+  // Drag the divider left of the canvas: live width while dragging, saved on release;
+  // dragged nearly shut it closes the pane (the saved width stays for next time).
+  function canvasDividerDrag(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    setCanvasResizing(true)
+    let last: number | "close" = canvasW ?? handle.parentElement!.getBoundingClientRect().width
+    const onMove = (ev: PointerEvent) => {
+      last = canvasDragWidth(window.innerWidth - ev.clientX, window.innerWidth)
+      if (last !== "close") setCanvasW(last)
+    }
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove)
+      handle.removeEventListener("pointerup", onUp)
+      handle.removeEventListener("pointercancel", onUp)
+      setCanvasResizing(false)
+      if (last === "close") {
+        setCanvasW(storedCanvasWidth(localStorage.getItem(CANVAS_W_KEY)))
+        closeCanvas()
+      } else localStorage.setItem(CANVAS_W_KEY, String(last))
+    }
+    handle.addEventListener("pointermove", onMove)
+    handle.addEventListener("pointerup", onUp)
+    handle.addEventListener("pointercancel", onUp)
+  }
+
+  function resetCanvasWidth() {
+    localStorage.removeItem(CANVAS_W_KEY)
+    setCanvasW(null)
   }
 
   // Drag / resize the floating panel window.
@@ -403,8 +440,21 @@ function App() {
           )}
         </main>
         {!needsAuth && canvasOpen && (
-          // Wide: a resizable-by-layout column beside the chat. Narrow: a full-screen sheet.
-          <aside className="fixed inset-0 z-40 bg-background md:static md:z-auto md:w-[min(45vw,720px)] md:shrink-0 md:border-l md:border-border">
+          // Wide: a column beside the chat, its width set by dragging the divider. Narrow: a full-screen sheet.
+          // max-w keeps the chat usable when the window shrinks below a saved width.
+          <aside
+            style={{ "--canvas-w": canvasW ? `${canvasW}px` : "min(45vw,720px)" } as React.CSSProperties}
+            className={`fixed inset-0 z-40 bg-background md:relative md:z-auto md:w-[var(--canvas-w)] md:max-w-[calc(100vw-360px)] md:shrink-0 md:border-l md:border-border ${canvasResizing ? "select-none [&_iframe]:pointer-events-none" : ""}`}
+          >
+            <div
+              onPointerDown={canvasDividerDrag}
+              onDoubleClick={resetCanvasWidth}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize canvas"
+              title="Drag to resize · double-click to reset · drag to the edge to close"
+              className={`absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize transition-colors hover:bg-primary/50 md:block ${canvasResizing ? "bg-primary/50" : ""}`}
+            />
             <ErrorBoundary label="Canvas error">
               <CanvasPane onShowInChat={showInChat} />
             </ErrorBoundary>
