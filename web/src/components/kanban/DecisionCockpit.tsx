@@ -4,12 +4,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { AuqBlock } from "@/components/AuqBlock"
+import { CardDetail } from "@/components/kanban/CardDetail"
 import { PlanBlock } from "@/components/PlanBlock"
 import { api } from "@/lib/api"
 import { fmtDuration } from "@/lib/format"
 import { firstOpen, stepDecision } from "@/lib/decisions"
 import { SNOOZE_OPTIONS } from "@/lib/inbox"
-import type { OpenDecision, ToolUseBlock } from "@/lib/types"
+import type { BoardColumn, Card, OpenDecision, ToolUseBlock } from "@/lib/types"
 import { userError } from "@/lib/errors"
 
 const KIND = {
@@ -43,10 +44,12 @@ async function decided(res: Response | Promise<Response>): Promise<void> {
  *    another device already decided it, which counts as resolved.
  * Question/plan content is fetched from the durable row (chatStatus); a tool
  * approval renders only the secret-safe preview the queue carries — raw tool
- * input stays in the owning chat ("Open chat").
+ * input stays in the owning chat ("Open chat"). A card decision opens the card
+ * itself (CardDetail) over the cockpit, from any caller — board, Inbox or
+ * canvas; moving it out of its column there resolves the item.
  */
 export function DecisionCockpit({
-  decisions, startIndex, onClose, onResolved, onOpenSession, onOpenCard,
+  decisions, startIndex, onClose, onResolved, onOpenSession, onCardChange,
 }: {
   decisions: OpenDecision[]
   startIndex: number
@@ -54,7 +57,8 @@ export function DecisionCockpit({
   onResolved: () => void
   /** Open the owning chat; false when it is not openable from here. */
   onOpenSession?: (d: OpenDecision) => boolean
-  onOpenCard?: (id: number) => Promise<boolean>
+  /** A card changed in the opened card view — lets a board behind stay in step. */
+  onCardChange?: (card: Card) => void
 }) {
   const [idx, setIdx] = useState(startIndex)
   const [resolved] = useState(() => new Set<number>())
@@ -64,6 +68,8 @@ export function DecisionCockpit({
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [postponing, setPostponing] = useState(false)
+  // The card a "card" decision opened, with its board's columns and the column it was parked in.
+  const [card, setCard] = useState<{ card: Card; columns: BoardColumn[]; from: number | null } | null>(null)
 
   const len = decisions.length
   const d = decisions[idx]
@@ -114,7 +120,7 @@ export function DecisionCockpit({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t.closest("input, textarea, select, [contenteditable=true]")) return
+      if (card || t.closest("input, textarea, select, [contenteditable=true]")) return
       if (e.key === "ArrowRight") step(1)
       if (e.key === "ArrowLeft") step(-1)
     }
@@ -203,13 +209,19 @@ export function DecisionCockpit({
                 <Box title={d.column ? `Parked in ${d.column}` : "Parked for you"}>
                   <p className="text-sm">The card holds the full context and the question. Open it to read the thread, comment, or move it to Approved or Declined.</p>
                   <div className="mt-3 flex justify-end">
-                    <Button size="sm" disabled={!d.card || !onOpenCard} onClick={async () => {
+                    <Button data-testid="cockpit-open-card" size="sm" disabled={!d.card || busy} onClick={async () => {
                       setError("")
-                      // Opening is not deciding: the item stays open in the queue.
-                      if (await onOpenCard!(d.card!)) onClose()
-                      else setError("Could not open this card — it may have been deleted.")
+                      setBusy(true)
+                      try {
+                        const r = await api.orgCard(d.card!)
+                        setCard({ card: r.card, columns: r.columns || [], from: r.card.column_id })
+                      } catch (e) {
+                        setError(userError(e, "this card"))
+                      } finally {
+                        setBusy(false)
+                      }
                     }}>
-                      <ClipboardList className="size-3.5" /> Open card
+                      <ClipboardList className="size-3.5" /> Open card to decide
                     </Button>
                   </div>
                 </Box>
@@ -253,6 +265,22 @@ export function DecisionCockpit({
           </>
         )}
       </DialogContent>
+      {card && (
+        <CardDetail
+          card={card.card}
+          allCards={[]}
+          columns={card.columns}
+          sessionTitle={d?.label}
+          onOpenSession={d?.session && onOpenSession ? () => { if (onOpenSession(d)) setCard(null) } : undefined}
+          onChange={(u) => { setCard((c) => c && { ...c, card: u }); onCardChange?.(u) }}
+          onClose={() => {
+            // Moved out of the column it was parked in = decided; otherwise it stays open here.
+            const moved = card.card.column_id !== card.from
+            setCard(null)
+            if (moved) resolvedHere()
+          }}
+        />
+      )}
     </Dialog>
   )
 }

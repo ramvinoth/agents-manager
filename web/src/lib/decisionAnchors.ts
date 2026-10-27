@@ -7,6 +7,10 @@
  * or comment), else the card_create whose result returned its id. A Red org
  * approval is found by the tool result that quoted its id. Anything else —
  * a card the owner made by hand, or a message not in loaded history — is null.
+ *
+ * Loaded history is only the tail of a long chat, so findKey names the same
+ * call for the server's backward scan (?find=), and callSaid is what to show
+ * when that call is too far up to page in.
  */
 import type { OpenDecision, ToolUseBlock, Turn } from "./types"
 
@@ -51,4 +55,29 @@ export function anchorFor(d: OpenDecision, turns: Turn[]): string | null {
     for (let i = calls.length - 1; i >= 0; i--) if (resultText(calls[i].b.result).includes(ref)) return calls[i].domId
   }
   return null
+}
+
+/** A tool call the server found in the transcript (GET /api/session/…?find=). */
+export interface FoundCall {
+  offset: number
+  timestamp?: string
+  name: string
+  input: any
+}
+
+/** The server-side ?find= key for a decision, or null when only the loaded turns can anchor it. */
+export function findKey(d: OpenDecision): string | null {
+  if (d.kind === "card") return Number(d.card) ? `card:${Number(d.card)}` : null
+  if (d.kind === "question" || d.kind === "plan" || d.kind === "approval") return d.tool_use_id ? `tool:${d.tool_use_id}` : null
+  return null
+}
+
+/** One line on what a found call said, for when it is too far back to scroll to. */
+export function callSaid(c: FoundCall): string {
+  const i = c.input || {}
+  // A created card's title is its question; its body is the long context behind it.
+  const text = (isTool(c.name, "card_create") ? i.title : undefined) ?? i.body ?? i.questions?.[0]?.question ?? i.plan ?? i.title ?? i.command ?? i.description
+  if (typeof text === "string" && text.trim()) return text.trim()
+  if (isTool(c.name, "card_move")) return "Moved the card."
+  return c.name.replace(/^mcp__[^_]+__/, "")
 }

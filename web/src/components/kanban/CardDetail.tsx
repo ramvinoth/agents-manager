@@ -33,8 +33,8 @@ const POLL_MS = 5000
  *    `user:` / `session:` principal string.
  *
  * Writes go straight to /api/org/*; the parent receives `onChange` so the
- * board behind the dialog stays in step, and `onDelete` so the Red-gated
- * delete keeps its one implementation.
+ * board behind the dialog stays in step, and `onDelete` (optional) so the
+ * Red-gated delete keeps its one implementation.
  */
 export function CardDetail({
   card: initial,
@@ -55,7 +55,8 @@ export function CardDetail({
   sessionTitle?: string
   onOpenSession?: () => void
   onChange: (card: Card) => void
-  onDelete: (id: number) => void
+  /** Absent where deleting isn't this surface's job (the decision cockpit). */
+  onDelete?: (id: number) => void
   onClose: () => void
 }) {
   const [card, setCard] = useState<Card>(initial)
@@ -278,7 +279,7 @@ export function CardDetail({
               )}
             </Field>
 
-            <div className="mt-auto border-t border-border pt-3">
+            {onDelete && <div className="mt-auto border-t border-border pt-3">
               {confirmDelete ? (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-muted-foreground">Delete this card and its thread?</span>
@@ -292,7 +293,7 @@ export function CardDetail({
                   <Trash2 className="size-3" /> Delete card
                 </button>
               )}
-            </div>
+            </div>}
           </aside>
         </div>
       </DialogContent>

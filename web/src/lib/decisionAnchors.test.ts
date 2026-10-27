@@ -1,4 +1,4 @@
-import { anchorFor, resultText } from "./decisionAnchors.ts"
+import { anchorFor, findKey, callSaid, resultText } from "./decisionAnchors.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -28,6 +28,15 @@ eq("user-made card", anchorFor(d({ kind: "card", card: 999 }), turns), null)
 eq("red by quoted id", anchorFor(d({ kind: "red", id: "apr_77" }), turns), "a5")
 eq("resultText array", resultText([{ type: "text", text: "a" }, { type: "image" }, { type: "text", text: "b" }]), "a\n\nb")
 eq("resultText null", resultText(null), "")
+
+eq("findKey card", findKey(d({ kind: "card", card: 121 })), "card:121")
+eq("findKey question", findKey(d({ kind: "question", tool_use_id: "tu_x" })), "tool:tu_x")
+eq("findKey no id", findKey(d({ kind: "plan", tool_use_id: "" })), null)
+eq("findKey red stays client-side", findKey(d({ kind: "red", id: "apr_1" })), null)
+eq("callSaid comment body", callSaid({ offset: 0, name: "mcp__viewer__card_comment", input: { body: " Need X? " } }), "Need X?")
+eq("callSaid question", callSaid({ offset: 0, name: "AskUserQuestion", input: { questions: [{ question: "Which?" }] } }), "Which?")
+eq("callSaid created card shows its title, not its body", callSaid({ offset: 0, name: "mcp__viewer__card_create", input: { title: "Ship it?", body: "Long context" } }), "Ship it?")
+eq("callSaid bare move", callSaid({ offset: 0, name: "mcp__viewer__card_move", input: { card_id: 1, column_id: 2 } }), "Moved the card.")
 
 console.log(`decisionAnchors: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)
