@@ -141,7 +141,7 @@ export function Header() {
             <ChevronDown className="size-3 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuContent align="end" className="min-w-44">
           <DropdownMenuItem onClick={openFs}>
             <FolderOpen className="size-3.5" /> Files
           </DropdownMenuItem>
