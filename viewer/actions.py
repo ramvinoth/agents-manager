@@ -415,7 +415,8 @@ def _loop_create(a):
         return {"error": "session required"}
     # `at` makes this a one-shot (kind='once'): fires once at that time, then
     # the scheduler deletes the row. A run can schedule its own next wake by
-    # calling this again at the end of itself.
+    # calling this again at the end of itself (the route allows a session a
+    # one-shot for itself, never a recurring schedule).
     sched, err = build_schedule(a.get("cron"), a.get("interval"), a.get("at"))
     if err:
         return {"error": err}
@@ -442,6 +443,11 @@ def _loop_update(a):
     loop = db.loop_get(lid)
     if not loop:
         return {"error": "not found"}
+    if a.get("own_pause"):
+        # The route granted a session pausing its OWN loop (any origin — pausing
+        # only narrows what runs). Nothing but `enabled` changes on this path.
+        updated = db.loop_update(lid, {"enabled": False})
+        return {"updated": lid, "enabled": False} if updated else {"error": "not found"}
     if (loop.get("origin") or "user") != "agent":
         return {"error": "not an agent loop"}
     fields = {}

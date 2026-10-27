@@ -414,6 +414,34 @@ def mutates_own_session(acting_session, target_session):
         and acting_session == target_session
 
 
+# Transport fields every agent request carries, never part of what it asks to change.
+_TRANSPORT_KEYS = {"id", "session"}
+
+
+def self_loop_change_allowed(op, args):
+    """True if an agent may make this change to a loop that drives ITS OWN session.
+
+    The rail above refuses self-mutation in general; this names the two exceptions
+    the owner granted, both of which can only narrow what the agent does unattended:
+      create — a ONE-SHOT wake (`at`, no cron/interval). It fires once and retires,
+               and it is still an agent loop, so the automation switch and the
+               loop-control mode decide whether it ever fires.
+      update — a PAUSE (enabled=false and nothing else), on any of its loops,
+               including the owner's. Re-enabling, rescheduling, retargeting or
+               rewriting its own loop stays refused: only a person turns it back on.
+    Delete and anything else stay refused. Pure: `args` is the request body.
+    """
+    args = args or {}
+    if op == "create":
+        return bool(str(args.get("at") or "").strip()) \
+            and not str(args.get("cron") or "").strip() \
+            and not str(args.get("interval") or "").strip()
+    if op == "update":
+        changed = {k for k in args if k not in _TRANSPORT_KEYS}
+        return changed == {"enabled"} and args.get("enabled") is False
+    return False
+
+
 # ── Board shape: which project / which column (PURE) ──────────────────────────
 
 def resolve_board_project(explicit=None, session_project=None):

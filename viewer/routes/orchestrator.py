@@ -665,8 +665,26 @@ class OrchestratorMixin:
             return True
         return False
 
+    def _own_loop_change(self, req, target_session, op, body):
+        """For a change aimed at the caller's OWN session: True if it is one of the
+        narrowing changes orglogic.self_loop_change_allowed grants (a one-shot wake,
+        a pause), else refuse it through the self-mutation rail (403). False, with
+        nothing sent, when the target is another session — the normal path."""
+        acting = req.principal.get("session") or ""
+        if not orglogic.mutates_own_session(acting, target_session or ""):
+            return False
+        if orglogic.self_loop_change_allowed(op, body):
+            return True
+        self._self_mutation_denied(
+            req, target_session,
+            reason="a session may set itself a one-time wake (`at`) or pause its "
+                   "own loop (enabled=false alone), never schedule, resume, edit "
+                   "or delete it")
+        return None
+
     def _p_org_loops(self, req):
-        """Create a agent-origin loop for a session OTHER than the caller's own.
+        """Create an agent-origin loop. For the caller's own session only a one-shot
+        wake is allowed (see _own_loop_change); any schedule for another session.
 
         The target session travels as `for_session`, NOT `session`: the MCP transport
         mirrors the CALLER's own session id into the body's `session` field as a
@@ -676,7 +694,7 @@ class OrchestratorMixin:
         """
         body = self.read_body() or {}
         target = (body.get("for_session") or "").strip()
-        if self._self_mutation_denied(req, target):
+        if self._own_loop_change(req, target, "create", body) is None:
             return
         self._org_send(req, "loop_create", {
             "session": target, "path": body.get("path", ""),
@@ -686,14 +704,21 @@ class OrchestratorMixin:
             "provider": body.get("provider", "")})
 
     def _p_org_loops_update(self, req):
-        """Edit a agent-origin loop. The rail resolves the loop's OWN session (not a
-        body field) so a caller cannot dodge it by omitting/spoofing the session."""
+        """Edit an agent-origin loop. The rail resolves the loop's OWN session (not a
+        body field) so a caller cannot dodge it by omitting/spoofing the session.
+        On its own session a caller may only pause — and that pause may reach a loop
+        the owner authored, so the route (never the body) stamps `own_pause` for
+        _loop_update's origin guard."""
         body = self.read_body() or {}
+        body.pop("own_pause", None)
         loop = db.loop_get(body.get("id", ""))
         if not loop:
             self.send_json({"error": "not found"}, status=404); return
-        if self._self_mutation_denied(req, loop.get("session")):
+        own = self._own_loop_change(req, loop.get("session"), "update", body)
+        if own is None:
             return
+        if own:
+            body = {"id": body["id"], "enabled": False, "own_pause": True}
         self._org_send(req, "loop_update", body)
 
     def _p_org_loops_delete(self, req):
