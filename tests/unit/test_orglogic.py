@@ -330,6 +330,36 @@ def test_a_human_at_the_ui_is_never_caught_by_the_rail():
     assert orglogic.mutates_own_session("sX", "") is False
 
 
+# ── self_loop_change_allowed(): the two self-changes that only narrow ────────
+
+def test_a_session_may_set_itself_a_one_shot_wake():
+    assert orglogic.self_loop_change_allowed("create", {"at": "30m", "prompt": "x"})
+
+
+def test_a_session_may_not_give_itself_a_recurring_schedule():
+    assert not orglogic.self_loop_change_allowed("create", {"cron": "0 9 * * *"})
+    assert not orglogic.self_loop_change_allowed("create", {"interval": "5m"})
+    # `at` beside a cron would build a RECURRING loop (cron wins) — refused.
+    assert not orglogic.self_loop_change_allowed("create", {"at": "30m", "cron": "* * * * *"})
+    assert not orglogic.self_loop_change_allowed("create", {"at": "30m", "interval": "5m"})
+    assert not orglogic.self_loop_change_allowed("create", {"at": "  "})
+
+
+def test_a_session_may_pause_its_own_loop_but_never_resume_or_retune_it():
+    assert orglogic.self_loop_change_allowed("update", {"id": "L", "session": "s", "enabled": False})
+    assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": True})
+    # A falsy non-bool is not a pause the caller meant.
+    assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": 0})
+    # Pausing while also changing anything else is a retune, not a pause.
+    assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": False, "cron": "* * * * *"})
+    assert not orglogic.self_loop_change_allowed("update", {"id": "L", "prompt": "x"})
+    assert not orglogic.self_loop_change_allowed("update", {"id": "L"})
+
+
+def test_a_session_may_never_delete_its_own_loop():
+    assert not orglogic.self_loop_change_allowed("delete", {"id": "L"})
+
+
 # ── project_columns: which column is Todo / Doing / Review / Done ──────────
 
 COLS = [
