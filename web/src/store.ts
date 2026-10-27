@@ -203,7 +203,7 @@ function sessionIdOf(path: string): string {
 
 function turnText(t: Turn): string {
   if (t.type === "assistant")
-    return t.blocks.map((b) => (b.type === "text" ? b.text : b.name)).join(" ")
+    return t.blocks.map((b) => (b.type === "text" ? b.text : b.type === "compact" ? b.summary : b.name)).join(" ")
   return t.content
 }
 

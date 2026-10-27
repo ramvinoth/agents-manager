@@ -103,6 +103,21 @@ test("groupThread puts the final text in finalText and tools in steps", () => {
   assert.equal(ex.steps.length, 2, "narration + tool collapse into steps")
 })
 
+test("a compaction folds into the reply it interrupted", () => {
+  const items = groupThread(parseTranscript([
+    line({ type: "user", uuid: "1", message: { content: "build it" } }),
+    line({ type: "assistant", uuid: "2", message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: {} }] } }),
+    line({ type: "system", subtype: "compact_boundary", uuid: "3", content: "Conversation compacted" }),
+    line({ type: "user", uuid: "4", isCompactSummary: true, message: { content: [{ type: "text", text: "This session is being continued…" }] } }),
+    line({ type: "assistant", uuid: "5", message: { content: [{ type: "text", text: "done" }] } }),
+  ]))
+  assert.deepEqual(items.map((i) => i.kind), ["user", "exchange"])
+  const ex = items[1] as any
+  assert.deepEqual(ex.steps.map((b: any) => b.kind), ["tool", "compact"])
+  assert.equal(ex.steps[1].text, "This session is being continued…")
+  assert.equal(ex.finalText, "done")
+})
+
 test("groupThread keeps separate exchanges around a user message", () => {
   const turns = parseTranscript([
     line({ type: "assistant", uuid: "a1", message: { content: [{ type: "text", text: "one" }] } }),

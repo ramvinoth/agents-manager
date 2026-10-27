@@ -1534,7 +1534,7 @@ def compute_session_summary(line_iter, cwd):
         elif t == "summary" and obj.get("summary"):
             if obj["summary"] not in data["summaries"]:
                 data["summaries"].append(obj["summary"])
-        elif t == "user" and not obj.get("isMeta"):
+        elif t == "user" and not obj.get("isMeta") and not obj.get("isCompactSummary"):
             c = (obj.get("message") or {}).get("content")
             if not (isinstance(c, list) and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c)):
                 data["userMessages"] += 1
@@ -1663,7 +1663,7 @@ def session_digest_from_lines(lines, max_chars=55000):
         except Exception:
             continue
         t = o.get("type")
-        if t == "user" and not o.get("isMeta"):
+        if t == "user" and not o.get("isMeta") and not o.get("isCompactSummary"):
             c = (o.get("message") or {}).get("content")
             if isinstance(c, list):
                 if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
@@ -1973,7 +1973,7 @@ class LocalHost(Host):
         plain text for assistant. Returns None for records that aren't visible
         messages (tool results, meta records, <command…> wrappers)."""
         t = obj.get("type")
-        if t not in ("user", "assistant") or obj.get("isMeta"):
+        if t not in ("user", "assistant") or obj.get("isMeta") or obj.get("isCompactSummary"):
             return None
         content = (obj.get("message") or {}).get("content")
         if isinstance(content, str):

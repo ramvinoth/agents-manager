@@ -37,7 +37,10 @@ export function fmtDate(ts?: string): string {
 }
 export type TextBlock = { kind: "text"; text: string }
 export type ToolBlock = { kind: "tool"; name: string; input: unknown; id: string; result: unknown; isError?: boolean; answered?: boolean; ts?: string }
-export type Block = TextBlock | ToolBlock
+// A context compaction mid-reply: the summary the CLI wrote so it could keep going.
+// It is a step of the reply it interrupted, not something the user said.
+export type CompactBlock = { kind: "compact"; text: string }
+export type Block = TextBlock | ToolBlock | CompactBlock
 // `uuid` is the transcript record id. Fork and revert both cut the session at a
 // specific message, so it has to survive parsing — see /api/session/fork.
 export type Turn =
@@ -230,6 +233,16 @@ export function parseTranscript(input: string[] | string): Turn[] {
       seen.add(msg.uuid)
     }
     if (msg.isMeta) continue
+    // A compaction writes a "Conversation compacted" boundary, then its summary as
+    // a user record. Drop the boundary; fold the summary into the reply as a step,
+    // so a long run still reads as one message and one answer.
+    if (msg.type === "system" && msg.subtype === "compact_boundary") continue
+    if (msg.isCompactSummary) {
+      const c = msg.message?.content
+      const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n") : ""
+      turns.push({ role: "assistant", id: id(), blocks: [{ kind: "compact", text }], ts: msg.timestamp, uuid: msg.uuid })
+      continue
+    }
 
     if (msg.type === "user" && msg.message) {
       const content = msg.message.content

@@ -98,7 +98,7 @@ export class SessionParser {
       md.models.add(obj.message.model)
 
     st.totalMessages++
-    if (obj.type === "user" && !obj.isMeta) {
+    if (obj.type === "user" && !obj.isMeta && !obj.isCompactSummary) {
       const c = obj.message?.content
       const toolOnly =
         Array.isArray(c) && c.length && c.every((b: any) => b && b.type === "tool_result")
@@ -148,7 +148,22 @@ export class SessionParser {
       this.seen.add(msg.uuid)
     }
     if (msg.isMeta) return null
+    // A compaction writes a "Conversation compacted" boundary, then the summary
+    // as a user record. Neither is something the user said: the boundary is
+    // dropped and the summary becomes a step of the reply it interrupted, so a
+    // long run still reads as one message and one answer.
+    if (msg.type === "system" && msg.subtype === "compact_boundary") return null
     const domId = "t" + ++this.counter
+    if (msg.isCompactSummary) {
+      const c = msg.message?.content
+      const summary =
+        typeof c === "string"
+          ? c
+          : Array.isArray(c)
+            ? c.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n")
+            : ""
+      return { type: "assistant", domId, blocks: [{ type: "compact", summary }], timestamp: msg.timestamp, uuid: msg.uuid }
+    }
     if (msg.type === "user" && msg.message) {
       const content = msg.message.content
       if (Array.isArray(content) && content.every((b: any) => b.type === "tool_result"))
