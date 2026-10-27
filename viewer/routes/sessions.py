@@ -2,7 +2,6 @@
 import json
 import os
 import re
-import subprocess
 import time
 import uuid as uuid_mod
 from pathlib import Path
@@ -15,7 +14,7 @@ from viewer.config import (
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    extract_cwd, get_host, plugin_description, resolve_level, session_analysis, start_claude_run,
+    extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
     start_copilot_new,
 )
 from viewer.loops import USER_ORIGIN, build_schedule
@@ -966,25 +965,6 @@ class SessionsMixin:
                                status=502 if req.host != "local" else 500)
             return
         self.serve_session_list(req.host, reader)
-
-    def _g_session_analysis(self, req):
-        rel = (req.query.get("session") or [""])[0]
-        refresh = (req.query.get("refresh") or ["0"])[0] == "1"
-        if not rel:
-            self.send_json({"error": "No session"}, status=400)
-            return
-        try:
-            data = session_analysis(req.host, rel, refresh=refresh)
-        except subprocess.TimeoutExpired:
-            self.send_json({"error": "Analysis timed out"}, status=504)
-            return
-        except Exception as e:
-            self.send_json({"error": f"Analysis failed: {str(e)[-300:]}"}, status=500)
-            return
-        if data is None:
-            self.send_json({"error": "Session not found"}, status=404)
-            return
-        self.send_json(data)
 
     def handle_fork(self):
         body = self.read_body() or {}

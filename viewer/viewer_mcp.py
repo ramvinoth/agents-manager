@@ -50,7 +50,6 @@ _TOOLS = {
     "session_read":     ("GET", "/api/session/"),      # + <path>, see _PATH_ARG
     "session_summary":  ("GET", "/api/session-summary"),
     "session_detail":   ("GET", "/api/session-detail"),
-    "session_analysis": ("GET", "/api/session-analysis"),
     "chat_status":      ("GET", "/api/chat/status"),
     "host_list":        ("GET", "/api/hosts"),
     "project_list":     ("GET", "/api/org/projects"),
@@ -192,12 +191,6 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "string", "description": "Target session id from session_list."},
          "agent": {"type": "string", "description": "Harness: claude (default), codex, copilot."},
-         "host": _HOST_ARG}}},
-    {"name": "session_analysis",
-     "description": "Extracted facts about what a session was doing. Cached; pass refresh=\"1\" to recompute.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["session"], "properties": {
-         "session": {"type": "string"},
-         "refresh": {"type": "string", "description": "\"1\" to recompute."},
          "host": _HOST_ARG}}},
     {"name": "chat_status",
      "description": "Whether a session has a run in flight, and any question or plan it is waiting on.",
