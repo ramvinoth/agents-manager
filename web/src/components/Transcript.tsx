@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react"
-import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive } from "lucide-react"
+import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive, RotateCcw } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -125,6 +125,7 @@ function TextBlock({ text, latest }: { text: string; latest?: boolean }) {
 function BlockView({ block, latest }: { block: Block; latest?: boolean }) {
   if (block.type === "text") return <TextBlock text={block.text} latest={latest} />
   if (block.type === "compact") return <CompactStep summary={block.summary} />
+  if (block.type === "resume") return <ResumeStep note={block.note} />
   if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
   if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
   if (block.name === CANVAS_SHOW_TOOL && showSucceeded(block.result, block.isError)) return <CanvasChip block={block} />
@@ -133,7 +134,7 @@ function BlockView({ block, latest }: { block: Block; latest?: boolean }) {
 
 /**
  * A step of the work as one quiet line — icon, label, chevron; no box. The detail
- * opens beneath it. Tool calls and compactions share it so the steps read alike.
+ * opens beneath it. Tool calls, compactions and resumes share it so the steps read alike.
  */
 function QuietStep({ icon, label, children }: { icon: ReactNode; label: ReactNode; children: ReactNode }) {
   return (
@@ -159,6 +160,15 @@ function CompactStep({ summary }: { summary: string }) {
   )
 }
 
+/** A turn the server resumed after a restart cut it off: one quiet line, the resume prompt behind it. */
+function ResumeStep({ note }: { note: string }) {
+  return (
+    <QuietStep icon={<RotateCcw className="size-3.5" />} label={<span>Resumed after an interruption</span>}>
+      <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{note}</div>
+    </QuietStep>
+  )
+}
+
 /** A successful canvas_show reads as what it did — "opened a canvas" — and reopens it. */
 function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
   const openCanvas = useStore((s) => s.openCanvas)
@@ -178,7 +188,7 @@ function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) 
 
 /** What an exchange shows with the Tools filter off: narration, compactions and image-bearing calls only. */
 function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
-  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
+  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || b.type === "resume" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
 }
 
 /**

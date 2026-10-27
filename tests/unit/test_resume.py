@@ -158,3 +158,13 @@ def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
     assert got[0]["session_id"] == "s" and got[0]["queue"] == ["queued"]
     job["started"] = 6.0
     assert engine._resume_cut_turn("s", job, []) is False
+
+
+def test_clients_fold_the_resume_prompt_by_its_opening():
+    """The web and mobile transcripts fold the resume prompt into the reply by
+    matching its opening words; rewording RESUME_PROMPT must update them too."""
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parents[2]
+    for f in ("web/src/lib/parser.ts", "mobile-app/src/lib/thread.ts"):
+        mark = re.search(r'RESUME_MARK = "([^"]+)"', (root / f).read_text()).group(1)
+        assert resume.RESUME_PROMPT.startswith(mark), f

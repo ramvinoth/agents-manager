@@ -22,6 +22,17 @@ export function extractImages(content: unknown): ImagePart[] {
   return out
 }
 
+/** How viewer/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together). */
+const RESUME_MARK = "Your last turn was cut off mid-way"
+
+/** The text of a server auto-resume prompt, or null when the record is anything else. */
+function resumeNote(msg: any): string | null {
+  if (msg.type !== "user") return null
+  const c = msg.message?.content
+  const t = typeof c === "string" ? c : Array.isArray(c) && c.length === 1 && c[0]?.type === "text" ? c[0].text : ""
+  return typeof t === "string" && t.startsWith(RESUME_MARK) ? t : null
+}
+
 const SKIP_TYPES = new Set([
   "mode",
   "file-history-snapshot",
@@ -98,7 +109,7 @@ export class SessionParser {
       md.models.add(obj.message.model)
 
     st.totalMessages++
-    if (obj.type === "user" && !obj.isMeta && !obj.isCompactSummary) {
+    if (obj.type === "user" && !obj.isMeta && !obj.isCompactSummary && resumeNote(obj) === null) {
       const c = obj.message?.content
       const toolOnly =
         Array.isArray(c) && c.length && c.every((b: any) => b && b.type === "tool_result")
@@ -164,6 +175,9 @@ export class SessionParser {
             : ""
       return { type: "assistant", domId, blocks: [{ type: "compact", summary }], timestamp: msg.timestamp, uuid: msg.uuid }
     }
+    // The server's auto-resume after a restart folds the same way: a step of the cut-off reply.
+    const note = resumeNote(msg)
+    if (note !== null) return { type: "assistant", domId, blocks: [{ type: "resume", note }], timestamp: msg.timestamp, uuid: msg.uuid }
     if (msg.type === "user" && msg.message) {
       const content = msg.message.content
       if (Array.isArray(content) && content.every((b: any) => b.type === "tool_result"))

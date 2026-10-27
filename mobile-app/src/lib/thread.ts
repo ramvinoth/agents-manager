@@ -40,7 +40,21 @@ export type ToolBlock = { kind: "tool"; name: string; input: unknown; id: string
 // A context compaction mid-reply: the summary the CLI wrote so it could keep going.
 // It is a step of the reply it interrupted, not something the user said.
 export type CompactBlock = { kind: "compact"; text: string }
-export type Block = TextBlock | ToolBlock | CompactBlock
+// The server resumed a turn a restart (or a stopped process) cut off. Its resume
+// prompt is a step of the reply it continues, not something the user said.
+export type ResumeBlock = { kind: "resume"; text: string }
+export type Block = TextBlock | ToolBlock | CompactBlock | ResumeBlock
+
+// How viewer/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together).
+const RESUME_MARK = "Your last turn was cut off mid-way"
+
+// The text of a server auto-resume prompt, or null when the record is anything else.
+function resumeNote(msg: any): string | null {
+  if (msg.type !== "user") return null
+  const c = msg.message?.content
+  const t = typeof c === "string" ? c : Array.isArray(c) && c.length === 1 && c[0]?.type === "text" ? c[0].text : ""
+  return typeof t === "string" && t.startsWith(RESUME_MARK) ? t : null
+}
 // `uuid` is the transcript record id. Fork and revert both cut the session at a
 // specific message, so it has to survive parsing — see /api/session/fork.
 export type Turn =
@@ -237,6 +251,12 @@ export function parseTranscript(input: string[] | string): Turn[] {
       const c = msg.message?.content
       const text = typeof c === "string" ? c : Array.isArray(c) ? c.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n") : ""
       turns.push({ role: "assistant", id: id(), blocks: [{ kind: "compact", text }], ts: msg.timestamp, uuid: msg.uuid })
+      continue
+    }
+    // The server's auto-resume after a restart folds the same way: a step of the cut-off reply.
+    const note = resumeNote(msg)
+    if (note !== null) {
+      turns.push({ role: "assistant", id: id(), blocks: [{ kind: "resume", text: note }], ts: msg.timestamp, uuid: msg.uuid })
       continue
     }
 
