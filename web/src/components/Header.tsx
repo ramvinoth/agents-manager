@@ -64,13 +64,16 @@ export function Header() {
   const serverVersion = useStore((s) => s.serverVersion)
   const signout = useStore((s) => s.signout)
   const needsAuth = useStore((s) => s.needsAuth)
-  const rhsOpen = useStore((s) => s.rhsOpen)
+  // The open canvas covers the right panel (App renders one or the other).
+  const rhsShown = useStore((s) => s.rhsOpen && !s.canvasOpen)
   const toggleRhs = useStore((s) => s.toggleRhs)
   const canvases = useStore((s) => s.canvases)
   const canvasOpen = useStore((s) => s.canvasOpen)
   const canvasUnseen = useStore((s) => s.canvasUnseen)
   const openCanvas = useStore((s) => s.openCanvas)
   const closeCanvas = useStore((s) => s.closeCanvas)
+  const needs = useStore((s) => s.canvasNeeds)
+  const showNeeds = useStore((s) => s.showNeeds)
   const lhsOpen = useStore((s) => s.lhsOpen)
   const toggleLhs = useStore((s) => s.toggleLhs)
   const [navOpen, setNavOpen] = useState(false)
@@ -247,31 +250,37 @@ export function Header() {
 
       {/* Skills · MCP · Plugins: a closed side panel on wide screens, a drawer
           (MobileRightNav) on narrow ones - both at the right edge. */}
-      {canvases.length > 0 && (
+      {(canvases.length > 0 || needs.length > 0) && (
         <Button
           variant="ghost"
           size="icon"
           className={"relative size-7 shrink-0" + (canvasOpen ? " bg-accent" : "")}
-          onClick={() => (canvasOpen ? closeCanvas() : openCanvas())}
+          onClick={() => (canvasOpen ? closeCanvas() : needs.length ? showNeeds() : openCanvas())}
           data-track="canvas toggle"
           aria-label={canvasOpen ? "Hide canvas" : "Show canvas"}
           aria-pressed={canvasOpen}
-          title={canvasOpen ? "Hide canvas" : canvasUnseen ? "The agent updated the canvas" : "Canvas"}
+          title={canvasOpen ? "Hide canvas"
+            : needs.length ? `${needs.length} in this chat waiting on you`
+            : canvasUnseen ? "The agent updated the canvas" : "Canvas"}
         >
           <Presentation className="size-4" />
-          {canvasUnseen > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-primary" />}
+          {needs.length > 0 ? (
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground tabular-nums">
+              {needs.length}
+            </span>
+          ) : canvasUnseen > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-primary" />}
         </Button>
       )}
       <MobileRightNav />
       <Button
         variant="ghost"
         size="icon"
-        className={"hidden size-7 shrink-0 lg:inline-flex" + (rhsOpen ? " bg-accent" : "")}
+        className={"hidden size-7 shrink-0 lg:inline-flex" + (rhsShown ? " bg-accent" : "")}
         onClick={toggleRhs}
         data-track="rhs toggle"
-        aria-label={rhsOpen ? "Hide skills panel" : "Show skills panel"}
-        aria-pressed={rhsOpen}
-        title={rhsOpen ? "Hide skills panel" : "Skills, MCP and plugins"}
+        aria-label={rhsShown ? "Hide skills panel" : "Show skills panel"}
+        aria-pressed={rhsShown}
+        title={rhsShown ? "Hide skills panel" : "Skills, MCP and plugins"}
       >
         <PanelRight className="size-4" />
       </Button>

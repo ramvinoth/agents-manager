@@ -10,6 +10,8 @@ import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
 import { CanvasPane } from "@/components/CanvasPane"
 import { latestShow } from "@/lib/canvas"
+import { anchorFor } from "@/lib/decisionAnchors"
+import type { OpenDecision } from "@/lib/types"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
 import { SearchBar } from "@/components/SearchBar"
 import { LoginPanel } from "@/components/LoginPanel"
@@ -59,6 +61,7 @@ function App() {
   const loadCanvases = useStore((s) => s.loadCanvases)
   const resetCanvases = useStore((s) => s.resetCanvases)
   const canvasShown = useStore((s) => s.canvasShown)
+  const loadNeeds = useStore((s) => s.loadNeeds)
   const agentLabel = useAgentLabel()
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -102,6 +105,14 @@ function App() {
     resetCanvases()
     if (currentSessionPath) loadCanvases()
   }, [currentSessionPath, resetCanvases, loadCanvases])
+  // What this chat is waiting on the owner for: checked on open and every 30s,
+  // so a question raised (or answered elsewhere) shows without a reload.
+  useEffect(() => {
+    if (!currentSessionPath) return
+    loadNeeds()
+    const t = window.setInterval(() => document.visibilityState === "visible" && loadNeeds(), 30_000)
+    return () => window.clearInterval(t)
+  }, [currentSessionPath, loadNeeds])
   useEffect(() => {
     if (loading) return
     const show = latestShow(turns)
@@ -151,6 +162,33 @@ function App() {
     follow.current = false
     document.getElementById("turn-" + currentMatch)?.scrollIntoView({ block: "center", behavior: "smooth" })
   }, [currentMatch])
+
+  // "Show in chat" from the canvas pane: page older history in until the turn
+  // that raised the decision is loaded, then scroll to it and ring it briefly.
+  const [jumpHighlight, setJumpHighlight] = useState<string | undefined>()
+  // While a jump lands, the top-of-history auto-load must not page in more and shift it away.
+  const jumpLock = useRef(0)
+  async function showInChat(d: OpenDecision): Promise<boolean> {
+    let domId = anchorFor(d, useStore.getState().turns)
+    for (let page = 0; !domId && page < 20 && useStore.getState().headOffset > 0; page++) {
+      follow.current = false
+      prependAnchor.current = scrollRef.current?.scrollHeight ?? null
+      await useStore.getState().loadOlder()
+      domId = anchorFor(d, useStore.getState().turns)
+    }
+    if (!domId) return false
+    follow.current = false
+    prependAnchor.current = null
+    jumpLock.current = Date.now() + 1500
+    // Instant and top-aligned, re-asserted once the last prepended page has
+    // laid out: a smooth scroll is dropped while the live transcript re-renders.
+    const land = () => document.getElementById("turn-" + domId)?.scrollIntoView({ block: "start" })
+    requestAnimationFrame(land)
+    window.setTimeout(land, 300)
+    setJumpHighlight(domId)
+    window.setTimeout(() => setJumpHighlight((h) => (h === domId ? undefined : h)), 4000)
+    return true
+  }
 
   function startDrag(e: React.MouseEvent) {
     e.preventDefault()
@@ -290,7 +328,7 @@ function App() {
               const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 250
               if (!currentMatch) follow.current = nearBottom
               setShowJump(!nearBottom)
-              if (el.scrollTop < 80 && headOffset > 0 && !loadingOlder) {
+              if (el.scrollTop < 80 && headOffset > 0 && !loadingOlder && Date.now() > jumpLock.current) {
                 prependAnchor.current = el.scrollHeight
                 loadOlder()
               }
@@ -308,7 +346,7 @@ function App() {
             ) : (
               <ErrorBoundary key={currentSessionPath} label="Couldn't render this transcript">
                 <FileLinkProvider cwd={sessionCwd}>
-                  <Transcript turns={turns} highlightId={searchOpen ? currentMatch : undefined} />
+                  <Transcript turns={turns} highlightId={searchOpen ? currentMatch : jumpHighlight} />
                 </FileLinkProvider>
               </ErrorBoundary>
             )}
@@ -348,11 +386,11 @@ function App() {
           // Wide: a resizable-by-layout column beside the chat. Narrow: a full-screen sheet.
           <aside className="fixed inset-0 z-40 bg-background md:static md:z-auto md:w-[min(45vw,720px)] md:shrink-0 md:border-l md:border-border">
             <ErrorBoundary label="Canvas error">
-              <CanvasPane />
+              <CanvasPane onShowInChat={showInChat} />
             </ErrorBoundary>
           </aside>
         )}
-        {!needsAuth && rhsOpen && (
+        {!needsAuth && rhsOpen && !canvasOpen && (
           <aside className="hidden w-72 shrink-0 border-l border-border lg:block">
             <ErrorBoundary label="Skills panel error">
               <RhsPanel />
