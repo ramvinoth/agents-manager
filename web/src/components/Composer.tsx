@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Send, Square, X, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal, File, Folder } from "lucide-react"
+import { Send, Square, X, Undo2, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal, File, Folder } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -83,8 +83,13 @@ function QueueRow() {
       {queue.map((q, i) => (
         <Badge key={i} variant="secondary" className="max-w-64 gap-1 font-normal">
           <span className="truncate">{q}</span>
-          <button onClick={() => removeQueued(i)} className="shrink-0 hover:text-destructive">
-            <X className="size-3" />
+          <button
+            onClick={() => removeQueued(i)}
+            title="Back to the composer to edit"
+            aria-label="Back to the composer to edit"
+            className="shrink-0 hover:text-foreground"
+          >
+            <Undo2 className="size-3" />
           </button>
         </Badge>
       ))}
