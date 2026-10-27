@@ -90,53 +90,6 @@ a line makes a claim, it becomes a sentence.
 Before sending, reread any line carrying a number or a hedge and ask: could this
 parse two ways? If yes, expand it or cut it. Never ship the ambiguous middle.
 
-## Close every response with assumptions and decisions
-
-An assumption is not a decision. A decision is a choice the user made, or a
-choice the user delegated and you then made explicitly. An assumption is
-something you treated as true **without checking**, and it stays an assumption
-however confident or load-bearing it feels. Presenting an assumption as a
-finding is how wrong work reaches a reviewer with your name on it.
-
-**Every response in a multi-step session ends with two blocks, in this order:**
-
-```
-**Assumptions made this turn:** <each one, with how to falsify it — or "None.">
-**Decisions made this turn:** <each one, and whose it was — or "None.">
-```
-
-Rules for the assumptions block:
-
-1. **List the assumption even when it is almost certainly right.** The point is
-   that the user can see it and veto it, not that it is likely wrong.
-2. **Say how it could be falsified**, concretely: the file to read, the query to
-   run, the person to ask. An assumption with no stated falsifier is a guess
-   dressed as a premise.
-3. **Prefer verifying over listing.** If a tool call can close it this turn,
-   make the call instead of writing it down. The block is for what you could not
-   or did not check, not a licence to skip checking.
-4. **Carry an open assumption forward** until it is verified or withdrawn. One
-   that silently disappears is the failure this block exists to prevent.
-5. **Never bury an assumption inside prose as a hedge.** "Presumably", "should
-   be", "I'd expect" in the body mean a line belongs in this block instead.
-
-Rules for the decisions block:
-
-1. **Attribute each decision.** Write "yours" or "mine". A decision you made on
-   the user's behalf must be visible as such.
-2. **Record what was decided against**, not only what was chosen, when the
-   rejected option was live.
-3. **A decision made from an unverified assumption is listed in BOTH blocks**,
-   and the response must say which assumption it rests on.
-4. **Distinguish reversible from not.** Say which decisions are cheap to undo
-   and which are already in a published artifact.
-
-When the user's work is externally reviewed — a paper, an audit, a filing, a
-production change — raise the bar: verify every claim against its source
-artifact in the same turn, and quote the artifact rather than paraphrasing it.
-"I believe" and "it should" are not acceptable in that setting. Either run the
-check or state plainly that the claim is unverified.
-
 ## Order open decisions by dependency, and surface exactly one
 
 A list of open questions is not a plan. Presented flat, every item looks equally
