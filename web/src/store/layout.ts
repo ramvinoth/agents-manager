@@ -3,8 +3,10 @@ import type { Slice } from "./types"
 
 export interface LayoutSlice {
   lhsTab: string
-  /** The project drilled into on the Projects tab, per host; the Files tab roots there. */
+  /** The focused project on the Projects tab, per host; the Files tab roots there. */
   projectDirs: Record<string, string>
+  /** The projects expanded in the Projects tree, per host. */
+  openProjects: Record<string, string[]>
   rhsTab: string
   /** The wide-screen left rail (Projects, Files, Settings, Stats); open by default. */
   lhsOpen: boolean
@@ -20,8 +22,10 @@ export interface LayoutSlice {
   panelFloating: boolean
   floatRect: { x: number; y: number; w: number; h: number }
   setLhsTab: (t: string) => void
-  /** Drill into (or, with null, back out of) a project on the current host. */
+  /** Focus (or, with null, unfocus) a project on the current host. */
   setProjectDir: (dir: string | null) => void
+  /** Expand or collapse a project in the tree; `open` omitted toggles it. */
+  setProjectOpen: (dir: string, open?: boolean) => void
   setRhsTab: (t: string) => void
   /** Show the right panel on tab `t` (opens it if shut; never toggles it shut). */
   openRhs: (t: string) => void
@@ -38,7 +42,7 @@ export interface LayoutSlice {
   setFloatRect: (r: { x: number; y: number; w: number; h: number }) => void
 }
 
-// One drilled project per host, persisted so a page refresh reopens the same project.
+// One focused project per host, persisted so a page refresh keeps the Files root.
 const PROJECT_DIR = "projectDir:"
 function loadProjectDirs(): Record<string, string> {
   const out: Record<string, string> = {}
@@ -50,10 +54,22 @@ function loadProjectDirs(): Record<string, string> {
   return out
 }
 
+// The tree's expanded projects, all hosts in one key.
+const OPEN_PROJECTS = "openProjects"
+function loadOpenProjects(): Record<string, string[]> {
+  try {
+    const v = JSON.parse(localStorage.getItem(OPEN_PROJECTS) || "{}")
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {}
+  } catch {
+    return {}
+  }
+}
+
 export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
   return {
     lhsTab: localStorage.getItem("lhsTab") || "projects",
     projectDirs: loadProjectDirs(),
+    openProjects: loadOpenProjects(),
     rhsTab: localStorage.getItem("rhsTab") || "skills",
     rhsOpen: localStorage.getItem("rhsOpen") === "1",
     lhsOpen: localStorage.getItem("lhsOpen") !== "0",
@@ -84,6 +100,15 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
         delete next[host]
       }
       set({ projectDirs: next })
+    },
+    setProjectOpen: (dir, open) => {
+      const host = get().currentHost
+      const cur = get().openProjects[host] ?? []
+      const want = open ?? !cur.includes(dir)
+      if (want === cur.includes(dir)) return
+      const next = { ...get().openProjects, [host]: want ? [...cur, dir] : cur.filter((d) => d !== dir) }
+      localStorage.setItem(OPEN_PROJECTS, JSON.stringify(next))
+      set({ openProjects: next })
     },
     setRhsTab: (t) => { localStorage.setItem("rhsTab", t); set({ rhsTab: t }) },
     openRhs: (t) => {

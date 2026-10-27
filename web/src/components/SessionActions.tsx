@@ -41,7 +41,7 @@ export function SessionActions({ session }: { session: SessionListItem }) {
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0 text-muted-foreground"
+            className="size-6 shrink-0 text-muted-foreground"
             data-track="session menu"
             aria-label={`Actions for ${session.title || "this chat"}`}
           >
