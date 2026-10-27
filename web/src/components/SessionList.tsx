@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react"
-import { type LucideIcon, Folder, ChevronRight, ChevronDown, ArrowLeft, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus, MoreHorizontal } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus, MoreHorizontal, Info } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +17,7 @@ import { useStore } from "@/store"
 import { api } from "@/lib/api"
 import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "@/lib/types"
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
+import { projectLabels, projectTree } from "@/lib/projectTree"
 import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
@@ -38,7 +39,7 @@ export function SessionList() {
   const [mapFor, setMapFor] = useState<Group | null>(null)
   const projectPlugins = useProjectPlugins()
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
-  const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
+  const [inboxSession, setInboxSession] = useState<{ id: string; title: string; cwd: string } | null>(null)
   const [harmanOpen, setHarmanOpen] = useState(false)
   // The New dialog's folder: a project's dir, "" for the dialog's own default, null = closed.
   const [startIn, setStartIn] = useState<string | null>(null)
@@ -51,8 +52,49 @@ export function SessionList() {
   }, [sessions.length])
 
   const groups = useMemo(() => groupSessions(sessions, orgProjects, currentHost), [sessions, orgProjects, currentHost])
-  const active = dir ? groups.find((g) => g.dir === dir) : null
-  const filter = q.toLowerCase()
+  const focused = dir ? groups.find((g) => g.dir === dir) : null
+  const openList = useStore((s) => s.openProjects[s.currentHost])
+  const openSet = useMemo(() => new Set(openList ?? []), [openList])
+  const setProjectOpen = useStore((s) => s.setProjectOpen)
+  // Long projects list CHAT_LIMIT chats until "Show N more"; per visit, not persisted.
+  const [showAll, setShowAll] = useState<Set<string>>(new Set())
+  const tree = useMemo(
+    () => projectTree(groups, q, openSet, showAll, (g) => projectName(g.project || g.dir)),
+    [groups, q, openSet, showAll],
+  )
+
+  // The open chat's project expands and takes focus (so Files follows), however
+  // the chat was opened — the rail, the inbox, a push. Collapsing it afterwards sticks.
+  const currentDir = useMemo(
+    () => groups.find((g) => g.sessions.some((s) => s.path === currentSessionPath))?.dir,
+    [groups, currentSessionPath],
+  )
+  useEffect(() => {
+    if (!currentDir) return
+    setProjectOpen(currentDir, true)
+    setDir(currentDir)
+  }, [currentDir, setProjectOpen, setDir])
+
+  // Folder names, with the parent folder as a hint where two projects share one.
+  const labels = useMemo(() => projectLabels(groups.map((g) => g.project || g.dir)), [groups])
+  const label = (g: Group) => labels.get(g.project || g.dir) ?? { name: projectName(g.project || g.dir), hint: "" }
+
+  // After a reload (or a chat opened from elsewhere) the open chat's row is
+  // scrolled into view once its project has expanded — never on later re-renders.
+  const treeRef = useRef<HTMLDivElement>(null)
+  const scrolledTo = useRef("")
+  useEffect(() => {
+    if (!currentSessionPath || scrolledTo.current === currentSessionPath) return
+    const el = treeRef.current?.querySelector(`[data-path="${CSS.escape(currentSessionPath)}"]`)
+    if (!el) return
+    scrolledTo.current = currentSessionPath
+    el.scrollIntoView({ block: "nearest" })
+  }, [currentSessionPath, tree])
+
+  const toggleProject = (g: Group) => {
+    setProjectOpen(g.dir)
+    setDir(g.dir)
+  }
 
   // A custom provider is stored as a preset id; show its human name (falling back
   // to "Custom" if the preset was deleted). "" means the harness default — no chip.
@@ -65,6 +107,7 @@ export function SessionList() {
     if (existing) loadSession(existing.path)
     else setHarmanOpen(true)
   }
+  const showHarman = automationOn && (!q.trim() || "harman".includes(q.trim().toLowerCase()))
 
   return (
     <div className="flex h-full flex-col">
@@ -73,153 +116,118 @@ export function SessionList() {
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder={active ? "Filter chats…" : "Filter projects…"}
+            placeholder="Filter projects and chats…"
             className="h-8"
           />
           <Button
             variant="outline"
             size="sm"
             className="h-8 shrink-0 gap-1 px-2 text-xs"
-            onClick={() => setStartIn(active?.dir ?? "")}
+            onClick={() => setStartIn(focused?.dir ?? "")}
             data-track="New"
             aria-label="New chat"
-            title={active ? `New chat in ${projectName(active.project || active.dir)}` : "New chat"}
+            title={focused ? `New chat in ${projectName(focused.project || focused.dir)}` : "New chat"}
           >
             <Plus className="size-3.5" /> New
           </Button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
-        <div className="space-y-0.5 p-2 pt-0">
-          {!active
-            ? [
-                // Pinned Harman entry — the orchestrator's home, above the project
-                // groups. Only when automation is on; otherwise it doesn't exist here.
-                ...(automationOn && (!filter || "harman".includes(filter))
-                  ? [
-                      <PinnedRow
-                        key="harman"
-                        icon={Sparkles}
-                        label="Harman"
-                        title="Harman — Harness Manager orchestrator"
-                        onClick={openHarman}
-                      />,
-                    ]
-                  : []),
-                ...groups
-                  .filter((g) => !filter || g.project.toLowerCase().includes(filter))
-                  .map((g) => (
+        <div ref={treeRef} className="space-y-px px-2 pb-2" role="tree" aria-label="Projects and chats">
+          {/* Pinned Harman entry — the orchestrator's home, above the projects.
+              Only when automation is on; otherwise it doesn't exist here. */}
+          {showHarman && (
+            <PinnedRow icon={Sparkles} label="Harman" title="Harman — Harness Manager orchestrator" onClick={openHarman} />
+          )}
+          {tree.map(({ group: g, open, sessions: chats, more }) => (
+            <div key={g.dir} role="treeitem" aria-expanded={open}>
+              <div
+                className={cn(
+                  "group/row flex h-7 items-center rounded-md pr-0.5 hover:bg-accent/70 has-[[data-state=open]]:bg-accent/70",
+                  g.dir === dir && "bg-accent/50",
+                )}
+              >
+                <button
+                  onClick={() => toggleProject(g)}
+                  title={`${g.project}${g.sessions.length ? ` · ${g.sessions.length} chat${g.sessions.length === 1 ? "" : "s"} · ${fmtAgo(g.modified)}` : ""}`}
+                  data-track="project row"
+                  className="flex h-full min-w-0 flex-1 items-center gap-1 pl-1 text-left text-[13px]"
+                >
+                  {open ? (
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  {open ? (
+                    <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Folder className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="ml-0.5 min-w-0 flex-1 truncate">
+                    <span className="font-medium">{label(g).name}</span>
+                    {label(g).hint && <span className="ml-1 text-xs text-muted-foreground">{label(g).hint}</span>}
+                  </span>
+                  {g.unread && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="unread" title="Unread replies" />}
+                  {g.running > 0 ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 pr-1 text-[11px] tabular-nums text-emerald-600" title={`${g.running} running`}>
+                      <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+                      {g.running}
+                    </span>
+                  ) : (
+                    !open && g.sessions.length > 0 && (
+                      <span className="shrink-0 pr-1 text-[11px] tabular-nums text-muted-foreground">{g.sessions.length}</span>
+                    )
+                  )}
+                </button>
+                <ProjectMenu
+                  name={label(g).name}
+                  visible={g.dir === dir}
+                  plugins={currentHost === "local" ? projectPlugins : []}
+                  onNew={() => setStartIn(g.dir)}
+                  onTasks={() => setTasksFor(g)}
+                  onNotes={() => setNotesFor(g)}
+                  onInbox={() => setInboxFor(g)}
+                  onMap={() => setMapFor(g)}
+                  onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
+                />
+              </div>
+              {open && (
+                <div role="group" className="ml-[11px] space-y-px border-l border-border py-px pl-1">
+                  {g.sessions.length === 0 ? (
+                    // A chat-less project's one action: start its first chat there.
                     <button
-                      key={g.dir}
-                      onClick={() => setDir(g.dir)}
-                      title={g.project}
-                      data-track="project row"
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={() => setStartIn(g.dir)}
+                      className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] text-primary hover:bg-accent/70"
                     >
-                      <Folder className="size-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          {g.unread && (
-                            <span
-                              className="size-2 shrink-0 rounded-full bg-primary"
-                              aria-label="unread"
-                            />
-                          )}
-                          <div className="truncate font-medium">{projectName(g.project)}</div>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {g.sessions.length ? (
-                            <>
-                              {g.sessions.length} session{g.sessions.length === 1 ? "" : "s"} · {fmtAgo(g.modified)}
-                            </>
-                          ) : (
-                            "No sessions yet"
-                          )}
-                          {g.running > 0 && (
-                            <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-600">
-                              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                              {g.running} running
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                      <Plus className="size-3.5" /> Start session
                     </button>
-                  )),
-              ]
-            : [
-                // The project's header: back to all projects, its name, and a "⋯" menu
-                // with its board, notes ledger, message ledger, code map and the apps
-                // sharing this folder — tucked away so the rail is just its chats.
-                <div key="head" className="mb-1 flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 shrink-0"
-                    onClick={() => setDir(null)}
-                    aria-label="All projects"
-                    title="All projects"
-                  >
-                    <ArrowLeft className="size-4" />
-                  </Button>
-                  <div className="min-w-0 flex-1 truncate text-sm font-semibold" title={active.project}>
-                    {projectName(active.project || active.dir)}
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        data-track="project menu"
-                        aria-label="Project tools"
-                      >
-                        <MoreHorizontal className="size-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
-                      <DropdownMenuItem onClick={() => setTasksFor(active)}>
-                        <ClipboardList className="size-3.5" /> Tasks
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setNotesFor(active)}>
-                        <NotebookPen className="size-3.5" /> Notes
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setInboxFor(active)}>
-                        <Mail className="size-3.5" /> Inbox
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setMapFor(active)}>
-                        <Network className="size-3.5" /> Map
-                      </DropdownMenuItem>
-                      {/* Project plugins only open this computer's folders. */}
-                      {currentHost === "local" && projectPlugins.length > 0 && <DropdownMenuSeparator />}
-                      {(currentHost === "local" ? projectPlugins : []).map((p) => {
-                        const Icon = pluginIcon(p.icon)
-                        return (
-                          <DropdownMenuItem key={p.id} title={p.description} onClick={() => setPluginFor({ plugin: p, group: active })}>
-                            <Icon className="size-3.5" /> {p.label}
-                          </DropdownMenuItem>
-                        )
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>,
-                // A chat-less project's one action: start its first chat there.
-                ...(active.sessions.length
-                  ? []
-                  : [<PinnedRow key="start" icon={Plus} label="Start session" onClick={() => setStartIn(active.dir)} />]),
-                ...active.sessions
-                  .filter((s) => !filter || s.title.toLowerCase().includes(filter))
-                  .map((s) => (
-                    <SessionRow
-                      key={s.path}
-                      s={s}
-                      current={s.path === currentSessionPath}
-                      providerName={providerName}
-                      onOpen={() => loadSession(s.path)}
-                      onOpenInbox={(id, title) => setInboxSession({ id, title })}
-                    />
-                  )),
-              ]}
+                  ) : (
+                    chats.map((s) => (
+                      <SessionRow
+                        key={s.path}
+                        s={s}
+                        current={s.path === currentSessionPath}
+                        providerName={providerName}
+                        onOpen={() => loadSession(s.path)}
+                        onOpenInbox={(id, title) => setInboxSession({ id, title, cwd: g.project || g.dir })}
+                      />
+                    ))
+                  )}
+                  {more > 0 && (
+                    <button
+                      onClick={() => setShowAll((m) => new Set(m).add(g.dir))}
+                      className="flex h-6 w-full items-center rounded-md pl-[22px] text-left text-xs text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                    >
+                      Show {more} more
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          {tree.length === 0 && q.trim() && !showHarman && (
+            <div className="px-2 py-6 text-center text-xs text-muted-foreground">No project or chat matches “{q.trim()}”.</div>
+          )}
         </div>
       </div>
       {tasksFor && (
@@ -266,7 +274,7 @@ export function SessionList() {
       {inboxSession && (
         <InboxDialog
           host={currentHost}
-          cwd={active?.project || active?.dir || ""}
+          cwd={inboxSession.cwd}
           name={inboxSession.title}
           session={inboxSession.id}
           sessionTitle={inboxSession.title}
@@ -279,7 +287,88 @@ export function SessionList() {
   )
 }
 
-/** A fixed, bordered entry above the list (Harman, or an empty project's Start session). */
+/**
+ * A project's "⋯" menu on its tree row: a new chat there, its board, notes
+ * ledger, message ledger, code map, and the apps sharing its folder.
+ */
+function ProjectMenu({
+  name,
+  visible,
+  plugins,
+  onNew,
+  onTasks,
+  onNotes,
+  onInbox,
+  onMap,
+  onPlugin,
+}: {
+  name: string
+  /** Always shown (the focused project); otherwise only on hover/focus. */
+  visible: boolean
+  plugins: ProjectPlugin[]
+  onNew: () => void
+  onTasks: () => void
+  onNotes: () => void
+  onInbox: () => void
+  onMap: () => void
+  onPlugin: (p: ProjectPlugin) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn("size-6 shrink-0 text-muted-foreground", !visible && HOVER_ONLY)}
+          data-track="project menu"
+          aria-label={`${name} tools`}
+          title={`${name} tools`}
+        >
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem onClick={onNew}>
+          <Plus className="size-3.5" /> New chat here
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onTasks}>
+          <ClipboardList className="size-3.5" /> Tasks
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onNotes}>
+          <NotebookPen className="size-3.5" /> Notes
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onInbox}>
+          <Mail className="size-3.5" /> Inbox
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onMap}>
+          <Network className="size-3.5" /> Map
+        </DropdownMenuItem>
+        {/* Project plugins only open this computer's folders (the caller passes none otherwise). */}
+        {plugins.length > 0 && <DropdownMenuSeparator />}
+        {plugins.map((p) => {
+          const Icon = pluginIcon(p.icon)
+          return (
+            <DropdownMenuItem key={p.id} title={p.description} onClick={() => onPlugin(p)}>
+              <Icon className="size-3.5" /> {p.label}
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * Row controls that stay out of the way: shown on the row's hover, keyboard
+ * focus or open menu; always shown where there is no hover (touch).
+ */
+const HOVER_ONLY_GROUP =
+  "hidden group-hover/row:flex group-focus-within/row:flex group-has-[[data-state=open]]/row:flex [@media(hover:none)]:flex"
+const HOVER_ONLY =
+  "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
+
+/** A fixed entry above the tree (Harman), styled as a tree row. */
 function PinnedRow({
   icon: Icon,
   label,
@@ -295,17 +384,18 @@ function PinnedRow({
     <button
       onClick={onClick}
       title={title}
-      className="mb-1 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-accent"
+      className="mb-1 flex h-7 w-full items-center gap-1 rounded-md pl-1 text-left text-[13px] hover:bg-accent/70"
     >
+      {/* Chevron-width spacer, so the icon lines up with the project folders. */}
+      <span className="size-3.5 shrink-0" />
       <Icon className="size-4 shrink-0 text-primary" />
-      <span className="flex-1 font-medium">{label}</span>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      <span className="ml-0.5 flex-1 font-medium">{label}</span>
     </button>
   )
 }
 
 /**
- * One session in the drilled-in project view. The row itself opens the session;
+ * One chat under its project in the tree. The row itself opens the session;
  * a caret expands an inline detail panel that lazy-loads /api/session-detail on
  * first open — progressive disclosure, so a peer's skills · MCP · cwd · model
  * are visible in place without navigating into it (and cost nothing until asked).
@@ -353,53 +443,58 @@ function SessionRow({
     openRhs(tab)
   }
 
+  const status = s.running ? "running" : s.unread ? "unread" : ""
+  const provider = providerName(s.provider)
+  const harness = s.harness && s.harness !== "claude" ? s.harness : ""
+
   return (
-    <div className={cn("rounded-md", current && "bg-accent")}>
-      <div className="flex items-center">
+    <div className={cn("rounded-md", current && "bg-accent")} data-path={s.path}>
+      <div className={cn("group/row flex h-7 items-center rounded-md pr-0.5 has-[[data-state=open]]:bg-accent/70", !current && "hover:bg-accent/70")}>
         <button
           onClick={onOpen}
           data-track="session row"
-          className="flex min-w-0 flex-1 flex-col rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+          aria-current={current || undefined}
+          title={[s.title, provider, harness].filter(Boolean).join(" · ")}
+          className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-1.5 text-left text-[13px]"
         >
-          <span className="flex items-center gap-1.5">
-            {s.unread && (
-              <span className="size-2 shrink-0 rounded-full bg-primary" aria-label="unread" />
-            )}
-            {s.running && (
+          {/* A fixed status slot keeps every title on the same left edge. */}
+          <span className="flex size-2 shrink-0 items-center justify-center">
+            {status && (
               <span
-                className="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
-                aria-label="running"
-                title="A run is in flight"
+                className={cn("size-1.5 rounded-full", status === "running" ? "animate-pulse bg-emerald-500" : "bg-primary")}
+                aria-label={status}
+                title={status === "running" ? "A run is in flight" : "Unread"}
               />
             )}
-            <span className="truncate font-medium">{s.title}</span>
           </span>
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{fmtAgo(activity(s))}</span>
-            {providerName(s.provider) && (
-              <span className="rounded bg-muted px-1 py-px text-[10px] font-medium text-foreground/70">
-                {providerName(s.provider)}
-              </span>
-            )}
-            {s.harness && s.harness !== "claude" && (
-              <span className="rounded bg-muted px-1 py-px text-[10px] font-medium uppercase text-foreground/70">
-                {s.harness}
-              </span>
-            )}
+          <span className={cn("min-w-0 flex-1 truncate", (current || s.unread) && "font-medium")}>{s.title}</span>
+          {(provider || harness) && (
+            <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-medium text-foreground/70 group-hover/row:hidden">
+              {harness ? harness.toUpperCase() : provider}
+            </span>
+          )}
+          <span className="shrink-0 pr-1 text-[11px] tabular-nums text-muted-foreground group-hover/row:hidden group-has-[[data-state=open]]/row:hidden">
+            {fmtAgo(activity(s))}
           </span>
         </button>
-        <SessionActions session={s} />
-        <button
-          onClick={toggle}
-          aria-label={expanded ? "Hide details" : "Show details"}
-          aria-expanded={expanded}
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-        </button>
+        <span className={cn("flex shrink-0 items-center", !current && !expanded && HOVER_ONLY_GROUP)}>
+          <button
+            onClick={toggle}
+            aria-label={expanded ? "Hide details" : "Show details"}
+            aria-expanded={expanded}
+            title={expanded ? "Hide details" : "Details"}
+            className={cn(
+              "flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background/60 hover:text-foreground",
+              expanded && "text-foreground",
+            )}
+          >
+            <Info className="size-3.5" />
+          </button>
+          <SessionActions session={s} />
+        </span>
       </div>
       {expanded && (
-        <div className="space-y-1.5 px-2 pb-2 pt-0.5 text-xs text-muted-foreground">
+        <div className="space-y-1.5 pb-2 pl-[22px] pr-2 pt-0.5 text-xs text-muted-foreground">
           {loading && !detail ? (
             <div className="flex items-center gap-1.5 py-1">
               <Loader2 className="size-3.5 animate-spin" /> loading…
