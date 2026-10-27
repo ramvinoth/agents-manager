@@ -274,3 +274,9 @@ export function renderMarkdownSegments(text: string, syntax?: NoteSyntax): Markd
   flush()
   return segs
 }
+
+/** A SKILL.md's body without its leading `---` YAML frontmatter block (the
+ *  metadata Claude reads, not prose to render). Text without one is unchanged. */
+export function stripFrontmatter(text: string): string {
+  return text.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "").replace(/^\s+/, "")
+}

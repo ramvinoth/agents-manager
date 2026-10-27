@@ -1,4 +1,4 @@
-import { renderMarkdownSegments } from "./markdown.ts"
+import { renderMarkdownSegments, stripFrontmatter } from "./markdown.ts"
 
 let pass = 0, fail = 0
 function ok(label: string, cond: boolean, got?: unknown) {
@@ -7,6 +7,12 @@ function ok(label: string, cond: boolean, got?: unknown) {
 }
 const html = (t: string, known: string[] = ["plan", "tom's plan"]) =>
   renderMarkdownSegments(t, { resolves: (x) => known.includes(x.toLowerCase()) }).map((s) => s.type === "html" ? s.html : "").join("")
+
+ok("frontmatter stripped", stripFrontmatter("---\nname: x\ndescription: y\n---\n\n# Body\n") === "# Body\n", stripFrontmatter("---\nname: x\n---\n\n# Body\n"))
+ok("crlf frontmatter", stripFrontmatter("---\r\nname: x\r\n---\r\nBody") === "Body")
+ok("no frontmatter unchanged", stripFrontmatter("# Title\n---\nmore") === "# Title\n---\nmore")
+ok("unclosed frontmatter unchanged", stripFrontmatter("---\nname: x\nBody") === "---\nname: x\nBody")
+ok("frontmatter only", stripFrontmatter("---\nname: x\n---") === "")
 
 let h = html("see [[Plan]] and [[Nope]]")
 ok("resolved link", h.includes('class="wikilink" data-note="Plan"'), h)
