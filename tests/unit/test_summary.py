@@ -1,9 +1,9 @@
-"""Unit tests for engine.compute_session_summary — the shared local+remote stats
+"""Unit tests for sessions.compute_session_summary — the shared local+remote stats
 engine behind the Stats tab. Feed synthetic transcripts, lock the aggregates
 (counts, tokens, tool tally, title/summaries, timeline downsampling)."""
 import json
 
-from viewer.engine import compute_session_summary
+from viewer.sessions import compute_session_summary
 
 
 def _summary(objs, cwd="/tmp/proj"):
@@ -70,6 +70,15 @@ class TestComputeSessionSummary:
 
     def test_synthetic_model_excluded(self):
         assert _summary([{"type": "assistant", "message": {"model": "<synthetic>", "content": []}}])["models"] == []
+
+    def test_model_is_the_last_real_one_used(self):
+        # A chat switched opus -> sonnet runs on sonnet now, even though "models"
+        # sorts alphabetically; a trailing <synthetic> turn never replaces it.
+        d = _summary([{"type": "assistant", "message": {"model": m, "content": []}}
+                      for m in ("claude-sonnet-5-5", "claude-opus-5-5", "<synthetic>")])
+        assert d["model"] == "claude-opus-5-5"
+        assert d["models"] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+        assert _summary([])["model"] is None
 
     def test_token_timeline_downsampled_and_total_preserved(self):
         objs = [{"type": "assistant", "message": {

@@ -23,6 +23,8 @@ export interface LayoutSlice {
   /** Drill into (or, with null, back out of) a project on the current host. */
   setProjectDir: (dir: string | null) => void
   setRhsTab: (t: string) => void
+  /** Show the right panel on tab `t` (opens it if shut; never toggles it shut). */
+  openRhs: (t: string) => void
   toggleRhs: () => void
   toggleLhs: () => void
   openPanel: (k: "terminal" | "browser") => void
@@ -84,6 +86,11 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
       set({ projectDirs: next })
     },
     setRhsTab: (t) => { localStorage.setItem("rhsTab", t); set({ rhsTab: t }) },
+    openRhs: (t) => {
+      localStorage.setItem("rhsTab", t)
+      localStorage.setItem("rhsOpen", "1")
+      set({ rhsTab: t, rhsOpen: true })
+    },
     toggleRhs: () => {
       const v = !get().rhsOpen
       localStorage.setItem("rhsOpen", v ? "1" : "0")

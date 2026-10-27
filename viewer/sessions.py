@@ -399,8 +399,8 @@ def compute_session_summary(line_iter, cwd):
     contents). Shared by local and remote summary paths so both produce
     identical output."""
     data = {"lines": 0, "userMessages": 0, "assistantMessages": 0, "totalInput": 0,
-            "totalOutput": 0, "tools": {}, "models": [], "title": "", "summaries": [],
-            "startTime": None, "endTime": None, "cwd": cwd}
+            "totalOutput": 0, "tools": {}, "models": [], "model": None, "title": "",
+            "summaries": [], "startTime": None, "endTime": None, "cwd": cwd}
     models = set()
     first_ts = last_ts = None
     timeline = []
@@ -431,6 +431,7 @@ def compute_session_summary(line_iter, cwd):
             m = obj.get("message") or {}
             if m.get("model") and m["model"] != "<synthetic>":
                 models.add(m["model"])
+                data["model"] = m["model"]  # last one wins: the model the chat runs on now
             u = m.get("usage") or {}
             ti = u.get("input_tokens", 0) or 0
             to = u.get("output_tokens", 0) or 0
