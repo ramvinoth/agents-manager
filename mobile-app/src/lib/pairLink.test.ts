@@ -15,7 +15,7 @@ function test(name: string, fn: () => void) {
 const CODE = "abcdEFGH1234_-xyzABC"
 const SID = "Q2xhdWRlLXNlcnZlci1pZA"
 const PK = Buffer.alloc(32, 7).toString("base64")
-const relayQ = (url = "wss://relay.harman.ai", sid = SID, pk = PK) =>
+const relayQ = (url = "wss://relay.example.com", sid = SID, pk = PK) =>
   `relay=${encodeURIComponent(url)}&sid=${encodeURIComponent(sid)}&pk=${encodeURIComponent(pk)}`
 
 test("parses the link the web builds", () => {
@@ -29,15 +29,15 @@ test("keeps a port and a path prefix", () => {
 })
 
 test("a relay-only link and a link with both routes", () => {
-  const relay = { url: "wss://relay.harman.ai", serverId: SID, publicKey: PK }
+  const relay = { url: "wss://relay.example.com", serverId: SID, publicKey: PK }
   assert.deepEqual(parsePairLink(`agents://pair?code=${CODE}&${relayQ()}`), { code: CODE, relay })
-  assert.deepEqual(parsePairLink(`agents://pair?code=${CODE}&url=https%3A%2F%2Fx&${relayQ("wss://relay.harman.ai/")}`),
+  assert.deepEqual(parsePairLink(`agents://pair?code=${CODE}&url=https%3A%2F%2Fx&${relayQ("wss://relay.example.com/")}`),
     { code: CODE, url: "https://x", relay })
 })
 
 test("rejects a malformed relay rather than dropping it", () => {
   const bad = [
-    relayQ("ws://relay.harman.ai"),           // no TLS
+    relayQ("ws://relay.example.com"),           // no TLS
     relayQ(undefined, "short"),                // id the relay refuses
     relayQ(undefined, SID, Buffer.alloc(31).toString("base64")),
     relayQ(undefined, SID, "not base64!"),

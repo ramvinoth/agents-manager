@@ -106,7 +106,7 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
         # only the owner may allow — a delete, a permission change, a restart.
         # The row arrives with `subject` (what it touches, resolved by the
         # route) and `risk` (what approving costs), so the headline reads
-        # cold: "Delete card: #12 Fix login — asked by session:Harman".
+        # cold: "Delete card: #12 Fix login — asked by session:Manager".
         intent = r.get("detail") if isinstance(r.get("detail"), dict) else {}
         sid = str(intent.get("session") or "")
         what = r.get("action_label") or str(intent.get("action") or r.get("summary") or "")

@@ -1,0 +1,15 @@
+[Unit]
+Description=Manager keep-alive front for the model gateway (stops Cloudflare 524s on long prompts)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/agents-keepalive
+Environment=AGENTS_KA_LISTEN=127.0.0.1:8079
+Environment=AGENTS_KA_UPSTREAM=http://127.0.0.1:8080
+ExecStart=/usr/bin/python3 %h/agents-keepalive/gateway_keepalive.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

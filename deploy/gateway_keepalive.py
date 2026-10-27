@@ -20,10 +20,10 @@ POST .../v1/messages this proxy keeps bytes flowing:
 SSE parsers ignore comment lines, so clients see an ordinary stream. Every
 other request passes through untouched.
 
-  HARMAN_KA_LISTEN        host:port to serve        (127.0.0.1:8079)
-  HARMAN_KA_UPSTREAM      the gateway               (http://127.0.0.1:8080)
-  HARMAN_KA_PING_EVERY    seconds between pings     (15)
-  HARMAN_KA_HEADER_GRACE  seconds before we commit  (20)
+  AGENTS_KA_LISTEN        host:port to serve        (127.0.0.1:8079)
+  AGENTS_KA_UPSTREAM      the gateway               (http://127.0.0.1:8080)
+  AGENTS_KA_PING_EVERY    seconds between pings     (15)
+  AGENTS_KA_HEADER_GRACE  seconds before we commit  (20)
 """
 import asyncio
 import json
@@ -177,10 +177,10 @@ def make_app(proxy):
 
 
 def main():
-    host, port = os.environ.get("HARMAN_KA_LISTEN", "127.0.0.1:8079").rsplit(":", 1)
-    proxy = Proxy(os.environ.get("HARMAN_KA_UPSTREAM", "http://127.0.0.1:8080"),
-                  float(os.environ.get("HARMAN_KA_PING_EVERY", "15")),
-                  float(os.environ.get("HARMAN_KA_HEADER_GRACE", "20")))
+    host, port = os.environ.get("AGENTS_KA_LISTEN", "127.0.0.1:8079").rsplit(":", 1)
+    proxy = Proxy(os.environ.get("AGENTS_KA_UPSTREAM", "http://127.0.0.1:8080"),
+                  float(os.environ.get("AGENTS_KA_PING_EVERY", "15")),
+                  float(os.environ.get("AGENTS_KA_HEADER_GRACE", "20")))
     web.run_app(make_app(proxy), host=host, port=int(port),
                 handler_cancellation=True, access_log=None)
 

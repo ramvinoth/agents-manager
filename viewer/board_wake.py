@@ -3,7 +3,7 @@
 Every wake in the system is written through boardwatch.schedule_wake (one
 coalesced one-shot per card, origin mirrors the cause). This module only
 COMPOSES the event string for the one event family the action handlers
-cannot see — autonomous, so its wakes are harman-origin, gated by the
+cannot see — autonomous, so its wakes are agent-origin, gated by the
 loop-control mode AND the automation master switch (a human's own card moves
 get user-origin wakes from actions._board_followup instead — a person asking,
 never halted):

@@ -234,7 +234,7 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "limit": {"type": "integer", "description": "How many entries (default 100)."}}}},
     {"name": "usage_report",
-     "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Read it before proposing UI changes; cite it on the card.",
+     "description": "How the owner actually uses the Manager app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Read it before proposing UI changes; cite it on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "days": {"type": "integer", "description": "Window in days (default 30)."}}}},
     {"name": "intake_list",
@@ -249,7 +249,7 @@ _TOOL_LIST = [
          "for_session": {"type": "string", "description": "Session to wake for each new card; omit for board-only."},
          "app_feedback": {"type": "boolean"}}}},
     {"name": "restart_request",
-     "description": "Ask for a Harman server restart so your server-code change goes live. Never restart the server yourself: every restart cuts off every running agent turn. Requests queue for the hourly maintenance window (:50 local time): it waits for running turns to finish (up to 10 min), preflights the code on a spare port, restarts ONCE for all queued requests and writes one audit entry. You are woken afterwards with the result (live, or why it was not applied). Commit your change first.",
+     "description": "Ask for a Manager server restart so your server-code change goes live. Never restart the server yourself: every restart cuts off every running agent turn. Requests queue for the hourly maintenance window (:50 local time): it waits for running turns to finish (up to 10 min), preflights the code on a spare port, restarts ONCE for all queued requests and writes one audit entry. You are woken afterwards with the result (live, or why it was not applied). Commit your change first.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["reason"], "properties": {
          "reason": {"type": "string", "description": "What changed and why it needs a restart (it goes in the audit record)."},
          "commit": {"type": "string", "description": "The commit that must go live."}}}},
@@ -276,7 +276,7 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string", "description": "Session id to filter by; omit for all."}}}},
     {"name": "loop_control_get",
-     "description": "The current loop-firing mode (user/harman/both/none): WHICH loop origins may fire right now.",
+     "description": "The current loop-firing mode (user/agent/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Notes (the knowledge ledger next to the board) ──────────────────────
     {"name": "note_list", "description": "List notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass session to see one chat's notes, archived=true for the shelf. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
@@ -452,7 +452,7 @@ _TOOL_LIST = [
          "title": {"type": "string"}}}},
     # ── Schedule recurring work ─────────────────────────────────────────────
     {"name": "session_create",
-     "description": "Start a NEW named worker session (e.g. a dedicated 'Trader' to host loops), the way the owner's New chat does: it gets Harman's tools, its project's board, and shows by its title in every list. Never start a session with a raw `claude -p` — that one is invisible to Harman's naming, board and audit. Needs Workspace level — below it the request queues for the owner's approval, so pass `reason`; runs start in acceptEdits (bypass is the owner's call via session_mode_set). Returns {session}; schedule its work with loop_create.",
+     "description": "Start a NEW named worker session (e.g. a dedicated 'Trader' to host loops), the way the owner's New chat does: it gets Manager's tools, its project's board, and shows by its title in every list. Never start a session with a raw `claude -p` — that one is invisible to Manager's naming, board and audit. Needs Workspace level — below it the request queues for the owner's approval, so pass `reason`; runs start in acceptEdits (bypass is the owner's call via session_mode_set). Returns {session}; schedule its work with loop_create.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title", "message", "cwd"], "properties": {
          "title": {"type": "string", "description": "Display name, e.g. 'Trader'."},
          "message": {"type": "string", "description": "First message: the session's role and first task."},
@@ -463,7 +463,7 @@ _TOOL_LIST = [
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan"]},
          "reason": _REASON_ARG}}},
     {"name": "loop_create",
-     "description": "Schedule work for ANOTHER session (a worker you manage): a RECURRING prompt (cron expression OR interval like 30s/5m/1h), or a ONE-SHOT task via `at` that fires once at that time and then retires — plan ahead by ending a run by creating its next wake. You cannot schedule your OWN session. Whether harman-scheduled loops actually FIRE is governed separately by the loop-control mode.",
+     "description": "Schedule work for ANOTHER session (a worker you manage): a RECURRING prompt (cron expression OR interval like 30s/5m/1h), or a ONE-SHOT task via `at` that fires once at that time and then retires — plan ahead by ending a run by creating its next wake. You cannot schedule your OWN session. Whether agent-scheduled loops actually FIRE is governed separately by the loop-control mode.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "prompt"], "properties": {
          "for_session": {"type": "string", "description": "Target session id to run the prompt in (must not be your own)."},
          "prompt": {"type": "string", "description": "The prompt to run (each time, or once for a one-shot)."},
@@ -474,7 +474,7 @@ _TOOL_LIST = [
          "model": {"type": "string"},
          "provider": {"type": "string", "description": "Custom provider preset id for the runs; empty inherits the target session's provider."}}}},
     {"name": "loop_update",
-     "description": "Edit a harman-scheduled loop (prompt/cron/interval/at/model/provider/enabled). `at` converts it to a one-shot; cron/interval back to recurring. Only loops you (agents) scheduled can be edited; a human's own loops are off-limits, as is the loop driving your OWN session.",
+     "description": "Edit a agent-scheduled loop (prompt/cron/interval/at/model/provider/enabled). `at` converts it to a one-shot; cron/interval back to recurring. Only loops you (agents) scheduled can be edited; a human's own loops are off-limits, as is the loop driving your OWN session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "string", "description": "Loop id from loop_list."},
          "prompt": {"type": "string"}, "cron": {"type": "string"},
@@ -484,14 +484,14 @@ _TOOL_LIST = [
          "provider": {"type": "string", "description": "Custom provider preset id for the runs; empty inherits the target session's provider."},
          "enabled": {"type": "boolean"}}}},
     {"name": "loop_delete",
-     "description": "Delete a harman-scheduled loop. Irreversible (takes its run history with it), so it queues for the owner's approval. Only agent-scheduled loops, never the one driving your own session.",
+     "description": "Delete a agent-scheduled loop. Irreversible (takes its run history with it), so it queues for the owner's approval. Only agent-scheduled loops, never the one driving your own session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id", "reason"], "properties": {
          "reason": _REASON_ARG,
          "id": {"type": "string", "description": "Loop id from loop_list."}}}},
     {"name": "loop_control_set",
-     "description": "Set WHICH loop origins may fire: user (human-scheduled only), harman (agent-scheduled only), both, or none. Manager-scoped; setting it does not touch the automation master switch.",
+     "description": "Set WHICH loop origins may fire: user (human-scheduled only), agents (agent-scheduled only), both, or none. Manager-scoped; setting it does not touch the automation master switch.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["mode"], "properties": {
-         "mode": {"type": "string", "enum": ["user", "harman", "both", "none"]}}}},
+         "mode": {"type": "string", "enum": ["user", "agent", "both", "none"]}}}},
     # ── Delegate trust to a session (Red: queues for the owner) ─────────────
     {"name": "session_mode_set",
      "description": "Set the permission mode a session's runs start in: default (every tool gated), acceptEdits (file edits auto-approve, commands still gated), plan, or bypass (no gating at all — runs start with --dangerously-skip-permissions). It applies to EVERY later run of that session (loop-fired AND chat) — the way a trusted agent runs its loops without a command-approval push per Bash. Red: the request queues for the owner's approval and runs once he approves; a model can never set its OWN session (the server refuses it — trust is granted by the person, not requested by the agent).",
@@ -501,7 +501,7 @@ _TOOL_LIST = [
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan", "bypass"],
                  "description": "The permission mode for that session's runs."}}}},
     {"name": "session_level_set",
-     "description": "Set the Harman authority level another session acts at on the board: ic = Own work (its own cards, notes, messages), lead = Workspace (also schedule loops, delete cards, shape columns and projects), manager = Organization (also org settings). To the owner, say Own work/Workspace/Organization, never the key ic. Empty clears it back to the level of the agent the chat was started from. This is Harman's org authority, separate from session_mode_set (which gates the harness's own Bash/Edit tools). Red: queues for the owner's approval; never your OWN session. For a single action above your level you do not need this — just call the tool; the server queues that one ask for the owner.",
+     "description": "Set the Manager authority level another session acts at on the board: ic = Own work (its own cards, notes, messages), lead = Workspace (also schedule loops, delete cards, shape columns and projects), manager = Organization (also org settings). To the owner, say Own work/Workspace/Organization, never the key ic. Empty clears it back to the level of the agent the chat was started from. This is Manager's org authority, separate from session_mode_set (which gates the harness's own Bash/Edit tools). Red: queues for the owner's approval; never your OWN session. For a single action above your level you do not need this — just call the tool; the server queues that one ask for the owner.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "level", "reason"], "properties": {
          "reason": _REASON_ARG,
          "for_session": {"type": "string", "description": "Target session id (from session_list; must not be your own)."},

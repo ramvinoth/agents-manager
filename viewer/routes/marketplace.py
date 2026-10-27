@@ -23,7 +23,7 @@ from viewer.engine import get_host
 from viewer.login import MCP_LOGIN
 from viewer.routes import require_human
 
-_UA = {"User-Agent": "harman-viewer", "Accept": "application/json"}
+_UA = {"User-Agent": "agents-viewer", "Accept": "application/json"}
 
 
 def _fetch(url):

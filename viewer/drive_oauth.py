@@ -41,7 +41,7 @@ _PENDING = {}
 _LOCK = threading.Lock()
 
 _CONSENT_TTL = 600   # seconds a started consent may wait for its redirect
-_BROWSER_HTML = ("<html><head><title>Harman</title>"
+_BROWSER_HTML = ("<html><head><title>Manager</title>"
                  "<meta charset=utf-8><meta name=viewport content='width=device-width'></head>"
                  "<body style='font-family:system-ui;padding:3rem'>"
                  "<h2>{title}</h2><p>{msg}</p>"
@@ -70,7 +70,7 @@ def _pkce():
 
 def redirect_uri_for(origin):
     """The callback the vendor must have on record for this deployment, from
-    the origin the browser reached us on (e.g. 'https://harman.example.com'). Every
+    the origin the browser reached us on (e.g. 'https://agents.example.com'). Every
     vendor matches redirect_uri against its registration verbatim, so this
     exact string is what the owner registers — start() returns it so a
     mismatch error can show precisely what to add."""
@@ -296,7 +296,7 @@ def callback(query):
     if p is None:
         return _page("Connection didn't complete",
                      "This sign-in link is not for a connection that is still waiting. "
-                     "Go back to Harman and click Add again.")
+                     "Go back to Manager and click Add again.")
     label = integrations.service(p["service"])["label"]
     error = (query.get("error") or [None])[0]
     code = (query.get("code") or [None])[0]
@@ -313,4 +313,4 @@ def callback(query):
         _finish(p, "failed", str(e))
         return _page("Connection didn't complete", str(e))
     _finish(p, "authorized")
-    return _page("%s connected" % label, "Harman's agents can now use it.")
+    return _page("%s connected" % label, "Manager's agents can now use it.")

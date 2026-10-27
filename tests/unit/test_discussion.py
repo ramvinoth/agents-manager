@@ -140,7 +140,7 @@ def test_agent_comment_wakes_note_session_and_pushes_owner_on_their_note(env):
     f, wakes, pushes = env
     payload, status = _comment(1, "Competitor X charges $49", "session:researcher", "s2")
     assert status == 200 and payload["author"] == "session:researcher" and payload["session_id"] == "s2"
-    assert [(w[0], w[1], w[2]) for w in wakes] == [("nd1:s1", "s1", "harman")]
+    assert [(w[0], w[1], w[2]) for w in wakes] == [("nd1:s1", "s1", "agent")]
     assert "note_comments note_id=1" in wakes[0][3] and "parent_id=1" in wakes[0][3]
     assert pushes == [("Note 1 · Pricing research", {"note": 1})]   # the owner wrote the note
 

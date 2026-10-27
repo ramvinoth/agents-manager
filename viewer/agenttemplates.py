@@ -104,7 +104,7 @@ def ai_from(raw):
 
 
 def plugins_from(raw):
-    """An agent's Harman plugin list → (names, error). None means the body did
+    """An agent's Manager plugin list → (names, error). None means the body did
     not send one (an older client): the agent keeps what it has."""
     if raw is None:
         return None, None

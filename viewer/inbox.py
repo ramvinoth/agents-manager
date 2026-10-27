@@ -293,7 +293,7 @@ def red_risk(intent):
 def deliver_red(approval):
     """Put a freshly queued org Red approval in the owner's inbox (and push).
     The mailbox is the asking session's when one asked (so it archives with
-    that chat), else the owner's own ("" — e.g. Harman's scheduler). Never
+    that chat), else the owner's own ("" — e.g. Manager's scheduler). Never
     raises."""
     try:
         from viewer import audit
@@ -460,7 +460,7 @@ def _who(sender_type, sender_id):
     if sender_type == "user":
         return "You"
     if sender_type == "system":   # the server itself (viewer.maintenance)
-        return "Harman"
+        return "Manager"
     return _label(str(sender_id))
 
 

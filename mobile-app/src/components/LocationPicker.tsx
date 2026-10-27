@@ -110,7 +110,7 @@ export default function LocationPicker({
   }
 
   function remove(drive: Drive) {
-    Alert.alert(`Remove “${drive.label}”?`, "Harman forgets its access token; nothing in the drive itself is touched.", [
+    Alert.alert(`Remove “${drive.label}”?`, "Manager forgets its access token; nothing in the drive itself is touched.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Remove", style: "destructive",

@@ -269,7 +269,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   )
 
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString()
-  // Principal strings ("user:ram", "session:Harman") rendered for a
+  // Principal strings ("user:ram", "session:Manager") rendered for a
   // person — the same rule the web card detail uses (lib/board.ts).
   const self = username()
   const creator = formatActor(card.created_by, self)

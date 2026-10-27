@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy/smoke-install.sh — prove a fresh Linux box installs and boots Harman.
+# deploy/smoke-install.sh — prove a fresh Linux box installs and boots Manager.
 #
 # Runs the real deploy/lib.sh steps (deps → DB → venv → bootstrap → web build)
 # in a throwaway root-capable environment, starts the server, and asserts the
@@ -9,7 +9,7 @@
 # boxes) and runnable locally:
 #   docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 bash /src/deploy/smoke-install.sh
 # Never run it on a real host: it installs system packages and starts Postgres.
-set -euo pipefail   # same strictness as install.sh and harman
+set -euo pipefail   # same strictness as install.sh and agents
 export DEBIAN_FRONTEND=noninteractive
 SRC="${SRC:-/src}" APP=/app PORT=8091
 
@@ -43,8 +43,8 @@ signup() { curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/
              -d "$1" "http://127.0.0.1:$PORT/api/auth/signup"; }
 code="$(signup '{"username":"eve","password":"pw-123456"}')"
 [[ "$code" == 403 ]] || { echo "FAIL: signup without setup code returned $code, want 403"; exit 1; }
-setup="$(cat "$HOME/.harman/setup-code")"
+setup="$(cat "$HOME/.agents/setup-code")"
 code="$(signup "{\"username\":\"owner\",\"password\":\"pw-123456\",\"setupCode\":\"$setup\"}")"
 [[ "$code" == 200 ]] || { echo "FAIL: signup with setup code returned $code, want 200"; exit 1; }
-[[ ! -e "$HOME/.harman/setup-code" ]] || { echo "FAIL: setup code not burned after use"; exit 1; }
+[[ ! -e "$HOME/.agents/setup-code" ]] || { echo "FAIL: setup code not burned after use"; exit 1; }
 echo "PASS: fresh install boots, healthy, API gated, owner claim needs setup code"

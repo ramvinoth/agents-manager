@@ -70,7 +70,7 @@ eq("case/whitespace tolerant", decisionActions([COL({ id: 1, name: " REVIEW ", p
 // formatActor — principal strings → a person-readable name + kind
 eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
 eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
-eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
+eq("session agent", formatActor("session:Manager"), { name: "Manager", kind: "agent" })
 eq("historical employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
 eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
 eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })

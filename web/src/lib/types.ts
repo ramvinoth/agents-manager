@@ -27,19 +27,19 @@ export interface SessionListItem {
   [k: string]: unknown
 }
 
-/** Harman orchestrator config — the server's master automation switch.
+/** Manager orchestrator config — the server's master automation switch.
  *  DUPLICATED in mobile-app/src/api/client.ts, deliberately: the two apps
  *  share no build. Keep in sync BY HAND. */
-export interface HarmanConfig {
+export interface OrchestratorConfig {
   /** The master switch. Omitted by servers predating it — treat absence as OFF
    *  (a server with no gate must not be shown as running unattended work). */
   automation_enabled?: boolean
 }
 
 /** WHICH loop origins may fire — orthogonal to the automation master switch.
- *  user→your loops only (default), harman→agent loops only, both, none→paused.
+ *  user→your loops only (default), agents→agent loops only, both, none→paused.
  *  DUPLICATED in mobile-app/src/api/client.ts — keep in sync BY HAND. */
-export type LoopMode = "user" | "harman" | "both" | "none"
+export type LoopMode = "user" | "agent" | "both" | "none"
 export interface LoopControl {
   mode: LoopMode
 }
@@ -169,7 +169,7 @@ export interface McpServer {
   config?: unknown
   editable: boolean
 }
-/** A plugin a chat runs with. `agent` plugins are in Harman's catalog and the owner adds
+/** A plugin a chat runs with. `agent` plugins are in Manager's catalog and the owner adds
  *  or removes them per chat (`included` = the chat's agent brings it by default); `machine` plugins
  *  are enabled for every Claude run on this Mac (read-only here). */
 export interface Plugin {
@@ -209,7 +209,7 @@ export interface SessionDetail {
     archived?: boolean
     favorite?: boolean
   }
-  /** The Harman level this chat acts at now (override → the agent it was started from → Own work). */
+  /** The Manager level this chat acts at now (override → the agent it was started from → Own work). */
   effective_level?: string
   capabilities: Capabilities
   summary: SessionSummary & { error?: string }

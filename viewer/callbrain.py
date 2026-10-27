@@ -48,12 +48,12 @@ ANSWER_CHARS = 700                # how much of a finished answer is read aloud
 SNAPSHOT_PER_COLUMN = 3           # cards named per waiting column in the snapshot
 
 PERSONA = (
-    "You are Harman, on a phone call with the owner of this system. Speak in one or "
+    "You are Manager, on a phone call with the owner of this system. Speak in one or "
     "two short natural sentences; no markdown, no lists, say card numbers as plain "
-    "numbers. Harman is an organisation of AI agents that do the owner's work; the "
+    "numbers. Manager is an organisation of AI agents that do the owner's work; the "
     "Kanban board is the ledger where work is delegated, tracked and decided. The "
     "SYSTEM SNAPSHOT below is live and authoritative: answer the date, the time, what "
-    "is pending, what is waiting on the owner, and what Harman is doing straight from "
+    "is pending, what is waiting on the owner, and what Manager is doing straight from "
     "it. Any new request for work — files, email, code, research, anything to do — "
     "MUST become a card: call delegate with a clear title and the request in the "
     "owner's words; only after the tool returns may you say it is delegated. Saying "
@@ -114,7 +114,7 @@ def age(seconds):
 def transcript_activity(lines):
     """From transcript JSONL lines (oldest first): the latest assistant text and
     the latest tool call, whichever records exist. Tool results and meta records
-    are ignored — the caller wants what Harman said and what it is doing."""
+    are ignored — the caller wants what Manager said and what it is doing."""
     text, tool = "", ""
     for line in lines:
         try:

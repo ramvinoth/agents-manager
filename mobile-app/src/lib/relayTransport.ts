@@ -1,5 +1,5 @@
 /**
- * The phone's transport over the Harman relay: one end-to-end encrypted
+ * The phone's transport over the Manager relay: one end-to-end encrypted
  * connection per server (relayChannel.ts) multiplexing HTTP requests and
  * WebSockets onto it, plus the choice between a server's direct address and
  * its relay route. The mirror of viewer/relay.py's Connection.
@@ -219,7 +219,7 @@ class Wire {
       } catch {
         // connection gone; nothing to cancel
       }
-      end(new TooLargeError(`Too large to transfer through the Harman relay (over ${Math.round(maxBytes / 1048576)} MB)`))
+      end(new TooLargeError(`Too large to transfer through the Manager relay (over ${Math.round(maxBytes / 1048576)} MB)`))
     }
     id = await this.open({
       frame: (kind, payload) => {

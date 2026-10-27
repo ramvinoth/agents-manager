@@ -178,7 +178,7 @@ function Install({ kind, item, cwd, session, agent, onInstalled, onDone }: {
       ) : null}
       {!installable ? (
         <Text testID="market-not-installable" style={[styles.hint, { marginTop: 18, color: t.text }]}>
-          This server ships only as a Docker image or bundle. Harman installs npm, PyPI and hosted servers; add it by hand from its repository.
+          This server ships only as a Docker image or bundle. Manager installs npm, PyPI and hosted servers; add it by hand from its repository.
         </Text>
       ) : (
         <>
@@ -276,7 +276,7 @@ function SignIn({ title, name, scope, at, onDone }: {
     <ScrollView testID="market-signin" contentContainerStyle={{ padding: 16, paddingBottom: 60 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
       <Text style={{ color: t.text, fontSize: 17, fontWeight: "700" }}>Installed. One step left: sign in.</Text>
       <Text style={[styles.hint, { marginTop: 6 }]}>
-        Your agents can't reach {title} until you sign in once. The publisher's sign-in page opens in your browser; Harman never sees your password.
+        Your agents can't reach {title} until you sign in once. The publisher's sign-in page opens in your browser; Manager never sees your password.
       </Text>
       <TouchableOpacity testID="market-signin-open" style={[styles.button, busy || (open && !state?.url) ? { opacity: 0.6 } : null]}
         disabled={busy || (open && !state?.url)} onPress={() => (state?.url ? Linking.openURL(state.url) : start())}>

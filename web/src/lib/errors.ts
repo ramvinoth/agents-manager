@@ -23,8 +23,8 @@ export function userError(error: unknown, what: string, verb = "load"): string {
   const msg = (typeof error === "string" ? error : e.message || "").trim()
   if (e.status === 401) return "Your sign-in expired. Reload the page and sign in again."
   if (e.status === 403) return msg && !/^HTTP \d+$/.test(msg) ? msg : `You don't have access to ${what}.`
-  if (e.status === 404 && /^HTTP 404$/.test(msg)) return `This server doesn't support ${what} yet. Update Harman on the server.`
-  if (isTransportError(e)) return "Can't reach the Harman server. Check your connection and try again."
+  if (e.status === 404 && /^HTTP 404$/.test(msg)) return `This server doesn't support ${what} yet. Update Manager on the server.`
+  if (isTransportError(e)) return "Can't reach the Manager server. Check your connection and try again."
   if (!msg || /^HTTP \d+$/.test(msg) || BAD_JSON.test(msg) || msg === "[object Object]") return `Couldn't ${verb} ${what}. Try again.`
   return msg
 }

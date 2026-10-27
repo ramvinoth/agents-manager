@@ -11,7 +11,7 @@ author of the comment you answered):
   - the note's own session, and the session that wrote the parent comment, are
     woken through boardwatch.schedule_once — the one wake mechanism, coalesced
     per (note, session), never a self-wake, origin = the cause (a human's
-    comment wakes as 'user', an agent's as 'harman' and so obeys the loop mode
+    comment wakes as 'user', an agent's as 'agent' and so obeys the loop mode
     and the automation switch);
   - the owner's phone is pushed only when an agent answers the OWNER (a reply
     to their comment, or a comment on a note they wrote). Agent-to-agent

@@ -1,6 +1,6 @@
 /**
  * How the app talks to ONE saved server: over its direct address, through
- * the Harman relay, or direct-with-relay-fallback when the entry has both
+ * the Manager relay, or direct-with-relay-fallback when the entry has both
  * (Paseo's HostProfile.connections + selectBestConnection).
  *
  * Every request the app makes goes through here, so callers never know which
@@ -100,7 +100,7 @@ export class ServerTransport {
         : null
   }
 
-  /** Does the direct address answer as a Harman server, quickly? */
+  /** Does the direct address answer as a Manager server, quickly? */
   private async probe(): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
@@ -157,9 +157,9 @@ export class ServerTransport {
       async (link) => {
         const data = await this.deps.files.read(file.uri)
         if (data.length > RELAY_FILE_MAX) {
-          throw new Error(`Too large to upload through the Harman relay (over ${RELAY_FILE_MAX / 1048576} MB)`)
+          throw new Error(`Too large to upload through the Manager relay (over ${RELAY_FILE_MAX / 1048576} MB)`)
         }
-        const boundary = `harman${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+        const boundary = `agents${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
         const res = await link.fetch({
           method: "POST",
           path,

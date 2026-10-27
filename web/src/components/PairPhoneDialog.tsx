@@ -12,16 +12,16 @@ import { userError } from "@/lib/errors"
 
 // The address a phone uses can differ from the one this tab is on (localhost on
 // the box itself). Precedence: what the user typed here (remembered per browser)
-// > the server's configured public address (HARMAN_PUBLIC_URL) > this tab's origin.
+// > the server's configured public address (AGENTS_PUBLIC_URL) > this tab's origin.
 const URL_KEY = "pairServerUrl"
 
 /**
  * Pair a phone: shows a QR of a one-time sign-in link. Scanning it with the
- * iPhone Camera opens the Harman app, which adds this server and signs in as
+ * iPhone Camera opens the Manager app, which adds this server and signs in as
  * you — no password typed on the phone. The code is single-use and expires in
  * five minutes; the dialog counts down and offers a fresh one.
  *
- * When the server runs the Harman relay (pair/start returns `relay`), the QR
+ * When the server runs the Manager relay (pair/start returns `relay`), the QR
  * also carries the relay route, so a phone pairs even when this server has no
  * address it can reach — the direct address becomes optional, not a blocker.
  *
@@ -108,7 +108,7 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>Pair a phone</DialogTitle>
           <DialogDescription>
-            Scan with the iPhone Camera. The Harman app opens and signs in as you — no password needed.
+            Scan with the iPhone Camera. The Manager app opens and signs in as you — no password needed.
           </DialogDescription>
         </DialogHeader>
 
@@ -143,11 +143,11 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
                   ? `Set by this server's configuration (${relayState.enabled ? "on" : "off"}).`
                   : !relayState.enabled
                     ? problem
-                      ? "Your phone can't reach the address above. Turn this on to connect through the Harman relay instead."
-                      : "Off — your phone only connects on this address. Turn on to use the encrypted Harman relay everywhere else."
+                      ? "Your phone can't reach the address above. Turn this on to connect through the Manager relay instead."
+                      : "Off — your phone only connects on this address. Turn on to use the encrypted Manager relay everywhere else."
                     : relayState.connected
-                      ? "On — connected to the Harman relay."
-                      : "On — connecting to the Harman relay…"}
+                      ? "On — connected to the Manager relay."
+                      : "On — connecting to the Manager relay…"}
                 {!isOwner && !relayState.pinned && " Only the owner can change this."}
               </div>
             </div>
@@ -158,7 +158,7 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
                 on={relayState.enabled}
                 disabled={relayState.pinned || !isOwner}
                 onClick={toggleRelay}
-                label="Harman relay"
+                label="Manager relay"
                 testId="relay-switch"
               />
             )}
@@ -168,8 +168,8 @@ export function PairPhoneDialog({ onClose }: { onClose: () => void }) {
         {link && left > 0 && relay && (
           <p className="text-[11px] text-muted-foreground">
             {direct
-              ? "Your phone uses this address when it can, and the Harman relay everywhere else."
-              : "Your phone connects through the Harman relay."}{" "}
+              ? "Your phone uses this address when it can, and the Manager relay everywhere else."
+              : "Your phone connects through the Manager relay."}{" "}
             The relay only passes along encrypted traffic; it can't read it.
           </p>
         )}

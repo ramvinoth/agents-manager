@@ -84,7 +84,7 @@ export default function SideMenu({ visible, dragging, progress, onClose, navigat
         }}>
           <Pressable testID="side-menu" accessible={false} style={{ flex: 1, paddingTop: insets.top + 12, paddingBottom: insets.bottom }}
             onPress={(e) => e.stopPropagation()}>
-            <Text style={{ color: t.text, fontSize: 24, fontWeight: "800", paddingHorizontal: 20, marginBottom: 8 }}>Harman</Text>
+            <Text style={{ color: t.text, fontSize: 24, fontWeight: "800", paddingHorizontal: 20, marginBottom: 8 }}>Manager</Text>
             <ScrollView>
               {MENU_SECTIONS.map((s) => (
                 <View key={s.title} style={{ marginTop: 14 }}>

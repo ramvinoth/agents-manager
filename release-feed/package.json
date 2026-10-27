@@ -1,5 +1,5 @@
 {
-  "name": "harman-release-feed",
+  "name": "agents-release-feed",
   "private": true,
   "type": "module",
   "scripts": {

@@ -11,11 +11,11 @@ import type { LoopMode } from "./types"
 export type ScheduleFlags = { mine: boolean; agents: boolean }
 
 export function scheduleFlags(mode: LoopMode): ScheduleFlags {
-  return { mine: mode === "user" || mode === "both", agents: mode === "harman" || mode === "both" }
+  return { mine: mode === "user" || mode === "both", agents: mode === "agent" || mode === "both" }
 }
 
 export function loopModeFor({ mine, agents }: ScheduleFlags): LoopMode {
-  return mine ? (agents ? "both" : "user") : agents ? "harman" : "none"
+  return mine ? (agents ? "both" : "user") : agents ? "agent" : "none"
 }
 
 /** What fires right now, in one sentence. `automation` is undefined when unknown

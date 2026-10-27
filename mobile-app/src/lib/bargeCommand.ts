@@ -1,7 +1,7 @@
 /**
  * bargeCommand — pure classifier for spoken barge-in commands in call mode.
  *
- * During barge-in the user talks over Harman with the wake word "Harman" followed
+ * During barge-in the user talks over Manager with the wake word "Manager" followed
  * by an instruction. The server's `/wakeguard` keyword-spotter detects the wake
  * word (fuzzy, `_is_wake_token`) and returns the tail after it; this turns that
  * tail into a typed command so the call state machine can act:
@@ -36,7 +36,7 @@ function matchesAny(tail: string, phrases: string[]): boolean {
   return phrases.some((p) => tail === p || tail.startsWith(p + " "))
 }
 
-/** Classify the tail the server returns as `{wake:true, text:tail}` ("Harman" already removed). */
+/** Classify the tail the server returns as `{wake:true, text:tail}` ("Manager" already removed). */
 export function parseBargeTail(raw: string): BargeCommand {
   const tail = normalize(raw)
   // Order matters: check END before STOP ("stop the call" is an end, and "stop"

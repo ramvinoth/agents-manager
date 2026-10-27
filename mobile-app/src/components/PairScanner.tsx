@@ -40,8 +40,8 @@ export default function PairScanner({ visible, onClose, onScan }: {
           <View style={[styles.center, cam.blocked]}>
             <Text style={cam.message}>
               {permission && !permission.canAskAgain
-                ? "Camera access is off for Harman. Turn it on in Settings to scan."
-                : "Harman needs the camera to scan the pairing code."}
+                ? "Camera access is off for Manager. Turn it on in Settings to scan."
+                : "Manager needs the camera to scan the pairing code."}
             </Text>
             <TouchableOpacity testID="pair-camera-allow" style={[styles.button, cam.allow]}
               onPress={() => (permission && !permission.canAskAgain ? Linking.openSettings() : requestPermission())}>
@@ -51,7 +51,7 @@ export default function PairScanner({ visible, onClose, onScan }: {
         )}
         <View style={cam.footer}>
           <Text style={cam.message}>
-            {notPairing ? "That isn't a Harman pairing code." : "On your computer: Profile → Pair a phone"}
+            {notPairing ? "That isn't a Manager pairing code." : "On your computer: Profile → Pair a phone"}
           </Text>
           <TouchableOpacity testID="pair-scan-cancel" accessibilityLabel="Cancel scan" onPress={onClose}
             style={cam.cancel}>

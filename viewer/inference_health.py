@@ -68,7 +68,7 @@ def parse_load(metrics_text, model=""):
 
 def _get(url, api_key=""):
     """(status, body) for a GET; status 0 = no HTTP answer at all."""
-    headers = {"user-agent": "harman-viewer/health"}
+    headers = {"user-agent": "agents-viewer/health"}
     if api_key:  # a keyed gateway (llama-swap apiKeys) answers 401 to /metrics without it
         headers["x-api-key"] = api_key
     req = urllib.request.Request(url, headers=headers)
@@ -214,6 +214,6 @@ def diagnose(text):
                 f"and the model's limit is {limit:,} including room for its reply. This is not "
                 "temporary — every retry, including /compact, sends the same oversized chat. It "
                 "usually happens when one step pulls in many large tool results at once (e.g. full "
-                "email bodies). Fix: continue in a new chat, or ask Harman to trim the oversized "
+                "email bodies). Fix: continue in a new chat, or ask Manager to trim the oversized "
                 "tool results from this chat's history.")
     return None

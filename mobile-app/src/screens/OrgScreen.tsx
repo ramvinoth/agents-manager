@@ -56,7 +56,7 @@ export default function OrgScreen({ navigation }: Props) {
 
   // Create a project via a cross-platform sheet (Alert.prompt is iOS-only, so an
   // inline prompt silently no-ops on Android). A project needs a real workspace
-  // dir — without a cwd a Harman-spawned session falls back to $HOME, which is
+  // dir — without a cwd a Manager-spawned session falls back to $HOME, which is
   // wrong — so we offer recent dirs as suggestions.
   const [creating, setCreating] = useState(false)
   const [dirs, setDirs] = useState<string[]>([])

@@ -41,8 +41,8 @@ function confirm(title: string, message: string, ok: string): Promise<boolean> {
 export async function pairFromLink(raw: string): Promise<boolean> {
   const link = parsePairLink(raw)
   if (!link) return false
-  const where = link.url || "your Harman through the Harman relay (end-to-end encrypted)"
-  const ok = await confirm("Connect this phone?", `Sign in to ${where}\n\nOnly continue if you just scanned this from your own Harman.`, "Connect")
+  const where = link.url || "your Manager through the Manager relay (end-to-end encrypted)"
+  const ok = await confirm("Connect this phone?", `Sign in to ${where}\n\nOnly continue if you just scanned this from your own Manager.`, "Connect")
   if (!ok) return false
   // A failed redeem must not strand the phone on a server it has no token for
   // (the screen underneath may be Home on the previous server), so switch back.

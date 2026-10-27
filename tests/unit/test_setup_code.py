@@ -14,7 +14,7 @@ from viewer.routes.auth import AuthMixin
 
 @pytest.fixture(autouse=True)
 def code_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("HARMAN_SETUP_CODE_FILE", str(tmp_path / "h" / "setup-code"))
+    monkeypatch.setenv("AGENTS_SETUP_CODE_FILE", str(tmp_path / "h" / "setup-code"))
     monkeypatch.setattr(auth, "_login_hits", {})
     return tmp_path / "h" / "setup-code"
 

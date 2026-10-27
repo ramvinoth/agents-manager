@@ -1,6 +1,6 @@
 ---
 name: update-spec
-description: After a change alters user-visible behaviour, update the feature's Harman spec note so the spec stays the truth. Use when finishing an implementation, fix or refactor that changed behaviour, states, data or interfaces.
+description: After a change alters user-visible behaviour, update the feature's Manager spec note so the spec stays the truth. Use when finishing an implementation, fix or refactor that changed behaviour, states, data or interfaces.
 ---
 
 # Keep the spec true

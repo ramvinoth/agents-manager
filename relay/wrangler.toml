@@ -1,4 +1,4 @@
-name = "harman-relay"
+name = "agents-relay"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 # The stable public address phones store at pairing time — never the workers.dev URL.

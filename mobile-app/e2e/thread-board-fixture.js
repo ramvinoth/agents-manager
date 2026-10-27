@@ -104,10 +104,10 @@ const INTEGRATIONS = {
     },
     {
       id: "aws", label: "Amazon Web Services", auth: "token", category: "compute", public: false, fields: [],
-      setup: [{ text: "Needs AWS request signing, which Harman doesn't do yet.", redirect: false, links: [] }],
+      setup: [{ text: "Needs AWS request signing, which Manager doesn't do yet.", redirect: false, links: [] }],
       client: { client_id: "", has_secret: false, configured: true },
       services: [{ id: "aws.api", label: "Amazon Web Services", kind: "api", agent: "", try: "", available: false,
-        unavailable: "Needs AWS request signing, which Harman doesn't do yet.", ops: [] }],
+        unavailable: "Needs AWS request signing, which Manager doesn't do yet.", ops: [] }],
       connections: [],
     },
   ],
@@ -124,8 +124,8 @@ const FS_TREE = {
   "/Users": [["fixture", true]],
   [FS_HOME]: [["notes.txt", false], ["projects", true], ["Desktop", true]],
   [`${FS_HOME}/Desktop`]: [],
-  [`${FS_HOME}/projects`]: [["harman", true], ["empire", true], ["README.md", false]],
-  [`${FS_HOME}/projects/harman`]: [],
+  [`${FS_HOME}/projects`]: [["agent", true], ["empire", true], ["README.md", false]],
+  [`${FS_HOME}/projects/agents`]: [],
   [`${FS_HOME}/projects/empire`]: [],
 }
 
@@ -350,7 +350,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     if (market && route === "POST /api/market/mcp/install") {
       const item = MARKET_MCP.find(i => i.id === body.id)
       if (!item) return send({ error: "No such server in the registry." }, 404)
-      if (!item.install) return send({ error: "This server needs Docker or a bundle installer; Harman installs npm, PyPI and hosted servers only." }, 400)
+      if (!item.install) return send({ error: "This server needs Docker or a bundle installer; Manager installs npm, PyPI and hosted servers only." }, 400)
       const gap = item.inputs.find(i => i.required && !(body.values || {})[i.name])
       if (gap) return send({ error: `${gap.name} is required.` }, 400)
       const name = item.id.split("/").pop()
@@ -425,7 +425,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     if (url.pathname === "/api/git/status") return send({ repo: false })
     if (url.pathname === "/api/chat/status") return send({ running: false, pending_approvals: [] })
     if (url.pathname === "/api/resolve" && ai) return send({ found: true, path: `/fixture/${NEW_SESSION}.jsonl` })
-    if (url.pathname === "/api/org/harman") return send({ enabled: false, automation_enabled: false, projects: [] })
+    if (url.pathname === "/api/org/orchestrator") return send({ enabled: false, automation_enabled: false, projects: [] })
     if (url.pathname === "/api/org/loop-control") return send({ mode: loopMode })
     if (url.pathname === "/api/org/system-preamble") return send({ preamble: "Isolated native fixture" })
     if (boardIsolation && ["/api/org/board", "/api/org/cards"].includes(url.pathname)) {

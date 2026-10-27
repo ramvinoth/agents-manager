@@ -155,7 +155,7 @@ export type Provider = { id: string; name: string; baseUrl: string; model: strin
 // Capabilities: skills + MCP tools (mirrors the web /api/capabilities shape).
 export type Skill = { name: string; description?: string; source: string; path: string; editable: boolean }
 export type McpServer = { name: string; scope: string; transport: string; target: string; config: Record<string, unknown>; editable: boolean }
-/** A chat's plugin. `agent` = in Harman's catalog, added/removed per chat (`included` =
+/** A chat's plugin. `agent` = in Manager's catalog, added/removed per chat (`included` =
  *  the chat's agent brings it by default); `machine` = enabled in Claude Code on the Mac. */
 export type Plugin = { name: string; description?: string; source: "agent" | "machine"; included: boolean; active: boolean }
 /** `agent`: the agent this chat was started from — where "Keep on agent" saves its setup. */
@@ -179,10 +179,10 @@ export type McpSignin = { name: string; stage: "idle" | "starting" | "url" | "do
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
-/** Harman (org) authority, server-enforced on every board/org action whatever the
+/** Manager (org) authority, server-enforced on every board/org action whatever the
  *  harness: ic < lead < manager (viewer/orglogic.LEVELS). Separate from the
  *  harness PermissionMode, which gates the CLI's own tools inside a run. */
-export type HarmanLevel = "ic" | "lead" | "manager"
+export type OrgLevel = "ic" | "lead" | "manager"
 export type AgentTemplate = {
   id: number; name: string; description: string; category: string; icon: string
   system_prompt: string; goal: string
@@ -193,8 +193,8 @@ export type AgentTemplate = {
   /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
    *  lens it turns on ("map"); both are read server-side from the template row. */
   plugin?: string; lens?: string
-  /** Harman authority a chat started from this role acts at on the board. */
-  level?: HarmanLevel
+  /** Manager authority a chat started from this role acts at on the board. */
+  level?: OrgLevel
   is_builtin: boolean; created_by: string; created_at: number
   /** Set = a personal agent only that user sees; null = shared/built-in. */
   owner_user_id?: number | null
@@ -315,19 +315,19 @@ export type Queued = { queued: true; approval: number }
 export const isQueued = (r: unknown): r is Queued =>
   !!r && (r as Queued).queued === true
 /** `automation_enabled` is the master switch (default off): while it is off NOTHING
- *  runs unattended — not Harman's manager tick, not scheduled loops. `enabled`
+ *  runs unattended — not the manager tick, not scheduled loops. `enabled`
  *  scopes only the manager tick, so it is meaningless while the master is off.
  *
  *  OPTIONAL on purpose: a server older than the switch omits the key entirely, and
  *  `undefined` must not collapse to `false` there — that server has no gate at all,
  *  so showing "off" would promise a pause that isn't happening. Callers must treat a
  *  missing value as *unknown*, never as off. */
-export type HarmanConfig = { automation_enabled?: boolean }
+export type OrchestratorConfig = { automation_enabled?: boolean }
 /** WHICH loop origins may fire, orthogonal to the automation master switch:
- *  user = the owner's own scheduled loops only (the default), harman = agent-created
+ *  user = the owner's own scheduled loops only (the default), agents = agent-created
  *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
- *  NOT start Harman's manager tick (that is `automation_enabled`). */
-export type LoopMode = "user" | "harman" | "both" | "none"
+ *  NOT start the manager tick (that is `automation_enabled`). */
+export type LoopMode = "user" | "agent" | "both" | "none"
 export type LoopControl = { mode: LoopMode }
 /** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
  *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
@@ -532,7 +532,7 @@ export const api = {
   chatStatus: (id: string) => req<ChatStatus>("GET", `/api/chat/status?id=${encodeURIComponent(id)}`),
   // One spoken exchange with the fast call brain. It answers in ~1-2 s: small talk
   // itself, real work handed to the session at `path` as a background turn (the
-  // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
+  // brain's ask_agents/check_agents/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
@@ -598,9 +598,9 @@ export const api = {
     req<{ session?: string; permission_mode?: PermissionMode; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
       "POST", "/api/session/mode", { for_session: session, mode }
     ),
-  /** Set the session's Harman level ("" clears it back to the level of the agent it was started from).
+  /** Set the session's Manager level ("" clears it back to the level of the agent it was started from).
    *  Red: from the app the owner's tap applies; anyone else's queues. */
-  sessionLevelSet: (session: string, level: HarmanLevel | "") =>
+  sessionLevelSet: (session: string, level: OrgLevel | "") =>
     req<{ session?: string; level?: string; error?: string; queued?: boolean; denied?: boolean; reason?: string }>(
       "POST", "/api/session/level", { for_session: session, level }
     ),
@@ -658,7 +658,7 @@ export const api = {
     req<{ saved?: boolean; error?: string }>("POST", "/api/mcp/save", body),
   mcpDelete: (body: { name: string; scope?: string; cwd?: string; host?: string; session?: string }) =>
     req<{ deleted?: boolean; error?: string }>("POST", "/api/mcp/delete", body),
-  /** Add (on) or remove one Harman plugin for a chat; returns the chat's plugin list. */
+  /** Add (on) or remove one Manager plugin for a chat; returns the chat's plugin list. */
   chatPlugin: (body: { session: string; name: string; on: boolean }) =>
     req<{ plugins: string[] }>("POST", "/api/chat/plugin", body),
   /** Keep this chat's plugins, skills and MCP on the agent it was started from. */
@@ -798,7 +798,7 @@ export const api = {
     req<IntegrationsView>("POST", "/api/integrations/token", body),
   integrationService: (body: { connection: string; service: string; on: boolean }) =>
     req<IntegrationsView>("POST", "/api/integrations/service", body),
-  // Harman's own OAuth client per provider. The secret is write-only: a save
+  // Manager's own OAuth client per provider. The secret is write-only: a save
   // without client_secret keeps the stored one; "" clears it.
   // Allow/disallow one operation for agents on one account (409 if never granted).
   integrationOp: (body: { connection: string; service: string; op: string; on: boolean }) =>
@@ -851,7 +851,7 @@ export const api = {
 
   // Barge-in wake-guard socket: a lightweight keyword-spotting stream that runs
   // WHILE the assistant is speaking. The server uses a cheap KWS pass (not full
-  // STT) so it can loop continuously; it fires only when the wake word "Harman"
+  // STT) so it can loop continuously; it fires only when the wake word "Manager"
   // is heard, returning the transcript tail for command parsing (stop / end /
   // new question).
   voiceWakeguardSocket: (speakerId = "default") =>
@@ -1012,9 +1012,9 @@ export const api = {
     req<Approval & { result?: { error?: string } }>("POST", "/api/org/approvals/resolve", body),
   orgAudit: async (result: AuditFilter = "all", before?: number) =>
     parseAuditPage(await req("GET", auditPath(result, before)), before),
-  orgHarman: () => req<HarmanConfig>("GET", "/api/org/harman"),
-  orgSetHarman: (patch: Partial<HarmanConfig>) =>
-    req<HarmanConfig | Queued>("POST", "/api/org/harman", patch),
+  orgOrchestrator: () => req<OrchestratorConfig>("GET", "/api/org/orchestrator"),
+  orgSetOrchestrator: (patch: Partial<OrchestratorConfig>) =>
+    req<OrchestratorConfig | Queued>("POST", "/api/org/orchestrator", patch),
   // Loop-firing mode. Manager-scoped and green (setting it never queues), so the
   // response is always the applied config — no Queued union, unlike the Red resume.
   orgLoopControl: () => req<LoopControl>("GET", "/api/org/loop-control"),

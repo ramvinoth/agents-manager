@@ -244,8 +244,8 @@ def _complete(path):
 def to_pdf(title, meta, body, chrome=None):
     chrome = chrome or find_chrome()
     if not chrome:
-        raise ExportUnavailable("PDF export needs Chrome or Chromium on the Harman server")
-    with tempfile.TemporaryDirectory(prefix="harman-pdf-") as d:
+        raise ExportUnavailable("PDF export needs Chrome or Chromium on the Manager server")
+    with tempfile.TemporaryDirectory(prefix="agents-pdf-") as d:
         src, dst = os.path.join(d, "note.html"), os.path.join(d, "note.pdf")
         with open(src, "w", encoding="utf-8") as f:
             f.write(to_html(title, meta, body))

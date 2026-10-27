@@ -75,7 +75,7 @@ def next_window(now):
 
 def supervised():
     """True when a supervisor restarts this process after it exits."""
-    return bool(os.environ.get("XPC_SERVICE_NAME", "").startswith("com.harman.")
+    return bool(os.environ.get("XPC_SERVICE_NAME", "").startswith("com.agents.")
                 or os.environ.get("INVOCATION_ID"))
 
 
@@ -247,4 +247,4 @@ def _tell(reqs, body):
         if sid:
             inbox.deliver_message("system", "maintenance", "session", sid, body)
         else:
-            inbox._push_owner("Harman · maintenance", body, {})
+            inbox._push_owner("Manager · maintenance", body, {})

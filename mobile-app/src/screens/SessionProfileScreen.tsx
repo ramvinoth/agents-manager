@@ -12,8 +12,8 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
-import { HARMAN_LEVELS, LEVEL_NAME, isHarmanLevel } from "../lib/harmanLevel"
+import { api, type Capabilities, type GitStatus, type OrgLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
+import { ORG_LEVELS, LEVEL_NAME, isOrgLevel } from "../lib/orgLevel"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
@@ -36,9 +36,9 @@ const MODES: { v: PermissionMode; label: string }[] = [
   { v: "bypass", label: "Bypass" },
 ]
 // "" = no per-chat override: the level of the agent the chat was started from.
-const LEVELS: { v: HarmanLevel | ""; label: string }[] = [
+const LEVELS: { v: OrgLevel | ""; label: string }[] = [
   { v: "", label: "Agent default" },
-  ...HARMAN_LEVELS.map((v) => ({ v, label: LEVEL_NAME[v] })),
+  ...ORG_LEVELS.map((v) => ({ v, label: LEVEL_NAME[v] })),
 ]
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
@@ -58,10 +58,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [modeSaving, setModeSaving] = useState(false)
   const [modeError, setModeError] = useState("")
   const [modeReload, setModeReload] = useState(0)
-  // Harman level: the override stored on the session ("" = none) and the level
+  // Manager level: the override stored on the session ("" = none) and the level
   // that actually applies (override → the agent it was started from → Own work), both from sessionMeta.
-  const [level, setLevel] = useState<HarmanLevel | "">("")
-  const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
+  const [level, setLevel] = useState<OrgLevel | "">("")
+  const [effectiveLevel, setEffectiveLevel] = useState<OrgLevel | "">("")
   const [levelSaving, setLevelSaving] = useState(false)
   const [levelNote, setLevelNote] = useState("")
   const modeRequest = useRef({ active: false, saving: false })
@@ -95,8 +95,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         }
         setModeTarget(meta.session)
         setModeState(stored)
-        setLevel(isHarmanLevel(meta.level) ? meta.level : "")
-        setEffectiveLevel(isHarmanLevel(meta.effective_level) ? meta.effective_level : "")
+        setLevel(isOrgLevel(meta.level) ? meta.level : "")
+        setEffectiveLevel(isOrgLevel(meta.effective_level) ? meta.effective_level : "")
       }).catch(e => {
         if (request.active && claude) setModeError(e?.message || "Could not load permission policy. Please retry.")
       }).finally(() => { if (request.active) setModeLoading(false) })
@@ -229,7 +229,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       if (request.active) setModeSaving(false)
     }
   }
-  const pickLevel = async (v: HarmanLevel | "") => {
+  const pickLevel = async (v: OrgLevel | "") => {
     const request = modeRequest.current
     if (!request.active || levelSaving || !modeTarget || modeLoading || v === level) return
     setLevelSaving(true); setLevelNote("")
@@ -447,7 +447,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       {agent === "claude" ? renderCard("behaviour", "settings", "Trust", trustLabel, <>
         <Text style={styles.sheetSection}>PERMISSION POLICY · CLAUDE CODE TOOLS</Text>
         <Text style={styles.sheetHint}>Saved on the server for future chat and scheduled runs, across devices. Does not change a run already in progress.</Text>
-        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. This governs the harness's own tools (shell, file edits) only; the Harman level below is separate.</Text>
+        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. This governs the harness's own tools (shell, file edits) only; the Manager level below is separate.</Text>
         {!mode && modeTarget ? <Text style={styles.sheetHint}>No saved policy. Each launch uses its requested mode; scheduled runs request Accept edits.</Text> : null}
         {!sessionId && !path ? <Text style={styles.sheetHint}>Start the chat before setting its permission policy.</Text> : null}
         {renderPill(MODES, mode, setMode, "sp-mode", "permission policy", modeSaving)}
@@ -459,7 +459,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         </> : null}
         <Text style={[styles.sheetSection, styles.spSectionGap]}>BOARD AUTHORITY · HOW FAR IT ACTS ALONE</Text>
-        <Text style={styles.sheetHint}>How far this chat may reach with no approval from you, enforced by the Harman server for any harness. Own work — its own cards, notes and messages. Workspace — also projects, columns and scheduled loops. Organization — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</Text>
+        <Text style={styles.sheetHint}>How far this chat may reach with no approval from you, enforced by the Manager server for any harness. Own work — its own cards, notes and messages. Workspace — also projects, columns and scheduled loops. Organization — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</Text>
         {renderPill(LEVELS, level, pickLevel, "sp-level", "Board authority", levelSaving)}
         {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting at {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</Text> : null}
         {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}

@@ -10,7 +10,7 @@
 #   release-feed.sh token-add <label>              mint a customer token (printed ONCE)
 #   release-feed.sh token-revoke <sha256-of-token> cut one customer off
 #
-# Signing key: $HARMAN_RELEASE_KEY (default ~/.harman/release-signing.key, mode
+# Signing key: $AGENTS_RELEASE_KEY (default ~/.agents/release-signing.key, mode
 # 600, never committed). Its public half is deploy/release-pubkey.txt, which
 # ships inside every release, so boxes need no key configuration.
 # Needs wrangler auth (`npx wrangler login` once, in release-feed/).
@@ -18,7 +18,7 @@ set -euo pipefail
 
 HM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FEED_DIR="$HM_DIR/../release-feed"
-KEY="${HARMAN_RELEASE_KEY:-$HOME/.harman/release-signing.key}"
+KEY="${AGENTS_RELEASE_KEY:-$HOME/.agents/release-signing.key}"
 PY=/usr/bin/python3   # has pynacl; the same interpreter launchd runs
 
 die() { echo "release-feed: $*" >&2; exit 1; }
@@ -51,7 +51,7 @@ case "$cmd" in
     tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
     printf '%s\n' "$1" > "$tmp"
     kv_put "tokens/$hash" "$tmp"
-    echo "token for '$1' (shown once — put it in the box's /opt/harman/update.env as HARMAN_FEED_TOKEN):"
+    echo "token for '$1' (shown once — put it in the box's /opt/agents/update.env as AGENTS_FEED_TOKEN):"
     echo "  $token"
     echo "revoke later with: $0 token-revoke $hash"
     ;;

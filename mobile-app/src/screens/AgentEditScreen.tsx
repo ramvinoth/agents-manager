@@ -11,7 +11,7 @@ import JobScheduler from "../components/JobScheduler"
 import { draftBlocker, draftFrom, draftPayload, pluginLabel, pluginRows, sameDraft, type AgentDraft } from "../lib/agentEdit"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { showActions } from "../lib/actionSheet"
-import { HARMAN_LEVELS, LEVEL_NAME, LEVEL_REACH } from "../lib/harmanLevel"
+import { ORG_LEVELS, LEVEL_NAME, LEVEL_REACH } from "../lib/orgLevel"
 import { describeSchedule } from "../lib/interval"
 import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
 import { userError } from "../lib/errors"
@@ -25,7 +25,7 @@ const ICONS: IconName[] = ["sparkle", "book", "school", "barbell", "airplane", "
 
 /**
  * Create or edit a personal agent — the hub a new chat starts from: name,
- * instructions, goal, AI (provider + model), board level, scheduled jobs, Harman plugins, and
+ * instructions, goal, AI (provider + model), board level, scheduled jobs, Manager plugins, and
  * its own skills and MCP servers (each new chat gets a copy). Only its owner
  * sees or edits it; the server enforces both. Built-ins are duplicated, not edited.
  * Plugins save with the form; skills and MCP save one by one, so they need the
@@ -253,7 +253,7 @@ export default function AgentEditScreen({ route, navigation }: Props) {
       {head("ON ITS OWN")}
       <View style={styles.aiGroup}>
         {valueRow({ testID: "agent-level", title: "Board access", first: true, value: LEVEL_NAME[d.level], sub: LEVEL_REACH[d.level],
-          onPress: () => showActions("Board access", HARMAN_LEVELS.map((v) => ({
+          onPress: () => showActions("Board access", ORG_LEVELS.map((v) => ({
             text: `${LEVEL_NAME[v]}${v === d.level ? "  ✓" : ""}`, onPress: () => set("level", v),
           }))) })}
         {d.jobs.map((job, i) => (

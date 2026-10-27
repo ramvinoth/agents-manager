@@ -1,7 +1,7 @@
 # ORCHESTRATOR — Kanban / Empire design (v1)
 
 > **Superseded in part (2026-10-08, card 146):** the Employees roster, card
-> assignment and the Harman manager tick described below were removed. Authority
+> assignment and the manager tick described below were removed. Authority
 > now comes from the agent role (agent_templates.level) or a per-chat override
 > (session_meta.level); see SESSIONS.md "Two trust layers". Read the rest as
 > design history.
@@ -10,7 +10,7 @@ Status: **design (v1)** — extends ORCHESTRATOR.md's charter with the owner's K
 (2026-08-15). No code until approved. Branch: `feature/orchestrator`.
 
 ## The vision (the owner's words, structured)
-- **The owner = Founder & CEO.** **Harman (Harness Manager) = the assistant that runs the empire** —
+- **The owner = Founder & CEO.** **Manager = the assistant that runs the empire** —
   monitors and manages everything, surfaces to the owner ONLY what truly needs their approval.
 - **Employees** are assigned to **projects**; they do the work **through chat sessions**, which are
   their *workspace* for that project. (session = employee's desk for one project)
@@ -18,7 +18,7 @@ Status: **design (v1)** — extends ORCHESTRATOR.md's charter with the owner's K
   create boards, add tasks, move cards, assign work.
 - **The owner swipes right on a chat session → Kanban view**, filtered to that employee / project /
   session. From there he can see + manage tasks, create boards, assign.
-- **Approval + Questions page**: Harman monitors/manages approvals; an **audit log** records
+- **Approval + Questions page**: Manager monitors/manages approvals; an **audit log** records
   everything; the owner is pinged only for the genuinely-needs-CEO items (narrow gate from the charter).
 - **Fresh install bootstrap**: first run installs the required **skills + MCP tools** so the whole
   system works out of the box.
@@ -42,9 +42,9 @@ is keyed to that employee's **responsibility/authority level** — not a flat al
 2. **Responsibility scope**: each employee has an authority level (e.g. `ic` < `lead` < `manager`).
    An action is allowed only if within the employee's scope — e.g. an IC can create/move/assign cards
    on their own project; only a lead+ can create projects or reassign across employees; hiring stays
-   Harman/CEO. Table-driven in `orglogic` (pure, testable) → `allowed(action, level)`.
+   Manager/CEO. Table-driven in `orglogic` (pure, testable) → `allowed(action, level)`.
 3. **Green/Red charter gate**: on top of scope, destructive/secret/money/infra actions are Red →
-   Harman queues an approval; the owner decides. `classify_action` already implements this.
+   Manager queues an approval; the owner decides. `classify_action` already implements this.
 4. **Audit**: every attempt (allowed or denied, by whom, at what level) appends to `audit_log`.
 So permission = responsibility: authority bounds *what* you can do; the Green/Red gate bounds *how
 risky*; the audit records *that you did*. An over-scope or Red action doesn't silently fail — it
@@ -57,12 +57,12 @@ becomes an approval item surfaced to the responsible party.
   tool. Requiring agent mode means the `kanban` MCP works UNIFORMLY for every employee. Feasible for
   cheap local models too: an employee's provider must expose an Anthropic Messages endpoint
   (`/v1/messages`) — the Qwen llama-swap gateway already does. Consequence: employee creation must set
-  a provider whose `anthropic_env` resolves (else Harman can't spawn the employee's session).
+  a provider whose `anthropic_env` resolves (else Manager can't spawn the employee's session).
 - **Board scope**: one common main board; all other boards are pre-filtered views. ✅
 - **Escalation cadence**: **hybrid** — batch Green-adjacent asks at loop end; interrupt immediately
   only for destructive / secret / money. All actions hit Approvals page + audit regardless; only Red
   pings the owner. ✅
-- **Who can hire**: **Harman can create employees AND projects** (within Green autonomy) — not just
+- **Who can hire**: **Manager can create employees AND projects** (within Green autonomy) — not just
   the owner. Creation is logged to the audit trail. ✅
 - **Persistence**: Postgres (`db.py`, via DATABASE_URL). **Employee identity** persists beyond any single session.
   **Budget ceiling**: optional, can be turned off. ✅
@@ -76,8 +76,8 @@ becomes an approval item surfaced to the responsible party.
 | Workspace | existing **chat session** | one session = one employee working one project. Links employeeId + projectId in session-meta. |
 | Board | ONE `board` (columns config) + `views` (saved filters) | Single canonical board for the whole empire; per-session/project/employee "boards" are just filtered views. Default columns Todo/Doing/Review/Done. |
 | Card / Task | one `cards` table | title, body, column, assignee(employeeId), projectId, sessionId, order, createdBy, timestamps. The ONLY card store. |
-| Approval | extend `pending_questions`/`pending_plans` pattern → `approvals` table | typed: destructive/secret/money/infra. Harman auto-handles Green; queues Red. |
-| Audit log | new `audit_log` table | append-only: who/what/when/target/outcome. Every Green action Harman takes + every Red decision. |
+| Approval | extend `pending_questions`/`pending_plans` pattern → `approvals` table | typed: destructive/secret/money/infra. Manager auto-handles Green; queues Red. |
+| Audit log | new `audit_log` table | append-only: who/what/when/target/outcome. Every Green action Manager takes + every Red decision. |
 
 All in the EXISTING Postgres (`viewer` DB) via `viewer/db.py` — new `init_db()` tables + accessors,
 mirroring the existing `pending_questions` lifecycle (set/get_open/resolve/delete).
@@ -91,16 +91,16 @@ agent: Claude/Qwen/Codex) can drive its own board from inside a turn:
 - `card_list(board|project|employee filter)`
 - `task_done(card)` → moves to Done + audit entry.
 Registered automatically per session (see bootstrap). Writes go through db.py; every mutation
-appends to `audit_log`. Harman reads the same tables to monitor.
+appends to `audit_log`. Manager reads the same tables to monitor.
 
 ## Server (viewer) — new surfaces
-- `viewer/orchestrator.py`: the registry + queue + Harman's tick. Employee/project CRUD, assignment,
+- `viewer/orchestrator.py`: the registry + queue + Manager's tick. Employee/project CRUD, assignment,
   board/card CRUD (shared by MCP tool + REST), approval queue, audit append.
 - `viewer/routes/orchestrator.py`: REST for the app — `/api/org/employees`, `/api/org/projects`,
   `/api/org/boards`, `/api/org/cards`, `/api/org/approvals`, `/api/org/audit`. (Cross-check: no
   duplicate of existing routes — this is net-new surface.)
 - `viewer/mcp/kanban_mcp.py`: the MCP server above.
-- Approval gate reuses the charter's Green/Red tiers. Harman auto-resolves Green + logs; Red items
+- Approval gate reuses the charter's Green/Red tiers. Manager auto-resolves Green + logs; Red items
   land on the Approvals page and (only these) notify the owner.
 
 ## App (mobile) — new surfaces
@@ -110,10 +110,10 @@ appends to `audit_log`. Harman reads the same tables to monitor.
 - **KanbanScreen**: columns + draggable cards (react-native-gesture-handler is already a dep). Create
   board, add/assign/move cards. Filter chips: employee / project / session.
 - **Org tab or CEO dashboard**: employees, projects, and the **Approvals & Questions** page
-  (Harman's queue) + **Audit log** view (read-only timeline).
+  (Manager's queue) + **Audit log** view (read-only timeline).
 - Pure logic in `lib/` (board/card ordering, filter predicates) — unit-tested, per CLAUDE.md.
 
-## Harman's role (the manager loop, from the charter)
+## Manager's role (the manager loop, from the charter)
 - Watches boards + sessions; assigns/unblocks within **Green** autonomy; advances cards.
 - **Escalation cadence** (the owner: **hybrid**, confirmed): batch Green-adjacent asks at loop end;
   interrupt immediately only for destructive/secret/money. Everything lands in the Approvals page +
@@ -134,10 +134,10 @@ session loads it automatically on next run.
 
 **The learning loop:**
 1. **Capture** — after a turn that solved something non-obvious or recovered from a mistake, the
-   employee (or Harman, watching) proposes a skill: a `SKILL.md` with a trigger description + the
+   employee (or Manager, watching) proposes a skill: a `SKILL.md` with a trigger description + the
    procedure/lesson. Origin card + session recorded (provenance).
 2. **Review (governed, so the library stays clean per CLAUDE.md)** — a proposed skill is an **approval
-   item**: Harman auto-accepts low-risk, non-overlapping additions and logs them (Green); broad,
+   item**: Manager auto-accepts low-risk, non-overlapping additions and logs them (Green); broad,
    destructive, or duplicate-of-existing ones go to the Approvals page for the owner (Red). Prevents a junk
    pile of near-duplicate skills — same no-duplication discipline as code.
 3. **Promote** — accepted skills are written to shared **user-scope** `~/.claude/skills/<name>/SKILL.md`
@@ -156,43 +156,43 @@ lesson mid-turn without leaving chat. Promotion still passes the governance gate
 
 **Why governed, not auto-write:** auto-writing a skill every turn would flood `~/.claude/skills` with
 overlapping junk — the exact duplication trap we're eliminating. Capture is cheap; promotion is
-reviewed (mostly Harman within Green; the owner only for the ambiguous ones).
+reviewed (mostly Manager within Green; the owner only for the ambiguous ones).
 
 ## Fresh-install bootstrap
 A `make bootstrap` (or first-run check in server startup) that ensures a working system on a clean
 box: install/register the required **skills** and the **kanban MCP** (+ permission MCP), create the
-default board columns, and seed the CEO (the owner) + Harman as the manager identity. Idempotent — safe to
+default board columns, and seed the CEO (the owner) + Manager as the manager identity. Idempotent — safe to
 re-run. This is what makes "everything works on fresh install" true.
 
 ## Resolved (was "open questions") — all locked with the owner 2026-08-15
 1. **Board scope** → ✅ one canonical board; others are filtered views. (See Board model.)
 2. **Escalation cadence** → ✅ hybrid (batch Green, interrupt destructive/secret/money).
 3. **Employee identity** → ✅ persistent record (name+role+provider+model+avatar+status); sessions are
-   its per-project work log. Harman spins up / resumes sessions for an employee on demand.
-4. **Who creates employees/projects** → ✅ Harman can (Green, audited) AND the owner.
+   its per-project work log. Manager spins up / resumes sessions for an employee on demand.
+4. **Who creates employees/projects** → ✅ Manager can (Green, audited) AND the owner.
 5. **MVP cut** → the FULL picture is the target (no half-measures). MVP is the first *vertical slice
    that works end-to-end*, then each phase adds a complete layer — NOT a permanently-reduced scope.
    Phasing below is the delivery order; the destination is the whole design.
 
 ## Full scope checklist — ALL SHIPPED (P0–P4 on `feature/orchestrator`, verified live)
 - [x] Postgres: employees, projects, cards, board-columns, approvals, audit_log, skills_learned (+ accessors + tests) — P0
-- [x] Employee identity persists; sessions link employee via provider preset; Harman spawns on demand — P0/P1/P3
+- [x] Employee identity persists; sessions link employee via provider preset; Manager spawns on demand — P0/P1/P3
 - [x] ONE canonical board; session/project/employee/CEO are filtered views (pure filter logic in lib/board.ts + orglogic.py) — P0/P2
 - [x] `kanban` MCP tool auto-registered per (agent-mode) session; any agent creates/moves/assigns cards from a turn — P1
-- [x] REST /api/org/* (employees, projects, board, cards, approvals, audit, harman, skills) — net-new, no dupes — P1/P3/P4
+- [x] REST /api/org/* (employees, projects, board, cards, approvals, audit, agents, skills) — net-new, no dupes — P1/P3/P4
 - [x] App: per-session board icon → filtered board; KanbanScreen (drag/assign/move); CEO dashboard (OrgScreen) — P2
 - [x] Approvals queue (Approve/Deny) + read-only Audit timeline — P2
-- [x] Harman loop: monitor + assign/spawn within Green; hybrid escalation; only Red pings the owner — P3 (hooked into loop_scheduler)
-- [x] Harman can hire (create employees/projects), audited — P1 route (manager authority)
+- [x] Manager loop: monitor + assign/spawn within Green; hybrid escalation; only Red pings the owner — P3 (hooked into loop_scheduler)
+- [x] Manager can hire (create employees/projects), audited — P1 route (manager authority)
 - [x] Budget ceiling (concurrent agent sessions), HARD_CAP-bounded; on-by-default but inert until a project is managed — P3
 - [x] Organizational learning: `skill_propose` MCP + governed promotion to shared `~/.claude/skills`
       + `skills_learned` ledger (provenance) + "Skills learned" CEO view; dedupe→approval before overwrite — P4
-- [x] `make bootstrap`: idempotent fresh-install — init_db + seed CEO the owner + manager Harman + skills dir
-      + default Harman config; README updated — P4
+- [x] `make bootstrap`: idempotent fresh-install — init_db + seed CEO the owner + manager Manager + skills dir
+      + default Manager config; README updated — P4
 
 ## Still OPEN (the owner's calls, not code)
 - [ ] Merge `feature/orchestrator` into the main line (Red-tier — The owner's explicit OK required).
-- [ ] First real run: create a project + cards, toggle Harman onto that project, watch it assign+spawn
+- [ ] First real run: create a project + cards, toggle Manager onto that project, watch it assign+spawn
       (burns real GPU — deliberately gated behind the owner starting it).
 
 
@@ -200,6 +200,6 @@ re-run. This is what makes "everything works on fresh install" true.
 - **P0 Data**: db.py tables (employees, projects, boards, cards, approvals, audit_log) + accessors + tests.
 - **P1 MCP**: kanban_mcp.py + auto-registration; prove a session can create/move a card.
 - **P2 REST + app**: /api/org/* routes; KanbanScreen + swipe-right entry; filters.
-- **P3 Harman loop**: monitor/assign within Green; Approvals page + audit; Red→notify the owner.
+- **P3 Manager loop**: monitor/assign within Green; Approvals page + audit; Red→notify the owner.
 - **P4 Bootstrap**: make bootstrap (skills + MCP + seed) idempotent; verify on a clean checkout.
 - Each phase: tsc/tests green, no dead code, ship to TestFlight, confirm testable.

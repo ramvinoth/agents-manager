@@ -1,7 +1,7 @@
 """Unit tests for viewer.orglogic — the pure org/Kanban logic (no db/server).
 
 Covers the "one canonical board → filtered views" rules (filter_cards, order_column,
-next_position fractional indexing), Harman's Green/Red approval gate (classify_action),
+next_position fractional indexing), Manager's Green/Red approval gate (classify_action),
 and the learned-skill dedup (dedupe_skill). Hermetic; runs under `make unit`.
 """
 from viewer import orglogic
@@ -158,7 +158,7 @@ def test_allowed_accepts_dict():
 def test_retired_roster_actions_are_unknown():
     """The Employees roster is gone: its actions must not linger in the scope
     table as a door nothing implements."""
-    for a in ("employee_create", "employee_update", "card_assign", "harman_config"):
+    for a in ("employee_create", "employee_update", "card_assign", "orchestrator_config"):
         assert orglogic.allowed(a, "manager") is False, a
 
 
@@ -282,7 +282,7 @@ def test_scheduling_loops_needs_lead_authority():
 
 
 def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
-    # Create/update stay green: a harman loop cannot FIRE until the owner licenses
+    # Create/update stay green: a agents loop cannot FIRE until the owner licenses
     # its origin via the loop-control mode, so authoring one is not itself risky.
     # Delete is irreversible (takes its run history with it) → red → queued.
     assert orglogic.is_red("loop_create") is False

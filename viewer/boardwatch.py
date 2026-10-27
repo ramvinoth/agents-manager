@@ -22,9 +22,9 @@ ones are in the card's comment thread, not lost.
 Origin is the CAUSE: a human's action (owner at the UI) makes a 'user' wake —
 a person asking, which the loop-firing mode 'user' licenses and which the
 automation master switch never halts (the 8f19861 contract). A foreign AGENT's
-action makes a 'harman' wake — autonomous, so it obeys the mode AND the
-switch, exactly like any other harman-origin loop. The wake can never be
-harman-origin when a human caused it, and never a self-wake: the caller
+action makes a 'agent' wake — autonomous, so it obeys the mode AND the
+switch, exactly like any other agent-origin loop. The wake can never be
+agent-origin when a human caused it, and never a self-wake: the caller
 (actions.execute) already excludes the card's own session as the actor.
 """
 import time
@@ -75,7 +75,7 @@ def schedule_once(lid, sid, prompt, origin):
         # `origin` is patched too: the mode filter acts on the LATEST cause, so
         # a coalesced event must never keep a stale one (a human's comment
         # merged into an agent-caused wake would otherwise never fire in
-        # 'user' mode — and vice versa in 'harman' mode). `session` is patched
+        # 'user' mode — and vice versa in 'agent' mode). `session` is patched
         # for the same reason: a card handed to another chat (card_update
         # session_id) must wake its NEW owner, not the chat that queued the
         # first event (card 170, 2026-10-11).

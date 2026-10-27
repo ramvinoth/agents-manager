@@ -121,8 +121,8 @@ export default function ProviderPicker({ config, scope, providers, title, localO
   </>
   const allProviders = [{id: "", name: "Built-in", baseUrl: "", model: ""}, ...providers]
   const rows = allProviders.filter(p => p.name.toLowerCase().includes(providerSearch.toLowerCase())).sort((a,b) => a.id === "" ? -1 : b.id === "" ? 1 : a.name.localeCompare(b.name))
-  const providerSub = (p: {id: string; baseUrl?: string}) => !p.id ? "Claude on this Harman server — full agent tools"
-    : !caps?.customProviders ? "Needs a newer Harman server" : (p.baseUrl || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "")
+  const providerSub = (p: {id: string; baseUrl?: string}) => !p.id ? "Claude on this Manager server — full agent tools"
+    : !caps?.customProviders ? "Needs a newer Manager server" : (p.baseUrl || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "")
   const current = providers.find(p => p.id === draft.provider)
   // A typed ID lives in its own row, so the list must not echo it back as an
   // extra "(current; not in discovered list)" entry on every keystroke.
@@ -152,7 +152,7 @@ export default function ProviderPicker({ config, scope, providers, title, localO
       </View> : null}
       <FlatList data={models} keyExtractor={r => r.id} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets
         ListHeaderComponent={<>
-          <Text style={styles.aiSectionHint}>{hint ?? (localOnly ? "Only this unsent chat. Your defaults are unchanged." : scope.id ? "Applies from this chat's next reply; a reply already running keeps its settings." : "What every new chat on this Harman server starts with. Existing chats keep their own.")}</Text>
+          <Text style={styles.aiSectionHint}>{hint ?? (localOnly ? "Only this unsent chat. Your defaults are unchanged." : scope.id ? "Applies from this chat's next reply; a reply already running keeps its settings." : "What every new chat on this Manager server starts with. Existing chats keep their own.")}</Text>
           {error || capError || missing || incompatible ? <Text testID="ai-error" accessibilityRole="alert" style={[styles.aiSectionHint, {color: t.danger}]}>{error || capError || (missing ? "Selected connection is unavailable. Choose another provider." : "This machine can't run that combination. Pick a different provider or model.")}</Text> : null}
           {config.issue ? <Text style={[styles.aiSectionHint, {color: t.danger}]}>{config.issue}</Text> : null}
 

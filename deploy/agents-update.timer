@@ -1,5 +1,5 @@
 [Unit]
-Description=Check the Harman release feed hourly
+Description=Check the Manager release feed hourly
 
 [Timer]
 OnBootSec=15min

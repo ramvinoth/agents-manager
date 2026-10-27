@@ -89,7 +89,7 @@ class ProvidersMixin:
 
     def _discover_models(self, base, key, pid=""):
         result = {"models": [], "choices": [], "source": "endpoint", "manualModelId": True}
-        headers = {"User-Agent": "harman-viewer/1.0"}
+        headers = {"User-Agent": "agents-viewer/1.0"}
         if key:
             headers["Authorization"] = "Bearer " + key
         try:

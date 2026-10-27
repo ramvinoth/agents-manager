@@ -3,7 +3,7 @@
 Two layers, both standard Claude Code plugins loaded with --plugin-dir (the
 engine reads config.session_plugin_dirs), so there is one loading mechanism:
 
-  - Harman plugins (the catalog, config.agent_plugin_names): the ones shipped
+  - Manager plugins (the catalog, config.agent_plugin_names): the ones shipped
     in viewer/agent_plugins. A chat starts with its agent's plugins
     ("included"); the owner may add or remove any of them. A plugin is added or
     removed whole — editing one would change it for every chat that uses it.
@@ -62,7 +62,7 @@ def extras_rows(root, source, editable):
 
 
 def merge_into(caps, sid):
-    """Add this chat's Harman plugins and extras to a capabilities dict
+    """Add this chat's Manager plugins and extras to a capabilities dict
     ({skills, mcp, plugins}) — read-only rows for plugin parts, editable rows
     for the chat's own extras — plus the catalog of plugins it could add."""
     meta = _meta(sid)
@@ -101,7 +101,7 @@ def merge_into(caps, sid):
 
 
 def set_plugin(sid, name, on):
-    """Add or remove one Harman plugin for this chat. Returns the new list."""
+    """Add or remove one Manager plugin for this chat. Returns the new list."""
     if not agent_plugin_dir(name):
         raise ChatPluginError("Unknown plugin", 404)
     current = session_plugins(_meta(sid))

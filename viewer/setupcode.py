@@ -4,7 +4,7 @@ Until an account exists, signup creates the OWNER, and the server may already
 be reachable from the LAN, a tailnet or a tunnel. Without a gate, whoever
 reaches a fresh install first owns it. So while there are no users the server
 keeps a random code in a 0600 file under the service user's home, prints it at
-boot, and the installer prints it too (`harman setup-code`). Signup must
+boot, and the installer prints it too (`agents setup-code`). Signup must
 present it; once the owner exists the code is deleted and signup is closed.
 No loopback exemption: a reverse proxy on the box makes every visitor look
 local, so the code is required everywhere (Jupyter's token model)."""
@@ -19,7 +19,7 @@ _LEN = 10   # 31^10 ≈ 2^49; with the 20/min signup throttle, unguessable
 
 
 def path():
-    return Path(os.environ.get("HARMAN_SETUP_CODE_FILE") or Path.home() / ".harman" / "setup-code")
+    return Path(os.environ.get("AGENTS_SETUP_CODE_FILE") or Path.home() / ".agents" / "setup-code")
 
 
 def ensure():

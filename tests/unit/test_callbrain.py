@@ -77,11 +77,11 @@ class TestRenderSnapshot:
              {"id": 1, "column_id": 9, "title": "old", "updated_at": T}]
 
     def test_clock_speaker_board_and_waiting_cards(self):
-        s = callbrain.render_snapshot(NOW, "user:ram", "Harman", COLS, self.cards, 2, "The work session is idle.")
+        s = callbrain.render_snapshot(NOW, "user:ram", "Manager", COLS, self.cards, 2, "The work session is idle.")
         assert s.startswith("Now: Saturday, September 26, 2026, 3:04 PM PDT.\nSpeaking with: user:ram.")
         # Counts are stated verbatim (total + per-column key:value): a small
         # model must only echo, never derive, any number in the answer.
-        assert "Board 'Harman': 4 open cards." in s
+        assert "Board 'Manager': 4 open cards." in s
         assert "Counts by column — Todo: 1 open; Doing: 1 open; Review: 1 open; Needs-info: 1 open." in s
         assert ('Waiting on the owner: Review: 1 open — #53 "Call mode" (2 hours). '
                'Needs-info: 1 open — #61 "Decision loop" (1 minute).') in s
@@ -125,7 +125,7 @@ def test_render_board_lists_open_cards_only():
 
 def test_render_card_with_blockers_and_comments():
     card = {"id": 53, "title": "Call mode", "updated_at": T - 600}
-    comments = [{"author": "session:Harman", "body": "first", "created_at": T - 500},
+    comments = [{"author": "session:Manager", "body": "first", "created_at": T - 500},
                 {"author": "user:ram", "body": "Ok  approved\n", "created_at": T - 60}]
     deps = [{"id": 9, "title": "Restart", "done": False}, {"id": 8, "title": "x", "done": True}]
     s = callbrain.render_card(card, "Review", comments, deps, T)
@@ -243,7 +243,7 @@ class FakeDb:
         return dict(self.meta)
 
     def project_get(self, pid):
-        return {"id": pid, "name": "Harman"}
+        return {"id": pid, "name": "Manager"}
 
     def approval_list_open(self):
         return [{"id": 1}]
@@ -324,7 +324,7 @@ def test_snapshot_composes_live_data(board, monkeypatch):
     s = callbrain.snapshot("sess", PRINCIPAL, now=NOW)
     assert "Now: Saturday, September 26, 2026, 3:04 PM PDT." in s
     assert "Speaking with: user:ram." in s
-    assert "Board 'Harman': 1 open card." in s
+    assert "Board 'Manager': 1 open card." in s
     assert "Counts by column — Review: 1 open." in s
     assert 'Review: 1 open — #53 "Call mode" (1 minute)' in s
     assert "approvals waiting on the owner in the app: 1." in s

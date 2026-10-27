@@ -158,7 +158,7 @@ function Install({ kind, item, session, chatScope, onInstalled, onDone }: {
         {item.repo && <a href={item.repo} target="_blank" rel="noreferrer" className="block truncate text-primary hover:underline">{item.repo}</a>}
       </div>
       {!installable ? (
-        <p>This server ships only as a Docker image or bundle. Harman installs npm, PyPI and hosted servers; add it by hand from its repository.</p>
+        <p>This server ships only as a Docker image or bundle. Manager installs npm, PyPI and hosted servers; add it by hand from its repository.</p>
       ) : (
         <>
           {inputs.map(i => (
@@ -245,7 +245,7 @@ function SignIn({ title, name, scope, session, onDone }: {
       <p className="font-medium">Installed. One step left: sign in.</p>
       <p className="text-muted-foreground">
         Your agents can't reach {title} until you sign in once. The publisher's sign-in page opens in a new tab;
-        Harman never sees your password.
+        Manager never sees your password.
       </p>
       {!state?.url ? (
         <Button className="w-full" disabled={busy || open} onClick={start}>

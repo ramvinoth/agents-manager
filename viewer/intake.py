@@ -10,8 +10,8 @@ board_wake sweep re-wakes it until the session answers. No new wake path.
 
 The owner's own in-app feedback is just one client: the channel flagged
 `app_feedback` also receives every feedback note the web/phone clients post
-(routes.usage). That is how Harman's developers route "this screen is bad"
-to the session building Harman — and how any other org routes it anywhere.
+(routes.usage). That is how Manager's developers route "this screen is bad"
+to the session building Manager — and how any other org routes it anywhere.
 
 Trust: a channel's text comes from OUTSIDE the org. The wake tells the
 session so (actions._board_followup), and the card body says where it came

@@ -23,11 +23,11 @@ A session's settings show both under **Trust**:
 | Layer | Question it answers | Where it lives | Who enforces it |
 |---|---|---|---|
 | **Harness permission mode** (default / acceptEdits / plan / bypass) | May this CLI run Bash, edit files, touch the machine without a prompt? | `session_meta.permission_mode` → the CLI's `--permission-mode` | The harness (Claude Code) inside its own process |
-| **Harman level** — shown as Worker < Lead < Manager (keys `ic < lead < manager`; "ic" = individual contributor, never shown to people) | What may this agent do *in the org* — create projects, schedule loops, rewrite the preamble? | `session_meta.level` (per-chat override) → the agent role's `agent_templates.level` → `ic` (`engine.resolve_level`) | The viewer server, in `actions.execute`, for every caller |
+| **Manager level** — shown as Worker < Lead < Manager (keys `ic < lead < manager`; "ic" = individual contributor, never shown to people) | What may this agent do *in the org* — create projects, schedule loops, rewrite the preamble? | `session_meta.level` (per-chat override) → the agent role's `agent_templates.level` → `ic` (`engine.resolve_level`) | The viewer server, in `actions.execute`, for every caller |
 
 They cannot merge: the harness never sees org actions (they arrive as MCP tool
 calls that are only transport to `/api/*`), and the server never sees a local
-`rm -rf`. MCP and skills are how a harness *reaches* Harman; the gate is the
+`rm -rf`. MCP and skills are how a harness *reaches* Manager; the gate is the
 server, so a Codex or Copilot session, the web UI and the phone app all meet the
 same rule.
 
@@ -39,11 +39,11 @@ any session they drive (`orglogic.effective_level` takes the weaker).
 
 ## Every session can see every other session
 
-Create a new chat and Harman — and every other session/agent — can see it
+Create a new chat and Manager — and every other session/agent — can see it
 immediately, with full detail. Nothing is private between sessions. This is the
 point: without total visibility, agents could not see the big picture,
 collaborate, or plan. Visibility is delivered in two tiers (progressive
-disclosure), both through the built-in Harman MCP:
+disclosure), both through the built-in Manager MCP:
 
 **Tier 1 — the thin list** (`session_list` → `/api/sessions`): every session on
 the host, each row carrying `id, title, project, provider, harness, running,

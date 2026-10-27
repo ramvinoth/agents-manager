@@ -22,7 +22,7 @@ export function userError(error: unknown, what: string, verb = "load"): string {
   const msg = (e.message || "").trim()
   if (e.status === 401) return "Your session expired. Sign in again."
   if (e.status === 403) return msg && !/^HTTP \d+$/.test(msg) ? msg : `You don't have access to ${what}.`
-  if (e.status === 404 && /^HTTP 404$/.test(msg)) return `This server doesn't support ${what} yet. Update Harman on the server.`
+  if (e.status === 404 && /^HTTP 404$/.test(msg)) return `This server doesn't support ${what} yet. Update Manager on the server.`
   if (isTransportError(e)) return "Can't reach the server. Check your connection and try again."
   if (msg === "No server configured") return "No server set up yet. Add one in Profile."
   if (!msg || /^HTTP \d+$/.test(msg)) return `Couldn't ${verb} ${what}. Try again.`

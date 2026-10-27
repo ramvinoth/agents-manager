@@ -93,7 +93,7 @@ class PanelsMixin:
         stays True (the process IS up; `db_ok` tells the prober the DB is not).
 
         `busy` is how many agent turns are running right now: the box's
-        auto-updater (`harman auto-update`) waits for 0 before restarting so it
+        auto-updater (`agents auto-update`) waits for 0 before restarting so it
         doesn't cut work off. A bare count, so a public probe learns no more
         than "the agents are working"."""
         with config.CHAT_LOCK:

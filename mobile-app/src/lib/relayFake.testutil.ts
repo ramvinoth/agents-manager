@@ -1,5 +1,5 @@
 /**
- * Test double for the far end of the Harman relay: a fake WebSocket whose
+ * Test double for the far end of the Manager relay: a fake WebSocket whose
  * peer speaks viewer/relay.py's end-to-end protocol. Shared by the transport
  * tests; not a test file itself (npm test runs *.test.ts only).
  */

@@ -600,7 +600,7 @@ class SessionsMixin:
                      "level": meta.get("level", ""),
                      "archived": bool(meta.get("archived", False)),
                      "favorite": bool(meta.get("favorite", False))},
-            # The Harman level this session acts at right now (override → its
+            # The Manager level this session acts at right now (override → its
             # agent role → ic), so a client shows the effective value next to
             # the owner's override without re-deriving the resolution order.
             "effective_level": resolve_level(sid),
@@ -664,7 +664,7 @@ class SessionsMixin:
                         "reason": body.get("reason") or ""})
 
     def _p_session_level(self, req):
-        """Set (or clear, level "") the Harman authority level a session acts at
+        """Set (or clear, level "") the Manager authority level a session acts at
         on the board — the org-side twin of _p_session_mode, with the same
         rails: Red (an agent's request queues for the owner), and a session may
         never change its own level. `for_session` names the target for the

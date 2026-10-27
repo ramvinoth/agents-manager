@@ -9,7 +9,7 @@ session):
   are untouched.
 - boardwatch.schedule_wake — an event on a card becomes AT MOST ONE one-shot
   wake for the card's own session; the wake's origin is the CAUSE (a human →
-  'user', a foreign agent → 'harman').
+  'user', a foreign agent → 'agent').
 - actions.execute's follow-up — which board events wake, which ones push the
   owner, and when the card's own session (the actor) is not woken.
 
@@ -149,13 +149,13 @@ def test_first_event_creates_a_one_shot_wake(floops):
 
 def test_a_coalesced_wake_follows_the_cards_new_owner(floops):
     boardwatch.schedule_wake(CARD, "moved to 'Review'", "user")
-    boardwatch.schedule_wake(dict(CARD, session_id="sess-new"), "new comment", "harman")
+    boardwatch.schedule_wake(dict(CARD, session_id="sess-new"), "new comment", "agent")
     assert floops.loops["bw7"]["session"] == "sess-new"
 
 
 def test_origin_is_passed_through_never_guessed(floops):
-    boardwatch.schedule_wake(CARD, "updated by session:bob", "harman")
-    assert floops.loops["bw7"]["origin"] == "harman"
+    boardwatch.schedule_wake(CARD, "updated by session:bob", "agent")
+    assert floops.loops["bw7"]["origin"] == "agent"
 
 
 def test_events_on_one_card_coalesce_into_a_single_wake(floops):
@@ -285,13 +285,13 @@ def test_followup_keeps_the_sweep_ledger(board):
         "human → pending, own session → cleared, foreign agent → pending"
 
 
-def test_foreign_agent_move_wakes_with_harman_origin(board):
+def test_foreign_agent_move_wakes_with_agent_origin(board):
     actions.execute(_it("card_move", {"card_id": 42, "column_id": 12},
                         "session:bob"),
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
-    assert origin == "harman" and "session:bob" in event
+    assert origin == "agent" and "session:bob" in event
     assert board.pushes == []
 
 
@@ -317,7 +317,7 @@ def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
                     "owner", "ic", acting_session="sess-2")
     assert len(board.wakes) == 1
     _, event, origin = board.wakes[0]
-    assert origin == "harman"
+    assert origin == "agent"
     assert "new comment by session:bob" in event
     assert board.pushes == [("Card 42 · Fix login", "session:bob: needs your call",
                              {"card": 42})]
@@ -397,7 +397,7 @@ def test_session_creating_its_own_card_wakes_nothing(board):
 def test_intake_card_wakes_with_user_origin_and_stays_flagged(board):
     """Regression (card 206): an intake door exists only because the owner opened
     or approved it, so its card's wake is the owner's standing request. As
-    'harman' it never fired on a default install (automation switch off) and a
+    'agent' it never fired on a default install (automation switch off) and a
     folder watcher's cards sat in Todo for days."""
     _created(board, "sess-1", "intake:ch_abc", level="ic")
     _, event, origin = board.wakes[0]

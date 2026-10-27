@@ -64,11 +64,11 @@ class TestSift(unittest.TestCase):
         self.assertEqual(Sift().public_base("http://[::1]:8091"), "http://[::1]:8120")
         # A public origin cannot reach a loopback Sift: refused, no ticket minted.
         with self.assertRaises(PluginError) as e:
-            Sift().open_url("/work", "https://harman.example.com")
+            Sift().open_url("/work", "https://agents.example.com")
         self.assertEqual(e.exception.status, 409)
         self.assertEqual(self.calls, [])
         with patch.dict("os.environ", {"SIFT_PUBLIC_URL": "https://sift.example.com/"}):
-            self.assertEqual(Sift().public_base("https://harman.example.com"), "https://sift.example.com")
+            self.assertEqual(Sift().public_base("https://agents.example.com"), "https://sift.example.com")
 
 
 class TestSiftCall(unittest.TestCase):

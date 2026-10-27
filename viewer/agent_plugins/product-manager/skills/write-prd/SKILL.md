@@ -1,6 +1,6 @@
 ---
 name: write-prd
-description: Write a product requirements document (PRD) for a feature or product idea and save it as a Harman note. Use when the user asks for a PRD, a product brief, requirements, or "what should we build and why".
+description: Write a product requirements document (PRD) for a feature or product idea and save it as a Manager note. Use when the user asks for a PRD, a product brief, requirements, or "what should we build and why".
 ---
 
 # Write a PRD

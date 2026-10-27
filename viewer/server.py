@@ -350,7 +350,7 @@ class SessionViewerHandler(
 
     def request_origin(self):
         """The origin the client reached this server on — scheme + host as the
-        browser sees it, e.g. 'https://harman.example.com' through the Cloudflare
+        browser sees it, e.g. 'https://agents.example.com' through the Cloudflare
         tunnel or 'http://localhost:8091' on the dev box. The tunnel forwards
         the browser's Host and sets X-Forwarded-Proto; without that header
         only a loopback host is plain http (a public hostname is never served
@@ -451,7 +451,7 @@ class SessionViewerHandler(
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
         "/api/org/maintenance": "_g_org_maintenance",
-        "/api/org/harman": "_g_org_harman",
+        "/api/org/orchestrator": "_g_org_orchestrator",
         "/api/org/loop-control": "_g_org_loop_control",
         "/api/org/system-preamble": "_g_org_system_preamble",
         "/api/org/skills": "_g_org_skills",
@@ -578,7 +578,7 @@ class SessionViewerHandler(
         "/api/org/card_dep_add": "_p_org_card_dep_add",
         "/api/org/card_dep_remove": "_p_org_card_dep_remove",
         "/api/org/approvals/resolve": "_p_org_approvals_resolve",
-        "/api/org/harman": "_p_org_harman",
+        "/api/org/orchestrator": "_p_org_orchestrator",
         "/api/org/loop-control": "_p_org_loop_control",
         "/api/org/system-preamble": "_p_org_system_preamble",
         "/api/org/loops": "_p_org_loops",
@@ -765,8 +765,8 @@ def main():
         # (its audit entry + the requesters' wake), if there was one.
         from viewer import maintenance
         threading.Thread(target=maintenance.finish_after_boot, daemon=True).start()
-        # Outbound to the Harman relay when it is on (the owner's switch, or
-        # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
+        # Outbound to the Manager relay when it is on (the owner's switch, or
+        # AGENTS_RELAY_URL). Never from a preflight spare: the relay keeps ONE
         # control socket per server, so a spare would steal the live server's phones.
         from viewer import relay
         if relay.start():
@@ -784,7 +784,7 @@ def main():
         try:
             if db.user_count() == 0:
                 print(f"  First run: create the owner account with setup code {setupcode.ensure()}")
-                print(f"  (also in {setupcode.path()}; `harman setup-code` prints it)")
+                print(f"  (also in {setupcode.path()}; `agents setup-code` prints it)")
             else:
                 setupcode.clear()   # an owner exists: a stale code must not linger
                 print("  Sign in at the URL above.")

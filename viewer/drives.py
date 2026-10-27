@@ -162,7 +162,7 @@ def _http(method, url, headers=None, data=None, timeout=60):
             if len(body) > MEMORY_BUDGET:
                 raise DriveError(
                     f"File is over {MEMORY_BUDGET // (1024 * 1024)} MB — too large to pass "
-                    "through Harman; open it in the vendor's own app", 413)
+                    "through Manager; open it in the vendor's own app", 413)
             return resp.status, dict(resp.headers), body
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read()
@@ -553,7 +553,7 @@ class GoogleDrive(_OAuthDrive):
         would leave the file unnamed (Drive assigns a random name), which would
         make every `created`/`path` we report a lie — so the metadata part always
         carries the name and MIME type. Returns the created file resource."""
-        boundary = "harman-" + secrets.token_hex(16)
+        boundary = "agents-" + secrets.token_hex(16)
         # `parents` rides in the metadata part, like every File field: as a
         # URL query it is silently ignored and the file lands in the root.
         meta = json.dumps({"name": name, "mimeType": mime, "parents": [parent_id]}).encode()

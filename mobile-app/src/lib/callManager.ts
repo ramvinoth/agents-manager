@@ -35,7 +35,7 @@ function uuidv4(): string {
 
 const SETUP_OPTIONS = {
   ios: {
-    appName: "Harman",
+    appName: "Manager",
     supportsVideo: false,
     maximumCallGroups: "1",
     maximumCallsPerCallGroup: "1",
@@ -45,7 +45,7 @@ const SETUP_OPTIONS = {
   // it's inert filler (no Android CallConnectionService wired).
   android: {
     alertTitle: "Permissions required",
-    alertDescription: "Harman needs access to make calls",
+    alertDescription: "Manager needs access to make calls",
     cancelButton: "Cancel",
     okButton: "OK",
     additionalPermissions: [],
@@ -111,7 +111,7 @@ class CallManager {
       })
     )
 
-    RNCallKeep.startCall(uuid, "Harman", label || "Harman", "generic", false)
+    RNCallKeep.startCall(uuid, "Manager", label || "Manager", "generic", false)
     // Mark it connected right away — there's no remote ringing party.
     RNCallKeep.setCurrentCallActive(uuid)
     return uuid

@@ -9,7 +9,7 @@ test("server-authored messages pass through", () => {
   assert.equal(userError(err("Permission denied: /root", 403), "this folder"), "Permission denied: /root")
 })
 test("bare HTTP fallbacks never reach the screen", () => {
-  assert.equal(userError(err("HTTP 404", 404), "files"), "This server doesn't support files yet. Update Harman on the server.")
+  assert.equal(userError(err("HTTP 404", 404), "files"), "This server doesn't support files yet. Update Manager on the server.")
   assert.equal(userError(err("HTTP 500", 500), "files"), "Couldn't load files. Try again.")
   assert.equal(userError(err("HTTP 403", 403), "files"), "You don't have access to files.")
 })

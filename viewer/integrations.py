@@ -1,4 +1,4 @@
-"""viewer.integrations — the catalog of what Harman can connect to, and the
+"""viewer.integrations — the catalog of what Manager can connect to, and the
 pure rules that say what a connected account may be used for.
 
 Two nouns:
@@ -8,7 +8,7 @@ Two nouns:
                in Integrations (db.drive_clients).
   service    — one thing an agent can use on that account (Google Drive,
                Gmail, Calendar…): the scopes it needs and what agents may do
-               with it. A service is AVAILABLE when Harman has an adapter
+               with it. A service is AVAILABLE when Manager has an adapter
                for it; Keep is listed but unavailable (see below), so the page
                tells the owner the truth instead of hiding the request.
 
@@ -46,7 +46,7 @@ Vendor facts (VERIFIED 2026-10-05 against developers.google.com):
     the token response's `scope` field lists what was granted.
   - Gmail scopes used here (gmail.readonly, gmail.compose) are RESTRICTED: a
     personal project (<100 users) works after an "unverified app" click-through;
-    distributing Harman beyond that needs Google verification + a security
+    distributing Manager beyond that needs Google verification + a security
     assessment. calendar.readonly is sensitive (same click-through).
   - calendar.events lets an app read and write events on every calendar the
     user can access (events.list/insert/patch/delete all accept it);
@@ -183,7 +183,7 @@ for _p in PROVIDERS.values():
 # A token provider's extra inputs beyond the token. `name` (every provider) is
 # how the owner tells two accounts apart — a Hetzner token covers ONE project.
 _NAME = {"id": "name", "label": "Name", "placeholder": "Optional — e.g. Production", "required": False}
-_UA = "Harman/1.0 (+https://agents.suhai.ai)"
+_UA = "Manager/1.0 (+https://agents.suhai.ai)"
 _TOKEN = []      # (provider id, service entry), turned into SERVICES below
 
 
@@ -199,7 +199,7 @@ def _token(pid, label, category, base, verify, setup, agent, try_, docs, account
                       "verify_body": verify_body, "secret": secret,
                       "account": account, "header": auth, "headers": dict({"User-Agent": _UA}, **(headers or {})),
                       "fields": (_NAME,) + tuple(fields), "reads": tuple(reads), "docs": docs,
-                      "setup": tuple(setup) + ({"text": "Paste the %s below. Harman checks it with %s before saving."
+                      "setup": tuple(setup) + ({"text": "Paste the %s below. Manager checks it with %s before saving."
                                                         % (secret[0].lower() + secret[1:], label)},)}
     _TOKEN.append({"id": pid + ".api", "provider": pid, "label": label, "kind": "api",
                    "scopes": (pid + ".api",),
@@ -226,7 +226,7 @@ _token("cloudflare", "Cloudflare", "network", "https://api.cloudflare.com/client
        "List my Cloudflare zones and their DNS records, and point out anything misconfigured.",
        "https://developers.cloudflare.com/api/")
 _token("tailscale", "Tailscale", "network", "https://api.tailscale.com/api/v2", "/tailnet/-/keys",
-       ({"text": "Generate an API access token. It lasts 1 to 90 days; when it ends, Harman asks you for a new one.",
+       ({"text": "Generate an API access token. It lasts 1 to 90 days; when it ends, Manager asks you for a new one.",
          "links": (("Keys", "https://login.tailscale.com/admin/settings/keys"),)},),
        "See your tailnet's machines, keys and access rules; change them only if you allow it.",
        "List the machines on my tailnet, when each was last seen, and any key that expires within 30 days.",
@@ -285,7 +285,7 @@ _token("railway", "Railway", "compute", "https://backboard.railway.com/graphql",
        verify_body={"query": "query { me { name email } }"})
 _token("aws", "Amazon Web Services", "compute", "https://{service}.{region}.amazonaws.com",
        "/sts/?Action=GetCallerIdentity&Version=2011-06-15",
-       ({"text": "In IAM, create a user for Harman (never use the root account's keys). Attach "
+       ({"text": "In IAM, create a user for Manager (never use the root account's keys). Attach "
                  "ReadOnlyAccess unless agents should create or change resources — that costs money. "
                  "New AWS accounts get $100–200 of credits for 6 months.",
          "links": (("IAM users", "https://console.aws.amazon.com/iam/home#/users"),
@@ -302,12 +302,12 @@ _token("aws", "Amazon Web Services", "compute", "https://{service}.{region}.amaz
                 "default": "us-east-1"}))
 _token("gcp", "Google Cloud", "compute", "https://{service}.googleapis.com",
        "/cloudresourcemanager/v1/projects/{project}",
-       ({"text": "In IAM → Service accounts, create one for Harman in your project and grant it Viewer "
+       ({"text": "In IAM → Service accounts, create one for Manager in your project and grant it Viewer "
                  "(or Editor if agents should create resources — that costs money). Always Free includes "
                  "one e2-micro VM in us-west1, us-central1 or us-east1.",
          "links": (("Service accounts", "https://console.cloud.google.com/iam-admin/serviceaccounts"),
                    ("Free tier", "https://cloud.google.com/free"))},
-        {"text": "Turn on the Cloud Resource Manager API (Harman checks the key with it), plus any API "
+        {"text": "Turn on the Cloud Resource Manager API (Manager checks the key with it), plus any API "
                  "agents should use, such as Compute Engine.",
          "links": (("Resource Manager API", _ENABLE + "cloudresourcemanager.googleapis.com"),
                    ("Compute Engine API", _ENABLE + "compute.googleapis.com"))},
@@ -322,7 +322,7 @@ _token("gcp", "Google Cloud", "compute", "https://{service}.googleapis.com",
                 "required": False},))
 _token("azure", "Microsoft Azure", "compute", "https://management.azure.com",
        "/subscriptions/{subscription}?api-version=2022-12-01",
-       ({"text": "In Microsoft Entra ID → App registrations, register an app for Harman. Copy its "
+       ({"text": "In Microsoft Entra ID → App registrations, register an app for Manager. Copy its "
                  "Directory (tenant) ID and Application (client) ID.",
          "links": (("App registrations", "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps"),
                    ("Azure free account", "https://azure.microsoft.com/free/"))},
@@ -340,7 +340,7 @@ _token("azure", "Microsoft Azure", "compute", "https://management.azure.com",
                 "required": True},
                {"id": "subscription", "label": "Subscription ID", "placeholder": "xxxxxxxx-…", "required": True}))
 _planned("oracle", "Oracle Cloud", "compute",
-         "Needs Oracle's request signing, which Harman doesn't do yet.",
+         "Needs Oracle's request signing, which Manager doesn't do yet.",
          ("Always Free", "https://www.oracle.com/cloud/free/"))
 _token("discord", "Discord", "social", "https://discord.com/api/v10", "/users/@me",
        ({"text": "Create an application, open Bot, press Reset Token and copy it.",
@@ -434,7 +434,7 @@ SERVICES = (
      "try": "",
      "available": False,
      "unavailable": "Google only opens the Keep API to Workspace admins, not personal "
-                    "accounts. Use Harman Notes — agents already read and write them."},
+                    "accounts. Use Manager Notes — agents already read and write them."},
     {"id": "dropbox.files", "provider": "dropbox", "label": "Dropbox", "kind": "files",
      "scopes": ("files.metadata.read", "files.content.read", "files.content.write"), "ops": _FILE_OPS,
      "agent": "Browse, read and save files; files appear in the Files tab.",
@@ -737,7 +737,7 @@ def verify_problem(pid, body):
     text = body if isinstance(body, str) else json.dumps(body)
     if pid == "aws" and re.search(r"arn:aws:iam::\d+:root", text):
         return ("These are the AWS root account's keys, which can do anything. Create an IAM user for "
-                "Harman and paste its keys instead")
+                "Manager and paste its keys instead")
     if isinstance(body, dict) and body.get("errors") and not body.get("data"):
         msg = (body["errors"][0] or {}).get("message", "") if isinstance(body["errors"], list) else ""
         return "%s refused this token%s" % (provider(pid)["label"], ": " + msg if msg else "")

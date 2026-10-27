@@ -214,7 +214,7 @@ export default function ProvidersScreen(_: Props) {
         </TouchableOpacity>
       </View>
       <Text style={styles.sheetHint}>
-        Each model has its own context window; Harman compacts a chat before it overflows. Tap a model to make it the default. Leave the override blank to use what the endpoint reports.
+        Each model has its own context window; Manager compacts a chat before it overflows. Tap a model to make it the default. Leave the override blank to use what the endpoint reports.
       </Text>
       {discoveryNote ? <Text testID="provider-discovery-status" accessibilityRole="text" style={styles.sheetHint}>{discoveryNote}</Text> : null}
 

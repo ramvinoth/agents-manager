@@ -37,7 +37,7 @@ export function createRuntime(set: SetState, get: GetState) {
     get().loadAgents()
     get().loadDesktop()
     get().loadProviders() // global provider library — session-independent
-    get().loadOrchestration() // master switch + loop mode (gates the Harman UI)
+    get().loadOrchestration() // master switch + loop mode (gates the Manager UI)
     api.getPrefs().then((p: any) => {
       // A server-side theme is a cross-device preference, so it wins, but only
       // when it says something: absent leaves the local choice (or the dark

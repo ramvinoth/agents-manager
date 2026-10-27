@@ -142,7 +142,7 @@ test("addToList relay-only: synthetic url, direct address empty, display hides i
   const { entry } = addToList(EMPTY_STATE, "", undefined, RELAY)
   assert.equal(entry.url, relayOnlyUrl(RELAY.serverId))
   assert.equal(directUrl(entry), "")
-  assert.equal(displayAddress(entry), "Remote (via Harman relay)")
+  assert.equal(displayAddress(entry), "Remote (via Manager relay)")
   assert.deepEqual(entry.relay, RELAY)
 })
 

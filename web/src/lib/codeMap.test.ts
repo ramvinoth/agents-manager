@@ -14,7 +14,7 @@ eq("file drills to its insides", drillTarget(N({ id: "viewer/db.py", kind: "file
 eq("class is a leaf", drillTarget(N({ id: "a.py#A", kind: "class" })), null)
 eq("method is a leaf", drillTarget(N({ id: "a.py#A.f", kind: "method" })), null)
 
-eq("project crumbs", crumbs({ level: "project", path: "" }, "Harman"), [{ level: "project", path: "", label: "Harman" }])
+eq("project crumbs", crumbs({ level: "project", path: "" }, "Manager"), [{ level: "project", path: "", label: "Manager" }])
 eq("folder crumbs", crumbs({ level: "folder", path: "viewer/routes" }, "H").map((c) => [c.level, c.path]),
   [["project", ""], ["folder", "viewer"], ["folder", "viewer/routes"]])
 eq("file crumbs end on the file", crumbs({ level: "file", path: "viewer/db.py" }, "H").map((c) => [c.level, c.path, c.label]),

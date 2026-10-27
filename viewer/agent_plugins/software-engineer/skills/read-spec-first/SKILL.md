@@ -1,6 +1,6 @@
 ---
 name: read-spec-first
-description: Before changing code for a feature or card, find and read its spec and PRD in the project's Harman notes, so the change matches the agreed behaviour. Use at the start of any implementation, bug fix or refactor task.
+description: Before changing code for a feature or card, find and read its spec and PRD in the project's Manager notes, so the change matches the agreed behaviour. Use at the start of any implementation, bug fix or refactor task.
 ---
 
 # Read the spec before coding

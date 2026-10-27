@@ -1,5 +1,5 @@
 {
-  "name": "harman-relay",
+  "name": "agents-relay",
   "private": true,
   "type": "module",
   "scripts": {

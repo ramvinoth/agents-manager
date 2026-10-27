@@ -264,10 +264,10 @@ def test_red_and_tool_approval_refs_never_collide():
 
 
 def test_format_red_asks_first_and_names_cost_and_asker():
-    body = inbox.format_red("Delete card", "#12 Fix login", "Deleted for good.", "session:Harman")
+    body = inbox.format_red("Delete card", "#12 Fix login", "Deleted for good.", "session:Manager")
     first = body.splitlines()[0]
     assert first == "Approve or deny: Delete card: #12 Fix login"
-    assert "session:Harman" in body and "Deleted for good." in body
+    assert "session:Manager" in body and "Deleted for good." in body
 
 
 def test_format_red_carries_the_askers_why_or_says_it_is_missing():

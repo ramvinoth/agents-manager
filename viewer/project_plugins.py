@@ -1,9 +1,9 @@
 """viewer.project_plugins — apps that live beside a project's sessions.
 
-A project plugin is an outside app that shares a project's folder with Harman:
+A project plugin is an outside app that shares a project's folder with Manager:
 the owner opens it from the project's pinned rows (next to Tasks, Notes, Inbox
 and Map) and every local Claude run in that folder gets the app's own Claude
-Code plugin (its skills and MCP server), so agents operate it too. Harman only
+Code plugin (its skills and MCP server), so agents operate it too. Manager only
 knows the contract — label, icon, the env that turns it on, where the app's
 plugin folder is, and how to mint the URL the owner's browser opens. The app's
 behaviour stays in the app.
@@ -59,7 +59,7 @@ class ProjectPlugin:
 
     def open_url(self, cwd, origin):
         """The URL the owner's browser opens for this project folder; `origin`
-        is the address the browser reached Harman on."""
+        is the address the browser reached Manager on."""
         raise NotImplementedError
 
     def row(self):
@@ -69,8 +69,8 @@ class ProjectPlugin:
 class Sift(ProjectPlugin):
     """Sift, the PDF reader with a workspace. SIFT_URL is where this server
     reaches it; SIFT_PUBLIC_URL (optional) is where the owner's browser does —
-    it must be the same site as Harman's address, or the browser keeps Sift's
-    sign-in cookie out of the frame. SIFT_EMAIL is the Sift account Harman's
+    it must be the same site as Manager's address, or the browser keeps Sift's
+    sign-in cookie out of the frame. SIFT_EMAIL is the Sift account Manager's
     owner and agents share, so both see one project per folder."""
 
     id, label, icon = "sift", "Sift", "BookOpenText"
@@ -100,7 +100,7 @@ class Sift(ProjectPlugin):
 
     def public_base(self, origin):
         """Sift's address as the browser sees it: SIFT_PUBLIC_URL, else SIFT_URL's
-        port on the host the browser reached Harman on — which only works when
+        port on the host the browser reached Manager on — which only works when
         that host is this machine, so a public origin without SIFT_PUBLIC_URL is
         refused rather than handed a frame that cannot sign in."""
         public = _env("SIFT_PUBLIC_URL")

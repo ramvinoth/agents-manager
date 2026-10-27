@@ -95,7 +95,7 @@ export default function LoginScreen({ navigation }: Props) {
             onChangeText={setSetupCode}
           />
           <Text style={styles.hint}>
-            First run on this instance — this creates the owner account. The setup code is shown when Harman is installed.
+            First run on this instance — this creates the owner account. The setup code is shown when Manager is installed.
           </Text>
         </>
       ) : null}

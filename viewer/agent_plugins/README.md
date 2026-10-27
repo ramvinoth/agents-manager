@@ -37,5 +37,5 @@ to every **local** Claude run. Plugin parts are namespaced (`<plugin>:<skill>`,
 `plugin:<plugin>:<server>`), so they never collide with user/project skills or
 MCP. Remote, Codex, Copilot and custom-provider runs get the persona only.
 
-The skills write into Harman's own ledgers (notes, cards) through the
+The skills write into Manager's own ledgers (notes, cards) through the
 `mcp__viewer__*` tools every session already has — no new storage.

@@ -1,12 +1,12 @@
 /*
- * Harman.app's executable: runs the viewer as its child so macOS privacy
- * settings (Screen Recording, Accessibility) list and grant "Harman" rather
+ * Agents.app's executable: runs the viewer as its child so macOS privacy
+ * settings (Screen Recording, Accessibility) list and grant "Manager" rather
  * than the Python interpreter. TCC charges a process's access to its
  * responsible app, and a child spawned here stays this app's responsibility.
  *
- *   Harman <command> [args…]   spawn the command, forward stop signals, exit as it exits
- *   Harman --request-access    ask macOS for both permissions once, which adds
- *                              Harman to both lists; run it via `open -a`
+ *   Manager <command> [args…]   spawn the command, forward stop signals, exit as it exits
+ *   Manager --request-access    ask macOS for both permissions once, which adds
+ *                              Manager to both lists; run it via `open -a`
  */
 #include <ApplicationServices/ApplicationServices.h>
 #include <signal.h>
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     pid_t pid;
     int err = posix_spawnp(&pid, argv[1], NULL, NULL, &argv[1], environ);
     if (err) {
-        fprintf(stderr, "Harman: cannot start %s: %s\n", argv[1], strerror(err));
+        fprintf(stderr, "Manager: cannot start %s: %s\n", argv[1], strerror(err));
         return 127;
     }
     child = pid;

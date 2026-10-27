@@ -10,7 +10,7 @@ import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
 import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
-import { createHarman, HARMAN_TITLE } from "../lib/harman"
+import { createManager, MANAGER_TITLE } from "../lib/manager"
 import type { StartingChat } from "../lib/session"
 import { activity, groupByProject } from "../lib/chatList"
 import { useTheme } from "../lib/useTheme"
@@ -60,11 +60,11 @@ export default function ChatsScreen({ navigation }: Props) {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // The master switch decides whether the orchestrator exists for this app at
-  // all: OFF → no pinned Harman entry, the plain chat-session list it is.
+  // all: OFF → no pinned Manager entry, the plain chat-session list it is.
   const [automationOn, setAutomationOn] = useState(false)
-  const [harmanBusy, setHarmanBusy] = useState(false)
-  // The Harman just started here: it's untitled until its transcript exists.
-  const startedHarman = useRef<{ host: string; starting: StartingChat; at: number } | null>(null)
+  const [managerBusy, setManagerBusy] = useState(false)
+  // The Manager just started here: it's untitled until its transcript exists.
+  const startedManager = useRef<{ host: string; starting: StartingChat; at: number } | null>(null)
   const t = useTheme()
   const styles = useStyles()
   const { online } = useReachability()
@@ -190,34 +190,34 @@ export default function ChatsScreen({ navigation }: Props) {
     }
   }
 
-  // Open the orchestrator: jump to the existing Harman session if one is already
+  // Open the orchestrator: jump to the existing Manager session if one is already
   // running on this host, otherwise bootstrap one and then open it. Guarded so a
-  // double-tap during the ~seconds-long create doesn't spawn a second Harman.
-  async function openHarman() {
-    if (harmanBusy) return
-    const existing = sessions.find((s) => s.title === HARMAN_TITLE)
+  // double-tap during the ~seconds-long create doesn't spawn a second Manager.
+  async function openManager() {
+    if (managerBusy) return
+    const existing = sessions.find((s) => s.title === MANAGER_TITLE)
     // Started moments ago but not titled yet: reopen that one, never a second.
-    const fresh = startedHarman.current
+    const fresh = startedManager.current
     if (!existing && fresh && fresh.host === host && Date.now() - fresh.at < 180_000) {
-      navigation.navigate("Thread", { host, label: HARMAN_TITLE, starting: fresh.starting })
+      navigation.navigate("Thread", { host, label: MANAGER_TITLE, starting: fresh.starting })
       return
     }
     if (existing) {
       markSeen(existing.path)
-      navigation.navigate("Thread", { host, label: HARMAN_TITLE, path: existing.path })
+      navigation.navigate("Thread", { host, label: MANAGER_TITLE, path: existing.path })
       return
     }
-    setHarmanBusy(true)
+    setManagerBusy(true)
     try {
-      const { path, starting } = await createHarman(host)
-      startedHarman.current = { host, starting, at: Date.now() }
+      const { path, starting } = await createManager(host)
+      startedManager.current = { host, starting, at: Date.now() }
       if (path) markSeen(path)
-      navigation.navigate("Thread", { host, label: HARMAN_TITLE, path, starting })
+      navigation.navigate("Thread", { host, label: MANAGER_TITLE, path, starting })
       load(true)
     } catch (e) {
-      setError(userError(e, "Harman", "start"))
+      setError(userError(e, "Manager", "start"))
     } finally {
-      setHarmanBusy(false)
+      setManagerBusy(false)
     }
   }
 
@@ -309,9 +309,9 @@ export default function ChatsScreen({ navigation }: Props) {
       load(true) // silent refresh on return — no spinner, no visible reload
       const id = setInterval(() => load(true), 4000)
       // The master switch is editable from Profile / Company; re-read it on focus
-      // so the pinned Harman row appears/disappears in step with the server.
+      // so the pinned Manager row appears/disappears in step with the server.
       let alive = true
-      api.orgHarman()
+      api.orgOrchestrator()
         .then((h) => alive && setAutomationOn(h.automation_enabled === true))
         .catch(() => alive && setAutomationOn(false))
       return () => {
@@ -394,25 +394,25 @@ export default function ChatsScreen({ navigation }: Props) {
                   <Text style={[styles.archivedRowText, { marginLeft: "auto", color: t.textMuted }]}>{archivedCount}</Text>
                 </TouchableOpacity>
               ) : null}
-              {/* Pinned Harman — the orchestrator's home, above the project groups.
+              {/* Pinned Manager — the orchestrator's home, above the project groups.
                   Only when the master switch is on, in the main (non-archived) view,
                   and matching the search. Off → it doesn't exist in this app. */}
-              {automationOn && !showArchived && (!query.trim() || "harman".includes(query.trim().toLowerCase())) ? (
+              {automationOn && !showArchived && (!query.trim() || MANAGER_TITLE.toLowerCase().includes(query.trim().toLowerCase())) ? (
                 <TouchableOpacity
-                  testID="pinned-harman"
+                  testID="pinned-agent"
                   style={[styles.chatRow, { borderBottomColor: t.border }]}
-                  onPress={openHarman}
-                  disabled={harmanBusy}
+                  onPress={openManager}
+                  disabled={managerBusy}
                 >
                   <View style={[styles.avatar, { backgroundColor: t.chipBg }]}>
-                    {harmanBusy ? <ActivityIndicator color={t.accent} /> : <Icon name="sparkle" size={24} color={t.accent} />}
+                    {managerBusy ? <ActivityIndicator color={t.accent} /> : <Icon name="sparkle" size={24} color={t.accent} />}
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.chatName, { color: t.text }]} numberOfLines={1}>
-                      {HARMAN_TITLE}
+                      {MANAGER_TITLE}
                     </Text>
                     <Text style={styles.chatSub} numberOfLines={1}>
-                      {harmanBusy ? "Starting…" : "Orchestrator · every project"}
+                      {managerBusy ? "Starting…" : "Orchestrator · every project"}
                     </Text>
                   </View>
                   <Icon name="chevronRight" size={18} color={t.textMuted} />

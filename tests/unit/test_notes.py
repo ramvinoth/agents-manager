@@ -235,5 +235,5 @@ def test_export_route_zips_an_obsidian_vault(fdb):
     h._g_org_notes_export(_Req({"project": ["7"]}))
     assert sent["name"] == "Empire notes.zip" and sent["ctype"] == "application/zip"
     z = zipfile.ZipFile(io.BytesIO(sent["data"]))
-    assert z.namelist() == ["Harman Notes/A.md"]
-    assert z.read("Harman Notes/A.md").decode().endswith("---\n[[B]]")
+    assert z.namelist() == ["Manager Notes/A.md"]
+    assert z.read("Manager Notes/A.md").decode().endswith("---\n[[B]]")

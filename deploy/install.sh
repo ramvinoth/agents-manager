@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# deploy/install.sh — idempotent fresh-machine install for the Harman viewer.
+# deploy/install.sh — idempotent fresh-machine install for the Manager viewer.
 #
 # Cross-platform (Linux + macOS). Brings a clean checkout to a running,
 # reboot-surviving instance on :8091:
 #   system deps → Postgres `viewer` DB → bootstrap → web build → service.
 # Every step is a no-op when already done, so it is safe to re-run.
 #
-#   Linux : apt + `sudo -u postgres` DB + systemd unit (harman-viewer.service)
-#   macOS : Homebrew + `brew services` DB + launchd agent (com.harman.viewer)
+#   Linux : apt + `sudo -u postgres` DB + systemd unit (agents-viewer.service)
+#   macOS : Homebrew + `brew services` DB + launchd agent (com.agents.viewer)
 #
-# The steps themselves live in deploy/lib.sh so the `harman` update path reuses
+# The steps themselves live in deploy/lib.sh so the `agents` update path reuses
 # them verbatim; this file just sequences them. See lib.sh for the env knobs.
 #
 # Usage:

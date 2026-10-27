@@ -141,7 +141,7 @@ export default function NotesScreen({ navigation, filter, title, tag }: Props) {
     if (exporting) return
     setExporting(true)
     setActionError("")
-    const dest = FileSystem.cacheDirectory + "Harman notes.zip"
+    const dest = FileSystem.cacheDirectory + "Manager notes.zip"
     try {
       const status = await api.orgNotesExport(scope?.project, dest)
       if (status >= 400) throw Object.assign(new Error(`HTTP ${status}`), { status })

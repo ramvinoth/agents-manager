@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Harman speech service — runs on the GPU box (suha-ai), driven by the viewer.
+Manager speech service — runs on the GPU box (suha-ai), driven by the viewer.
 
 Exposes two endpoints backed by sherpa-onnx, using models already on disk under
 ~/.paseo/models/local-speech/ (nothing is downloaded):
@@ -13,7 +13,7 @@ Exposes two endpoints backed by sherpa-onnx, using models already on disk under
 Models load once at startup and are reused across requests. Runs under systemd
 on its own port (default 8095) so it never touches the existing .paseo daemon.
 
-This file is deployed to ~/harman-speech/speech_service.py on suha-ai and run
+This file is deployed to ~/agents-speech/speech_service.py on suha-ai and run
 inside ~/voiceagent-env (which already has sherpa_onnx, fastapi, uvicorn,
 soundfile, numpy).
 """
@@ -34,23 +34,23 @@ BASE = os.path.expanduser("~/.paseo/models/local-speech")
 PARAKEET = os.path.join(BASE, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 KOKORO = os.path.join(BASE, "kokoro-en-v0_19")
 SPK_MODEL = os.environ.get(
-    "HARMAN_SPK_MODEL",
+    "AGENTS_SPK_MODEL",
     os.path.join(BASE, "speaker-embedding", "nemo_en_titanet_small.onnx"),
 )
 SILERO_VAD = os.path.join(BASE, "silero-vad", "silero_vad.onnx")
 # Where enrolled voiceprints live (one JSON per speaker_id: {"dim":..,"vec":[...]}).
 VOICEPRINT_DIR = os.environ.get(
-    "HARMAN_VOICEPRINT_DIR", os.path.join(BASE, "voiceprints")
+    "AGENTS_VOICEPRINT_DIR", os.path.join(BASE, "voiceprints")
 )
 # NeMo Parakeet is a transducer trained at 16 kHz; Kokoro renders at 24 kHz.
 STT_SAMPLE_RATE = 16000
-PROVIDER = os.environ.get("HARMAN_SPEECH_PROVIDER", "cpu")  # "cuda" once ORT-GPU is wired
-THREADS = int(os.environ.get("HARMAN_SPEECH_THREADS", "4"))
+PROVIDER = os.environ.get("AGENTS_SPEECH_PROVIDER", "cpu")  # "cuda" once ORT-GPU is wired
+THREADS = int(os.environ.get("AGENTS_SPEECH_THREADS", "4"))
 
 # Wake word + speaker-verification tunables (all env-overridable so they can be
 # tuned on the box without a redeploy).
-WAKE_WORD = os.environ.get("HARMAN_WAKE_WORD", "harman").lower().strip()
-SPK_THRESHOLD = float(os.environ.get("HARMAN_SPK_THRESHOLD", "0.45"))
+WAKE_WORD = os.environ.get("AGENTS_WAKE_WORD", "agent").lower().strip()
+SPK_THRESHOLD = float(os.environ.get("AGENTS_SPK_THRESHOLD", "0.45"))
 
 app = FastAPI()
 
@@ -109,7 +109,7 @@ def _load_spk():
     Pinned to CPU: TitaNet's fused-conv layers trip a cuDNN BAD_PARAM on this
     ORT-CUDA build, and the model is tiny (~40MB, sub-10ms/clip on CPU), so GPU
     buys nothing here. STT/TTS stay on CUDA."""
-    provider = os.environ.get("HARMAN_SPK_PROVIDER", "cpu")
+    provider = os.environ.get("AGENTS_SPK_PROVIDER", "cpu")
     cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
         model=SPK_MODEL, num_threads=THREADS, provider=provider
     )
@@ -261,10 +261,10 @@ def _edit_distance(a: str, b: str) -> int:
     return prev[-1]
 
 
-# ASR (Parakeet) rarely spells the wake word exactly — "Harman" comes back as
+# ASR (Parakeet) rarely spells the wake word exactly — "Manager" comes back as
 # "Harmon", "Herman", etc. Accept a token as the wake word if it's an explicit
 # known variant or within a small edit distance of the configured wake word.
-_WAKE_VARIANTS = {WAKE_WORD, "harman", "harmon", "herman", "harmony", "harmen",
+_WAKE_VARIANTS = {WAKE_WORD, "agent", "harmon", "herman", "harmony", "harmen",
                   "hartman", "harding"}
 
 
@@ -334,7 +334,7 @@ async def segment(request: Request):
     `speaker_id` selects the enrolled voiceprint. Returns:
         {speech, wake, match, score, text}
     - speech: did VAD find any speech at all
-    - wake:   did the transcript start with the wake word ("Harman")
+    - wake:   did the transcript start with the wake word ("Manager")
     - match:  is the speaker the enrolled user (cosine >= threshold)
     - score:  cosine similarity to the enrolled voiceprint
     - text:   the transcript with the wake word stripped (only meaningful on wake)
@@ -346,7 +346,7 @@ async def segment(request: Request):
         return JSONResponse({"error": "empty audio body"}, status_code=400)
     speaker_id = (request.query_params.get("speaker_id") or "default").strip()
     # Call mode: the phone call is itself the intent signal, so we do NOT require
-    # the "Harman" wake word — return the full transcript for any speech so the
+    # the "Manager" wake word — return the full transcript for any speech so the
     # caller can fire a turn on it. Hands-free (no_wake unset) keeps strict gating.
     no_wake = (request.query_params.get("no_wake") or "") in ("1", "true", "yes")
     try:
@@ -395,13 +395,13 @@ async def transcribe(request: Request):
 
 @app.post("/wakeguard")
 async def wakeguard(request: Request):
-    """Barge-in wake guard: cheap "did the user say Harman?" check for a window
+    """Barge-in wake guard: cheap "did the user say Manager?" check for a window
     captured WHILE the assistant is speaking (call-mode barge-in).
 
     Body = raw audio (echo-cancelled PCM/WAV from the phone's voiceProcessingIO,
     so the assistant's own TTS is already removed from the signal). Returns:
         {wake: bool, text: str}
-    - wake: did the transcript start with the wake word ("Harman")
+    - wake: did the transcript start with the wake word ("Manager")
     - text: the transcript with the wake word stripped (the command / question)
 
     Unlike /segment this SKIPS speaker verification: the hardware AEC already
@@ -462,5 +462,5 @@ async def synthesize(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("HARMAN_SPEECH_PORT", "8095"))
+    port = int(os.environ.get("AGENTS_SPEECH_PORT", "8095"))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

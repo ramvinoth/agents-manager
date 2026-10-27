@@ -49,7 +49,7 @@ def _json(fetch, url):
 # --- MCP ------------------------------------------------------------------
 
 # How each registry package type runs locally. oci (docker) and mcpb bundles
-# need tooling Harman does not manage, so they are listed but not installable.
+# need tooling Manager does not manage, so they are listed but not installable.
 _RUNNERS = {"npm": ("npx", lambda p: ["-y", f"{p['identifier']}@{p['version']}"]),
             "pypi": ("uvx", lambda p: [f"{p['identifier']}=={p['version']}"])}
 _REMOTE_TYPES = {"streamable-http": "http", "sse": "sse"}
@@ -120,7 +120,7 @@ def mcp_config(server, values):
     input is empty."""
     plan = _install_plan(server)
     if not plan:
-        raise MarketError("This server needs Docker or a bundle installer; Harman installs npm, PyPI and hosted servers only.")
+        raise MarketError("This server needs Docker or a bundle installer; Manager installs npm, PyPI and hosted servers only.")
     filled = {}
     for i in _inputs(plan):
         v = str((values or {}).get(i["name"]) or "").strip()

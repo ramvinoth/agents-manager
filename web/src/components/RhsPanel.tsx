@@ -256,7 +256,7 @@ function McpEditor({ server, onClose }: { server: McpServer | null; onClose: () 
   )
 }
 
-/** A chat's plugins: Harman's own (add/remove per chat; "Included" = its agent
+/** A chat's plugins: Manager's own (add/remove per chat; "Included" = its agent
  *  brings it by default) and the Mac's enabled Claude plugins (read-only — they
  *  are turned on in Claude Code itself). A plugin is whole: add or remove, never edit.
  *  The agent is the hub for its setup (edited on the agent); "Keep on agent" copies

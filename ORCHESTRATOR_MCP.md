@@ -1,7 +1,7 @@
 # ORCHESTRATOR_MCP — the internal MCP, layered RBAC, and skill distillation
 
 > **Superseded in part (2026-10-08, card 146):** the Employees roster, card
-> assignment and the Harman manager tick described below were removed. Authority
+> assignment and the manager tick described below were removed. Authority
 > now comes from the agent role (agent_templates.level) or a per-chat override
 > (session_meta.level); see SESSIONS.md "Two trust layers". Read the rest as
 > design history.
@@ -17,12 +17,12 @@ learn a skill/sub-skill routing subsystem connected to all chat sessions as an M
 with RBAC-controlled user management — distilling skills from the user's messages,
 judgements, intent, goal and clarity.* And: **installable on any machine.**
 
-Plus, from the second pass: *harvesting agents that Harman creates on first install,
-running in a loop and also triggered on demand as Harman wants; Harman approves
+Plus, from the second pass: *harvesting agents that Manager creates on first install,
+running in a loop and also triggered on demand as Manager wants; Manager approves
 everything on the owner's behalf and surfaces only genuinely real questions and decisions.*
 
 And the third pass, which is the product the rest of this doc serves: *one prefixed
-Harman chat session, pinned to the top by default, as the owner's only interface — a second
+Manager chat session, pinned to the top by default, as the owner's only interface — a second
 brain that reasons, plans, creates tasks and delegates but does not act; where the owner
 supplies only real-world resources and decisions, and is not interrupted for silly
 things, because the user's time is precious.* §12.
@@ -44,17 +44,17 @@ Most of this is built. Naming it prevents building a second copy.
 | Per-session fact extraction | `session_analysis()` (`engine.py:1690`), cached by (mtime,size), **fleet-aware over SSH** | works — this is the harvester |
 | Skill write/list | `skills.py` | works, **local disk only** |
 | Skill promotion + dedupe gate | `routes/orchestrator.py:324-358` | works, but voluntary + name-only dedupe |
-| **Harman autonomous loop** | `orchestrator.py:121` `harman_tick()`, driven by `engine.py:198` | **built and live** — survey → plan → assign → spawn → escalate |
+| **Manager autonomous loop** | `orchestrator.py:121` `orchestrator_tick()`, driven by `engine.py:198` | **built and live** — survey → plan → assign → spawn → escalate |
 | **Loop safety rails** | `HARD_CAP=4`, budget, in-progress guard, self-throttle (`orchestrator.py:9-13, 26`) | works |
 | **Session spawning** | `_spawn_employee_session` (`orchestrator.py:82-118`) | works — this is how a harvester agent gets created |
-| **First-install bootstrap** | `bootstrap.py` (`make bootstrap`) — tables, seeds the owner + Harman, skills dir, Harman config | works, idempotent |
+| **First-install bootstrap** | `bootstrap.py` (`make bootstrap`) — tables, seeds the owner + Manager, skills dir, Manager config | works, idempotent |
 
 Two consequences worth stating plainly, because they shrink the build:
 
-- **The loop already exists.** "Runs in a loop, and on demand as Harman wants" is
-  `harman_tick()` plus a `spawn` intent. It does not need designing — it needs a new
+- **The loop already exists.** "Runs in a loop, and on demand as Manager wants" is
+  `orchestrator_tick()` plus a `spawn` intent. It does not need designing — it needs a new
   *kind* of card. §5A.
-- **The first-install hook already exists.** `bootstrap.py` already seeds Harman as an
+- **The first-install hook already exists.** `bootstrap.py` already seeds Manager as an
   employee. Seeding the harvester is four lines in the same file. §5A.
 
 ### Five defects this design must fix
@@ -66,7 +66,7 @@ Two consequences worth stating plainly, because they shrink the build:
 2. **Red approvals are inert.** `_org_do` queues them (orchestrator.py:50-55) but
    `_p_org_approvals_resolve` executes only `kind == "skill"`.
    Approving a Red infra action does nothing — the `mutate` closure died with the request.
-   **This also blocks Harman approving on the owner's behalf**: there is nothing to execute.
+   **This also blocks Manager approving on the owner's behalf**: there is nothing to execute.
 3. **Skill truth is one machine's filesystem.** `skills_learned` stores a `path`
    (`db.py:187`); the body lives at `~/.claude/skills/<n>/SKILL.md`. A skill learned on
    the Mac does not exist on a remote host. Same root cause as "not installable."
@@ -137,7 +137,7 @@ Deny-by-default survives: `_MIN_LEVEL` lists what is granted; anything unlisted 
 
 ---
 
-## 2A. Harman approves on the owner's behalf — delegation, not bypass
+## 2A. Manager approves on the owner's behalf — delegation, not bypass
 
 The owner: *"it can approve everything on my behalf and only surface to me with genuinely real
 questions and decisions that it requires me."*
@@ -151,7 +151,7 @@ delegated approver**. Red still means "a decision was made"; it stops meaning "t
 interrupted."
 
 ```
-Harman = a principal with human_role "owner"  (§2's ceiling)
+Manager = a principal with human_role "owner"  (§2's ceiling)
        + a DELEGATION policy saying which approval kinds it may resolve autonomously
 ```
 
@@ -161,11 +161,11 @@ boundary — no new taxonomy.
 
 ```python
 # orglogic.py — pure, table-driven, sits beside _RED_ACTIONS.
-_DELEGATED_KINDS = {"infra", "destructive"}   # Harman may self-approve
+_DELEGATED_KINDS = {"infra", "destructive"}   # Manager may self-approve
 _RESERVED_KINDS  = {"secret", "money"}        # ALWAYS the owner
 
 def delegable(approval_kind, *, reversible, blast_radius):
-    """True if Harman may resolve this approval itself."""
+    """True if Manager may resolve this approval itself."""
 ```
 
 ### The three tests an approval must pass to be self-approved
@@ -193,7 +193,7 @@ before?" is a query over data already being written.
   correctness question. This is the owner's "genuinely real decisions" — and it is the one
   category no table can classify. It is raised by the *agent*, via `AskUserQuestion`, not
   inferred by policy.
-- Anything Harman self-approved that then **failed** — reported after, not asked before.
+- Anything Manager self-approved that then **failed** — reported after, not asked before.
 
 ### Non-negotiable rails
 
@@ -205,20 +205,20 @@ before?" is a query over data already being written.
   started executing, and it binds *humans* too: an operator has enough authority to resolve
   approvals, so exempting people would leave the identical hole wearing a person's name.
   The owner is never caught by it — acting at the UI they never queue in the first place.
-- Self-approvals are audited as `resolution="approved:harman"` — distinguishable from
+- Self-approvals are audited as `resolution="approved:agent"` — distinguishable from
   `approved` forever. The owner can always ask "what did you approve without me?"
-- A **kill switch**: `delegation_enabled` in Harman config, default **off**. Delegation
+- A **kill switch**: `delegation_enabled` in Manager config, default **off**. Delegation
   is opt-in per install, not a surprise on upgrade.
 - A **rate rail**: N self-approvals per hour (reuse the `HARD_CAP` pattern from
   `orchestrator.py:26`). A runaway loop hits a ceiling instead of draining an account.
 
 ### The master switch, above all of it
 
-`delegation_enabled` above scopes one behaviour: whether Harman may *approve* on the owner's
+`delegation_enabled` above scopes one behaviour: whether Manager may *approve* on the owner's
 behalf. The owner asked for something broader — *"pass the full system with a single switch and
 keep it off"* — so there is one flag above every rail here: **`automation_enabled` in
-Harman config, default off**. While it is off, nothing starts *without a person asking*:
-not Harman's manager tick, not any agent-scheduled loop or one-shot. The owner's own
+Manager config, default off**. While it is off, nothing starts *without a person asking*:
+not the manager tick, not any agent-scheduled loop or one-shot. The owner's own
 scheduled loops ARE a person asking — they follow the loop-control `mode` alone, so the
 switch pauses the machine's autonomy, not the human's calendar. It is the switch you
 flip before leaving the machine alone, and the state a fresh install ships in.
@@ -226,7 +226,7 @@ flip before leaving the machine alone, and the state a fresh install ships in.
 **Enforced at one point, not one per path.** `engine.loop_scheduler` is the only thread
 that starts work nobody asked for, so both unattended paths are gated inside it: the loop
 launcher (`fire_due_loops`) intersects the origins licensed by `mode` with the switch —
-the agent side of the set is halted when it is off — and `harman_tick` is skipped outright.
+the agent side of the set is halted when it is off — and `orchestrator_tick` is skipped outright.
 Gating each path at its own call site would make "everything is paused" a claim that
 decays the first time somebody adds a path, which is exactly the failure the switch
 exists to prevent. Anything added to that thread later is paused by default.
@@ -244,8 +244,8 @@ Four properties are load-bearing:
   expired while paused — "paused" must not come to mean "holding live credentials open."
 
 **Easy to pull, hard to push.** A kill switch the automation can flip back on is not a kill
-switch, and the first draft of this was exactly that: `harman_config` is a plain
-manager-level green action, and a Harman-role agent session resolves to `manager`
+switch, and the first draft of this was exactly that: `orchestrator_config` is a plain
+manager-level green action, and a Manager-role agent session resolves to `manager`
 (`engine._emp_level`) under the owner's ceiling — so it could have POSTed its own resume.
 The flag is therefore *two actions over one body*, the same shape as
 `skill_propose`/`skill_promote`: the risk lives in the **direction** of the change, not in
@@ -263,7 +263,7 @@ Three consequences worth stating:
   the safe action while carrying the dangerous payload — and would let an approval queued as
   "pause" execute as "resume".
 - **`set_config` cannot touch the flag.** `automation_enabled` is not in `_PATCH_KEYS`, and
-  the route does not fold it into the `harman_config` patch; `orchestrator.set_automation` is
+  the route does not fold it into the `orchestrator_config` patch; `orchestrator.set_automation` is
   the single writer. Without that, un-pausing stays reachable as one extra key on an ordinary
   config write.
 - **`self_approves` is what gives the red gate teeth.** It is `owner and not session_level`,
@@ -277,7 +277,7 @@ machine is idle when the request never landed.
 
 Note the ordering constraint: delegation is meaningless until §3 makes approvals
 executable. Both live in build step 2 — the rail itself is now built; what remains here
-is the *delegation* half (the three tests, the `approved:harman` marker, the kill switch),
+is the *delegation* half (the three tests, the `approved:agent` marker, the kill switch),
 which step 5 adds on top of it.
 
 ---
@@ -289,7 +289,7 @@ property of the action. The accountability score is that test made into a number
 delegation scope is derived from track record instead of configured by hand.
 
 **Subject is a pair, not a principal.** A score is per `(principal, action_kind)` —
-"Harman on `infra`", not "Harman". Being reliable at moving cards earns nothing on
+"Manager on `infra`", not "Manager". Being reliable at moving cards earns nothing on
 `session_delete`. A single global trust number is the failure mode this avoids.
 
 ### Computed from evidence already written
@@ -301,8 +301,8 @@ No new self-report, no new store. Every input already lands in `audit_log` and
 |---|---|---|
 | The owner approved this kind | `approvals.resolution = "approved"` | `+1` |
 | The owner **rejected** it | `resolution = "rejected"` | `−λ` (λ=3) |
-| Harman self-approved and it succeeded | `"approved:harman"` + `audit done` | `+0.5` |
-| Self-approved and it **failed/was reverted** | `"approved:harman"` + `audit error`, or the card returning from Review | `−μ` (μ=2) |
+| Manager self-approved and it succeeded | `"approved:agent"` + `audit done` | `+0.5` |
+| Self-approved and it **failed/was reverted** | `"approved:agent"` + `audit error`, or the card returning from Review | `−μ` (μ=2) |
 
 ```
 score(p, k) = Σ decayed(weight) / Σ decayed(|weight|)      → [-1, 1]
@@ -320,7 +320,7 @@ Four properties, each deliberate:
 - **It decays.** Good behaviour six months ago does not buy trust today. Without decay
   the score is a ratchet that only ever loosens.
 - **A self-approval is worth half a real one, and a failed one costs four times what it
-  earned.** Harman cannot bootstrap its own trust by approving easy things.
+  earned.** Manager cannot bootstrap its own trust by approving easy things.
 
 ### What it gates
 
@@ -354,7 +354,7 @@ already happened rather than asking the thing to rate itself.
 
 This is the load-bearing refactor. The owner chose "everything, with Red gating" — which is
 only real if approving a queued action **executes** it. It is also the prerequisite for
-§2A: Harman cannot approve on the owner's behalf if approval does nothing.
+§2A: Manager cannot approve on the owner's behalf if approval does nothing.
 
 Today `_org_do(action, level, actor, target, mutate)` takes a closure. Replace with a
 registry of named handlers over plain data:
@@ -470,11 +470,11 @@ isn't mistaken for a solved problem.
 
 ---
 
-## 5A. The harvester: an agent Harman creates on first install
+## 5A. The harvester: an agent Manager creates on first install
 
-The owner: *"auto-harvested skills by an agent/chat session within the system that the Harman
+The owner: *"auto-harvested skills by an agent/chat session within the system that the Manager
 orchestrator creates on first install, so that this agent runs in a loop and also gets
-triggered on demand as the Harman agent wants."*
+triggered on demand as the Manager agent wants."*
 
 The distiller is **not a service**. It is an employee, working cards, on the same board as
 everything else — because judging whether five observations amount to a transferable skill
@@ -489,13 +489,13 @@ for the same job — the parallel-code-path trap. As a card, the distiller inher
 
 ### First install (`bootstrap.py`, ~4 lines beside the existing seeds)
 
-`bootstrap.py:18-21` already seeds the owner and Harman. Add one more:
+`bootstrap.py:18-21` already seeds the owner and Manager. Add one more:
 
 ```python
 {"name": "Scribe", "role": "Distiller", "level": "ic"},
 ```
 
-Plus an internal project ("Harman Internal") owning the distillation cards, so the
+Plus an internal project ("Manager Internal") owning the distillation cards, so the
 harvester never needs `projects` to be non-empty for the owner's real work. Idempotent, dedupes
 by name, same as the existing seeds.
 
@@ -503,10 +503,10 @@ by name, same as the existing seeds.
 
 Both triggers are *"a card appears in the Scribe's column."* No second pathway:
 
-- **Loop**: `harman_tick` counts undistilled observations. Over threshold → create a
+- **Loop**: `orchestrator_tick` counts undistilled observations. Over threshold → create a
   `distill` card. The existing planner assigns and spawns it. Self-throttled by the
   existing `interval`.
-- **On demand**: Harman (or any session with the `distill_request` tool) creates the same
+- **On demand**: Manager (or any session with the `distill_request` tool) creates the same
   card. Identical downstream path.
 
 The in-progress guard (`_running_card_ids`, orchestrator.py:60-67) already prevents two
@@ -522,7 +522,7 @@ Failure mode this closes: **a self-amplifying loop** where the distiller writes 
 that changes how sessions behave, generating observations that produce more skills. Rails:
 the Scribe cannot approve its own proposals (§2A separation of duties), skill promotion is
 Green-but-audited, and `_DELEGATED_KINDS` excludes `skill` — so an overlapping skill
-always reaches a human or Harman, never self-merges.
+always reaches a human or Manager, never self-merges.
 
 ### What the Scribe is told
 
@@ -571,15 +571,15 @@ idempotent. **Extend it — do not write a second installer.** The gaps are what
    in shipped code. On someone else's hardware that seeds a stranger as CEO.
    Bootstrap should create the first `users` row from the install (env / prompt / first
    signup), mark it `role="owner"`, and create the matching employee from *that* name.
-   **Harman stays hardcoded** — it is a component of the system, not a person.
+   **Manager stays hardcoded** — it is a component of the system, not a person.
 3. **Seed the Scribe + internal project** (§5A) — beside the existing seeds, same dedupe.
-4. **Config file.** `~/.claude/.viewer-harman.json` already exists for Harman
+4. **Config file.** `~/.claude/.viewer-orchestrator.json` already exists for Manager
    (`orchestrator.py:25`). Widen that pattern to service endpoints rather than inventing
-   `~/.harman/config.toml`: precedence env → file → defaults, where **no default names a
+   `~/.agents/config.toml`: precedence env → file → defaults, where **no default names a
    machine**. `SPEECH_SERVICE_URL` etc. (`config.py:67-87`) default to empty = feature off,
    not "point at the owner's tailnet". `APNS_TOPIC` (`push.py:30`) gets no default.
 5. **Service unit from a template** for the detected platform, replacing hand-assembly of
-   `deploy/com.harman.viewer.plist` / `deploy/harman-viewer.service`.
+   `deploy/com.agents.viewer.plist` / `deploy/agents-viewer.service`.
 6. **Schema is the migration.** `db.py` already uses `CREATE TABLE IF NOT EXISTS` +
    `ALTER ... ADD COLUMN IF NOT EXISTS`, and `bootstrap.py` already calls `init_db()`.
    Keep that; nothing new.
@@ -595,7 +595,7 @@ no file copied from the owner's Mac, and no occurrence of "<owner name>" anywher
 
 ---
 
-## 7A. Capability routing — nodes advertise, Harman places
+## 7A. Capability routing — nodes advertise, Manager places
 
 The fleet is not a flat list of SSH hosts. Today it is 3×3090 serving LLM, GPU3 serving
 STT/TTS, a box that can run video, and laptops that are CPU-only. §7 makes the software
@@ -607,9 +607,9 @@ fail for the same reason: **the topology is hardcoded.**
 `config.py` hardcodes one machine three times:
 
 ```python
-SPEECH_SERVICE_URL    = env("HARMAN_SPEECH_URL",    "http://<gpu-host>:8095")
-TTS_STREAM_URL        = env("HARMAN_TTS_STREAM_URL","http://<gpu-host>:8097")
-VERIFY_SERVICE_URL    = env("HARMAN_VERIFY_URL",    "http://<gpu-host>:8095")
+SPEECH_SERVICE_URL    = env("AGENTS_SPEECH_URL",    "http://<gpu-host>:8095")
+TTS_STREAM_URL        = env("AGENTS_TTS_STREAM_URL","http://<gpu-host>:8097")
+VERIFY_SERVICE_URL    = env("AGENTS_VERIFY_URL",    "http://<gpu-host>:8095")
 ```
 
 That is not configuration, it is a topology baked into source. Move the GPU box's IP and
@@ -644,7 +644,7 @@ def resolve(capability, *, model=None):
 ```
 
 `config.SPEECH_SERVICE_URL` becomes `resolve("stt")[0]`. The constants disappear; the
-`HARMAN_*_URL` env vars stay as a single-node override so nothing breaks mid-flight.
+`AGENTS_*_URL` env vars stay as a single-node override so nothing breaks mid-flight.
 
 ### Discovered, not typed — and this is the second instance of the same bug
 
@@ -732,7 +732,7 @@ specified to have survive intact — ungated, available to any session at `ic`, 
 suppressed by delegation — because they are properties of the built-in tool, which no policy
 of ours gates.
 
-**Harman itself holds a strict subset** (§12.1): the whole See-everything tier, plus
+**Manager itself holds a strict subset** (§12.1): the whole See-everything tier, plus
 `card_create`, `card_assign` and `approval_resolve` — escalation is not in the list because
 it is native, not ours to grant. No Orchestrate, no Re-org, no Destructive. A planner that
 cannot execute is the constraint that gives every mutation an owner and a transcript.
@@ -826,7 +826,7 @@ Each step ships working and is independently reversible.
    call `/api/org/audit`, and a question body quotes the work.
 4. **Orchestrate tier** — spawn/send/steer/interrupt.
 5. **Delegation (§2A) + accountability (§2B)** — `_DELEGATED_KINDS`, the three tests,
-   `accountability()` derived from `audit_log`, separation-of-duties rail, `approved:harman`
+   `accountability()` derived from `audit_log`, separation-of-duties rail, `approved:agent`
    marker, kill switch default off. Needs steps 1-2 and real approval history to score
    against, which is why it is not earlier. Ship `accountability` read-only first and
    *watch* the numbers before letting them gate anything.
@@ -837,7 +837,7 @@ Each step ships working and is independently reversible.
 9. **`capabilities.py` + `capability_probe` (§7A)** — capability block on the hosts
    entry, `resolve()`, `contextLimit` from `max_model_len`, de-machine `config.py:67-87`.
    Then `pyproject.toml` + extend `bootstrap.py`, and run the clean-box acceptance test.
-10. **The Harman session (§12)** — seed it pinned in `bootstrap.py`, restrict Harman's
+10. **The Manager session (§12)** — seed it pinned in `bootstrap.py`, restrict Manager's
     `_MIN_LEVEL` subset, the interruption digest, the system prompt. **Last**, because
     every constraint in §12 is enforced by machinery from 1-9; shipping the prompt first
     would be asking a prompt to do a permission table's job.
@@ -849,21 +849,21 @@ built rather than the first.
 
 ---
 
-## 12. The Harman session — The owner's only interface
+## 12. The Manager session — The owner's only interface
 
-The owner: *"a single prefixed Harman chat session pinned to the top by default, my only
-interface to Harman. Harman doesn't do anything on its own but reason, plan, create tasks
+The owner: *"a single prefixed Manager chat session pinned to the top by default, my only
+interface to Manager. Manager doesn't do anything on its own but reason, plan, create tasks
 and delegate — an interface, a second brain, where I give only real-world resources and
 decisions. Everything else is handled responsibly, but not so intrusive as to come to me
 all the time for silly things. The user's time is precious."*
 
 This is the product. Everything above is what makes it possible.
 
-### 12.1 Harman plans; Harman does not execute
+### 12.1 Manager plans; Manager does not execute
 
 This narrows §2A and §8 and is the constraint the rest of the section hangs on.
 
-Harman holds tools from **See-everything**, plus exactly three verbs: `card_create`,
+Manager holds tools from **See-everything**, plus exactly three verbs: `card_create`,
 `card_assign` and `approval_resolve` (bounded by §2B). It holds **nothing** from
 Orchestrate, Re-org or Destructive. Not by convention — by `_MIN_LEVEL`, the same
 deny-by-default table as every other principal. Escalation is not in the list because it is
@@ -872,14 +872,14 @@ not ours to grant: `AskUserQuestion` is native and ungated for every session.
 Why this is a real constraint and not decoration:
 
 - **Every mutation gets an owner.** Work happens under an employee, on a card, with a
-  transcript. There is no "Harman just did it" with nothing to review or revert.
+  transcript. There is no "Manager just did it" with nothing to review or revert.
 - **It preserves separation of duties at the top.** §2A forbids approving your own
-  escalation. If Harman both created and executed work, its `approval_resolve` power
+  escalation. If Manager both created and executed work, its `approval_resolve` power
   would let it authorise itself through a second door.
 - **It makes the interruption budget honest.** A planner that cannot act has nothing to
   hide; its entire output is cards, questions and delegations that the owner can see.
 
-Harman's ability to *spawn* is therefore indirect: it creates a card; the existing
+Manager's ability to *spawn* is therefore indirect: it creates a card; the existing
 planner (`plan_assignments` → `_spawn_employee_session`, `orchestrator.py:82-189`)
 assigns and spawns it. That path already carries budget, `HARD_CAP`, the in-progress
 guard and audit. **This is the same mechanism as the Scribe (§5A)** — one way work
@@ -901,11 +901,11 @@ Not a new UI surface — a seeded session that sorts first.
 - **It is a normal session.** Same transcript, same MCP, same audit. If it were special
   it would drift from the code path everything else uses.
 - **It addresses the owner, not "<owner name>".** The session belongs to whoever holds
-  `users.role == "owner"` on this install (§7.2). Harman's prompt resolves that name at
+  `users.role == "owner"` on this install (§7.2). Manager's prompt resolves that name at
   spawn; nothing in source knows it.
 
 The owner keeps every other session. This is the *default* interface, not a cage — the pin
-makes Harman first, not exclusive.
+makes Manager first, not exclusive.
 
 ### 12.3 What reaches the owner — the interruption budget
 
@@ -916,7 +916,7 @@ constraint, not a tone. Four rules, in order:
    approvals. Interruption is the exception path.
 2. **Only these four categories may interrupt:**
    - **Real-world resources** — money, credentials, hardware, an account, physical
-     access. Harman cannot obtain these; asking is not a failure of autonomy.
+     access. Manager cannot obtain these; asking is not a failure of autonomy.
      (This is exactly `_RESERVED_KINDS = {secret, money}` — already built.)
    - **Genuine preference** — two defensible paths where the choice is taste, not
      correctness. Raised by the agent via `AskUserQuestion`; **no table can classify this**,
@@ -933,19 +933,19 @@ constraint, not a tone. Four rules, in order:
 **Measured, not asserted.** Interruptions/day is derived from `audit_log` — `ask_owner`
 rows (written by `questions.record()` when a native `AskUserQuestion` is persisted, so the
 count does not depend on an agent choosing our verb over Claude's) plus non-delegated
-`approval_resolve` rows — and shown on the Harman session. If it does not fall as §2B scores
+`approval_resolve` rows — and shown on the Manager session. If it does not fall as §2B scores
 rise, the design is wrong and the number will say so. Without this, "non-intrusive" is an
 aspiration nobody can check.
 
 The honest failure mode, stated plainly: **an interruption budget optimises for silence,
 and silence is also what a system looks like when it is quietly doing the wrong thing.**
 The counterweights are §2A's rule that failures always surface, `AskUserQuestion` being
-native and ungated so any session can escalate past Harman, and §11.5's review surface.
+native and ungated so any session can escalate past Manager, and §11.5's review surface.
 Delegation without a review surface is indistinguishable from having no gate at all.
 
 ### 12.4 Reading order
 
-Harman's system prompt is the second genuinely new artifact (after the Scribe's), and it
+Manager's system prompt is the second genuinely new artifact (after the Scribe's), and it
 encodes exactly this section: reason, plan, delegate, never execute; ask only in the four
 categories; always recommend and default; batch the rest.
 
@@ -962,14 +962,14 @@ theatre; `_MIN_LEVEL` is the actual boundary.
   routing lever. A second selector would be a parallel code path for one capability.
 - **A background distiller thread.** The Scribe is a card on the existing board (§5A);
   a thread would be a second unaudited execution path for the same work.
-- **A new "Harman loop".** `harman_tick()` exists and is wired (`engine.py:198`). The
+- **A new "Manager loop".** `orchestrator_tick()` exists and is wired (`engine.py:198`). The
   distiller is a new card kind, not a new loop.
-- **A separate Harman UI.** §12.2 is a seeded, pinned session on the existing list — a
+- **A separate Manager UI.** §12.2 is a seeded, pinned session on the existing list — a
   bespoke surface would be a second chat implementation to keep in sync.
 - **Widening Green to reduce interruptions.** §2A delegates approvals instead; the Red
   classification stays intact so the audit trail keeps meaning.
 - **A global trust score.** §2B scores `(principal, action_kind)` pairs. One number for
-  "how much do we trust Harman" lets competence at cheap actions pay for expensive ones.
+  "how much do we trust Manager" lets competence at cheap actions pay for expensive ones.
 - **A service registry / discovery daemon.** §7A adds a field to the hosts file that
   already exists; a registry would be new infrastructure for a fleet of single digits.
 - **Wrapping `fs/*` / `git/*`.** Duplicates native tools.
@@ -993,7 +993,7 @@ theatre; `_MIN_LEVEL` is the actual boundary.
 4. **Delegation scope (§2A).** `_DELEGATED_KINDS = {infra, destructive}` with `secret` and
    `money` always reserved — is `destructive` too far for a first cut? A narrower start
    (`infra` only) still removes most interruptions and can widen once the
-   `approved:harman` audit trail has been read a few times.
+   `approved:agent` audit trail has been read a few times.
 5. **How does the owner see what was approved without them?** A digest (daily push, or a Board
    column) — or only on request? Delegation without a review surface is indistinguishable
    from no gate at all. §12.3 assumes a digest; confirm the channel (push vs. the pinned
@@ -1001,8 +1001,8 @@ theatre; `_MIN_LEVEL` is the actual boundary.
 6. **Accountability constants (§2B).** `TAU=0.8`, `N_MIN=3`, `HALF_LIFE=30d`, `λ=3`,
    `μ=2` are reasoned starting points, not measured ones. They should be tuned from the
    first month of real audit data rather than defended as chosen.
-7. **Does the pinned Harman session survive `apply_default`?** `/api/providers/apply-default`
-   (`routes/providers.py:87`) rewrites the provider on *every* session. Harman's own
+7. **Does the pinned Manager session survive `apply_default`?** `/api/providers/apply-default`
+   (`routes/providers.py:87`) rewrites the provider on *every* session. Manager's own
    provider probably should be exempt — otherwise one bulk change can point the owner's sole
    interface at an unreachable engine.
 

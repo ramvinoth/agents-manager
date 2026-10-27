@@ -1,24 +1,24 @@
 /**
  * duplexMic — barge-in mic capture that runs WHILE the assistant is speaking.
  *
- * The native HarmanAudio module (modules/harman-audio, voiceProcessingIO) emits
+ * The native AgentsAudio module (modules/agents-audio, voiceProcessingIO) emits
  * echo-cancelled PCM16 frames — the assistant's own TTS is removed by hardware
- * AEC, so the mic doesn't self-trigger on Harman's voice. This module batches
+ * AEC, so the mic doesn't self-trigger on Manager's voice. This module batches
  * those frames into short WAV windows and streams each to the server's
  * `mode=wakeguard` WebSocket, which runs a cheap keyword-spotter and fires only
- * when the user says "Harman …". The transcript tail is handed back for command
+ * when the user says "Manager …". The transcript tail is handed back for command
  * parsing (bargeCommand.ts).
  *
  * Unlike the half-duplex `startListening()` in voice.ts (which serializes with
  * playback through audioSession), this coexists with `audioSession.play()` — the
  * whole point is to listen during speech. It is only used in call mode barge-in.
  */
-import { HarmanAudio, type HarmanAudioFrame } from "../../modules/harman-audio/src"
+import { AgentsAudio, type AgentsAudioFrame } from "../../modules/agents-audio/src"
 import { api } from "../api/client"
 import { fromBase64 } from "./bytes"
 
 export interface WakeguardEvent {
-  /** true when the wake word "Harman" was detected in this window. */
+  /** true when the wake word "Manager" was detected in this window. */
   wake: boolean
   /** Transcript tail after the wake word (the command / question), if any. */
   text: string
@@ -26,7 +26,7 @@ export interface WakeguardEvent {
 
 const SAMPLE_RATE = 16000
 /** Emit a WAV window roughly this often for keyword spotting. Short so barge-in
- *  latency ("Harman stop" → action) stays snappy. */
+ *  latency ("Manager stop" → action) stays snappy. */
 const WINDOW_MS = 900
 // Speech-energy gate for ducking (independent of the server wake check). RMS of a
 // PCM16 frame (normalized 0..1) above ON starts "speaking"; below OFF ends it.
@@ -55,7 +55,7 @@ export interface DuplexMic {
 /** Is the native echo-cancelling capture available on this build? (false on
  *  Android / a build without the module, so callers can fall back gracefully.) */
 export function duplexAvailable(): boolean {
-  return HarmanAudio.isAvailable()
+  return AgentsAudio.isAvailable()
 }
 
 /**
@@ -90,7 +90,7 @@ export async function startWakeguard(
     }
   }
 
-  const frameSub = HarmanAudio.addFrameListener((f: HarmanAudioFrame) => {
+  const frameSub = AgentsAudio.addFrameListener((f: AgentsAudioFrame) => {
     if (stopped) return
     const bytes = fromBase64(f.pcm)
     // Per-frame energy → duck the moment the user starts talking (well before the
@@ -131,13 +131,13 @@ export async function startWakeguard(
     setTimeout(resolve, 4000)
   })
 
-  await HarmanAudio.start(SAMPLE_RATE)
+  await AgentsAudio.start(SAMPLE_RATE)
 
   const stop = async () => {
     if (stopped) return
     stopped = true
     frameSub.remove()
-    try { await HarmanAudio.stop() } catch { /* best-effort */ }
+    try { await AgentsAudio.stop() } catch { /* best-effort */ }
     try { ws.close() } catch { /* already closing */ }
   }
 

@@ -235,10 +235,10 @@ class OrchestratorMixin:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for path, text in notelinks.vault(notes, names).items():
-                z.writestr("Harman Notes/" + path, text)
+                z.writestr("Manager Notes/" + path, text)
         project = (req.query.get("project") or [None])[0]
         label = names.get(int(project)) if project else None
-        self._send_attachment(buf.getvalue(), f"{label or 'Harman'} notes.zip", "application/zip")
+        self._send_attachment(buf.getvalue(), f"{label or 'Manager'} notes.zip", "application/zip")
 
     def _g_org_note_export(self, req):
         """GET /api/org/note/export?id=&format=md|docx|pdf — one note as a file
@@ -289,7 +289,7 @@ class OrchestratorMixin:
                            status=400); return
         if not codemap.available():
             self.send_json({"available": False, "level": level, "path": path,
-                            "install": "python3 -m pip install -r deploy/codemap-requirements.txt (into the Python that runs Harman)"})
+                            "install": "python3 -m pip install -r deploy/codemap-requirements.txt (into the Python that runs Manager)"})
             return
         if "map" not in (proj.get("lenses") or []):
             db.project_lens_set(proj["id"], "map", True)
@@ -523,13 +523,13 @@ class OrchestratorMixin:
         self._org_send(req, "restart_now", {"requested_by": req.principal["actor"],
                                             "reason": body.get("reason") or ""})
 
-    # ── Harman autonomous-manager config (owner surface) ─────────────────────
-    def _g_org_harman(self, req):
+    # ── Manager autonomous-manager config (owner surface) ─────────────────────
+    def _g_org_orchestrator(self, req):
         from viewer.orchestrator import get_config
         self.send_json(get_config())
 
-    def _p_org_harman(self, req):
-        """Write Harman config: the automation master switch, its only setting.
+    def _p_org_orchestrator(self, req):
+        """Write Manager config: the automation master switch, its only setting.
 
         It is a pair of actions so that resuming can be Red while pausing stays
         cheap — a session at manager level can stop the machine but can never
@@ -601,7 +601,7 @@ class OrchestratorMixin:
         self.send_json(get_loop_control())
 
     def _p_org_loop_control(self, req):
-        """Set the loop-firing mode (user/harman/both/none). Manager-scoped,
+        """Set the loop-firing mode (user/agent/both/none). Manager-scoped,
         green — a de-escalation ('none'/'user') must always be cheap, and licensing
         agent loops only decides WHETHER already-authored loops run."""
         body = self.read_body() or {}
@@ -639,10 +639,10 @@ class OrchestratorMixin:
             return
         self.send_json(doc)
 
-    # ── Agent-scheduled loops (origin='harman', gated) ────────────────────────
+    # ── Agent-scheduled loops (origin='agent', gated) ────────────────────────
     # The AGENT path to scheduling recurring work. The human UI keeps its own
     # ungated loop routes (routes.sessions): a person editing their own schedules
-    # is not an org action. These run through the org gate and stamp origin='harman'
+    # is not an org action. These run through the org gate and stamp origin='agent'
     # server-side, and every one is guarded by the self-mutation rail below.
     def _self_mutation_denied(self, req, target_session,
                               what="its own loop",
@@ -666,7 +666,7 @@ class OrchestratorMixin:
         return False
 
     def _p_org_loops(self, req):
-        """Create a harman-origin loop for a session OTHER than the caller's own.
+        """Create a agent-origin loop for a session OTHER than the caller's own.
 
         The target session travels as `for_session`, NOT `session`: the MCP transport
         mirrors the CALLER's own session id into the body's `session` field as a
@@ -686,7 +686,7 @@ class OrchestratorMixin:
             "provider": body.get("provider", "")})
 
     def _p_org_loops_update(self, req):
-        """Edit a harman-origin loop. The rail resolves the loop's OWN session (not a
+        """Edit a agent-origin loop. The rail resolves the loop's OWN session (not a
         body field) so a caller cannot dodge it by omitting/spoofing the session."""
         body = self.read_body() or {}
         loop = db.loop_get(body.get("id", ""))

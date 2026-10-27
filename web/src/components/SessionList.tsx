@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { HarmanDialog } from "@/components/HarmanDialog"
+import { ManagerDialog } from "@/components/ManagerDialog"
 import { SessionActions } from "@/components/SessionActions"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
@@ -27,7 +27,7 @@ export function SessionList() {
   const currentHost = useStore((s) => s.currentHost)
   const loadSession = useStore((s) => s.loadSession)
   // The master switch decides whether the orchestrator exists for this app at
-  // all: OFF → no pinned Harman entry, the plain chat-session system it is.
+  // all: OFF → no pinned Manager entry, the plain chat-session system it is.
   const automationOn = useStore((s) => s.automationOn)
   const dir = useStore((s) => s.projectDirs[s.currentHost] ?? null)
   const setDir = useStore((s) => s.setProjectDir)
@@ -39,7 +39,7 @@ export function SessionList() {
   const projectPlugins = useProjectPlugins()
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string } | null>(null)
-  const [harmanOpen, setHarmanOpen] = useState(false)
+  const [managerOpen, setManagerOpen] = useState(false)
   // The New dialog's folder: a project's dir, "" for the dialog's own default, null = closed.
   const [startIn, setStartIn] = useState<string | null>(null)
   // Org projects, so a project made before its first chat (on the board, by an
@@ -59,11 +59,11 @@ export function SessionList() {
   const providerName = (id?: string) =>
     id ? providers.find((p) => p.id === id)?.name || "Custom" : ""
 
-  // Harman: open the existing orchestrator session if one exists, else set one up.
-  const openHarman = () => {
-    const existing = sessions.find((s) => s.title === "Harman")
+  // Manager: open the existing orchestrator session if one exists, else set one up.
+  const openManager = () => {
+    const existing = sessions.find((s) => s.title === "Manager")
     if (existing) loadSession(existing.path)
-    else setHarmanOpen(true)
+    else setManagerOpen(true)
   }
 
   return (
@@ -93,16 +93,16 @@ export function SessionList() {
         <div className="space-y-0.5 p-2 pt-0">
           {!active
             ? [
-                // Pinned Harman entry — the orchestrator's home, above the project
+                // Pinned Manager entry — the orchestrator's home, above the project
                 // groups. Only when automation is on; otherwise it doesn't exist here.
-                ...(automationOn && (!filter || "harman".includes(filter))
+                ...(automationOn && (!filter || "agent".includes(filter))
                   ? [
                       <PinnedRow
-                        key="harman"
+                        key="agent"
                         icon={Sparkles}
-                        label="Harman"
-                        title="Harman — Harness Manager orchestrator"
-                        onClick={openHarman}
+                        label="Manager"
+                        title="Manager — the orchestrator session"
+                        onClick={openManager}
                       />,
                     ]
                   : []),
@@ -274,12 +274,12 @@ export function SessionList() {
         />
       )}
       {startIn !== null && <NewSessionDialog open cwd={startIn} onOpenChange={(o) => !o && setStartIn(null)} />}
-      <HarmanDialog open={harmanOpen} onOpenChange={setHarmanOpen} />
+      <ManagerDialog open={managerOpen} onOpenChange={setManagerOpen} />
     </div>
   )
 }
 
-/** A fixed, bordered entry above the list (Harman, or an empty project's Start session). */
+/** A fixed, bordered entry above the list (Manager, or an empty project's Start session). */
 function PinnedRow({
   icon: Icon,
   label,

@@ -79,7 +79,7 @@ def _missing_cli(name, binpath):
     if shutil.which(binpath) or os.access(binpath, os.X_OK):
         return ""
     return (f"{name} is not installed on this computer, so sign-in cannot start. "
-            f"Install it (or update Harman, which installs it), then try again.")
+            f"Install it (or update Manager, which installs it), then try again.")
 
 
 class LoginManager:

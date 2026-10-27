@@ -1,7 +1,7 @@
-/** Org-wide Harman state (automation switch, loop mode, system preamble), providers and loops. */
+/** Org-wide Manager state (automation switch, loop mode, system preamble), providers and loops. */
 import { api } from "../lib/api"
 import { isQueued } from "../lib/types"
-import type { HarmanConfig, Loop, LoopControl, LoopMode, LoopSchedule, Provider } from "../lib/types"
+import type { OrchestratorConfig, Loop, LoopControl, LoopMode, LoopSchedule, Provider } from "../lib/types"
 import type { Slice } from "./types"
 import { sessionIdOf } from "./helpers"
 
@@ -9,12 +9,12 @@ export interface OrchestrationSlice {
   /** Global custom-provider library (from /api/providers). Session-independent. */
   providers: Provider[]
   // Orchestration control state — ONE shared cache so the header/session-list
-  // pinned Harman entry and the Profile tab never drift. null = not-yet-loaded
+  // pinned Manager entry and the Profile tab never drift. null = not-yet-loaded
   // or server unreachable (rendered as "unknown", never guessed as off).
-  harman: HarmanConfig | null
+  orchestrator: OrchestratorConfig | null
   loopControl: LoopControl | null
   /** True only when the server explicitly says automation is on — the pinned
-   *  Harman entry and Harman controls are gated on this. Absence → off. */
+   *  Manager entry and Manager controls are gated on this. Absence → off. */
   automationOn: boolean
   /** The global system-awareness preamble (prepended to every session's system
    *  prompt). null = not-yet-loaded or server unreachable; "" = explicitly empty
@@ -48,7 +48,7 @@ export interface OrchestrationSlice {
 export const createOrchestrationSlice: Slice<OrchestrationSlice> = (set, get) => {
   return {
     providers: [],
-    harman: null,
+    orchestrator: null,
     loopControl: null,
     automationOn: false,
     systemPreamble: null,
@@ -65,23 +65,23 @@ export const createOrchestrationSlice: Slice<OrchestrationSlice> = (set, get) =>
     },
     // Orchestration control state (master switch + loop mode). One cache, loaded
     // at boot and after every write, so the header, the session-list pinned
-    // Harman entry and the Profile tab all read the same server truth. On any
+    // Manager entry and the Profile tab all read the same server truth. On any
     // failure we clear to "unknown/off" — a switch that never reached the server
     // must not be shown as running unattended work.
     loadOrchestration: async () => {
       const [h, l, p] = await Promise.all([
-        api.orgHarman().catch(() => null),
+        api.orgOrchestrator().catch(() => null),
         api.orgLoopControl().catch(() => null),
         api.orgSystemPreamble().catch(() => null),
       ])
       set({
-        harman: h, loopControl: l, automationOn: h?.automation_enabled === true,
+        orchestrator: h, loopControl: l, automationOn: h?.automation_enabled === true,
         systemPreamble: p ? p.preamble : null,
       })
     },
     setAutomation: async (on) => {
       try {
-        const res = await api.orgSetHarman({ automation_enabled: on })
+        const res = await api.orgSetOrchestrator({ automation_enabled: on })
         // Resuming is Red: a non-owner's request is QUEUED (200, nothing changed),
         // not applied. Report it so the unchanged switch reads as the gate working
         // rather than a bug, and re-sync from the server.
@@ -89,7 +89,7 @@ export const createOrchestrationSlice: Slice<OrchestrationSlice> = (set, get) =>
           await get().loadOrchestration()
           return "Sent for approval — only the owner can turn automation on."
         }
-        set({ harman: res, automationOn: res.automation_enabled === true })
+        set({ orchestrator: res, automationOn: res.automation_enabled === true })
         return ""
       } catch (e: any) {
         await get().loadOrchestration()

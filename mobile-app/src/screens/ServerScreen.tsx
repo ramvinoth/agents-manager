@@ -70,7 +70,7 @@ export default function ServerScreen({ navigation }: Props) {
       <TouchableOpacity testID="server-scan" accessibilityLabel="Scan pairing QR" style={[styles.button, { marginTop: 4 }]} onPress={() => setScanning(true)}>
         <Text style={styles.buttonText}>Scan pairing QR</Text>
       </TouchableOpacity>
-      <Text style={styles.hint}>On your computer open Harman → Profile → Pair a phone. Signs you in, no password.</Text>
+      <Text style={styles.hint}>On your computer open Manager → Profile → Pair a phone. Signs you in, no password.</Text>
       <Text style={[styles.hint, { marginTop: 20 }]}>Or enter the server address:</Text>
       <Text style={styles.label}>Name (optional)</Text>
       <TextInput

@@ -1,6 +1,6 @@
 """Per-chat plugins and extras (viewer.chatplugins + config.session_plugin_dirs).
 
-A chat's Harman plugins live in session_meta.agentPlugins (its template's
+A chat's Manager plugins live in session_meta.agentPlugins (its template's
 agentPlugin when it never chose); its own skills/MCP live in a generated plugin
 folder. Both reach a local Claude run as repeated --plugin-dir. Pure: the meta
 row is an in-memory dict and the chat-plugin root a tmp dir."""

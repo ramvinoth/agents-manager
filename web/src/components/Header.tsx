@@ -230,7 +230,7 @@ export function Header() {
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  Harman v{serverVersion}
+                  Manager v{serverVersion}
                 </DropdownMenuLabel>
               </>
             )}
@@ -299,7 +299,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
         <rect width="100" height="100" rx="22" className="fill-[#1D1B19] dark:fill-[#F3EEE6]" />
         <path transform="translate(50 50) scale(.66) translate(-50 -50)" className="fill-[#F3EEE6] dark:fill-[#1D1B19]" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z" />
       </svg>
-      <span className={compact ? "hidden text-sm sm:inline" : "text-sm"}>Harman</span>
+      <span className={compact ? "hidden text-sm sm:inline" : "text-sm"}>Manager</span>
     </div>
   )
 }

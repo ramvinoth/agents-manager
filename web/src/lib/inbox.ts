@@ -68,7 +68,7 @@ export function messagePreview(m: InboxMessage, max = 90): string {
  *  caller from the sessions list (the row carries only the raw id). */
 export function rowActor(m: InboxMessage, labels: Record<string, string> = {}): string {
   if (m.sender_type === "session") return labels[m.sender_id] || (m.sender_id || "").slice(0, 8)
-  if (m.sender_type === "system") return "Harman"  // the server itself (maintenance window)
+  if (m.sender_type === "system") return "Manager"  // the server itself (maintenance window)
   return "You"
 }
 

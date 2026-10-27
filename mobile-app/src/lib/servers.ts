@@ -20,7 +20,7 @@ export type ServerEntry = {
   token: string
   name?: string
   username?: string
-  /** How to reach this server through the Harman relay (end-to-end encrypted
+  /** How to reach this server through the Manager relay (end-to-end encrypted
    *  to the server's key). Like Paseo's HostProfile.connections, an entry may
    *  carry a direct address, a relay route, or both; the transport picks
    *  direct when it answers and falls back to the relay. */
@@ -45,7 +45,7 @@ export function directUrl(entry: ServerEntry | undefined): string {
 /** The address to show a human for an entry — never the synthetic
  *  relay:// identity, which means nothing to them. */
 export function displayAddress(entry: ServerEntry): string {
-  return directUrl(entry) || "Remote (via Harman relay)"
+  return directUrl(entry) || "Remote (via Manager relay)"
 }
 
 /** The whole persisted server selection: the list plus which entry is active. */

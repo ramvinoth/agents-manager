@@ -142,7 +142,7 @@ export function IntegrationsDialog({ onClose, onChanged }: { onClose: () => void
 
   function disconnect(p: IntegrationProvider, conn: IntegrationConnection) {
     const who = conn.account || `this ${p.label} account`
-    if (!window.confirm(`Disconnect ${who}? Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`)) return
+    if (!window.confirm(`Disconnect ${who}? Manager forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`)) return
     return run(`${conn.id}:delete`, async () => ok(await api.driveDelete(conn.id)))
   }
 
@@ -726,7 +726,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
     <section className="rounded-md border" data-testid="integration-local">
       <p className="flex gap-2 px-3 py-2.5 text-xs text-muted-foreground">
         <span className="flex-1">
-          Folders agents may use on the computer running Harman{local.roots.length ? "." : " — none yet."}
+          Folders agents may use on the computer running Manager{local.roots.length ? "." : " — none yet."}
         </span>
         {busy && <Loader2 className="size-3.5 animate-spin" />}
       </p>

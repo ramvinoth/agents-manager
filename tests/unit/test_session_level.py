@@ -1,4 +1,4 @@
-"""Harman authority level per session — the org-side twin of permission mode.
+"""Manager authority level per session — the org-side twin of permission mode.
 
 Two layers, one each, never duplicated:
 - permission mode (session_mode_set) gates the CLI's OWN tools inside a run;

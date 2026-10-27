@@ -64,7 +64,7 @@ def _db():
         pool.putconn(conn)
 
 
-# Harman's DB schema generation. The big CREATE/ALTER block in init_db() is
+# Manager's DB schema generation. The big CREATE/ALTER block in init_db() is
 # additive-idempotent, so additive changes (new table, new nullable column) need
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
@@ -99,7 +99,7 @@ def _run_migrations(prev):
                 -- default_provider) went with it; keep only the master switch.
                 UPDATE settings SET value = jsonb_build_object(
                     'automation_enabled', COALESCE((value->>'automation_enabled')::boolean, false))
-                  WHERE key = 'harman';
+                  WHERE key = 'orchestrator';
             """)
     if prev < 3:
         # An agent template held ONE job (cron + job_prompt columns); it now
@@ -226,7 +226,7 @@ def init_db():
               host        TEXT NOT NULL DEFAULT 'local',
               created_at  DOUBLE PRECISION NOT NULL
             );
-            -- ── Orchestrator ("Harman") empire tables ─────────────────────────
+            -- ── Orchestrator ("Manager") empire tables ─────────────────────────
             -- ONE canonical Kanban board: a single cards table; every per-session
             -- / project / CEO "board" is a filtered VIEW of it. See
             -- ORCHESTRATOR_KANBAN.md + viewer/orglogic.py.
@@ -443,13 +443,13 @@ def init_db():
             -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
-            -- The Harman authority level (ic < lead < manager) a chat started
+            -- The Manager authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
             -- The scheduled jobs a chat started from this agent begins with:
             -- [{prompt, cron} | {prompt, interval}], the same shape New chat sends.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS jobs JSONB NOT NULL DEFAULT '[]';
-            -- The Harman plugins a chat from this agent starts with, saved from a
+            -- The Manager plugins a chat from this agent starts with, saved from a
             -- chat (chatplugins.save_to_template). NULL = just `plugin`. Never
             -- seeded, so the owner's saved setup survives a builtin re-seed.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugins JSONB;
@@ -497,7 +497,7 @@ def init_db():
               -- (built-in Claude) runs. Resolved at fire time in run_loop_iteration.
               provider    TEXT NOT NULL DEFAULT '',
               enabled     BOOLEAN NOT NULL DEFAULT TRUE,
-              -- WHO scheduled this loop: 'user' (a human, via the UI) or 'harman'
+              -- WHO scheduled this loop: 'user' (a human, via the UI) or 'agent'
               -- (an agent, via the gated loop_create action). The loop_control
               -- setting gates firing per-origin, INDEPENDENT of the automation
               -- master switch. Existing rows backfill to 'user' (the ALTER below),
@@ -598,7 +598,7 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_job_runs_loop ON job_runs(loop_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_job_runs_started ON job_runs(started_at);
-            -- Singleton key/value store; holds the Harman config and the retention
+            -- Singleton key/value store; holds the Manager config and the retention
             -- policy (job-run history caps — tunable at runtime for SaaS plan tiers).
             CREATE TABLE IF NOT EXISTS settings (
               key   TEXT PRIMARY KEY,
@@ -610,37 +610,37 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('retention',
               $${"job_runs_days": 90, "job_runs_per_loop": 500}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
-            -- Fresh installs get Harman's config seeded (master switch OFF: an
+            -- Fresh installs get Manager's config seeded (master switch OFF: an
             -- unattended machine must never start running on its own). DO NOTHING
             -- so the legacy-file backfill and any later user edit always win.
-            INSERT INTO settings (key, value) VALUES ('harman',
+            INSERT INTO settings (key, value) VALUES ('orchestrator',
               $${"automation_enabled": false}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
-            -- Loop-firing control. 'mode' is one of user|harman|both|none: which
+            -- Loop-firing control. 'mode' is one of user|agent|both|none: which
             -- loop ORIGINS are licensed to fire. It is a different fact from the
             -- automation master switch (a runtime halt on the agent side of the
             -- same set — they intersect at fire time in engine.fire_due_loops).
             -- Default 'user' — a human's own scheduled loops run out of the box;
-            -- harman-created loops additionally need the master switch on.
+            -- agent-created loops additionally need the master switch on.
             -- DO NOTHING so a later user edit always wins over the seed.
             INSERT INTO settings (key, value) VALUES ('loop_control',
               $${"mode": "user"}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
             -- System-awareness preamble prepended to EVERY session's system prompt
             -- (engine.append_system_prompt). Without it a session sees the raw
-            -- mcp__viewer__* tool list but is never told it is a node in the Harman
+            -- mcp__viewer__* tool list but is never told it is a node in the Manager
             -- orchestration system or how the steering rules gate its power. Stored
             -- here (not a code constant) so it is editable at runtime with no deploy;
             -- to_jsonb(...::text) makes it a JSON string without escaping the body.
             -- DO NOTHING so any operator edit always wins over this seed.
             INSERT INTO settings (key, value) VALUES ('system_preamble',
-              to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
+              to_jsonb($preamble$You are one agent session inside the Manager system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
 Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.
 
 Authority: your power is the weaker of the human owner's role and this session's level: Own work (key ic: its own cards, notes, messages) < Workspace (lead: also projects, loops, columns) < Organization (manager: also org-wide settings). A session's level comes from the agent it was started from (Agents tab) or the owner's per-chat setting; with neither it runs at Own work, the least authority. To the owner say Own work/Workspace/Organization, never the key ic. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.
 
-Steering rules: you may create/edit loops for OTHER sessions, never your own. session_mode_set changes another session's permission mode (up to 'bypass' — no tool gating at all): it is Red, so an agent's request queues for the owner, and a session may never set its own (the owner grants trust, a model never requests it of itself). Agent-scheduled (harman) loops fire only when the loop-control mode (user|harman|both|none) licenses that origin AND the automation master switch (harman.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
+Steering rules: you may create/edit loops for OTHER sessions, never your own. session_mode_set changes another session's permission mode (up to 'bypass' — no tool gating at all): it is Red, so an agent's request queues for the owner, and a session may never set its own (the owner grants trust, a model never requests it of itself). Agent-scheduled (agent) loops fire only when the loop-control mode (user|agent|both|none) licenses that origin AND the automation master switch (orchestrator.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
 
 ## The board pipeline (decisions live on the board)
 Every project's board is the default pipeline: Todo → Doing → Review → Approved → Declined → Blocked → Needs-info → Done. "Review" is the holding state for work that needs the owner's decision — when you are done but a call is required, move your card to Review and comment with the question. The owner decides by moving the card to Approved or Declined, or by commenting; that move or comment reaches you as a [board-watch] wake. On a wake, read the card and its comments (card_comments) and act: Approved means proceed with that work (move it to Done when it is complete), Declined means stop it. If your work is stuck on a dependency, move the card to Blocked and comment on what is stuck; if you need a fact or a decision from the owner, move it to Needs-info and comment with the question — your comment pushes to the owner. A fresh comment on your card is a message for you — answer on the card. Comment on your card to report status: the owner gets a push when an agent comments. Never decide for the owner: a card in Review waits for their call, and a decision in Approved/Declined is theirs to make, not yours.
@@ -1284,7 +1284,7 @@ def pending_plan_delete(session_id):
         cur.execute("DELETE FROM pending_plans WHERE session_id = %s", (session_id,))
 
 
-# ── Orchestrator ("Harman") accessors ────────────────────────────────────────
+# ── Orchestrator ("Manager") accessors ────────────────────────────────────────
 # Dumb CRUD only: policy (Green/Red gate, audit-on-action) lives in the
 # orchestrator layer (P1+), not here. Rows come back as RealDictCursor dicts.
 
@@ -3287,17 +3287,17 @@ def migrate_legacy_files():
                 provider_upsert(pid, rec)
         _retire(p)
 
-    # harman config -> settings['harman']
-    p = _LEGACY_DIR / ".viewer-harman.json"
+    # agents config -> settings['orchestrator']
+    p = _LEGACY_DIR / ".viewer-orchestrator.json"
     data = _read_json(p)
     if data is not None:
         # Seed only if the row is still the untouched default (no automation flip
         # since install). setting_get returns the seeded default on a fresh DB.
-        cur_cfg = setting_get("harman", {}) or {}
+        cur_cfg = setting_get("orchestrator", {}) or {}
         # Only the master switch survives; the file's other keys fed the retired
         # manager tick (card 146).
         if not cur_cfg.get("automation_enabled") and isinstance(data, dict):
-            setting_set("harman", {"automation_enabled": bool(data.get("automation_enabled"))})
+            setting_set("orchestrator", {"automation_enabled": bool(data.get("automation_enabled"))})
         _retire(p)
 
     # cloud-drive vendor clients -> settings['drive_clients']

@@ -128,7 +128,7 @@ def _github_app(key, fields, http):
     body = _post(http, "https://api.github.com/app/installations/%s/access_tokens"
                  % urllib.parse.quote(str(fields.get("installation_id", "")), safe=""),
                  {"Authorization": "Bearer " + app_jwt, "Accept": "application/vnd.github+json",
-                  "User-Agent": "Harman"}, b"", "GitHub")
+                  "User-Agent": "Manager"}, b"", "GitHub")
     exp = body.get("expires_at") or ""
     try:
         ttl = datetime.datetime.strptime(exp, "%Y-%m-%dT%H:%M:%SZ").replace(

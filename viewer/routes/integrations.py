@@ -172,7 +172,7 @@ class IntegrationsMixin:
         self.send_json(out)
 
     def _p_integrations_client(self, req):
-        """Save a provider's OAuth client (Harman's own identity to that
+        """Save a provider's OAuth client (Manager's own identity to that
         vendor, shared by every account of the provider). Body: {provider,
         client_id, client_secret?}. Human-only. An omitted client_secret keeps
         the one on record (no client ever holds it); "" clears it. Takes effect

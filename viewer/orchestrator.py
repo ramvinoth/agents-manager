@@ -4,9 +4,9 @@
     until the owner turns it on, and turning it off pauses EVERY unattended path —
     see `automation_enabled()` below and its enforcement points in
     engine.loop_scheduler / engine.fire_due_loops.
-  - loop control: WHICH loop origins may fire (user / harman / both / none).
+  - loop control: WHICH loop origins may fire (user / agents / both / none).
 
-Both live in the Postgres `settings` table (rows `harman` and `loop_control`).
+Both live in the Postgres `settings` table (rows `agents` and `loop_control`).
 There is no autonomous manager here any more: work reaches a session through a
 card on its board (board_wake) or a loop someone scheduled, never through a
 roster-matching planner (removed with the Employees roster, card 146).
@@ -19,7 +19,7 @@ _DEFAULT = {"automation_enabled": False}
 
 def _load_config():
     cfg = dict(_DEFAULT)
-    stored = db.setting_get("harman", {})
+    stored = db.setting_get("orchestrator", {})
     # Defensive: only a dict row may override the default. A malformed value
     # (wrong shape, or a read that returns something other than a dict) leaves the
     # fail-safe default intact — automation stays OFF rather than crashing here.
@@ -43,14 +43,14 @@ def automation_enabled():
 
 
 def get_config():
-    """Public: the effective config (for the /api/org/harman route)."""
+    """Public: the effective config (for the /api/org/orchestrator route)."""
     return _load_config()
 
 
 def set_automation(on):
     """The ONLY writer of the master switch: flipping it is always a distinct,
     individually-gated act (Red to resume, cheap to pause — see orglogic)."""
-    db.setting_set("harman", {"automation_enabled": bool(on)})
+    db.setting_set("orchestrator", {"automation_enabled": bool(on)})
     return _load_config()
 
 

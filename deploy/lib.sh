@@ -3,7 +3,7 @@
 # deploy/lib.sh — the single copy of each install/update step for the viewer.
 #
 # Sourced by deploy/install.sh (fresh-machine install) and, from B5 on, the
-# `harman` CLI / deploy/update.sh (in-place release updates). Keeping every step
+# `agents` CLI / deploy/update.sh (in-place release updates). Keeping every step
 # here — not duplicated in each entrypoint — is what stops install and update
 # from drifting: they call the SAME functions. Sourcing this file only defines
 # functions and config defaults; it runs no steps. The caller invokes them.
@@ -36,10 +36,10 @@ HM_REPO_DIR="$(cd "$HM_LIB_DIR/.." && pwd)"
 OS="$(uname -s)"
 PORT="${PORT:-8091}"
 # An installed unit already names the service user: keep it. Defaulting to the
-# invoker made `sudo harman update` rewrite the unit to User=root, which has no
+# invoker made `sudo agents update` rewrite the unit to User=root, which has no
 # Postgres role — the viewer crash-looped and the rollback failed with it.
 hm_unit_user() {
-  sed -n 's/^User=//p' /etc/systemd/system/harman-viewer.service 2>/dev/null | head -1 || true
+  sed -n 's/^User=//p' /etc/systemd/system/agents-viewer.service 2>/dev/null | head -1 || true
 }
 SERVICE_USER="${SERVICE_USER:-$(hm_unit_user)}"
 SERVICE_USER="${SERVICE_USER:-$(id -un)}"
@@ -50,7 +50,7 @@ HM_WORKDIR="${HM_WORKDIR:-$HM_APP_DIR}"
 # the release logic can be exercised against a throwaway dir in tests without a
 # real /opt or systemd. Secrets are NOT symlinked per-release: config.py already
 # reads ~/.agents-apns.env (outside releases), which survives every swap.
-HM_PREFIX="${HM_PREFIX:-/opt/harman}"
+HM_PREFIX="${HM_PREFIX:-/opt/agents}"
 HM_RELEASES="$HM_PREFIX/releases"
 HM_CURRENT="$HM_PREFIX/current"
 
@@ -107,7 +107,7 @@ hm_deps() {
 # installer puts it in ~/.local/bin of whoever runs it (it refuses sudo-as-root
 # by design), so it runs AS the service user — viewer/config.py claude_bin()
 # looks in exactly that place. It keeps itself current afterwards. Non-fatal:
-# a network blip must not block a Harman update, and the app names the gap.
+# a network blip must not block a Manager update, and the app names the gap.
 hm_claude_cli() {
   if [[ -n "${SKIP_DEPS:-}" ]]; then return 0; fi
   local home; home="$(eval echo "~$SERVICE_USER")"
@@ -121,7 +121,7 @@ hm_claude_cli() {
     bash -c "$cmd"
   else
     sudo -u "$SERVICE_USER" -H bash -c "$cmd"
-  fi || hm_log "Claude Code install failed — sign-in will say so; re-run 'harman' update or the installer."
+  fi || hm_log "Claude Code install failed — sign-in will say so; re-run 'agents' update or the installer."
 }
 
 # 2. Postgres `viewer` database ────────────────────────────────────────────────
@@ -184,26 +184,26 @@ hm_web_build() {
 # RunAtLoad / systemd's --now also start it, so after this the instance is live.
 hm_service_install() {
   if [[ "$OS" == "Darwin" ]]; then
-    local plist="$HOME/Library/LaunchAgents/com.harman.viewer.plist"
+    local plist="$HOME/Library/LaunchAgents/com.agents.viewer.plist"
     local python_bin; python_bin="$(hm_py "$HM_WORKDIR")"
-    # The viewer runs under Harman.app so macOS privacy settings name it "Harman".
+    # The viewer runs under Agents.app so macOS privacy settings name it "Manager".
     local app_bin; app_bin="$("$HM_APP_DIR/deploy/macos/build-app.sh")"
-    hm_log "Installing launchd agent 'com.harman.viewer' (port=$PORT)…"
+    hm_log "Installing launchd agent 'com.agents.viewer' (port=$PORT)…"
     mkdir -p "$HOME/Library/LaunchAgents"
     sed \
       -e "s|__APP__|$app_bin|g" \
       -e "s|__PYTHON__|$python_bin|g" \
       -e "s|__WORKDIR__|$HM_WORKDIR|g" \
       -e "s|__PORT__|$PORT|g" \
-      "$HM_REPO_DIR/deploy/com.harman.viewer.plist" > "$plist"
+      "$HM_REPO_DIR/deploy/com.agents.viewer.plist" > "$plist"
     # Reload cleanly if it was already loaded.
-    launchctl bootout "gui/$(id -u)/com.harman.viewer" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/com.agents.viewer" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$plist"
     hm_log "Done. Instance should be live at http://localhost:$PORT"
-    hm_log "  status:  launchctl print gui/$(id -u)/com.harman.viewer"
-    hm_log "  logs:    tail -f $HM_WORKDIR/deploy/harman-viewer.log"
+    hm_log "  status:  launchctl print gui/$(id -u)/com.agents.viewer"
+    hm_log "  logs:    tail -f $HM_WORKDIR/deploy/agents-viewer.log"
   else
-    local unit_name="harman-viewer.service"
+    local unit_name="agents-viewer.service"
     hm_log "Installing systemd unit '$unit_name' (User=$SERVICE_USER, port=$PORT)…"
     sed \
       -e "s|^User=.*|User=$SERVICE_USER|" \
@@ -211,16 +211,16 @@ hm_service_install() {
       -e "s|^ExecStart=[^ ]*|ExecStart=$(hm_py "$HM_WORKDIR")|" \
       -e "s|server.py 8091|server.py $PORT|" \
       "$HM_REPO_DIR/deploy/$unit_name" | sudo tee "/etc/systemd/system/$unit_name" >/dev/null
-    # The auto-updater timer (harman-update.*): runs `harman auto-update` as the
+    # The auto-updater timer (agents-update.*): runs `agents auto-update` as the
     # service user; it is a no-op until $HM_PREFIX/update.env holds a feed token.
     local u
-    for u in harman-update.service harman-update.timer; do
+    for u in agents-update.service agents-update.timer; do
       sed -e "s|^User=.*|User=$SERVICE_USER|" "$HM_REPO_DIR/deploy/$u" \
         | sudo tee "/etc/systemd/system/$u" >/dev/null
     done
     sudo systemctl daemon-reload
     sudo systemctl enable --now "$unit_name"
-    sudo systemctl enable --now harman-update.timer
+    sudo systemctl enable --now agents-update.timer
     hm_log "Done. Instance should be live at http://localhost:$PORT"
     hm_log "  status:  systemctl status $unit_name"
     hm_log "  logs:    journalctl -u $unit_name -f"
@@ -233,7 +233,7 @@ hm_service_install() {
 # the person running the install; silent once the owner exists (file deleted).
 # Waits up to 30s because the service writes it on startup.
 hm_setup_code() {
-  local f i; f="$(eval echo "~$SERVICE_USER")/.harman/setup-code"
+  local f i; f="$(eval echo "~$SERVICE_USER")/.agents/setup-code"
   for (( i=0; i<30; i++ )); do
     if [[ -s "$f" ]]; then
       hm_log "Setup code (enter it when creating the owner account): $(sudo -u "$SERVICE_USER" cat "$f" 2>/dev/null || cat "$f")"
@@ -247,7 +247,7 @@ hm_setup_code() {
   return 1
 }
 
-# ─── Release-symlink helpers (used by the `harman` CLI / update.sh) ────────────
+# ─── Release-symlink helpers (used by the `agents` CLI / update.sh) ────────────
 #
 # Layout:
 #   $HM_PREFIX/releases/vX.Y.Z/   a verified checkout + built web/dist + node_modules
@@ -258,9 +258,9 @@ hm_setup_code() {
 
 hm_service_restart() {
   if [[ "$OS" == "Darwin" ]]; then
-    launchctl kickstart -k "gui/$(id -u)/com.harman.viewer"
+    launchctl kickstart -k "gui/$(id -u)/com.agents.viewer"
   else
-    sudo systemctl restart harman-viewer.service
+    sudo systemctl restart agents-viewer.service
   fi
 }
 

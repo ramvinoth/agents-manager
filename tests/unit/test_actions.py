@@ -321,17 +321,17 @@ def test_queued_red_intent_carries_no_token(fdb):
 
 # ── agent loops: origin is server-forced, and the origin guard is real ───────
 
-def test_loop_create_forces_harman_origin(fdb):
+def test_loop_create_forces_agent_origin(fdb):
     """origin is stamped by the handler, never taken from args: an intent is
     persisted and replayed, so a caller-supplied 'user' origin could forge a loop
-    that dodges the loop-control dropdown. Even asking for 'user' yields 'harman'."""
+    that dodges the loop-control dropdown. Even asking for 'user' yields 'agent'."""
     it = actions.intent("loop_create",
                         {"session": "worker", "prompt": "go", "interval": "5m",
                          "origin": "user"}, "session:bob")
     resp, status = actions.execute(it, "owner", "lead")
-    assert status == 200 and resp["origin"] == "harman"
+    assert status == 200 and resp["origin"] == "agent"
     lid = resp["created"]
-    assert fdb.loops[lid]["origin"] == "harman"
+    assert fdb.loops[lid]["origin"] == "agent"
 
 
 def test_loop_create_rejects_an_empty_prompt(fdb):
@@ -353,8 +353,8 @@ def test_loop_update_refuses_a_user_origin_loop(fdb):
     assert fdb.loops["u1"]["prompt"] == "go", "the human's loop must be untouched"
 
 
-def test_loop_update_edits_a_harman_loop(fdb):
-    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "harman"}
+def test_loop_update_edits_a_agent_loop(fdb):
+    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "agent"}
     resp, status = actions.execute(
         actions.intent("loop_update", {"id": "h1", "prompt": "changed"}, "session:bob"),
         "owner", "lead")
@@ -365,7 +365,7 @@ def test_loop_update_edits_a_harman_loop(fdb):
 def test_loop_delete_by_an_agent_queues_and_does_not_remove(fdb):
     """loop_delete is red, so an agent's call queues the intent rather than running.
     The loop must still be present until the owner approves."""
-    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "harman"}
+    fdb.loops["h1"] = {"id": "h1", "session": "s", "prompt": "go", "origin": "agent"}
     resp, status = actions.execute(
         actions.intent("loop_delete", {"id": "h1", "reason": "stale"}, "session:bob"), "owner", "manager")
     assert status == 200 and resp["queued"] is True

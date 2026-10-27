@@ -60,7 +60,7 @@ class _GoogleAPI(OAuthAccount):
         except Exception:
             msg = ""
         if status == 403 and "has not been used" in msg:
-            msg = ("This Google API is turned off in the Google Cloud project that owns Harman's "
+            msg = ("This Google API is turned off in the Google Cloud project that owns Manager's "
                    "OAuth client. Enable it at console.cloud.google.com → APIs & Services → Library.")
         raise DriveError(msg or "Google answered HTTP %d" % status,
                          status if status in (400, 403, 404) else 502)

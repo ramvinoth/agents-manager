@@ -1,14 +1,14 @@
 // A chat's Trust: the two server-side policies that gate what its agent may do.
-// Mirrors mobile-app (SessionProfileScreen Trust card + lib/harmanLevel).
+// Mirrors mobile-app (SessionProfileScreen Trust card + lib/orgLevel).
 
-/** Harman authority, least → most (viewer/orglogic.LEVELS). The keys are wire
+/** Manager authority, least → most (viewer/orglogic.LEVELS). The keys are wire
  *  values; a person reads LEVEL_NAME ("ic" is never shown). */
-export type HarmanLevel = "ic" | "lead" | "manager"
-export const HARMAN_LEVELS: readonly HarmanLevel[] = ["ic", "lead", "manager"]
+export type OrgLevel = "ic" | "lead" | "manager"
+export const ORG_LEVELS: readonly OrgLevel[] = ["ic", "lead", "manager"]
 /** Mirrors viewer/orglogic.LEVEL_NAMES — named by reach, never a job title. */
-export const LEVEL_NAME: Record<HarmanLevel, string> = { ic: "Own work", lead: "Workspace", manager: "Organization" }
-export function isHarmanLevel(v: unknown): v is HarmanLevel {
-  return typeof v === "string" && (HARMAN_LEVELS as readonly string[]).includes(v)
+export const LEVEL_NAME: Record<OrgLevel, string> = { ic: "Own work", lead: "Workspace", manager: "Organization" }
+export function isOrgLevel(v: unknown): v is OrgLevel {
+  return typeof v === "string" && (ORG_LEVELS as readonly string[]).includes(v)
 }
 
 /** The saved Claude Code permission policy (session_meta.permission_mode). */

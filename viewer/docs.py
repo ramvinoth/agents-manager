@@ -24,8 +24,8 @@ from viewer.config import STATIC_DIR
 _FILE_DOCS = {
     "SESSIONS.md": ("Sessions & authority",
                     "What a session is, where its authority comes from, and what every session can see."),
-    "README.md": ("Harman — overview",
-                  "What Harman is and how the pieces fit together."),
+    "README.md": ("Manager — overview",
+                  "What Manager is and how the pieces fit together."),
     "ORCHESTRATOR.md": ("Company charter",
                         "The operating contract: roles, RBAC, the Green/Red gate."),
     "ORCHESTRATOR_KANBAN.md": ("Kanban / empire design",
@@ -67,13 +67,13 @@ def _status_markdown():
     mode_line = {
         "none": "none — no scheduled loops fire (yours or the agents').",
         "user": "user — only human-scheduled loops fire; agent-created loops are paused.",
-        "harman": "harman — only agent-created loops fire; human-scheduled loops are paused.",
+        "agent": "agents — only agent-created loops fire; human-scheduled loops are paused.",
         "both": "both — every scheduled loop fires, human and agent.",
     }.get(mode, mode)
     lines = [
         f"# {_STATUS_TITLE}",
         "",
-        "The current control posture of this Harman machine, read live from the",
+        "The current control posture of this Manager machine, read live from the",
         "settings store. Two independent gates govern unattended work.",
         "",
         "## Automation master switch",
@@ -89,7 +89,7 @@ def _status_markdown():
         "",
         "This is orthogonal to the master switch: the owner can pause automation",
         "while their own loops keep firing (mode `user`), or license only agent",
-        "loops (mode `harman`).",
+        "loops (mode `agents`).",
         "",
         "## System-awareness preamble",
         "",

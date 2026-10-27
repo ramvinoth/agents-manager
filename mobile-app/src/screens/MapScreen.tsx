@@ -96,7 +96,7 @@ export default function MapScreen({ navigation, route }: Props) {
       ) : !view.available ? (
         <View testID="map-install" style={styles.mapInstall}>
           <Text style={styles.mapInstallTitle}>The code map isn't installed on the server.</Text>
-          <Text style={styles.mapHint}>Install it once on the machine running Harman, then reopen the map:</Text>
+          <Text style={styles.mapHint}>Install it once on the machine running Manager, then reopen the map:</Text>
           <Text selectable style={styles.mapCode}>{view.install}</Text>
         </View>
       ) : (

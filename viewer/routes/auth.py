@@ -143,7 +143,7 @@ class AuthMixin:
         setupcode.ensure()   # a missing file (deleted by hand) must not wedge first-run
         if not setupcode.matches(body.get("setupCode")):
             self.send_json({"error": "Wrong setup code. Find it in the install output, the server log, "
-                                     "or run `harman setup-code` on the server."}, status=403)
+                                     "or run `agents setup-code` on the server."}, status=403)
             return
         try:
             user = db.create_user(body.get("username", ""), body.get("password", ""))
@@ -184,7 +184,7 @@ class AuthMixin:
                            status=400)
             return
         code, expires = pairing.create(p["user"]["id"])
-        # `relay` (or null): how a phone reaches this server through the Harman
+        # `relay` (or null): how a phone reaches this server through the Manager
         # relay when it has no direct route — see viewer.relay.offer.
         self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
                         "publicUrl": PUBLIC_URL, "relay": relay.offer()})

@@ -1,6 +1,6 @@
 ---
 name: spec-to-cards
-description: Break a Harman spec note into board cards — one card per shippable slice, each self-contained, with dependencies recorded. Use when the user asks to plan the work, create tickets/cards/tasks from a spec, or "break this down".
+description: Break a Manager spec note into board cards — one card per shippable slice, each self-contained, with dependencies recorded. Use when the user asks to plan the work, create tickets/cards/tasks from a spec, or "break this down".
 ---
 
 # Spec → cards

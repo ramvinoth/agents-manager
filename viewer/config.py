@@ -52,15 +52,15 @@ VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
 # The address phones use to reach this server from anywhere (e.g. its Cloudflare
 # Tunnel hostname). The Pair-a-phone QR defaults to it, so a customer never has
 # to know or type it. Empty = the QR falls back to the browser's own address.
-PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
-# Harman relay (relay/ — Cloudflare Worker) this server dials out to so phones
+PUBLIC_URL = os.environ.get("AGENTS_PUBLIC_URL", "").strip().rstrip("/")
+# Manager relay (relay/ — Cloudflare Worker) this server dials out to so phones
 # reach it from anywhere with no tunnel or open port. Like Paseo, a fresh
 # install ships pointed at the hosted relay but leaves it OFF until the owner
 # switches it on while pairing a phone (persisted in settings; viewer/relay.py).
-# HARMAN_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
+# AGENTS_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
 # "off" = never (the owner cannot switch it on from the app).
 DEFAULT_RELAY_URL = "wss://relay.suhai.ai"
-RELAY_ENV = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
+RELAY_ENV = os.environ.get("AGENTS_RELAY_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 
 
@@ -74,7 +74,7 @@ def transcript_path(session_id):
     return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
 
-# Agent plugins shipped with Harman: standard Claude Code plugin folders that an
+# Agent plugins shipped with Manager: standard Claude Code plugin folders that an
 # agent template names (agent_templates.plugin / plugins), a chat adds or removes,
 # and the engine loads per run with --plugin-dir.
 AGENT_PLUGINS_DIR = STATIC_DIR / "viewer" / "agent_plugins"
@@ -90,7 +90,7 @@ def agent_plugin_dir(name):
 
 
 def agent_plugin_names():
-    """Every plugin Harman ships, by folder name — the catalog a chat or agent picks from."""
+    """Every plugin Manager ships, by folder name — the catalog a chat or agent picks from."""
     if not AGENT_PLUGINS_DIR.is_dir():
         return []
     return sorted(p.name for p in AGENT_PLUGINS_DIR.iterdir() if agent_plugin_dir(p.name))
@@ -138,7 +138,7 @@ def template_plugin_dir(template_id, create=False):
 
 
 def session_plugins(meta):
-    """The Harman plugins a session runs with. `agentPlugins` (the owner's
+    """The Manager plugins a session runs with. `agentPlugins` (the owner's
     per-chat choice) wins; a session that never chose keeps its template's
     `agentPlugin`. Unknown names are dropped, never passed to the CLI."""
     names = meta.get("agentPlugins")
@@ -148,16 +148,16 @@ def session_plugins(meta):
 
 
 def session_plugin_dirs(session_id, meta):
-    """Every --plugin-dir a local Claude run of this session gets: its Harman
+    """Every --plugin-dir a local Claude run of this session gets: its Manager
     plugins, then its own extras folder when it has one."""
     dirs = [agent_plugin_dir(n) for n in session_plugins(meta)]
     chat = chat_plugin_dir(session_id)
     return dirs + ([chat] if chat else [])
 
 
-# Harman's own release version. Read from the top-level VERSION file relative to
+# Manager's own release version. Read from the top-level VERSION file relative to
 # STATIC_DIR (NOT an absolute path) so that when the server is launched from a
-# release symlink (e.g. /opt/harman/current -> releases/v1.2.0), this reports the
+# release symlink (e.g. /opt/agents/current -> releases/v1.2.0), this reports the
 # active release with no release-awareness in the code. Bare dev checkouts without
 # a VERSION file fall back to a sentinel.
 try:
@@ -211,20 +211,20 @@ QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answe
 # STT + TTS run on a GPU box as a persistent sherpa-onnx service —
 # Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
 # The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
-SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "")
-SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
+SPEECH_SERVICE_URL = os.environ.get("AGENTS_SPEECH_URL", "")
+SPEECH_TIMEOUT = int(os.environ.get("AGENTS_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
                                      # (Qwen synthesizes a whole reply in one
                                      # pass — a long paragraph can take 30s+)
 # TTS streaming uses Pocket (:8097), which serves /synthesize_stream_aac.
 # The main speech service (:8095) handles STT + non-streaming TTS but NOT
 # streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
-TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "")
+TTS_STREAM_URL = os.environ.get("AGENTS_TTS_STREAM_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
-# service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
+# service (default :8095), which may differ from AGENTS_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
 VERIFY_SERVICE_URL = os.environ.get(
-    "HARMAN_VERIFY_URL", "")
-VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
+    "AGENTS_VERIFY_URL", "")
+VERIFY_TIMEOUT = int(os.environ.get("AGENTS_VERIFY_TIMEOUT", "20"))  # per segment
 
 # ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====
 # A SEPARATE, single-slot GPU backend (see deploy/voicechat.md) — not the
@@ -234,10 +234,10 @@ VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segme
 # read-a-secret-file convention as VIEWER_TOKEN_FILE / viewer/login.py),
 # never in an env var a process listing could show, and is read fresh on
 # each request rather than cached in memory at import time.
-NEMOTRON_URL = os.environ.get("HARMAN_NEMOTRON_URL", "")
-NEMOTRON_TOKEN_FILE = (Path(os.environ["HARMAN_NEMOTRON_TOKEN_FILE"])
-                      if os.environ.get("HARMAN_NEMOTRON_TOKEN_FILE") else None)
-NEMOTRON_TIMEOUT = int(os.environ.get("HARMAN_NEMOTRON_TIMEOUT", "15"))  # /health only
+NEMOTRON_URL = os.environ.get("AGENTS_NEMOTRON_URL", "")
+NEMOTRON_TOKEN_FILE = (Path(os.environ["AGENTS_NEMOTRON_TOKEN_FILE"])
+                      if os.environ.get("AGENTS_NEMOTRON_TOKEN_FILE") else None)
+NEMOTRON_TIMEOUT = int(os.environ.get("AGENTS_NEMOTRON_TIMEOUT", "15"))  # /health only
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()

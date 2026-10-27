@@ -137,7 +137,7 @@ export default function IntegrationsScreen() {
 
   function disconnect(p: IntegrationProvider, conn: IntegrationConnection) {
     Alert.alert(`Disconnect ${conn.account || `this ${p.label} account`}?`,
-      `Harman forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`, [
+      `Manager forgets its access; agents lose every ${p.label} service on it. Nothing in the account itself is touched.${isToken(p) ? ` The token still works at ${p.label} until you delete it there.` : ""}`, [
         { text: "Cancel", style: "cancel" },
         {
           text: "Disconnect", style: "destructive",
@@ -584,7 +584,7 @@ function LocalDiskSection({ local, busy, disabled, onSave }: {
     <View testID="integration-local">
       <Text style={styles.sheetSection}>THIS MACHINE</Text>
       <Text style={styles.sheetHint}>
-        Folders agents may use on the computer running Harman{local.roots.length ? "." : " — none yet."}
+        Folders agents may use on the computer running Manager{local.roots.length ? "." : " — none yet."}
       </Text>
       <View style={styles.spCard}>
       {local.roots.map((r, i) => (

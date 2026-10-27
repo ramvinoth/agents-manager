@@ -132,7 +132,7 @@ _ACTIONS = {
     "card_assign": ("Assign card", ("Card", "card_id", "card")),
     "employee_create": ("Create employee", None),
     "employee_update": ("Update employee", ("Employee", "id", None)),
-    "harman_config": ("Change manager configuration", None),
+    "orchestrator_config": ("Change manager configuration", None),
     "tick_dryrun": ("Plan manager action", None),
     "card_advance": ("Advance card", ("Card", None, "card")),
     "spawn_session": ("Start agent session", ("Card", None, "card")),

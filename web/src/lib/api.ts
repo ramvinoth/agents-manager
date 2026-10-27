@@ -4,8 +4,8 @@
 
 import type { NoteGraph } from "./noteLinks"
 import type { NoteExportFormat } from "./notes"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
-import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
+import type { Provider, OrchestratorConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
+import type { OrgLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import type { KeyAction } from "./providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
@@ -174,17 +174,17 @@ class ApiClient {
   }
 
   // ---- org / Kanban (project-scoped board) ----
-  /** Harman orchestrator config — the single server-side source of truth for
+  /** Manager orchestrator config — the single server-side source of truth for
    *  the master automation switch. Read on both apps; writable from the web
    *  Profile tab and the mobile Profile screen (they mirror each other). */
-  orgHarman() {
-    return this.getJSON<HarmanConfig>("/api/org/harman")
+  orgOrchestrator() {
+    return this.getJSON<OrchestratorConfig>("/api/org/orchestrator")
   }
   /** Flip the master automation switch. Turning it ON is a Red action — a
    *  caller who can't self-approve gets an approval back, not the config —
    *  hence the `| Queued` union. */
-  orgSetHarman(patch: Partial<HarmanConfig>) {
-    return this.postJSON<HarmanConfig | Queued>("/api/org/harman", patch)
+  orgSetOrchestrator(patch: Partial<OrchestratorConfig>) {
+    return this.postJSON<OrchestratorConfig | Queued>("/api/org/orchestrator", patch)
   }
   /** Loop-firing mode — which loop origins may run, orthogonal to automation.
    *  Green (manager scope, never queues): the write returns the applied config. */
@@ -483,7 +483,7 @@ class ApiClient {
     return this.postJSON<TrustWrite>("/api/session/mode", { for_session: session, mode })
   }
   /** "" clears the chat's override back to the level of the agent it was started from. */
-  sessionLevelSet(session: string, level: HarmanLevel | "") {
+  sessionLevelSet(session: string, level: OrgLevel | "") {
     return this.postJSON<TrustWrite>("/api/session/level", { for_session: session, level })
   }
 
@@ -592,7 +592,7 @@ class ApiClient {
   marketSkillInstall(body: { id: string; scope: "user" | "project" | "chat"; session?: string }) {
     return this.postStrict<{ installed: string; scope: string }>("/api/market/skill/install", body)
   }
-  /** Add (on) or remove one Harman plugin for a chat; returns the chat's plugin list. */
+  /** Add (on) or remove one Manager plugin for a chat; returns the chat's plugin list. */
   chatPlugin(body: { session: string; name: string; on: boolean }) {
     return this.postStrict<{ plugins: string[] }>("/api/chat/plugin", body)
   }
@@ -802,7 +802,7 @@ class ApiClient {
       "/api/auth/pair/start"
     )
   }
-  /** The Harman relay: on/off, whether HARMAN_RELAY_URL pins it, live link. */
+  /** The Manager relay: on/off, whether AGENTS_RELAY_URL pins it, live link. */
   relayStatus() {
     return this.getStrict<RelayStatus>("/api/relay")
   }

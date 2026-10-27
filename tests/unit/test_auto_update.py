@@ -1,5 +1,5 @@
-"""`harman auto-update` (deploy/harman): what a customer box does with what the
-private feed serves. The success path is `harman update`, covered elsewhere;
+"""`agents auto-update` (deploy/agents): what a customer box does with what the
+private feed serves. The success path is `agents update`, covered elsewhere;
 these pin the refusals — nothing unsigned, tampered, or already-failed gets
 staged. Hermetic: a throwaway HM_PREFIX and a loopback feed.
 
@@ -27,7 +27,7 @@ TOKEN = "t" * 40
 
 @pytest.fixture
 def box(tmp_path):
-    """A fake /opt/harman with release 1.0.0 current, plus a feed serving tmp_path/feed."""
+    """A fake /opt/agents with release 1.0.0 current, plus a feed serving tmp_path/feed."""
     sk = nacl.signing.SigningKey.generate()
     rel = tmp_path / "prefix" / "releases" / "1.0.0"
     (rel / "deploy").mkdir(parents=True)
@@ -51,7 +51,7 @@ def box(tmp_path):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(H, directory=str(feed)))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     (tmp_path / "prefix" / "update.env").write_text(
-        f"HARMAN_FEED_TOKEN={TOKEN}\nHARMAN_FEED_URL=http://127.0.0.1:{srv.server_port}\n")
+        f"AGENTS_FEED_TOKEN={TOKEN}\nAGENTS_FEED_URL=http://127.0.0.1:{srv.server_port}\n")
 
     def publish(ver, bundle=b"bundle-bytes", key=sk, tamper=None):
         (feed / "bundles" / f"{ver}.bundle").write_bytes(bundle)
@@ -66,7 +66,7 @@ def box(tmp_path):
     def run():
         env = dict(os.environ, HM_PREFIX=str(tmp_path / "prefix"),
                    PATH=f"{shim}:{os.environ['PATH']}", PORT="1")
-        p = subprocess.run(["bash", str(REPO / "deploy" / "harman"), "auto-update"],
+        p = subprocess.run(["bash", str(REPO / "deploy" / "agents"), "auto-update"],
                            env=env, capture_output=True, text=True, timeout=60)
         return p.returncode, p.stdout + p.stderr
 
@@ -125,14 +125,14 @@ def test_failed_version_not_retried(box):
 
 
 def test_script_uses_its_own_lib_not_currents(box, tmp_path):
-    """A newer release's `harman` must source the lib.sh shipped beside it: the
+    """A newer release's `agents` must source the lib.sh shipped beside it: the
     running release's lib.sh predates functions it calls (1.0.2 -> 1.0.4 died on
     `hm_wait_quiet: command not found` after provisioning, before the swap)."""
     old_lib = box.prefix / "current" / "deploy" / "lib.sh"
     old_lib.write_text("# an older release's library: defines none of today's hm_* functions\n")
     env = dict(os.environ, HM_PREFIX=str(box.prefix), PORT="1",
                PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}")
-    p = subprocess.run(["bash", str(REPO / "deploy" / "harman"), "status"],
+    p = subprocess.run(["bash", str(REPO / "deploy" / "agents"), "status"],
                        env=env, capture_output=True, text=True, timeout=30)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "current:  1.0.0" in p.stdout

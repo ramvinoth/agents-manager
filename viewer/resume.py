@@ -31,7 +31,7 @@ MAX_RESUMES = 2
 BOOT_DELAY = 3  # seconds: the resumed run's permission tool calls back into this server
 
 RESUME_PROMPT = (
-    "Your last turn was cut off mid-way (the Harman server restarted, or the agent "
+    "Your last turn was cut off mid-way (the Manager server restarted, or the agent "
     "process was stopped) before it finished. Check what actually completed before "
     "the cut (files, commands, background jobs) and then finish the task. Do not "
     "repeat a step that already finished.")

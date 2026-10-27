@@ -12,7 +12,7 @@ from viewer import db, skills
 
 def bootstrap():
     report = []
-    # 1. Tables (+ Harman's default config, seeded in init_db). Board columns are
+    # 1. Tables (+ Manager's default config, seeded in init_db). Board columns are
     #    created per-project on demand (no global board).
     db.init_db()
     report.append("DB ready")

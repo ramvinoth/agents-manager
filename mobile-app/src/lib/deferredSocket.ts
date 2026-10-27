@@ -1,7 +1,7 @@
 /**
  * A WebSocket handle returned synchronously while the real socket is still
  * being chosen. Opening a socket to a server first has to decide HOW to reach
- * it (direct address or Harman relay — an async probe, see
+ * it (direct address or Manager relay — an async probe, see
  * src/api/transport.ts), but every consumer (voice, call, terminal) wants a
  * socket object right away to hang its handlers on. This forwards to the real
  * one once attached, and behaves like a socket that never opened if the

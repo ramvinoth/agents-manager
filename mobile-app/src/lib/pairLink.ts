@@ -5,7 +5,7 @@
  * code on that server for a session token (POST /api/auth/pair/redeem) — no
  * password typed on the phone. The same text pasted into "Server URL" works too.
  *
- * A link carries at least one route: the server's direct address, the Harman
+ * A link carries at least one route: the server's direct address, the Manager
  * relay (viewer/relay.py) — the relay URL, the server's routing id and its
  * X25519 public key, which is what makes the relayed channel end-to-end
  * encrypted to THIS server — or both.

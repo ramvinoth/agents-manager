@@ -51,7 +51,7 @@ eq("orders input first", nextPosition([C({ id: 1, position: 6 }), C({ id: 2, pos
 // (must stay in step with web/src/lib/board.ts)
 eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
 eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
-eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
+eq("session agent", formatActor("session:Manager"), { name: "Manager", kind: "agent" })
 eq("historical employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
 eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
 eq("no colon", formatActor("legacy-label"), { name: "legacy-label", kind: "unknown" })

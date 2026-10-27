@@ -3,7 +3,7 @@
 Claude Code appends bookkeeping records (cost-state, last-prompt, custom-title…)
 with no `timestamp` when a session is resumed or exits. Those bumped the file's
 mtime, so a chat nobody had spoken in for days lit up unread. Regression for the
-LiteLLM / harman-wsl2 chats showing unread with no new message.
+LiteLLM / agents-wsl2 chats showing unread with no new message.
 """
 import json
 import os

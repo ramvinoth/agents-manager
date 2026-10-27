@@ -140,9 +140,9 @@ class TestRoute:
         import viewer.inbox as vi
         sent = []
         monkeypatch.setattr(vi, "deliver_red", lambda r: sent.append(r["id"]))
-        monkeypatch.setattr(vi, "red_subject", lambda intent: "Harman → bypass")
-        ap = {"id": 3, "created_at": NOW - 20, "created_by": "session:Harman",
-              "summary": "session:Harman: session_mode_set",
+        monkeypatch.setattr(vi, "red_subject", lambda intent: "Manager → bypass")
+        ap = {"id": 3, "created_at": NOW - 20, "created_by": "session:Manager",
+              "summary": "session:Manager: session_mode_set",
               "detail": {"action": "session_mode_set",
                          "args": {"mode": "bypass", "reason": "  needs   to run tests  "}}}
         self._fakes(monkeypatch, [], [], [], red=[ap],
@@ -152,7 +152,7 @@ class TestRoute:
         payload, _ = h.sent
         [d] = payload["decisions"]
         assert d["kind"] == "red" and d["id"] == "3"
-        assert d["summary"] == "Change session permission mode: Harman → bypass"
+        assert d["summary"] == "Change session permission mode: Manager → bypass"
         assert "bypass" in d["risk"]
         assert d["reason"] == "needs to run tests", "the asker's why, whitespace folded"
         assert sent == [3]
@@ -248,28 +248,28 @@ class TestRoute:
 
 # ---- org Red approvals (kind "red") ------------------------------------------
 
-def _red(id, created, action="session_mode_set", session="s-ask", subject="Harman → bypass"):
-    return {"id": id, "created_at": created, "created_by": "session:Harman",
-            "summary": f"session:Harman: {action}",
-            "detail": {"action": action, "args": {}, "actor": "session:Harman", "session": session},
+def _red(id, created, action="session_mode_set", session="s-ask", subject="Manager → bypass"):
+    return {"id": id, "created_at": created, "created_by": "session:Manager",
+            "summary": f"session:Manager: {action}",
+            "detail": {"action": action, "args": {}, "actor": "session:Manager", "session": session},
             "action_label": "Change session permission mode", "subject": subject,
             "risk": "bypass lets it run any command", "reason": "it keeps stalling on prompts"}
 
 
 def test_red_approval_reads_cold_and_names_the_asker():
-    q = decisions.open_decisions([], [], [], {"s-ask": "Harman"}, NOW, [], [_red(3, NOW - 50)])
+    q = decisions.open_decisions([], [], [], {"s-ask": "Manager"}, NOW, [], [_red(3, NOW - 50)])
     [it] = q["decisions"]
     assert it["kind"] == "red" and it["id"] == "3"
-    assert it["summary"] == "Change session permission mode: Harman → bypass"
-    assert it["session"] == "s-ask" and it["label"] == "Harman"
-    assert it["requested_by"] == "session:Harman" and it["risk"]
+    assert it["summary"] == "Change session permission mode: Manager → bypass"
+    assert it["session"] == "s-ask" and it["label"] == "Manager"
+    assert it["requested_by"] == "session:Manager" and it["risk"]
     assert it["action"] == "session_mode_set" and it["waiting_s"] == 50
     assert it["reason"] == "it keeps stalling on prompts"
 
 
 def test_red_approval_without_session_or_subject_still_reads():
     # A pre-delivery row: no session in the intent, nothing resolvable.
-    row = {"id": 9, "created_at": NOW, "created_by": "harman", "summary": "harman: restart_now",
+    row = {"id": 9, "created_at": NOW, "created_by": "agent", "summary": "agents: restart_now",
            "detail": {"action": "restart_now"}}
     [it] = decisions.open_decisions([], [], [], {}, NOW, [], [row])["decisions"]
     assert it["session"] == "" and it["summary"] == "restart_now" and it["risk"] == ""

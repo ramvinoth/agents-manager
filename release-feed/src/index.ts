@@ -1,5 +1,5 @@
 /**
- * Harman release feed — the private download point customer servers update
+ * Manager release feed — the private download point customer servers update
  * from (Card 121, option b: code stays private, nothing on public GitHub).
  *
  * Read-only by design. Publishing happens from the release Mac with

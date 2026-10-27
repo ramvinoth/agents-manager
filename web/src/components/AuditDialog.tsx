@@ -25,7 +25,7 @@ import {
 /**
  * AuditDialog — the org's activity feed: who did what, to which card, grouped
  * by day. Mirrors the mobile Audit screens as one surface: a row reads as a
- * sentence ("Harman · card_move · “Ship the editor” → Review"), plain successes
+ * sentence ("Manager · card_move · “Ship the editor” → Review"), plain successes
  * stay quiet and only approvals, denials and failures get a chip, and clicking a
  * row expands its record in place instead of leaving the feed. `onOpenCard`
  * lets the board host jump to a card that still exists on it; without a host

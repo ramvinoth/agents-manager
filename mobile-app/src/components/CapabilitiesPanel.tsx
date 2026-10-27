@@ -3,7 +3,7 @@
  * CapabilitiesScreen and the thread's slide-in CapabilitiesDrawer (they differ
  * only in their chrome). Lists /api/capabilities for host + cwd, edits through
  * CapabilitiesEditors, and opens the Marketplace to pull vetted entries.
- * For a local Claude chat the server also returns its plugins: Harman's own are
+ * For a local Claude chat the server also returns its plugins: Manager's own are
  * added/removed per chat ("Included" = the agent's default), and skills/MCP can
  * be scoped to "this chat" only. A plugin is whole — add or remove, never edit.
  * A chat's setup is per chat; "Keep on agent" makes it the agent's default

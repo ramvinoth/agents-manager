@@ -268,7 +268,7 @@ class CapabilitiesMixin:
         # UI on its built-in aliases.
         from viewer.claude_models import claude_models
         caps["models"] = claude_models(host)
-        # The chat's Harman plugins and its own extras ride --plugin-dir on local
+        # The chat's Manager plugins and its own extras ride --plugin-dir on local
         # claude runs only (engine), from folders the host scanner never reads —
         # merge them for exactly that case so this stays the true per-session view.
         if host == "local" and rel:
@@ -290,7 +290,7 @@ class CapabilitiesMixin:
             self.send_json({"error": str(e)}, status=e.status)
 
     def _p_chat_plugin(self, req):
-        """Add (on=true) or remove one Harman plugin for a chat."""
+        """Add (on=true) or remove one Manager plugin for a chat."""
         body = self.read_body() or {}
         name = (body.get("name") or "").strip()
         self._chat_write(req, lambda sid: {"plugins": chatplugins.set_plugin(sid, name, bool(body.get("on")))}, body)

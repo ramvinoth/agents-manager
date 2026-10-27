@@ -1,11 +1,11 @@
-"""viewer.orglogic — pure org/Kanban logic for the orchestrator ("Harman").
+"""viewer.orglogic — pure org/Kanban logic for the orchestrator ("Manager").
 
 The empire runs on ONE canonical board: a single `cards` list. Every "board" the UI
 shows (per session / project / the CEO dashboard) is that same data through
 a filtered VIEW. The filter + ordering rules that turn one list into a view live here,
 kept PURE (no db, no I/O) so they run under `make unit` and are trivially testable.
 
-Also here: the Green/Red action classifier (Harman's approval gate, from the
+Also here: the Green/Red action classifier (Manager's approval gate, from the
 orchestrator charter) and a near-duplicate check for the org's learned-skill library.
 
 Nothing in this module imports viewer.db or touches the network — callers pass plain
@@ -79,7 +79,7 @@ PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypass")
 
 # ── Approval gate: classify an action Green (auto) vs Red (needs the owner) ─────────
 # The charter's rule: escalate only what can irreversibly destroy work, spend money
-# or leak a secret, or hit a shared service. Everything else Harman does and logs.
+# or leak a secret, or hit a shared service. Everything else Manager does and logs.
 # Table-driven so the policy is one obvious place to read/audit.
 
 _RED_ACTIONS = {
@@ -119,13 +119,13 @@ _RED_ACTIONS = {
     # whole loop fleet). An agent's request therefore always queues for the owner;
     # the owner at the UI self-approves (he is the one delegating).
     "session_mode_set",
-    # the Harman-side twin of session_mode_set: sets the authority LEVEL a
+    # the Manager-side twin of session_mode_set: sets the authority LEVEL a
     # session acts at on the board (ic/lead/manager). Same delegation class —
     # a model can never raise its own (or a peer's) authority unattended.
     "session_level_set",
     # destroying a scheduled loop takes its run history with it — same
     # irreversible-removal class as card_delete. Creating/editing a loop stays
-    # green: a harman-origin loop cannot FIRE until the owner licenses that origin
+    # green: a agent-origin loop cannot FIRE until the owner licenses that origin
     # via the loop_control dropdown, so creation alone is contained and reversible.
     "loop_delete",
     # a new door from outside the org onto a board, and a fresh key to it
@@ -276,14 +276,14 @@ _MIN_LEVEL = {
     # WHICH loop origins may fire (the loop_control dropdown) is an org-wide control
     # panel. Not risk-split like the master
     # switch: setting it to 'none' or 'user' is a de-escalation, and licensing agent
-    # loops ('harman'/'both') only decides WHETHER already-authored loops run — the
-    # authoring of a harman loop was itself gated (loop_create, lead+).
+    # loops ('agent'/'both') only decides WHETHER already-authored loops run — the
+    # authoring of a agents loop was itself gated (loop_create, lead+).
     "loop_mode_set": "manager",
     # The global system-awareness preamble is org-wide config (it shapes every
     # session), so it is manager scope like loop_mode_set. It is ALSO Red (above):
     # scope says who may initiate, risk says whether it runs unattended.
     "system_preamble_set": "manager",
-    # Same authority as any other Harman config write; the two differ only in RISK
+    # Same authority as any other Manager config write; the two differ only in RISK
     # (automation_resume is Red, automation_pause is not), which is the orthogonal
     # gate. Pausing is deliberately NOT restricted to manager: an ic session that
     # notices something wrong should be able to stop the machine without a
@@ -295,7 +295,7 @@ _MIN_LEVEL = {
     # queues for the owner and a model can never grant itself trust: the scope
     # gate decides who may initiate, the risk gate decides who must consent.
     "session_mode_set": "ic",
-    # Same shape for the Harman authority level (session_level_set is Red).
+    # Same shape for the Manager authority level (session_level_set is Red).
     "session_level_set": "ic",
     # Any session that changed server code may ask for the next maintenance
     # window; restart_now is the same request without the wait, so the scope is
@@ -397,7 +397,7 @@ def mutates_own_session(acting_session, target_session):
     """True if a request would change the settings of the very session that is
     making it — the self-mutation rail for the agent execution-control tier.
 
-    The charter's shape is "Workers only; Harman plan-only", and a worker session
+    The charter's shape is "Workers only; Manager plan-only", and a worker session
     may reschedule/retune OTHER work under RBAC — but never its OWN. A session that
     could edit or delete the loop that drives it (or retarget it at itself) would
     be rewriting its own supervision from inside the loop: exactly the escalation

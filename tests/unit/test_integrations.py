@@ -235,7 +235,7 @@ def test_agent_route_refuses_a_service_that_is_not_on(rows):
 
 
 class TestClients:
-    """A provider's OAuth client: Harman's own identity to the vendor. The
+    """A provider's OAuth client: Manager's own identity to the vendor. The
     secret is write-only — saved, never returned."""
 
     @pytest.fixture()

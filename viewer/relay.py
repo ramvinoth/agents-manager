@@ -1,6 +1,6 @@
 """viewer.relay — reach this server from anywhere without exposing it.
 
-The server dials OUT to a Harman relay (relay/ — a Cloudflare Worker +
+The server dials OUT to a Manager relay (relay/ — a Cloudflare Worker +
 Durable Object derived from Paseo's relay v2) and phones dial the same relay.
 Nothing listens on the internet; no tunnel or port-forward per install.
 
@@ -109,13 +109,13 @@ def identity():
 # ---- on / off (Paseo's rule: off until the owner pairs through it) ---------
 
 def url():
-    """The relay this server dials: HARMAN_RELAY_URL when it names one, else
-    the hosted Harman relay."""
+    """The relay this server dials: AGENTS_RELAY_URL when it names one, else
+    the hosted Manager relay."""
     return RELAY_ENV if RELAY_ENV not in ("", "off") else DEFAULT_RELAY_URL
 
 
 def pinned():
-    """True when HARMAN_RELAY_URL decides on/off, so the app cannot."""
+    """True when AGENTS_RELAY_URL decides on/off, so the app cannot."""
     return RELAY_ENV != ""
 
 
@@ -633,9 +633,9 @@ def start():
 
 def set_enabled(on):
     """The owner's switch (Pair a phone). Persisted, applied without a
-    restart. Refused when HARMAN_RELAY_URL pins the choice."""
+    restart. Refused when AGENTS_RELAY_URL pins the choice."""
     if pinned():
-        raise ValueError("The relay is set by HARMAN_RELAY_URL on this server, so it can't be changed here.")
+        raise ValueError("The relay is set by AGENTS_RELAY_URL on this server, so it can't be changed here.")
     db.setting_set("relay_enabled", bool(on))
     if _live:
         _sync()

@@ -27,9 +27,9 @@ class TestCarryForkMeta(unittest.TestCase):
         self.store["parent"] = {
             "provider": "copilot", "modelSelection": {"model": "claude-opus-5"},
             "permission_mode": "bypass", "effort": "high", "convMode": "agent",
-            "kanbanProject": 15, "title": "Harman",
+            "kanbanProject": 15, "title": "Manager",
         }
-        SessionsMixin.carry_fork_meta("parent", "child", title="Harman (fork)")
+        SessionsMixin.carry_fork_meta("parent", "child", title="Manager (fork)")
         child = self.store["child"]
         self.assertEqual(child["provider"], "copilot")
         self.assertEqual(child["modelSelection"], {"model": "claude-opus-5"})
@@ -39,13 +39,13 @@ class TestCarryForkMeta(unittest.TestCase):
         self.assertEqual(child["kanbanProject"], 15)
 
     def test_explicit_title_wins_parent_title_does_not_leak(self):
-        self.store["parent"] = {"provider": "copilot", "title": "Harman"}
+        self.store["parent"] = {"provider": "copilot", "title": "Manager"}
         SessionsMixin.carry_fork_meta("parent", "child", title="My fork")
         self.assertEqual(self.store["child"]["title"], "My fork")
 
     def test_no_title_means_fork_does_not_copy_parent_title(self):
         # A fork with no explicit title must not become a title-twin of its parent.
-        self.store["parent"] = {"provider": "copilot", "title": "Harman"}
+        self.store["parent"] = {"provider": "copilot", "title": "Manager"}
         SessionsMixin.carry_fork_meta("parent", "child", title="")
         self.assertNotIn("title", self.store["child"])
         self.assertEqual(self.store["child"]["provider"], "copilot")

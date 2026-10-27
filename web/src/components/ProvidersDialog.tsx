@@ -263,7 +263,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
                   onChange={(e) => patch({ name: e.target.value })}
                 />
               </Field>
-              <Field label="Endpoint URL" hint="The server's base URL. Harman calls /v1/models and /v1/messages under it.">
+              <Field label="Endpoint URL" hint="The server's base URL. Manager calls /v1/models and /v1/messages under it.">
                 <Input
                   className="h-8 font-mono text-xs"
                   placeholder="https://models.example.com"
@@ -326,7 +326,7 @@ export function ProvidersDialog({ onClose }: { onClose: () => void }) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                The context window is per model. Harman uses it to compact a chat before it overflows. Leave the
+                The context window is per model. Manager uses it to compact a chat before it overflows. Leave the
                 override blank to use what the endpoint reports.
               </p>
               {discoveryNote && <p className="text-xs text-muted-foreground" role="status">{discoveryNote}</p>}

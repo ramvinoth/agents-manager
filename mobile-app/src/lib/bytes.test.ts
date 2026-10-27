@@ -36,7 +36,7 @@ test("base64 accepts url-safe, no padding, whitespace; rejects junk", () => {
 })
 
 test("utf8 round-trips and matches node, including astral and edge cases", () => {
-  for (const s of ["", "hello", "é", "€uro", "👋 harman ✓", "中文テキスト", "a\u0000b"]) {
+  for (const s of ["", "hello", "é", "€uro", "👋 agents ✓", "中文テキスト", "a\u0000b"]) {
     assert.deepEqual(utf8Encode(s), new Uint8Array(Buffer.from(s, "utf8")))
     assert.equal(utf8Decode(new Uint8Array(Buffer.from(s, "utf8"))), s)
   }

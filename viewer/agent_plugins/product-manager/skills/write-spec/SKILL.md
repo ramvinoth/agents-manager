@@ -1,6 +1,6 @@
 ---
 name: write-spec
-description: Turn an approved PRD into a functional spec saved as a Harman note — behaviour, states, edge cases and acceptance tests an engineer can build from. Use when the user asks for a spec, a functional/technical spec, or "how should this work".
+description: Turn an approved PRD into a functional spec saved as a Manager note — behaviour, states, edge cases and acceptance tests an engineer can build from. Use when the user asks for a spec, a functional/technical spec, or "how should this work".
 ---
 
 # Write a spec

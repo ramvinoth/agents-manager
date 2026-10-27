@@ -75,7 +75,7 @@ class VoiceChat:
         # Admission policy, not a claim about the model's exact memory usage.
         if probe.returncode or int(stdout.strip()) < 14000:
             raise RuntimeError("Insufficient free GPU memory; existing workloads were not changed")
-        self.directory = tempfile.TemporaryDirectory(prefix="harman-voicechat-")
+        self.directory = tempfile.TemporaryDirectory(prefix="agents-voicechat-")
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=self.gpu,
                    VC_NO_BARGE="1", VC_FORCE_BOS="1")
         self.process = await asyncio.create_subprocess_exec(

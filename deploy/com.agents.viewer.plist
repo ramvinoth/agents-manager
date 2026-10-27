@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  launchd agent for the Harman viewer on macOS (systemd's counterpart).
+  launchd agent for the Manager viewer on macOS (systemd's counterpart).
   install.sh renders __APP__ / __WORKDIR__ / __PYTHON__ / __PORT__ and drops the
-  result at ~/Library/LaunchAgents/com.harman.viewer.plist, then `launchctl
-  bootstrap`s it. __APP__ is Harman.app's launcher (deploy/macos), so macOS
-  privacy settings list the viewer as "Harman", not as Python.
+  result at ~/Library/LaunchAgents/com.agents.viewer.plist, then `launchctl
+  bootstrap`s it. __APP__ is Agents.app's launcher (deploy/macos), so macOS
+  privacy settings list the viewer as "Manager", not as Python.
 
   KeepAlive restarts the server if it dies (≈ Restart=always). We deliberately do
   NOT set an ANTHROPIC_*/CLAUDE_CODE_MAX_* environment here: a clean env is exactly
@@ -13,7 +13,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.harman.viewer</string>
+    <string>com.agents.viewer</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -38,8 +38,8 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>__WORKDIR__/deploy/harman-viewer.log</string>
+    <string>__WORKDIR__/deploy/agents-viewer.log</string>
     <key>StandardErrorPath</key>
-    <string>__WORKDIR__/deploy/harman-viewer.log</string>
+    <string>__WORKDIR__/deploy/agents-viewer.log</string>
 </dict>
 </plist>

@@ -166,7 +166,7 @@ def chat_completion_message(base_url, api_key, payload, timeout=None):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     # A non-default User-Agent: some CDNs (Cloudflare) 403 the urllib default.
-    req.add_header("User-Agent", "harman-viewer/1.0")
+    req.add_header("User-Agent", "agents-viewer/1.0")
     if api_key:
         req.add_header("Authorization", f"Bearer {api_key}")
     with urllib.request.urlopen(req, timeout=timeout or CHAT_TIMEOUT) as resp:

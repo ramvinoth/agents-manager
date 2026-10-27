@@ -8,7 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary"
 // opened before it 404s on its first lazy dialog. Reload once to pick up the
 // new build; the guard stops a loop if the chunk is missing after the reload too.
 window.addEventListener("vite:preloadError", (event) => {
-  const key = "harman:chunk-reload"
+  const key = "agents:chunk-reload"
   if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 10_000) return
   sessionStorage.setItem(key, String(Date.now()))
   event.preventDefault()

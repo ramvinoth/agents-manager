@@ -1,5 +1,5 @@
 /**
- * The phone side of the Harman relay's end-to-end channel — the mirror of
+ * The phone side of the Manager relay's end-to-end channel — the mirror of
  * viewer/relay.py's Channel, pack and unpack. Pure (no sockets, no state
  * outside the object) so it is node-tested against vectors the server made.
  *

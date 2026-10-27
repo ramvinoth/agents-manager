@@ -1,6 +1,6 @@
 /**
- * Harman relay — a Cloudflare Worker + Durable Object that lets a phone reach a
- * Harman server that has no public address. The server dials OUT to the relay;
+ * Manager relay — a Cloudflare Worker + Durable Object that lets a phone reach a
+ * Manager server that has no public address. The server dials OUT to the relay;
  * the phone dials the relay; the relay pipes opaque bytes between them. All
  * application traffic is end-to-end encrypted (NaCl box, see viewer/relay.py
  * and mobile-app/src/lib/relayChannel.ts), so the relay can route but never read.

@@ -22,11 +22,11 @@ function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ clas
  * Profile tab (web control point) — mirrors mobile ProfileScreen's orchestration
  * controls: the AUTOMATION master switch and the SCHEDULED LOOPS mode picker.
  * Both read/write the ONE shared store cache, so toggling here immediately
- * updates the session-list pinned Harman entry. Server is the source of truth;
+ * updates the session-list pinned Manager entry. Server is the source of truth;
  * every write re-syncs from it.
  */
 export function ProfilePanel() {
-  const harman = useStore((s) => s.harman)
+  const orchestrator = useStore((s) => s.orchestrator)
   const loopControl = useStore((s) => s.loopControl)
   const setAutomation = useStore((s) => s.setAutomation)
   const setLoopMode = useStore((s) => s.setLoopMode)
@@ -73,13 +73,13 @@ export function ProfilePanel() {
   // Three states, not two. A server older than the switch omits the key, and
   // rendering that as "off" would claim the machine is paused when that build
   // has no gate at all and still fires jobs. "Unknown" says so.
-  const autoKnown = harman ? typeof harman.automation_enabled === "boolean" : false
+  const autoKnown = orchestrator ? typeof orchestrator.automation_enabled === "boolean" : false
 
   async function toggleAutomation() {
-    if (!harman || autoBusy) return
+    if (!orchestrator || autoBusy) return
     setAutoBusy(true)
     setAutoErr("")
-    const msg = await setAutomation(!(harman.automation_enabled === true))
+    const msg = await setAutomation(!(orchestrator.automation_enabled === true))
     setAutoErr(msg)
     setAutoBusy(false)
   }
@@ -102,10 +102,10 @@ export function ProfilePanel() {
     setPreBusy(false)
   }
 
-  const automation = autoKnown ? harman!.automation_enabled : undefined
+  const automation = autoKnown ? orchestrator!.automation_enabled : undefined
   const autoHint = autoErr
     ? autoErr
-    : !harman
+    : !orchestrator
       ? "Can't reach the server — state unknown."
       : !autoKnown
         ? "This server is too old to have the switch — it still runs jobs on their own. Update it."
@@ -122,12 +122,12 @@ export function ProfilePanel() {
           <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">Let agents work on their own</div>
-              <div className={cn("text-[11px]", autoErr || (harman && !autoKnown) ? "text-destructive" : "text-muted-foreground")}>
+              <div className={cn("text-[11px]", autoErr || (orchestrator && !autoKnown) ? "text-destructive" : "text-muted-foreground")}>
                 {autoHint}
               </div>
             </div>
             <Switch
-              on={harman?.automation_enabled === true}
+              on={orchestrator?.automation_enabled === true}
               disabled={!autoKnown || autoBusy}
               onClick={toggleAutomation}
             />
@@ -187,7 +187,7 @@ export function ProfilePanel() {
             <QrCode className="size-4 shrink-0 text-muted-foreground" />
             <button className="min-w-0 flex-1 text-left" onClick={() => setPairOpen(true)}>
               <div className="text-sm font-medium">Pair a phone</div>
-              <div className="truncate text-[11px] text-muted-foreground">Scan a QR to sign the Harman app in as you — no password.</div>
+              <div className="truncate text-[11px] text-muted-foreground">Scan a QR to sign the Manager app in as you — no password.</div>
             </button>
             <button className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setPairOpen(true)} title="Pair a phone">
               <ChevronRight className="size-4" />
