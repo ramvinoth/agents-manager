@@ -910,7 +910,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   }
 
   /** Tap a queued chip to pull it back: drop it from the queue AND restore its
-   *  text to the composer so it isn't lost (the ✕ discards instead). If the
+   *  text to the composer so it isn't lost. If the
    *  composer already holds a draft, prepend so nothing is overwritten. */
   async function unqueue(index: number) {
     const text = queueList[index]
