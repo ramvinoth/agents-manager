@@ -17,7 +17,6 @@ from viewer.sessions import (
     extract_cwd,
     last_cwd_in_file,
     restore_session,
-    session_digest_from_lines,
     _compress,
     _decompress,
     _session_id_from_path,
@@ -256,32 +255,6 @@ class TestComputeSessionSummary(unittest.TestCase):
         data = compute_session_summary([], "/test")
         self.assertEqual(data["lines"], 0)
         self.assertEqual(data["userMessages"], 0)
-
-
-class TestSessionDigest(unittest.TestCase):
-    def test_extracts_user_and_assistant(self):
-        lines = [
-            json.dumps({"type": "user", "message": {"content": "do the thing"}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}}),
-        ]
-        digest = session_digest_from_lines(lines)
-        self.assertIn("USER: do the thing", digest)
-        self.assertIn("CLAUDE: done", digest)
-
-    def test_skips_tool_results(self):
-        lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}}),
-        ]
-        digest = session_digest_from_lines(lines)
-        self.assertEqual(digest, "")
-
-    def test_truncation(self):
-        lines = [
-            json.dumps({"type": "user", "message": {"content": "word " * 10000}})
-            for _ in range(20)
-        ]
-        digest = session_digest_from_lines(lines, max_chars=1000)
-        self.assertLessEqual(len(digest), 1100)  # some slack for prefix
 
 
 class TestCompressDecompress(unittest.TestCase):

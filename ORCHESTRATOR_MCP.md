@@ -41,7 +41,7 @@ Most of this is built. Naming it prevents building a second copy.
 | MCP transport pattern | `viewer_mcp.py` — dumb `(method, path)` proxy, policy server-side | correct pattern, reuse verbatim |
 | Remote MCP shipping | `remote.py:1305-1341` (SFTP + reverse tunnel) | works for remote hosts |
 | Approval + audit ledger | `approvals`, `audit_log` (`db.py:155-173`) | tables exist |
-| Per-session fact extraction | `session_analysis()` (`engine.py:1690`), cached by (mtime,size), **fleet-aware over SSH** | works — this is the harvester |
+| Per-session fact extraction | `session_analysis()` — **removed 2026-10-27**: each call spawned a `claude -p` in `~` that showed up as a stray chat, and nothing used it | gone; a future harvester must not spawn a visible session |
 | Skill write/list | `skills.py` | works, **local disk only** |
 | Skill promotion + dedupe gate | `routes/orchestrator.py:324-358` | works, but voluntary + name-only dedupe |
 | **Manager autonomous loop** | `orchestrator.py:121` `orchestrator_tick()`, driven by `engine.py:198` | **built and live** — survey → plan → assign → spawn → escalate |
@@ -452,7 +452,7 @@ The five `kind` values are exactly the owner's list: intent, goal, judgement, cl
 
 ```
 session transcript
-   └─ session_analysis()          [engine.py:1690 — EXISTS, cached, fleet-aware]
+   └─ fact extraction             [session_analysis() REMOVED 2026-10-27 — rebuild without a visible session]
         └─ observation harvest    [+ explicit MCP observe() for in-turn capture]
              └─ distiller         [N related observations → ONE candidate skill]
                   └─ skills_learned(status=proposed)
@@ -706,7 +706,7 @@ Every tool = one row in `_MIN_LEVEL` + one entry in `ACTIONS`. Levels below are 
 
 | Tier | Tools | Min level | Gate |
 |---|---|---|---|
-| **See everything** | `session_list` (all hosts), `session_read`, `session_summary`, `session_analysis`, `chat_status`, `board_list`, `card_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `host_list`, `skill_list`, `capability_list`, `observation_list`, `accountability` | `ic` | none |
+| **See everything** | `session_list` (all hosts), `session_read`, `session_summary`, `chat_status`, `board_list`, `card_list`, `audit_tail`, `approval_list`, `project_list`, `employee_list`, `host_list`, `skill_list`, `capability_list`, `observation_list`, `accountability` | `ic` | none |
 | **Orchestrate** | `session_spawn`, `session_send`, `session_steer`, `session_interrupt`, `queue_remove`, `session_meta_set`, `session_fork`, `session_rename`, `card_*`, `task_done`, `loop_*`, `template_*`, `distill_request` | `ic` / `lead` | Green |
 | **Re-org** | `provider_set`, `convmode_set`, `skill_grant`, `skill_revoke`, `skill_materialize`, `mcp_grant`, `host_save`, `capability_probe`, `employee_create`, `project_create`, `approval_resolve` | `lead` / `manager` | Green, audited |
 | **Destructive** | `session_delete`, `provider_delete`, `backup_restore`, `card_delete`, `skill_delete` | `manager` | **Red → intent queued** |
@@ -750,7 +750,7 @@ same list, and `docs_read system-status` shows the live posture.
 
 | Tier | Tools |
 |---|---|
-| **See everything** (read) | `session_list/detail/read/summary/analysis`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `note_graph`, `code_map`, `note_comments`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list`, `usage_report`, `intake_list` |
+| **See everything** (read) | `session_list/detail/read/summary`, `chat_status`, `host_list`, `audit_tail`, `approval_list`, `project_list`, `board_list`, `card_list`, `card`, `card_comments`, `card_deps`, `note_list`, `note`, `note_graph`, `code_map`, `note_comments`, `loop_list`, `loop_control_get`, `skill_list`, `skill_read`, `docs_list/read`, `inbox_list`, `usage_report`, `intake_list` |
 | **Act on the board** (Green at ic) | `card_create/move/update/comment`, `card_dep_add/remove`, `task_done`, `note_create/update`, `note_comment`, `note_vote`, `session_seen`, `inbox_send`, `skill_propose` (overlap → `skill_promote`, Red) |
 | **Shape work** (lead) | `loop_create/update`, `loop_delete` (Red) |
 | **Org control** (manager) | `loop_control_set` |
@@ -831,7 +831,7 @@ Each step ships working and is independently reversible.
    against, which is why it is not earlier. Ship `accountability` read-only first and
    *watch* the numbers before letting them gate anything.
 6. **Skill body in DB + `materialize()`** — fixes the fleet gap and unblocks install.
-7. **`observations` + harvest from `session_analysis`.**
+7. **`observations` + harvest** (the old `session_analysis` LLM pass was removed 2026-10-27; it spawned stray chats).
 8. **The Scribe (§5A)** — seed in `bootstrap.py`, `distill` card kind, system prompt.
    Depends on 5/6/7 and is the piece with a self-amplification risk.
 9. **`capabilities.py` + `capability_probe` (§7A)** — capability block on the hosts

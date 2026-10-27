@@ -419,7 +419,6 @@ class SessionViewerHandler(
         "/api/market/mcp/signin": "_g_market_mcp_signin",
         "/api/session-summary": "_g_session_summary",
         "/api/session-detail": "_g_session_detail",
-        "/api/session-analysis": "_g_session_analysis",
         "/api/session-backups": "_g_session_backups",
         "/api/skill": "_g_skill",
         "/api/session-meta": "_g_session_meta",

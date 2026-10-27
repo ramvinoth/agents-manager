@@ -457,39 +457,3 @@ def compute_session_summary(line_iter, cwd):
     else:
         data["tokenTimeline"] = []
     return data
-
-
-# --------------------------------------------------------------------------- #
-# session_digest_from_lines                                                    #
-# --------------------------------------------------------------------------- #
-def session_digest_from_lines(lines, max_chars=55000):
-    """Compact USER/CLAUDE transcript for the analyzer — user messages in full
-    (they carry the human decisions), assistant TEXT truncated, tool noise
-    dropped. Oldest turns trimmed if over the cap."""
-    parts = []
-    for line in lines:
-        try:
-            o = json.loads(line)
-        except Exception:
-            continue
-        t = o.get("type")
-        if t == "user" and not o.get("isMeta") and not o.get("isCompactSummary"):
-            c = (o.get("message") or {}).get("content")
-            if isinstance(c, list):
-                if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
-                    continue
-                txt = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
-            else:
-                txt = c if isinstance(c, str) else ""
-            txt = (txt or "").strip()
-            if txt:
-                parts.append("USER: " + txt[:1500])
-        elif t == "assistant":
-            c = (o.get("message") or {}).get("content") or []
-            txt = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text").strip()
-            if txt:
-                parts.append("CLAUDE: " + txt[:700])
-    digest = "\n".join(parts)
-    if len(digest) > max_chars:
-        digest = "[…earlier turns omitted…]\n" + digest[-max_chars:]
-    return digest
