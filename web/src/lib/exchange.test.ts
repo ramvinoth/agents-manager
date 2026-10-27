@@ -21,7 +21,7 @@ const ex = g[1] as Exchange
 eq("anchor is the first member", ex.domId, "a1")
 eq("every member id kept for search", ex.memberIds, ["a1", "a2", "a3"])
 eq("latest model wins", ex.model, "m2")
-eq("steps are everything before the trailing text", ex.steps.map((b) => (b.type === "text" ? b.text : b.name)), ["looking", "Read", "Bash"])
+eq("steps are everything before the trailing text", ex.steps.map((b) => (b.type === "text" ? b.text : b.type === "tool_use" ? b.name : b.type)), ["looking", "Read", "Bash"])
 eq("answer is the trailing text run", ex.answer, [text("done")])
 eq("a system line splits runs", groupExchanges([a("a1", [text("x")]), { type: "system", domId: "s", content: "c" }, a("a2", [text("y")])]).length, 3)
 
