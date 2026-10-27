@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { ChevronDown, ChevronRight, Loader2, Plus, Plug, RefreshCw, Store } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -19,10 +19,18 @@ import type { McpServer } from "@/lib/types"
  * untested server says "Not tested" rather than showing a green dot inferred
  * from its config merely being parseable.
  *
- * Editing stays with the caller's McpEditor (one editor for the whole panel);
- * onBrowse is absent when the marketplace can't install here (remote host).
+ * Viewing and editing stay with the caller's McpEditor (one editor for the whole
+ * panel), opened through onOpen; `menu` renders the caller's ⋮ row menu. onBrowse is absent when the marketplace can't install here (remote host).
  */
-export function McpPanel({ onEdit, onBrowse }: { onEdit: (m: McpServer | null) => void; onBrowse?: () => void }) {
+export function McpPanel({
+  onOpen,
+  menu,
+  onBrowse,
+}: {
+  onOpen: (m: McpServer | null, mode: "view" | "edit") => void
+  menu: (m: McpServer) => ReactNode
+  onBrowse?: () => void
+}) {
   const caps = useStore((s) => s.caps)
   const probes = useStore((s) => s.mcpProbes)
   const probeMcp = useStore((s) => s.probeMcp)
@@ -60,7 +68,7 @@ export function McpPanel({ onEdit, onBrowse }: { onEdit: (m: McpServer | null) =
               <Store className="size-3.5" /> Browse
             </Button>
           )}
-          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => onEdit(null)}>
+          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => onOpen(null, "edit")}>
             <Plus className="size-3.5" /> Add
           </Button>
         </div>
@@ -78,8 +86,8 @@ export function McpPanel({ onEdit, onBrowse }: { onEdit: (m: McpServer | null) =
                 <div className="flex items-start gap-2 p-2">
                   <button
                     className="min-w-0 flex-1 text-left"
-                    onClick={() => (canExpand ? setOpen((o) => ({ ...o, [m.name]: !expanded })) : onEdit(m))}
-                    title={canExpand ? (expanded ? "Collapse" : "Show details") : "Edit configuration"}
+                    onClick={() => (canExpand ? setOpen((o) => ({ ...o, [m.name]: !expanded })) : onOpen(m, "view"))}
+                    title={canExpand ? (expanded ? "Collapse" : "Show details") : "View configuration"}
                   >
                     <div className="flex items-center gap-2 text-sm">
                       {canExpand &&
@@ -127,6 +135,7 @@ export function McpPanel({ onEdit, onBrowse }: { onEdit: (m: McpServer | null) =
                       <RefreshCw className="size-3.5" />
                     )}
                   </Button>
+                  {menu(m)}
                 </div>
 
                 {expanded && res && (
@@ -165,7 +174,7 @@ export function McpPanel({ onEdit, onBrowse }: { onEdit: (m: McpServer | null) =
                       size="sm"
                       variant="ghost"
                       className="mt-1 h-6 px-1.5 text-[11px]"
-                      onClick={() => onEdit(m)}
+                      onClick={() => onOpen(m, "edit")}
                     >
                       Edit configuration
                     </Button>
