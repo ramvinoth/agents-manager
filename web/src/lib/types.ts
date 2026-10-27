@@ -244,6 +244,8 @@ export interface SessionSummary {
   totalOutput: number
   tools: Record<string, number>
   models: string[]
+  /** The model of the chat's latest assistant turn: what it runs on now. */
+  model?: string | null
   title?: string
   summaries?: string[]
   startTime?: string

@@ -342,8 +342,16 @@ function SessionRow({
     }
   }
 
+  const openRhs = useStore((st) => st.openRhs)
   const cwd = detail?.summary?.cwd
-  const models = detail?.summary?.models ?? []
+  // The model it runs on now, not every model it ever used. Older cached
+  // summaries carry no `model`; their last sorted entry is the best guess.
+  const model = detail?.summary?.model ?? detail?.summary?.models?.at(-1)
+  // The right panel shows the CURRENT chat's capabilities, so open this chat first.
+  const showCaps = (tab: "skills" | "mcp") => {
+    if (!current) onOpen()
+    openRhs(tab)
+  }
 
   return (
     <div className={cn("rounded-md", current && "bg-accent")}>
@@ -404,12 +412,22 @@ function SessionRow({
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-1">
-                <span className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70">
+                <button
+                  onClick={() => showCaps("skills")}
+                  title="Open this chat's skills"
+                  data-track="session caps skills"
+                  className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70 hover:bg-primary/15 hover:text-primary"
+                >
                   {detail.capabilities.skills.length} skills
-                </span>
-                <span className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70">
+                </button>
+                <button
+                  onClick={() => showCaps("mcp")}
+                  title="Open this chat's MCP tools"
+                  data-track="session caps mcp"
+                  className="rounded bg-muted px-1.5 py-px font-medium text-foreground/70 hover:bg-primary/15 hover:text-primary"
+                >
                   {detail.capabilities.mcp.length} MCP
-                </span>
+                </button>
                 {onOpenInbox && s.id && (
                   <button
                     onClick={() => onOpenInbox(s.id!, s.title || s.id!.slice(0, 8))}
@@ -423,14 +441,14 @@ function SessionRow({
                     {detail.meta.effort}
                   </span>
                 )}
-                {models.map((m) => (
+                {model && (
                   <span
-                    key={m}
+                    title="The model this chat's latest turn ran on"
                     className="rounded bg-muted px-1.5 py-px font-mono text-[10px] text-foreground/70"
                   >
-                    {m.replace("claude-", "")}
+                    {model.replace("claude-", "")}
                   </span>
-                ))}
+                )}
               </div>
               {detail.meta.goal && (
                 <div className="line-clamp-2 leading-snug" title={detail.meta.goal}>

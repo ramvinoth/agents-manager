@@ -37,7 +37,7 @@ _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
 from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
-from viewer.sessions import last_cwd_in_file
+from viewer.sessions import compute_session_summary, last_cwd_in_file
 
 
 # ===== Loops (recurring prompts per session) and session meta =====
@@ -2245,70 +2245,6 @@ def extract_cwd(session_file):
     except Exception:
         pass
     return str(Path.home())
-
-
-def compute_session_summary(line_iter, cwd):
-    """Full-session stats from a JSONL line iterator (local file or remote
-    contents). Shared by local and remote summary paths so both produce
-    identical output."""
-    data = {"lines": 0, "userMessages": 0, "assistantMessages": 0, "totalInput": 0,
-            "totalOutput": 0, "tools": {}, "models": [], "title": "", "summaries": [],
-            "startTime": None, "endTime": None, "cwd": cwd}
-    models = set()
-    first_ts = last_ts = None
-    timeline = []
-    for line in line_iter:
-        data["lines"] += 1
-        try:
-            obj = json.loads(line)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        t = obj.get("type")
-        ts = obj.get("timestamp")
-        if ts:
-            if not first_ts or ts < first_ts:
-                first_ts = ts
-            if not last_ts or ts > last_ts:
-                last_ts = ts
-        if t == "custom-title" and obj.get("customTitle"):
-            data["title"] = obj["customTitle"]
-        elif t == "summary" and obj.get("summary"):
-            if obj["summary"] not in data["summaries"]:
-                data["summaries"].append(obj["summary"])
-        elif t == "user" and not obj.get("isMeta") and not obj.get("isCompactSummary"):
-            c = (obj.get("message") or {}).get("content")
-            if not (isinstance(c, list) and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c)):
-                data["userMessages"] += 1
-        elif t == "assistant":
-            data["assistantMessages"] += 1
-            m = obj.get("message") or {}
-            if m.get("model") and m["model"] != "<synthetic>":
-                models.add(m["model"])
-            u = m.get("usage") or {}
-            ti = u.get("input_tokens", 0) or 0
-            to = u.get("output_tokens", 0) or 0
-            data["totalInput"] += ti
-            data["totalOutput"] += to
-            if u:
-                timeline.append((ti, to))
-            for b_ in (m.get("content") or []):
-                if isinstance(b_, dict) and b_.get("type") == "tool_use":
-                    data["tools"][b_.get("name", "?")] = data["tools"].get(b_.get("name", "?"), 0) + 1
-    data["models"] = sorted(models)
-    data["startTime"] = first_ts
-    data["endTime"] = last_ts
-    data["summaries"] = data["summaries"][-5:]
-    # Downsample the full-session token timeline to <=240 buckets.
-    if timeline:
-        bucket_n = min(len(timeline), 240)
-        per = max(1, -(-len(timeline) // bucket_n))
-        data["tokenTimeline"] = [
-            {"input": sum(t[0] for t in timeline[i:i + per]),
-             "output": sum(t[1] for t in timeline[i:i + per])}
-            for i in range(0, len(timeline), per)]
-    else:
-        data["tokenTimeline"] = []
-    return data
 
 
 def remote_session_summary(hid, rel):
