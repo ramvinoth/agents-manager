@@ -732,6 +732,10 @@ canvas_show opens a visual pane beside the chat on the owner's screen: mermaid f
               WHERE key = 'system_preamble'
                 AND position('## Canvas (' in value #>> '{}') = 0
                 AND position('## Work discipline' in value #>> '{}') > 0;
+            -- session_analysis retired (it spawned a stray `claude -p` chat).
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$session_list/detail/read/summary/analysis/seen$o$, $n$session_list/detail/read/summary/seen$n$))
+              WHERE key = 'system_preamble' AND position($o$session_list/detail/read/summary/analysis/seen$o$ in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same
