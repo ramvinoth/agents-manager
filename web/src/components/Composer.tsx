@@ -16,6 +16,7 @@ import { useStore, useAgentLabel } from "@/store"
 import { DEFAULT_PERM_MODE } from "@/store/chat"
 import { api } from "@/lib/api"
 import { applyMention, hashTerm, type HashTerm } from "@/lib/fileMention"
+import { userHistory, onFirstLine, onLastLine, stepHistory, searchHistory } from "@/lib/composerHistory"
 
 // Model + permission options are per-agent. Claude uses --permission-mode +
 // its model aliases; Copilot maps to native --mode (interactive/plan/autopilot)
@@ -161,6 +162,14 @@ export function Composer() {
   const [hash, setHash] = useState<HashTerm | null>(null)
   const [fileHits, setFileHits] = useState<{ path: string; dir: boolean }[]>([])
   const taRef = useRef<HTMLTextAreaElement>(null)
+  // Terminal-style history. `recall` is which past message is shown and the draft
+  // it replaced; it only counts while the box still holds that message, so any
+  // edit (typing, a stash restore, a send) quietly makes the text the new draft.
+  const [recall, setRecall] = useState<{ at: number; draft: string } | null>(null)
+  const [search, setSearch] = useState<{ query: string; at: number; draft: string } | null>(null)
+  const turns = useStore((s) => s.turns)
+  const history = useMemo(() => userHistory(turns), [turns])
+  const recalled = !!recall && text === history[recall.at]
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const chatRunning = useStore((s) => s.chatRunning)
   const sendChat = useStore((s) => s.sendChat)
@@ -228,11 +237,15 @@ export function Composer() {
   // Draft persistence — restore per-session on load, save as you type.
   useEffect(() => {
     setText(currentSessionPath ? localStorage.getItem("draft:" + currentSessionPath) || "" : "")
+    setRecall(null)
+    setSearch(null)
   }, [currentSessionPath])
   useEffect(() => {
-    if (!currentSessionPath) return
+    // A recalled or searched message is not a draft: a reload brings back what was being written.
+    if (!currentSessionPath || recalled || search) return
     if (text) localStorage.setItem("draft:" + currentSessionPath, text)
     else localStorage.removeItem("draft:" + currentSessionPath)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, currentSessionPath])
 
   // Fork/revert and un-queue hand a message back to the composer to edit & resend.
@@ -263,7 +276,7 @@ export function Composer() {
       .slice(0, 12)
   }, [term, slashCommands])
 
-  const slashOpen = slashMatches.length > 0
+  const slashOpen = slashMatches.length > 0 && !recalled && !search
 
   // "#word" at the caret searches the project's files (lib/fileMention.ts).
   // Debounced; a reply for an older query is dropped so results never lag
@@ -289,7 +302,7 @@ export function Composer() {
     }
   }, [hashQuery, cwd])
 
-  const fileOpen = !slashOpen && hash !== null && fileHits.length > 0
+  const fileOpen = !slashOpen && !recalled && !search && hash !== null && fileHits.length > 0
   const pickCount = slashOpen ? slashMatches.length : fileOpen ? fileHits.length : 0
 
   useEffect(() => {
@@ -316,6 +329,83 @@ export function Composer() {
       el.setSelectionRange(r.caret, r.caret)
     })
   }
+
+  function placeCaret(at: "start" | "end") {
+    requestAnimationFrame(() => {
+      const el = taRef.current
+      if (!el) return
+      const n = at === "start" ? 0 : el.value.length
+      el.setSelectionRange(n, n)
+    })
+  }
+
+  // Up on the first line / Down on the last walks this chat's messages. Up lands
+  // the caret at the start so the next Up keeps going even through a long message.
+  function historyKey(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
+    const el = e.currentTarget
+    const up = e.key === "ArrowUp"
+    if (el.selectionStart !== el.selectionEnd) return false
+    if (up ? !onFirstLine(text, el.selectionStart) : !onLastLine(text, el.selectionEnd)) return false
+    const at = recalled ? recall!.at : null
+    if (!up && at === null) return false
+    const next = stepHistory(history.length, at, up ? -1 : 1)
+    if (up && next === null) return false
+    const draft = recalled ? recall!.draft : text
+    setRecall(next === null ? null : { at: next, draft })
+    setText(next === null ? draft : history[next])
+    placeCaret(up ? "start" : "end")
+    return true
+  }
+
+  // Ctrl+R: reverse-incremental search, as in a shell. Typed keys build the query,
+  // Ctrl+R again goes older, Enter/arrows/Tab keep the match (to edit or send),
+  // Esc restores the draft.
+  function startSearch() {
+    const draft = recalled ? recall!.draft : text
+    setSearch({ query: "", at: -1, draft })
+  }
+  function searchKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!search) return
+    const { query, at, draft } = search
+    const show = (q: string, i: number) => {
+      setSearch({ query: q, at: i, draft })
+      setText(i >= 0 ? history[i] : draft)
+    }
+    const ctrl = e.ctrlKey && !e.metaKey && !e.altKey
+    if (ctrl && e.key.toLowerCase() === "r") {
+      e.preventDefault()
+      const older = searchHistory(history, query, at >= 0 ? at : history.length)
+      if (older >= 0) show(query, older)
+      return
+    }
+    if (e.key === "Escape" || (ctrl && (e.key === "g" || e.key === "c"))) {
+      e.preventDefault()
+      setSearch(null)
+      setText(draft)
+      return
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault()
+      const q = query.slice(0, -1)
+      show(q, q ? searchHistory(history, q) : -1)
+      return
+    }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault()
+      const q = query + e.key
+      // Keep the current match while it still matches; otherwise look older.
+      const i = searchHistory(history, q, (at >= 0 ? at : history.length - 1) + 1)
+      show(q, i >= 0 ? i : at)
+      return
+    }
+    if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return
+    // Anything else accepts: the match stays in the box as an editable draft.
+    e.preventDefault()
+    setSearch(null)
+    if (at < 0) setText(draft)
+    placeCaret("end")
+  }
+  const searchMiss = !!search && !!search.query && (search.at < 0 || !history[search.at].toLowerCase().includes(search.query.toLowerCase()))
 
   function pick(i: number) {
     if (slashOpen) selectSlash(slashMatches[i].name)
@@ -411,6 +501,15 @@ export function Composer() {
         )}
         <StatusLine />
         <QueueRow />
+        {search && (
+          <div data-testid="history-search" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className={cn("font-medium", searchMiss ? "text-destructive" : "text-foreground")}>
+              {searchMiss ? "No match:" : "Search history:"}
+            </span>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{search.query || " "}</span>
+            <span className="ml-auto">Ctrl+R older · Enter keep · Esc cancel</span>
+          </div>
+        )}
 
         {/* Full-width input box */}
         <div className="rounded-lg border border-input bg-transparent focus-within:ring-1 focus-within:ring-ring">
@@ -422,8 +521,20 @@ export function Composer() {
               trackCaret(e.target)
             }}
             onSelect={(e) => trackCaret(e.currentTarget)}
-            onBlur={() => setHash(null)}
+            onBlur={() => {
+              setHash(null)
+              setSearch(null)
+            }}
             onKeyDown={(e) => {
+              if (search) {
+                searchKey(e)
+                return
+              }
+              if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r" && history.length) {
+                e.preventDefault()
+                startSearch()
+                return
+              }
               if (pickCount > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault()
@@ -446,6 +557,10 @@ export function Composer() {
                   return
                 }
               }
+              if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+                if (historyKey(e)) e.preventDefault()
+                return
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
                 send()
@@ -458,7 +573,7 @@ export function Composer() {
                 ? "Load a session to chat"
                 : chatRunning
                 ? "Steer the current turn, or queue for the next…"
-                : `Message ${agentLabel}…  (/ for commands, # for files, Enter to send)`
+                : `Message ${agentLabel}…  (/ commands, # files, ↑ history, Enter to send)`
             }
             disabled={disabled}
             className="max-h-52 min-h-14 resize-none border-0 shadow-none focus-visible:ring-0"
