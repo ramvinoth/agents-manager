@@ -1,7 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 100 100">
-  <!-- Manager mark: two stems of an H, the right one stepped up, joined by a
-       rising bar - the hand-off from one agent to the next. -->
-  <style>.t{fill:#1D1B19}.g{fill:#F3EEE6}@media (prefers-color-scheme:dark){.t{fill:#F3EEE6}.g{fill:#1D1B19}}</style>
-  <rect class="t" width="100" height="100" rx="22"/>
-  <path transform="translate(50 50) scale(0.66) translate(-50 -50)" class="g" d="M20 28H37V49L63 35V14H80V72H63V51L37 65V86H20Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffa23c"/>
+      <stop offset="0.5" stop-color="#ff6a1a"/>
+      <stop offset="1" stop-color="#e64a05"/>
+    </linearGradient>
+    <linearGradient id="hub" x1="20" y1="20" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd9a0"/>
+      <stop offset="1" stop-color="#ff9d3c"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <rect x="13" y="13" width="5.5" height="22" rx="2.75"/>
+    <rect x="29.5" y="13" width="5.5" height="22" rx="2.75"/>
+    <rect x="16" y="21.25" width="16" height="5.5" rx="2.75"/>
+  </g>
+  <circle cx="24" cy="24" r="4.6" fill="url(#bg)"/>
+  <circle cx="24" cy="24" r="3.3" fill="url(#hub)"/>
+  <circle cx="24" cy="24" r="1.25" fill="#ffffff"/>
 </svg>
