@@ -1,5 +1,5 @@
 """viewer.engine — agent runners (claude/codex/pi), chat control, loops,
-session summary/analysis, skill scans, and the Host local/remote seam."""
+session summaries, skill scans, and the Host local/remote seam."""
 import json
 import os
 import posixpath
@@ -2254,143 +2254,6 @@ class StatCache:
 REMOTE_SUMMARY_CACHE = StatCache()   # (hid, path) invalidated by (mtime, size)
 
 
-# ===== Session analysis: assumptions + human decisions (LLM, on demand) =====
-
-def session_digest_from_lines(lines, max_chars=55000):
-    """Compact USER/CLAUDE transcript for the analyzer — user messages in full
-    (they carry the human decisions), assistant TEXT truncated, tool noise
-    dropped. Oldest turns trimmed if over the cap."""
-    import json as _json
-    parts = []
-    for line in lines:
-        try:
-            o = _json.loads(line)
-        except Exception:
-            continue
-        t = o.get("type")
-        if t == "user" and not o.get("isMeta") and not o.get("isCompactSummary"):
-            c = (o.get("message") or {}).get("content")
-            if isinstance(c, list):
-                if all(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
-                    continue
-                txt = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
-            else:
-                txt = c if isinstance(c, str) else ""
-            txt = (txt or "").strip()
-            if txt:
-                parts.append("USER: " + txt[:1500])
-        elif t == "assistant":
-            c = (o.get("message") or {}).get("content") or []
-            txt = " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text").strip()
-            if txt:
-                parts.append("CLAUDE: " + txt[:700])
-    digest = "\n".join(parts)
-    if len(digest) > max_chars:
-        digest = "[…earlier turns omitted…]\n" + digest[-max_chars:]
-    return digest
-
-
-ANALYSIS_PROMPT = (
-    "You are reviewing a Claude Code coding session between a USER and CLAUDE (the AI assistant). "
-    "From the transcript, extract exactly two lists:\n"
-    "1. \"assumptions\": specific assumptions or defaults CLAUDE made WITHOUT the user explicitly "
-    "confirming them — interpretations of ambiguous requests, technical choices made unilaterally, "
-    "defaults picked, things taken for granted.\n"
-    "2. \"decisions\": explicit decisions, directions, corrections, approvals, or rejections the USER "
-    "made — what the human actually chose or steered.\n"
-    "Each item is ONE concise line (≤16 words), concrete and specific to THIS session (not generic). "
-    "Most important first, at most 12 per list. Output ONLY minified JSON of the form "
-    "{\"assumptions\":[...],\"decisions\":[...]} with no prose and no markdown fences.\n\nTRANSCRIPT:\n")
-
-
-def _claude_run_env():
-    env = dict(os.environ)
-    env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
-    if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
-        if auth_status().get("method") == "setup-token":
-            try:
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = VIEWER_TOKEN_FILE.read_text().strip()
-            except Exception:
-                pass
-    return env
-
-
-def run_claude_analysis(digest, model="haiku", timeout=150):
-    """One-shot claude -p over the digest → {"assumptions":[], "decisions":[]}."""
-    if not digest.strip():
-        return {"assumptions": [], "decisions": []}
-    cmd = [claude_bin(), "-p", ANALYSIS_PROMPT + digest,
-           "--output-format", "json", "--model", model]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                       env=_claude_run_env(), cwd=str(Path.home()))
-    if p.returncode != 0:
-        raise RuntimeError((p.stderr or p.stdout or "claude failed")[-400:])
-    text = (json.loads(p.stdout).get("result") or "").strip()
-    m = re.search(r"\{.*\}", text, re.S)          # strip any prose/fences around the JSON
-    data = json.loads(m.group(0) if m else text)
-    clean = lambda arr: [str(x).strip() for x in (arr or []) if str(x).strip()][:12]
-    return {"assumptions": clean(data.get("assumptions")), "decisions": clean(data.get("decisions"))}
-
-
-ANALYSIS_CACHE = StatCache()   # (hid, path) invalidated by (mtime, size)
-
-
-def _remote_digest(hid, full):
-    """Build the digest ON the host (like remote_session_summary) so a 300MB
-    transcript isn't dragged over SFTP — only the compact digest crosses."""
-    import inspect
-    script = ("import json, sys\n"
-              + inspect.getsource(session_digest_from_lines)
-              + "P = json.loads(%r)\n" % json.dumps({"path": full})
-              + "try:\n"
-                "    lines = open(P['path'], errors='replace').read().splitlines()\n"
-                "except OSError:\n"
-                "    print('null'); sys.exit()\n"
-                "print(json.dumps(session_digest_from_lines(lines)))\n")
-    out = remote_run_python(hid, script)
-    try:
-        return json.loads(out.strip().splitlines()[-1]) or ""
-    except Exception:
-        return ""
-
-
-def session_analysis(hid, rel, refresh=False):
-    """(assumptions, decisions) for a session, cached by (mtime,size)."""
-    if hid == "local":
-        full = (CLAUDE_DIR.parent / rel).resolve()
-        if not str(full).startswith(str(CLAUDE_DIR.parent.resolve()) + os.sep) or not full.exists():
-            return None
-        st = full.stat()
-        key = (hid, str(full))
-        if not refresh:
-            hit = ANALYSIS_CACHE.get(key, st.st_mtime, st.st_size)
-            if hit is not None:
-                return hit
-        with open(full, errors="replace") as fh:
-            digest = session_digest_from_lines(fh.read().splitlines())
-    else:
-        full = remote_full_path(hid, rel)
-        if not full:
-            return None
-        with SSH.lock_for(hid):
-            c = SSH.get(hid)
-            try:
-                st = c["sftp"].stat(full)
-            except IOError:
-                return None
-        key = (hid, full)
-        if not refresh:
-            hit = ANALYSIS_CACHE.get(key, st.st_mtime, st.st_size)
-            if hit is not None:
-                return hit
-        digest = _remote_digest(hid, full)
-        if not digest:
-            return None
-    data = run_claude_analysis(digest)
-    ANALYSIS_CACHE.put(key, st.st_mtime, st.st_size, data)
-    return data
-
-
 # ===== Host: the local-vs-remote seam =====
 #
 # One interface over "where the session files and shell live." Every filesystem
@@ -2434,7 +2297,6 @@ class Host:
     def capabilities(self, cwd): raise NotImplementedError
     def extract_cwd(self, rel): raise NotImplementedError
     def session_summary(self, rel): raise NotImplementedError
-    def analysis(self, rel, refresh=False): return session_analysis(self.hid, rel, refresh)
     def resolve(self, sid): raise NotImplementedError
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
