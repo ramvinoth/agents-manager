@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react"
 import {
-  AppWindow, ChevronLeft, ChevronRight, FileText, Loader2, Maximize2, MessageSquareReply, Minimize2,
+  AppWindow, BellRing, ChevronLeft, ChevronRight, FileText, Loader2, Maximize2, MessageSquareReply, Minimize2,
   NotebookPen, Presentation, Trash2, Workflow, X, type LucideIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Markdown } from "./Markdown"
 import { MermaidDiagram } from "./MermaidDiagram"
+import { DecisionCockpit } from "./kanban/DecisionCockpit"
+import { DecisionRowContent } from "./kanban/DecisionRow"
 import { api } from "@/lib/api"
 import { KIND_LABEL, replyDraft, splitSlides, themedHtml, type Canvas, type CanvasKind } from "@/lib/canvas"
 import { fmtAgo } from "@/lib/format"
 import { sessionIdOf } from "@/store/helpers"
 import { useStore } from "@/store"
 import { cn } from "@/lib/utils"
+import type { OpenDecision } from "@/lib/types"
 
 const KIND_ICON: Record<CanvasKind, LucideIcon> = {
   markdown: FileText,
@@ -26,15 +29,90 @@ function typingIn(el: EventTarget | null): boolean {
   return !!e && (e.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.tagName))
 }
 
+/** "Needs you": this chat's open decisions, each linked to the turn that raised it.
+ *  Show in chat scrolls the transcript there (like an excerpt card jumping to its
+ *  passage); Decide opens the cockpit — the one place a decision is made. */
+function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInChat: (d: OpenDecision) => Promise<boolean> }) {
+  const loadNeeds = useStore((s) => s.loadNeeds)
+  // The cockpit walks a frozen copy, so the 30s poll never moves the item being read.
+  const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; at: number } | null>(null)
+  const [miss, setMiss] = useState<string | null>(null)
+  // A long chat pages its history in to find the turn — seconds, so say so.
+  const [finding, setFinding] = useState<string | null>(null)
+
+  async function show(d: OpenDecision, key: string) {
+    setMiss(null)
+    setFinding(key)
+    try {
+      if (!(await onShowInChat(d))) setMiss(key)
+    } finally {
+      setFinding(null)
+    }
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
+      <div className="mb-2 flex items-center gap-2 px-1">
+        <h2 className="text-base font-semibold">Needs you</h2>
+        <span className="text-xs text-muted-foreground">
+          {needs.length} open in this chat — the agent waits on these
+        </span>
+        <Button size="sm" className="ml-auto h-7 px-2 text-xs" data-track="needs decide all"
+          onClick={() => setCockpit({ snapshot: needs, at: 0 })}>
+          Decide {needs.length > 1 ? `all ${needs.length}` : ""} ›
+        </Button>
+      </div>
+      <ul className="space-y-1">
+        {needs.map((d, i) => {
+          const key = `${d.kind}:${d.tool_use_id || d.id || d.card}`
+          return (
+            <li key={key} className="rounded-md border border-border">
+              <div className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm">
+                <DecisionRowContent d={d} inSession />
+              </div>
+              <div className="flex items-center gap-1 border-t border-border px-1 py-1">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" data-track="needs show in chat"
+                  disabled={finding !== null} onClick={() => show(d, key)}>
+                  {finding === key ? "Finding in history…" : "Show in chat"}
+                </Button>
+                <Button size="sm" className="h-7 text-xs" data-track="needs decide"
+                  onClick={() => setCockpit({ snapshot: needs, at: i })}>
+                  Decide
+                </Button>
+                {miss === key && (
+                  <span className="min-w-0 truncate px-1 text-xs text-muted-foreground" role="status">
+                    Not in this chat's history — it was raised outside the chat (e.g. on the board).
+                  </span>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      {cockpit && (
+        <DecisionCockpit
+          decisions={cockpit.snapshot}
+          startIndex={cockpit.at}
+          onClose={() => setCockpit(null)}
+          onResolved={loadNeeds}
+        />
+      )}
+    </div>
+  )
+}
+
 /** The canvas pane: what the agent chose to SHOW, beside the chat. Tabs per
- *  canvas; the owner reads, replies about it, saves it as a note, or deletes it. */
-export function CanvasPane() {
+ *  canvas; the owner reads, replies about it, saves it as a note, or deletes it.
+ *  This chat's open decisions pin first as "Needs you". */
+export function CanvasPane({ onShowInChat }: { onShowInChat: (d: OpenDecision) => Promise<boolean> }) {
   const canvases = useStore((s) => s.canvases)
   const active = useStore((s) => s.canvasActive)
   const path = useStore((s) => s.currentSessionPath)
   const openCanvas = useStore((s) => s.openCanvas)
   const closeCanvas = useStore((s) => s.closeCanvas)
   const deleteCanvas = useStore((s) => s.deleteCanvas)
+  const needs = useStore((s) => s.canvasNeeds)
+  const showNeeds = useStore((s) => s.showNeeds)
+  const onNeeds = useStore((s) => s.canvasTab === "needs") && needs.length > 0
   const meta = canvases.find((c) => c.title === active) ?? null
   const [canvas, setCanvas] = useState<Canvas | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +142,7 @@ export function CanvasPane() {
 
   const slides = canvas?.kind === "slides" ? splitSlides(canvas.content) : null
   const at = slides ? Math.min(slide, slides.length - 1) : 0
-  const count = slides?.length ?? 0
+  const count = onNeeds ? 0 : slides?.length ?? 0
 
   useEffect(() => {
     if (count < 2 && !full) return
@@ -106,17 +184,33 @@ export function CanvasPane() {
     <div className={cn("flex h-full min-h-0 flex-col bg-background", full && "fixed inset-0 z-50")}>
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto scrollbar-none" role="tablist" aria-label="Canvases">
+          {needs.length > 0 && (
+            <button
+              role="tab"
+              aria-selected={onNeeds}
+              onClick={showNeeds}
+              data-track="canvas needs tab"
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs",
+                onNeeds ? "bg-primary text-primary-foreground font-medium" : "text-primary hover:bg-accent/50"
+              )}
+              title="Questions, plans, approvals and cards in this chat waiting on you"
+            >
+              <BellRing className="size-3.5 shrink-0" />
+              Needs you ({needs.length})
+            </button>
+          )}
           {canvases.map((c) => {
             const TabIcon = KIND_ICON[c.kind]
             return (
               <button
                 key={c.title}
                 role="tab"
-                aria-selected={c.title === active}
+                aria-selected={!onNeeds && c.title === active}
                 onClick={() => openCanvas(c.title)}
                 className={cn(
                   "flex max-w-52 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs",
-                  c.title === active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/50"
+                  !onNeeds && c.title === active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/50"
                 )}
                 title={`${c.title} · ${KIND_LABEL[c.kind]} · v${c.version} · updated ${fmtAgo(c.updated_at)}`}
               >
@@ -135,6 +229,7 @@ export function CanvasPane() {
         </Button>
       </div>
 
+      {onNeeds ? <NeedsList needs={needs} onShowInChat={onShowInChat} /> : <>
       {meta && (
         <div className="flex items-baseline gap-2 px-4 pb-1 pt-3">
           <h2 className="min-w-0 truncate text-base font-semibold">{meta.title}</h2>
@@ -201,6 +296,7 @@ export function CanvasPane() {
           <Trash2 className="size-3.5" />
         </Button>
       </div>
+      </>}
     </div>
   )
 }

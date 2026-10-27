@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useState } from "react"
-import { HelpCircle, FileText, ShieldCheck, ShieldAlert, ClipboardList, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
-import { fmtDuration } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { OpenDecision } from "@/lib/types"
 import { DecisionCockpit } from "./DecisionCockpit"
+import { DecisionRowContent } from "./DecisionRow"
 import { userError } from "@/lib/errors"
-
-const KIND_META = {
-  question: { icon: HelpCircle, label: "Question" },
-  plan: { icon: FileText, label: "Plan" },
-  approval: { icon: ShieldCheck, label: "Approval" },
-  card: { icon: ClipboardList, label: "Card" },
-  red: { icon: ShieldAlert, label: "Needs your OK" },
-} as const
 
 /**
  * DecisionsBand — the cross-session decision queue on the board (card #60):
@@ -97,37 +89,17 @@ export function DecisionsBand({
         </div>
       ) : (
         <ul className="max-h-40 space-y-1 overflow-y-auto">
-          {items.map((d, i) => {
-            const meta = KIND_META[d.kind] || KIND_META.question
-            const Icon = meta.icon
-            const isCard = d.kind === "card" && !!d.card
-            return (
+          {items.map((d, i) => (
               <li key={`${d.kind}:${d.session}:${d.tool_use_id || d.id || d.card}`}>
                 <button
                   data-track="decision row"
                   onClick={() => setCockpit({ snapshot: items, at: i })}
                   className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent"
                 >
-                  <Icon className={cn("size-4 shrink-0", d.kind === "red" ? "text-destructive" : "text-muted-foreground")} />
-                  <span className="shrink-0 font-medium">
-                    {isCard || d.kind === "red" ? d.summary : d.label || d.session.slice(0, 8)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                    {isCard
-                      ? `${d.column} · ${d.label || "an agent"} is waiting on you`
-                      : d.kind === "red"
-                        ? `${d.label || d.requested_by || "an agent"} · why: ${d.reason || "no reason given"}`
-                        : d.summary || meta.label}
-                  </span>
-                  <Badge variant="outline" className="shrink-0 text-[10px]">{meta.label}</Badge>
-                  {d.host !== "local" && <Badge variant="outline" className="shrink-0 text-[10px]">{d.host}</Badge>}
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    waiting {fmtDuration(d.waiting_s * 1000) || "now"}
-                  </span>
+                  <DecisionRowContent d={d} />
                 </button>
               </li>
-            )
-          })}
+          ))}
         </ul>
       )}
       {cockpit && (
