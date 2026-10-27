@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import {
+  Bot,
   ChevronDown,
   Moon,
   Sun,
@@ -294,8 +295,9 @@ export function Header() {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-2 font-semibold">
-      {/* The Agents mark, served once as public/favicon.svg so the tab and header never drift. */}
-      <img src="/favicon.svg" alt="" className="size-6 shrink-0" />
+      <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
+        <Bot className="size-3.5" />
+      </div>
       <span className={compact ? "hidden text-sm sm:inline" : "text-sm"}>Agents Manager</span>
     </div>
   )
