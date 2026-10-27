@@ -443,6 +443,72 @@ def read_back(path, end_off, n_lines):
         return read_back_f(f, end_off, n_lines)
 
 
+def find_tool_call(path, key, value, chunk=8 << 20):
+    """The newest assistant tool call in a transcript that names `value`:
+    key="id" matches the block's own id (a question/plan/approval's
+    tool_use_id), key="card_id" a card_move/card_comment's input or the
+    card_create whose result returned that id. Scans back in chunks with
+    bytes.rfind, so a call 200 MB up a long chat costs a fraction of a second
+    instead of the client paging the whole history in.
+    Returns {"offset", "timestamp", "name", "input"} or None; offset is the
+    line's byte offset, so the client knows whether paging back reaches it."""
+    needles = [f'"{key}":{json.dumps(value)}'.encode()]
+    if key == "card_id":
+        # card_create's result is the card as JSON text, escaped inside the record.
+        needles.append(b'"text":"{\\"id\\": ' + str(value).encode() + b",")
+
+    def match(line):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            return None
+        content = (rec.get("message") or {}).get("content") or []
+        if rec.get("type") == "user" and key == "card_id":
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    made = find_tool_call(path, "id", b.get("tool_use_id"), chunk)
+                    if made and made["name"].endswith("card_create"):
+                        return made
+            return None
+        if rec.get("type") != "assistant":
+            return None
+        for b in content:
+            if not isinstance(b, dict) or b.get("type") != "tool_use":
+                continue
+            if key == "id" and b.get("id") == value:
+                return {"timestamp": rec.get("timestamp"), "name": b.get("name"), "input": b.get("input")}
+            name = b.get("name") or ""
+            if key == "card_id" and (b.get("input") or {}).get("card_id") == value and (
+                    name.endswith("card_move") or name.endswith("card_comment")):
+                return {"timestamp": rec.get("timestamp"), "name": name, "input": b.get("input")}
+        return None
+
+    with open(path, "rb") as f:
+        pos = f.seek(0, 2)
+        while pos > 0:
+            start = max(0, pos - chunk)
+            f.seek(start)
+            buf = f.read(pos - start)
+            if start > 0:
+                nl = buf.find(b"\n")
+                # Only the newline ending the previous line (or none): a line
+                # longer than the chunk — widen and retry, or nothing advances.
+                if nl < 0 or nl == len(buf) - 1:
+                    chunk *= 2
+                    continue
+                buf, start = buf[nl + 1:], start + nl + 1
+            i = len(buf)
+            while (i := max(buf.rfind(n, 0, i) for n in needles)) >= 0:
+                a = buf.rfind(b"\n", 0, i) + 1
+                z = buf.find(b"\n", i)
+                hit = match(buf[a:z if z >= 0 else len(buf)])
+                if hit:
+                    return hit if "offset" in hit else {"offset": start + a, **hit}
+                i = a
+            pos = start
+    return None
+
+
 def split_lines(data, base):
     """Split raw bytes into complete JSONL lines. A trailing chunk without a
     newline is included only if it parses as JSON (the file may be mid-write).

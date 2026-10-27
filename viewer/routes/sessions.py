@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 from viewer import agenttemplates, chatplugins, db, discussion
 from viewer.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, agent_plugin_names,
-    read_back, split_lines, template_plugin_dir,
+    find_tool_call, read_back, split_lines, template_plugin_dir,
 )
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
@@ -58,6 +58,19 @@ class SessionsMixin:
             return normalize_lines(agent, lines) if agent != "claude" else lines
 
         q = parse_qs(query)
+        if "find" in q and agent == "claude":
+            # ?find=card:<id> | tool:<tool_use_id> — the call that raised a
+            # decision, even when it is far above the loaded history.
+            kind, _, val = q["find"][0].partition(":")
+            if kind == "card" and val.isdigit():
+                hit = find_tool_call(full_path, "card_id", int(val))
+            elif kind == "tool" and val:
+                hit = find_tool_call(full_path, "id", val)
+            else:
+                self.send_error(400, "find takes card:<id> or tool:<id>")
+                return
+            self.send_json({"hit": hit})
+            return
         if not any(k in q for k in ("tail", "before", "from")):
             if agent != "claude":
                 self.send_error(400, "This agent's sessions require tail/from/before")

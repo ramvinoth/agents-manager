@@ -3,6 +3,7 @@
 // `host` is set once (by the store) and injected centrally.
 
 import type { NoteGraph } from "./noteLinks"
+import type { FoundCall } from "./decisionAnchors"
 import type { NoteExportFormat } from "./notes"
 import type { Provider, OrchestratorConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
 import type { OrgLevel, PermissionPolicy, TrustWrite } from "./trust"
@@ -147,6 +148,10 @@ class ApiClient {
   }
   sessionReadBefore(path: string, before: number, lines: number) {
     return this.getRes(`/api/session/${path}?before=${before}&lines=${lines}` + this.qs() + this.ag())
+  }
+  /** The tool call that raised a decision, found server-side however far up the chat it is. */
+  sessionFind(path: string, key: string): Promise<{ hit: FoundCall | null }> {
+    return this.getJSON(`/api/session/${path}?find=${encodeURIComponent(key)}` + this.qs() + this.ag())
   }
   resolve(id: string) {
     return this.getJSON(`/api/resolve?id=${id}` + this.qs())

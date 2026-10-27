@@ -282,7 +282,7 @@ export function KanbanDialog({
 
         <DecisionsBand
           onOpenSession={openDecision}
-          onOpenCard={openCard}
+          onCardChange={(u) => setCards((cs) => cs.map((c) => (c.id === u.id ? { ...c, ...u } : c)))}
         />
 
         {loading ? (
