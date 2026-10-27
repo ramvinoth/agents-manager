@@ -312,20 +312,21 @@ function StepView({ block }: { block: Block }) {
       </View>
     )
   }
-  if (block.kind === "compact") return <CompactStep text={block.text} />
+  if (block.kind === "compact") return <FoldedStep testID="compact-step" icon="archive" label="Conversation compacted" text={block.text} />
+  if (block.kind === "resume") return <FoldedStep testID="resume-step" icon="repeat" label="Resumed after an interruption" text={block.text} />
   return <ToolStep block={block} />
 }
 
-// A context compaction inside the reply: one folded line, the summary on tap.
-function CompactStep({ text }: { text: string }) {
+// A compaction or a server resume inside the reply: one folded line, its text on tap.
+function FoldedStep({ testID, icon, label, text }: { testID: string; icon: "archive" | "repeat"; label: string; text: string }) {
   const t = useTheme()
   const [open, setOpen] = useState(false)
   return (
     <View style={{ marginVertical: 4 }}>
-      <Pressable testID="compact-step" accessibilityRole="button" accessibilityLabel="Conversation compacted"
+      <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label}
         onPress={() => setOpen((o) => !o)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Icon name="archive" size={13} color={t.textMuted} />
-        <Text style={{ color: t.textMuted, fontSize: 12 }}>Conversation compacted</Text>
+        <Icon name={icon} size={13} color={t.textMuted} />
+        <Text style={{ color: t.textMuted, fontSize: 12 }}>{label}</Text>
         <Icon name={open ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
       </Pressable>
       {open ? (

@@ -72,7 +72,13 @@ export interface CompactBlock {
   type: "compact"
   summary: string
 }
-export type Block = TextBlock | ToolUseBlock | CompactBlock
+/** The server resumed a turn a restart or stopped process cut off: its resume
+ *  prompt is a step of the reply it continues, not a message from the user. */
+export interface ResumeBlock {
+  type: "resume"
+  note: string
+}
+export type Block = TextBlock | ToolUseBlock | CompactBlock | ResumeBlock
 
 export interface ImagePart {
   mime: string
