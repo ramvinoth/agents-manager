@@ -1,4 +1,4 @@
-import { canvasShows, latestShow, replyDraft, showSucceeded, splitSlides, themedHtml, CANVAS_SHOW_TOOL } from "./canvas.ts"
+import { canvasDragWidth, storedCanvasWidth, canvasShows, latestShow, replyDraft, showSucceeded, splitSlides, themedHtml, CANVAS_SHOW_TOOL } from "./canvas.ts"
 import type { Turn } from "./types.ts"
 
 let pass = 0, fail = 0
@@ -56,6 +56,16 @@ eq("agent's style comes after ours", th("<head><style>body{background:red}</styl
 eq("dark scheme", th("x").includes("color-scheme:dark"), true)
 eq("light scheme", themedHtml("x", { ...T, dark: false }).includes("color-scheme:light"), true)
 eq("<header> is not <head>", th("<header>h</header>").startsWith('<meta name="viewport"'), true)
+
+// Divider drag: clamp to [min, viewport - chat room], close when dragged nearly shut.
+eq("drag mid", canvasDragWidth(500.4, 1400), 500)
+eq("drag below min clamps", canvasDragWidth(200, 1400), 280)
+eq("drag nearly shut closes", canvasDragWidth(120, 1400), "close")
+eq("drag past chat room clamps", canvasDragWidth(1300, 1400), 1040)
+eq("stored ok", storedCanvasWidth("612"), 612)
+eq("stored junk", storedCanvasWidth("abc"), null)
+eq("stored missing", storedCanvasWidth(null), null)
+eq("stored too small", storedCanvasWidth("100"), null)
 
 console.log(`canvas: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)
