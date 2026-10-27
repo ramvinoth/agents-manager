@@ -101,7 +101,7 @@ function blockHasImages(b: Block): boolean {
 
 // Some models (Qwen3) emit inline <think>…</think> reasoning before the answer.
 // Render it as a collapsed <details> and show only the reply body by default.
-function TextBlock({ text, live }: { text: string; live?: boolean }) {
+function TextBlock({ text, latest }: { text: string; latest?: boolean }) {
   const { thinking, body } = useMemo(() => splitThinking(text), [text])
   return (
     <>
@@ -113,11 +113,10 @@ function TextBlock({ text, live }: { text: string; live?: boolean }) {
           </div>
         </details>
       )}
-      {/* The turn still being streamed is never collapsed: its text is still
-          growing, and a bubble that folded itself shut mid-stream would hide the
-          very output the reader is watching. */}
+      {/* The latest reply is never collapsed: it is the one being read (and,
+          mid-stream, still growing). Older replies fold — same rule as mobile. */}
       {body &&
-        (live ? (
+        (latest ? (
           <Markdown text={body} />
         ) : (
           <Collapsible text={body}>{(shown) => <Markdown text={shown} />}</Collapsible>
@@ -127,8 +126,8 @@ function TextBlock({ text, live }: { text: string; live?: boolean }) {
 }
 
 /** One block of an exchange: text, a compaction, a surfaced question/plan card, or a tool call. */
-function BlockView({ block, live }: { block: Block; live?: boolean }) {
-  if (block.type === "text") return <TextBlock text={block.text} live={live} />
+function BlockView({ block, latest }: { block: Block; latest?: boolean }) {
+  if (block.type === "text") return <TextBlock text={block.text} latest={latest} />
   if (block.type === "compact") return <CompactStep summary={block.summary} />
   if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
   if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
@@ -162,7 +161,7 @@ function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
  * toggle above the answer — open on the latest reply (and while a search hit is
  * in it), collapsed on older ones so scrolling history reads as answers.
  */
-function ExchangeRow({ ex, latest, live, highlighted }: { ex: Exchange; latest: boolean; live: boolean; highlighted: boolean }) {
+function ExchangeRow({ ex, latest, highlighted }: { ex: Exchange; latest: boolean; highlighted: boolean }) {
   const agentLabel = useAgentLabel()
   const showTools = useStore((s) => s.visible.tools)
   const [open, setOpen] = useState<boolean | null>(null)
@@ -210,7 +209,7 @@ function ExchangeRow({ ex, latest, live, highlighted }: { ex: Exchange; latest: 
           <BlockView key={"s" + i} block={b} />
         ))}
         {ex.answer.map((b, i) => (
-          <BlockView key={"a" + i} block={b} live={live} />
+          <BlockView key={"a" + i} block={b} latest={latest} />
         ))}
       </div>
     </div>
@@ -259,7 +258,6 @@ export function Transcript({
   className?: string
 }) {
   const visible = useStore((s) => s.visible)
-  const chatRunning = useStore((s) => s.chatRunning)
   // Tool-only turns are NOT dropped here even with the Tools filter off: they
   // belong to an exchange, which keeps their screenshots (see visibleSteps).
   const shown = useMemo(
@@ -306,12 +304,9 @@ export function Transcript({
               <span key={id} id={`turn-${id}`} className="block scroll-mt-6" />
             ))}
             {it.type === "exchange" ? (
-              // Only the last reply can still be growing, and only while the
-              // agent is running — that one renders uncollapsed.
               <ExchangeRow
                 ex={it}
                 latest={i === lastExchange}
-                live={chatRunning && i === rows.length - 1}
                 highlighted={highlighted}
               />
             ) : (
