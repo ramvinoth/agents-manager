@@ -4,9 +4,12 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
+from viewer import chatplugins
 from viewer.config import (
-    HEADLESS_OK, VIEWER_HANDLED, load_system_commands,
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, VIEWER_HANDLED,
+    load_system_commands,
 )
+from viewer.routes import require_human
 from viewer.adapters import resolve_agent_session
 from viewer.browser import (
     MCP_CDP_CACHE,
@@ -18,7 +21,7 @@ from viewer.engine import (
 
 
 class CapabilitiesMixin:
-    def handle_skill_delete(self):
+    def handle_skill_delete(self, req):
         body = self.read_body() or {}
         if body.get("agent", "claude") == "codex":
             self.send_host_result(codex_skill_delete(body.get("path", "")))
@@ -27,7 +30,8 @@ class CapabilitiesMixin:
         if not p or not p.exists():
             self.send_json({"error": "Skill not found"}, status=404)
             return
-        if str(p).startswith(str(Path.home() / ".claude" / "plugins")):
+        if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR),
+                              str(TEMPLATE_PLUGINS_DIR))):
             self.send_json({"error": "Plugin skills are read-only"}, status=403)
             return
         trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
@@ -40,7 +44,7 @@ class CapabilitiesMixin:
             return
         self.send_json({"deleted": True, "trash": str(dest)})
 
-    def handle_mcp_save(self, delete=False):
+    def handle_mcp_save(self, req, delete=False):
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -55,6 +59,11 @@ class CapabilitiesMixin:
             self.send_json({"error": "config must be a JSON object"}, status=400)
             return
         host = body.get("host", "local")
+        if scope == "chat":
+            MCP_CDP_CACHE.pop("local", None)
+            self._chat_write(req, lambda sid: (chatplugins.delete_mcp(chatplugins.chat_root(sid, create=False), name) if delete
+                                          else chatplugins.save_mcp(chatplugins.chat_root(sid), name, cfg)) or {"saved": True}, body)
+            return
         if body.get("agent", "claude") == "codex" and host == "local":
             MCP_CDP_CACHE.pop(host, None)
             self.send_host_result(codex_mcp_save(name, cfg, delete))
@@ -79,16 +88,16 @@ class CapabilitiesMixin:
     # ----- Full-session summary -----
 
     def _p_skill_save(self, req):
-        self.handle_skill_save()
+        self.handle_skill_save(req)
 
     def _p_skill_delete(self, req):
-        self.handle_skill_delete()
+        self.handle_skill_delete(req)
 
     def _g_commands(self, req):
         self.serve_commands(req.raw_query)
 
     def _p_mcp_delete(self, req):
-        self.handle_mcp_save(delete=True)
+        self.handle_mcp_save(req, delete=True)
 
     def serve_commands(self, query):
         """List available slash commands from every source: project, user,
@@ -132,7 +141,7 @@ class CapabilitiesMixin:
 
         self.send_json(sorted(cmds.values(), key=lambda c: c["name"]))
 
-    def handle_skill_save(self):
+    def handle_skill_save(self, req):
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
@@ -145,6 +154,9 @@ class CapabilitiesMixin:
             return
         if not re.fullmatch(r"[\w-]+", name):
             self.send_json({"error": "Skill name must be letters/digits/dashes/underscores"}, status=400)
+            return
+        if scope == "chat":
+            self._chat_write(req, lambda sid: {"saved": True, "path": str(chatplugins.save_skill(chatplugins.chat_root(sid), name, content))}, body)
             return
         cwd = None
         if scope == "project":
@@ -165,23 +177,32 @@ class CapabilitiesMixin:
         return Path(extract_cwd(full)) if full else None
 
     def _p_mcp_save(self, req):
-        self.handle_mcp_save(delete=False)
+        self.handle_mcp_save(req, delete=False)
 
     def serve_capabilities(self, query):
         q = parse_qs(query)
         rel = (q.get("session") or [""])[0]
         host = (q.get("host") or ["local"])[0]
         agent = (q.get("agent") or ["claude"])[0]
-        # cwd from the picked new-session dir, or the session's own cwd on that
-        # host, so project-scoped skills/MCP resolve against the right folder.
         cwd = (q.get("cwd") or [""])[0].strip()
+        data, status = self.compute_capabilities(host, agent, rel, cwd)
+        self.send_json(data, status=status or 200)
+
+    def compute_capabilities(self, host, agent, rel, cwd=""):
+        """Resolve one session's skills, MCP servers and plugins -> ({skills, mcp, plugins}, status).
+
+        The single source of truth for per-session capabilities: the /api/capabilities
+        route serves this directly, and session_detail composes it in. `status` is None
+        on success or an HTTP code on failure, so a caller composing several sources can
+        decide whether a partial failure is fatal. cwd from the picked new-session dir,
+        or the session's own cwd on that host, so project-scoped skills/MCP resolve
+        against the right folder."""
         if agent == "codex" and host == "local":
             if not cwd and rel:
                 full = resolve_agent_session("codex", rel)
                 if full:
                     cwd = codex_session_meta(full)[1]
-            self.send_json(codex_capabilities(cwd))
-            return
+            return codex_capabilities(cwd), None
         if agent == "copilot":
             # Host-aware read of ~/.copilot skills + MCP (local or over SSH). cwd
             # is best-effort: local sessions resolve it, remote falls back to
@@ -191,8 +212,7 @@ class CapabilitiesMixin:
                 full = resolve_agent_session("copilot", rel)
                 if full:
                     cwd = copilot_session_meta(full)[1]
-            self.send_json(copilot_capabilities(host, cwd))
-            return
+            return copilot_capabilities(host, cwd), None
         h = get_host(host)
         if not cwd and rel:
             try:
@@ -200,18 +220,50 @@ class CapabilitiesMixin:
             except Exception:
                 cwd = ""
         try:
-            self.send_json(h.capabilities(cwd))
+            caps = h.capabilities(cwd)
         except Exception as e:
-            self.send_json({"error": f"SSH: {e}", "skills": [], "mcp": []}, status=502)
+            return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
+        # The chat's Harman plugins and its own extras ride --plugin-dir on local
+        # claude runs only (engine), from folders the host scanner never reads —
+        # merge them for exactly that case so this stays the true per-session view.
+        if host == "local" and rel:
+            chatplugins.merge_into(caps, self.sid_from_path(rel))
+        return caps, None
+
+    def _chat_write(self, req, fn, body):
+        """Run a write against the body's chat (its extras or plugin list).
+        Human-only: a chat's MCP server is code that runs on this machine."""
+        if not require_human(self, req):
+            return
+        sid = self.sid_from_path(body.get("session") or "")
+        if not sid or not self.resolve_session_quiet(body.get("session") or ""):
+            self.send_json({"error": "Pick a local chat for chat scope"}, status=404)
+            return
+        try:
+            self.send_json(fn(sid))
+        except chatplugins.ChatPluginError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+
+    def _p_chat_plugin(self, req):
+        """Add (on=true) or remove one Harman plugin for a chat."""
+        body = self.read_body() or {}
+        name = (body.get("name") or "").strip()
+        self._chat_write(req, lambda sid: {"plugins": chatplugins.set_plugin(sid, name, bool(body.get("on")))}, body)
+
+    def _p_chat_save_to_agent(self, req):
+        """Keep this chat's plugins, skills and MCP on the agent it came from."""
+        body = self.read_body() or {}
+        self._chat_write(req, chatplugins.save_to_template, body)
 
     def resolve_skill_path(self, raw):
-        """Only allow paths inside the three known skill roots."""
+        """Only allow paths inside the known skill roots."""
         try:
             p = Path(raw).resolve()
         except Exception:
             return None
         roots = [Path.home() / ".claude" / "skills",
-                 Path.home() / ".claude" / "plugins" / "cache"]
+                 Path.home() / ".claude" / "plugins" / "cache",
+                 AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, TEMPLATE_PLUGINS_DIR]
         if p.is_file() and p.name == "SKILL.md":
             # project skills can live anywhere under a project's .claude/skills
             if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):

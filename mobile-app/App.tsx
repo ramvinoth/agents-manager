@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react"
-import { ActivityIndicator, useColorScheme, View } from "react-native"
+import { ActivityIndicator, Linking, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
-import { DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
+import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer, type Theme as NavTheme } from "@react-navigation/native"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
 import { effectiveScheme, themeFor } from "./src/lib/theme"
 import { useThemePref } from "./src/lib/useTheme"
@@ -11,35 +11,154 @@ import { useThemePref } from "./src/lib/useTheme"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
-import { loadConfig, serverUrl, token } from "./src/state/config"
-import { registerForPush } from "./src/lib/notify"
+import { hasServer, loadConfig, token } from "./src/state/config"
+import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
+import { registerForPush, onNotificationTap } from "./src/lib/notify"
+import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
 import HomeTabs from "./src/screens/HomeTabs"
 import NewChatScreen from "./src/screens/NewChatScreen"
 import ThreadScreen from "./src/screens/ThreadScreen"
-import FilesScreen from "./src/screens/FilesScreen"
-import SessionInfoScreen from "./src/screens/SessionInfoScreen"
+import CallScreen from "./src/screens/CallScreen"
 import SessionProfileScreen from "./src/screens/SessionProfileScreen"
 import CapabilitiesScreen from "./src/screens/CapabilitiesScreen"
+import ProvidersScreen from "./src/screens/ProvidersScreen"
+import UndoToast from "./src/components/UndoToast"
+import ActionSheetHost from "./src/components/ActionSheetHost"
+import IntegrationsScreen from "./src/screens/IntegrationsScreen"
+import CalendarScreen from "./src/screens/CalendarScreen"
+import KanbanScreen from "./src/screens/KanbanScreen"
+import CardDetailScreen from "./src/screens/CardDetailScreen"
+import NotesScreen from "./src/screens/NotesScreen"
+import FilesScreen from "./src/screens/FilesScreen"
+import AgentsScreen from "./src/screens/AgentsScreen"
+import AgentEditScreen from "./src/screens/AgentEditScreen"
+import AgentToolsScreen from "./src/screens/AgentToolsScreen"
+import InboxScreen from "./src/screens/InboxScreen"
+import NoteEditorScreen from "./src/screens/NoteEditorScreen"
+import OrgScreen from "./src/screens/OrgScreen"
+import AuditScreen from "./src/screens/AuditScreen"
+import MapScreen from "./src/screens/MapScreen"
+import CanvasScreen from "./src/screens/CanvasScreen"
+import AuditEntryScreen from "./src/screens/AuditEntryScreen"
+import type { AuditEntry } from "./src/lib/audit"
 import HostEditScreen from "./src/screens/HostEditScreen"
+import type { StartingChat } from "./src/lib/session"
 import TerminalScreen from "./src/screens/TerminalScreen"
 
 export type RootStackParamList = {
   Server: { mode?: "initial" | "add" } | undefined
   Login: undefined
   Home: undefined
-  NewChat: undefined
-  Thread: { host: string; label: string; path?: string; jumpTo?: string }
-  Files: { host: string; path?: string }
-  SessionInfo: { host: string; path: string }
-  SessionProfile: { host: string; label: string; path?: string; sessionId: string }
-  Capabilities: undefined
+  NewChat: { template?: import("./src/api/client").AgentTemplate; cwd?: string } | undefined
+  // `starting`: a chat that was just started and whose transcript isn't written
+  // yet — the thread opens at once and resolves it (see ThreadScreen).
+  Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
+  Call: { label: string; path?: string }
+  SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
+  Capabilities: { host?: string; cwd?: string; session?: string; title?: string } | undefined
+  Providers: undefined
+  Integrations: undefined
+  Calendar: undefined
+  Kanban: { session?: string; project?: number; assignee?: number; title?: string } | undefined
+  CardDetail: { id: number }
+  Notes: { session?: string; project?: number; title?: string; tag?: string } | undefined
+  Map: { project?: number; session?: string; title: string }
+  Canvas: { session: string; title: string; initial?: string }
+  Files: undefined
+  Agents: undefined
+  /** Create (no template) or edit one of the caller's own agents. */
+  AgentEdit: { template?: import("./src/api/client").AgentTemplate } | undefined
+  AgentTools: { id: number; name: string; kind: "skill" | "mcp" }
+  NoteEditor: { id: number }
+  Inbox: { session?: string; host?: string; path?: string; title?: string } | undefined
+  Org: undefined
+  Audit: undefined
+  AuditEntry: { entry: AuditEntry }
   HostEdit: { host?: HostConfig } | undefined
   Terminal: { host: string; label: string }
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
+
+// Ref to the navigation tree so notification taps (which fire OUTSIDE React,
+// from the native module) can navigate without a screen in scope.
+export const navigationRef = createNavigationContainerRef<RootStackParamList>()
+
+// A tap can fire BEFORE the navigation tree mounts — this is the norm on a cold
+// start, where getLastNotificationResponseAsync resolves while <NavigationContainer>
+// is still initializing. So we buffer the most-recent target and flush it once the
+// tree is ready (see flushPendingNav, called from NavigationContainer.onReady and
+// after a warm tap). Bailing on !isReady() was why the tap only foregrounded the app.
+let pendingNav: Record<string, unknown> | null = null
+
+// Resolve a push payload to a screen: `{card}` (a board card the owner was asked
+// about) opens that card; `{note}` opens the note; `{screen: "Integrations"}` (an
+// account whose sign-in expired) opens Integrations; `{session, host}` (a chat
+// turn) opens the Thread. Thread
+// navigates by `path` (unique; id is not), so the session is looked up on its
+// host. Best-effort — a stale id or offline host just no-ops rather than throwing.
+async function navToTarget(data: Record<string, unknown>): Promise<void> {
+  const card = Number(data.card)
+  if (Number.isInteger(card) && card > 0) {
+    navigationRef.navigate("CardDetail", { id: card })
+    return
+  }
+  const note = Number(data.note)
+  if (Number.isInteger(note) && note > 0) {
+    navigationRef.navigate("NoteEditor", { id: note })
+    return
+  }
+  if (data.screen === "Integrations") {
+    navigationRef.navigate("Integrations")
+    return
+  }
+  const session = typeof data.session === "string" ? data.session : ""
+  const host = typeof data.host === "string" ? data.host : "local"
+  if (!session) return
+  try {
+    const sessions = await api.sessions(host)
+    const match = sessions.find((s) => s.id === session)
+    if (!match) return
+    const label = match.title || match.id.slice(0, 8)
+    navigationRef.navigate("Thread", { host, label, path: match.path })
+  } catch {
+    /* tap routing is best-effort */
+  }
+}
+
+// Handle a tap: if the tree is ready, navigate now; otherwise stash it so
+// flushPendingNav can complete the jump once the container mounts.
+function openFromNotification(data: Record<string, unknown>): void {
+  if (!data.card && !data.note && !data.screen && !data.session) return
+  if (navigationRef.isReady()) void navToTarget(data)
+  else pendingNav = data
+}
+
+// Drain any tap that arrived before navigation was ready (cold start).
+function flushPendingNav(): void {
+  const data = pendingNav
+  pendingNav = null
+  if (data && navigationRef.isReady()) void navToTarget(data)
+}
+
+// A scanned pairing QR (`agents://pair?...`, see lib/pairLink) arrives as a URL
+// open — on a cold start via getInitialURL, warm via the 'url' event. Handled
+// only after loadConfig (pairing adds a server, which a later hydrate would
+// overwrite), and one at a time so a double-delivered URL can't race itself.
+let pairing = false
+async function openPairLink(url: string | null): Promise<void> {
+  if (!url || pairing) return
+  pairing = true
+  try {
+    if (await pairFromLink(url)) {
+      if (navigationRef.isReady()) navigationRef.reset({ index: 0, routes: [{ name: "Home" }] })
+    }
+  } finally {
+    pairing = false
+  }
+}
 
 export default function App() {
   const [ready, setReady] = useState(false)
@@ -71,7 +190,7 @@ export default function App() {
     ;(async () => {
       try {
         await loadConfig()
-        if (!serverUrl()) setInitial("Server")
+        if (!hasServer()) setInitial("Server")
         else if (!token()) setInitial("Login")
         else {
           setInitial("Home")
@@ -90,6 +209,17 @@ export default function App() {
     })()
   }, [])
 
+  // Route notification taps to the chat they belong to (foreground/background AND
+  // cold start). Set up once; teardown on unmount.
+  useEffect(() => onNotificationTap((data) => openFromNotification(data)), [])
+
+  useEffect(() => {
+    if (!ready) return
+    Linking.getInitialURL().then(openPairLink).catch(() => {})
+    const sub = Linking.addEventListener("url", (e) => void openPairLink(e.url))
+    return () => sub.remove()
+  }, [ready])
+
   if (!ready) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -101,7 +231,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer theme={navTheme}>
+        <NavigationContainer
+          theme={navTheme}
+          ref={navigationRef}
+          onReady={() => { flushPendingNav(); startUsageReporting(); recordScreen(navigationRef.getCurrentRoute()?.name) }}
+          onStateChange={() => recordScreen(navigationRef.getCurrentRoute()?.name)}
+        >
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
             initialRouteName={initial}
@@ -117,10 +252,40 @@ export default function App() {
             <Stack.Screen name="Home" component={HomeTabs} options={{ title: "Chats" }} />
             <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: "New chat" }} />
             <Stack.Screen name="Thread" component={ThreadScreen} options={({ route }) => ({ title: route.params.label })} />
-            <Stack.Screen name="Files" component={FilesScreen} options={{ title: "Files" }} />
-            <Stack.Screen name="SessionInfo" component={SessionInfoScreen} options={{ title: "Session info" }} />
+            <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
+            <Stack.Screen name="Providers" component={ProvidersScreen} options={{ title: "Model providers" }} />
+            <Stack.Screen name="Integrations" component={IntegrationsScreen} options={{ title: "Integrations" }} />
+            <Stack.Screen name="Calendar" component={CalendarScreen} options={{ title: "Calendar" }} />
+            <Stack.Screen name="Kanban" component={KanbanScreen} options={{ title: "Board" }} />
+            <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: "Card" }} />
+            <Stack.Screen name="Map" component={MapScreen} options={{ title: "Map" }} />
+            <Stack.Screen name="Canvas" component={CanvasScreen} options={{ title: "Canvas" }} />
+            <Stack.Screen name="Notes" options={{ title: "Notes" }}>
+              {({ navigation, route }) => <NotesScreen navigation={navigation} filter={route.params} title={route.params?.title} tag={route.params?.tag} />}
+            </Stack.Screen>
+            <Stack.Screen name="Inbox" options={{ title: "Inbox" }}>
+              {({ navigation, route }) => (
+                <InboxScreen
+                  navigation={navigation}
+                  session={route.params?.session}
+                  title={route.params?.title}
+                  host={route.params?.host}
+                  path={route.params?.path}
+                />
+              )}
+            </Stack.Screen>
+            <Stack.Screen name="Files" component={FilesScreen} options={{ title: "Files" }} />
+            <Stack.Screen name="Agents" component={AgentsScreen} options={{ title: "Agents" }} />
+            <Stack.Screen name="AgentEdit" component={AgentEditScreen}
+              options={({ route }) => ({ title: route.params?.template ? "Edit agent" : "New agent" })} />
+            <Stack.Screen name="AgentTools" component={AgentToolsScreen}
+              options={({ route }) => ({ title: route.params.kind === "skill" ? "Skills" : "MCP tools" })} />
+            <Stack.Screen name="NoteEditor" component={NoteEditorScreen} options={{ title: "Note" }} />
+            <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
+            <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />
+            <Stack.Screen name="AuditEntry" component={AuditEntryScreen} options={{ title: "Recorded action" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
             <Stack.Screen
               name="Terminal"
@@ -129,6 +294,8 @@ export default function App() {
             />
           </Stack.Navigator>
         </NavigationContainer>
+        <UndoToast />
+        <ActionSheetHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   )

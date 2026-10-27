@@ -1,17 +1,18 @@
-import React, { useRef } from "react"
-import { Animated, PanResponder, View } from "react-native"
+import React, { useMemo, useRef } from "react"
+import { View } from "react-native"
+import { Gesture, GestureDetector } from "react-native-gesture-handler"
+import Animated, { Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import Icon from "./Icon"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
+import { useTheme } from "../lib/useTheme"
 
 const TRIGGER = 56 // px of drag before the reply fires — comfortably past a scroll jitter
+const EDGE = 30 // px from the screen's left edge reserved for iOS's native swipe-back
 
 /**
  * WhatsApp-style swipe-to-reply. Drag a message right; past the threshold it
- * springs back and quotes the message into the composer.
- *
- * Uses the built-in PanResponder rather than react-native-gesture-handler: a new
- * native dependency would force a ~15 min rebuild, and this gesture is simple
- * enough that the built-in is sufficient.
+ * springs back and quotes the message into the composer. The drag runs on the
+ * UI thread, so it stays smooth while the thread list re-renders underneath.
  */
 export default function SwipeToReply({
   onReply,
@@ -20,46 +21,48 @@ export default function SwipeToReply({
   onReply: () => void
   children: React.ReactNode
 }) {
-  const x = useRef(new Animated.Value(0)).current
-  const fired = useRef(false)
+  const x = useSharedValue(0)
   const styles = useStyles()
+  const t = useTheme()
+  // The gesture is memoized, so call the latest onReply through a ref — in a
+  // FlatList the inline closure changes every render.
+  const onReplyRef = useRef(onReply)
+  onReplyRef.current = onReply
+  const fire = () => onReplyRef.current()
 
-  const pan = useRef(
-    PanResponder.create({
-      // Claim the gesture only for a decidedly horizontal drag, so the vertical
-      // list scroll keeps working normally.
-      onMoveShouldSetPanResponder: (_e, g) => g.dx > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
-      onPanResponderGrant: () => {
-        fired.current = false
-      },
-      onPanResponderMove: (_e, g) => {
-        if (g.dx < 0) return // right-drag only
-        // Resistance past the trigger point so it feels like it "catches".
-        const d = g.dx > TRIGGER ? TRIGGER + (g.dx - TRIGGER) * 0.25 : g.dx
-        x.setValue(d)
-        if (!fired.current && g.dx >= TRIGGER) fired.current = true
-      },
-      onPanResponderRelease: () => {
-        if (fired.current) onReply()
-        Animated.spring(x, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start()
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(x, { toValue: 0, useNativeDriver: true }).start()
-      },
+  const pan = useMemo(() => Gesture.Pan()
+    // Claim only a decidedly rightward drag; vertical scroll and left drags pass through.
+    // A touch starting at the screen edge is iOS's back swipe — never compete for it.
+    .onTouchesDown((e, state) => {
+      if (e.allTouches[0] && e.allTouches[0].absoluteX < EDGE) state.fail()
     })
-  ).current
+    .activeOffsetX(12)
+    .failOffsetX(-12)
+    .failOffsetY([-10, 10])
+    .onUpdate((e) => {
+      const dx = Math.max(0, e.translationX)
+      // Resistance past the trigger point so it feels like it "catches".
+      x.value = dx > TRIGGER ? TRIGGER + (dx - TRIGGER) * 0.25 : dx
+    })
+    .onEnd((e) => {
+      if (e.translationX >= TRIGGER) runOnJS(fire)()
+    })
+    .onFinalize(() => {
+      x.value = withSpring(0, { damping: 18, stiffness: 220 })
+    }), [])
 
+  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }))
   // The ↩ hint fades in as you drag, so the affordance is discoverable.
-  const hintOpacity = x.interpolate({ inputRange: [0, TRIGGER], outputRange: [0, 1], extrapolate: "clamp" })
+  const hintStyle = useAnimatedStyle(() => ({ opacity: interpolate(x.value, [0, TRIGGER], [0, 1], Extrapolation.CLAMP) }))
 
   return (
     <View>
-      <Animated.View style={[styles.swipeHint, { opacity: hintOpacity }]} pointerEvents="none">
-        <Icon name="reply" size={18} color="#8a8a8a" />
+      <Animated.View style={[styles.swipeHint, hintStyle]} pointerEvents="none">
+        <Icon name="reply" size={18} color={t.textMuted} />
       </Animated.View>
-      <Animated.View style={{ transform: [{ translateX: x }] }} {...pan.panHandlers}>
-        {children}
-      </Animated.View>
+      <GestureDetector gesture={pan}>
+        <Animated.View style={rowStyle}>{children}</Animated.View>
+      </GestureDetector>
     </View>
   )
 }

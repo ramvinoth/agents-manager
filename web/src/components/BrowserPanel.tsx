@@ -11,7 +11,9 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { TONE_CLASS } from "@/lib/tone"
 import { useStore } from "@/store"
+import { userError } from "@/lib/errors"
 
 interface Tab {
   id: string
@@ -38,7 +40,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
     try {
       return await (await api.browserOp(op, body)).json()
     } catch (e: any) {
-      return { error: e.message }
+      return { error: userError(e, "the browser", "reach") }
     }
   }, [])
 
@@ -47,7 +49,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
     try {
       d = await api.browserStatus()
     } catch (e: any) {
-      d = { running: false, reasons: ["Status check failed: " + e.message] }
+      d = { running: false, reasons: [userError(e, "the browser status", "check")] }
     }
     setStatus(d)
     onState?.(d.running ? (d.browser || "running") : "not running")
@@ -189,7 +191,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
         loadCapabilities()
       }
     } catch (e: any) {
-      setMcpNote("MCP save failed: " + e.message)
+      setMcpNote(userError(e, "the browser MCP setting", "save"))
     }
   }
 
@@ -244,7 +246,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#1a1a1a]">
+    <div className="flex h-full flex-col bg-canvas">
       {/* tab strip */}
       {tabs.length > 0 && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-border/40 bg-black/20 px-1 py-1">
@@ -257,6 +259,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
                 t.active && "bg-white/15 text-white"
               )}
               title={t.url}
+              data-track="browser tab"
             >
               <span className="truncate">{t.title || t.url || "about:blank"}</span>
               <button
@@ -326,10 +329,10 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
 
       {/* headless warning + Xvfb upgrade */}
       {status.display_mode === "headless" && (
-        <div className="flex flex-wrap items-center gap-2 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-200">
+        <div className={cn("flex flex-wrap items-center gap-2 px-3 py-1.5 text-xs", TONE_CLASS.warning)}>
           <span>⚠ {status.headless_note || "Running headless — sign-in on Google & similar is blocked."}</span>
           {status.can_install_xvfb && (
-            <Button size="sm" variant="outline" className="ml-auto h-6 text-xs text-amber-950" onClick={installXvfb}>
+            <Button size="sm" variant="outline" className="ml-auto h-6 text-xs" onClick={installXvfb}>
               Install Xvfb &amp; relaunch headed
             </Button>
           )}
@@ -385,7 +388,7 @@ export function BrowserPanel({ onState }: { onState?: (s: string) => void }) {
       </div>
 
       <Dialog open={mcpConfirm} onOpenChange={setMcpConfirm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Use this browser as an MCP server?</DialogTitle>
           </DialogHeader>

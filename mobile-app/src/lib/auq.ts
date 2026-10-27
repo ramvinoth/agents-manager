@@ -3,7 +3,9 @@
  * answers by tapping. Port of the web AuqBlock's semantics:
  *   - one single-select question: tapping an option IS the answer
  *   - multi-select or multiple questions: picks accumulate, then submit
- * The answer is sent as a plain chat message (that is how the web replies too).
+ * The picks (and an optional typed reply) go to the dedicated question-answer
+ * route — never the chat queue, which would sit behind the run that is blocked
+ * on the question. The server composes the message the resumed run reads.
  */
 
 export type AuqOption = { label: string; description?: string }
@@ -52,20 +54,6 @@ export function pickOption(
 /** True when every question has at least one pick. */
 export function allAnswered(questions: AuqQuestion[], picks: Record<number, string[]>): boolean {
   return questions.length > 0 && questions.every((_, qi) => (picks[qi] || []).length > 0)
-}
-
-/**
- * The chat message that answers the question(s). Each answer embeds the question
- * text so it's self-contained: a resumed run a day later (claude --resume) sees
- * "You asked: … → pick" and needs no guessing about which prompt it answers.
- */
-export function composeAnswer(questions: AuqQuestion[], picks: Record<number, string[]>): string {
-  const parts: string[] = []
-  questions.forEach((q, qi) => {
-    const picked = picks[qi] || []
-    if (picked.length) parts.push(`You asked: "${q.question}" → ${picked.join(", ")}`)
-  })
-  return parts.join("\n")
 }
 
 /** Tap-to-answer shortcut applies only to a lone single-select question. */

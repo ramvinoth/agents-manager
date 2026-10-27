@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+#
+# harman — install / update / operate the Harman viewer like a package manager.
+#
+# /usr/local/bin/harman is a symlink to $HM_PREFIX/current/deploy/harman, made by
+# `install`, so the CLI always matches the release it manages and survives every
+# swap. All the actual steps live in deploy/lib.sh, sourced from beside this
+# script — so `harman` and install.sh never drift.
+#
+# First install on a fresh box (no CLI yet) — run it from the bundle itself:
+#   git clone -q harman-X.Y.Z.bundle /tmp/h && /tmp/h/deploy/harman install \
+#     --from harman-X.Y.Z.bundle --expect-sha <sha>
+#
+# Commands:
+#   harman install --from <bundle> --expect-sha <sha> [<ver>]
+#   harman update  <ver> --from <bundle> --expect-sha <sha>
+#   harman status
+#   harman rollback [<ver>]
+#   harman restart
+#   harman setup-code    # one-time code for creating the owner account
+#   harman auto-update   # pull the newest signed release from the private feed
+#                        # (run hourly by harman-update.timer; no-op without a token)
+#
+# The update is crash-safe: it stages + builds the new release FULLY before the
+# atomic symlink swap, and auto-rolls-back if the restarted service doesn't
+# report the new version on /healthz. A lock serializes concurrent runs.
+set -euo pipefail
+
+HM_PREFIX="${HM_PREFIX:-/opt/harman}"
+HM_LOCK="$HM_PREFIX/.harman.lock"
+
+die() { echo "harman: $*" >&2; exit 1; }
+usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# Resolve lib.sh. Prefer the active release (so the CLI runs the release's own
+# step definitions); fall back to a sibling of this script for first install.
+# The lib.sh beside THIS script first: script and library must come from the same
+# release. A newer release's harman run against the older `current` lib.sh dies on
+# functions the old one lacks (seen: hm_wait_quiet, 1.0.2 -> 1.0.4).
+_lib() {
+  local c
+  for c in "$(dirname "$(readlink -f "$0")")/lib.sh" "$HM_PREFIX/current/deploy/lib.sh"; do
+    [[ -f "$c" ]] && { echo "$c"; return 0; }
+  done
+  die "cannot locate deploy/lib.sh (looked in $HM_PREFIX/current and next to this script)"
+}
+
+# Parse --from / --expect-sha out of "$@", leaving positionals in REST.
+BUNDLE="" EXPECT_SHA="" ; REST=()
+_parse_flags() {
+  while (( $# )); do
+    case "$1" in
+      --from)       BUNDLE="${2:-}"; shift 2 ;;
+      --expect-sha) EXPECT_SHA="${2:-}"; shift 2 ;;
+      -h|--help)    usage 0 ;;
+      *)            REST+=("$1"); shift ;;
+    esac
+  done
+}
+
+# The shared install/build sequence against an already-staged release dir.
+# Args: <release-dir>. Points HM_APP_DIR at it (build/bootstrap there) and
+# HM_WORKDIR at the stable `current` symlink (what the service runs from).
+_provision_release() {
+  local rel="$1"
+  # A subshell, sourcing the INCOMING release's lib.sh: that release defines its
+  # own prerequisites (e.g. the Claude Code CLI) and unit templates, which the
+  # running release's lib.sh predates. Activate/rollback stay on the running copy.
+  (
+    HM_APP_DIR="$rel" HM_WORKDIR="$HM_CURRENT" PORT="$PORT"
+    export HM_APP_DIR HM_WORKDIR
+    # shellcheck source=deploy/lib.sh
+    source "$rel/deploy/lib.sh"
+    hm_deps
+    hm_claude_cli
+    hm_db
+    hm_pyenv
+    hm_bootstrap
+    hm_web_build
+    hm_service_install
+  )
+}
+
+cmd_update() {
+  _parse_flags "$@"
+  local ver="${REST[0]:-}"
+  [[ -n "$ver" ]]        || die "update needs a version, e.g. harman update 1.0.1 --from … --expect-sha …"
+  [[ -n "$BUNDLE" ]]     || die "update needs --from <bundle>"
+  [[ -n "$EXPECT_SHA" ]] || die "update needs --expect-sha <sha>"
+
+  local rel; rel="$(hm_stage_release "$ver" "$BUNDLE" "$EXPECT_SHA")" \
+    || die "staging failed — nothing changed, service still on $(hm_current_version || echo '?')"
+  hm_log "Staged $ver at $rel"
+
+  _provision_release "$rel"       # slow work (deps/build) BEFORE the swap
+  hm_wait_quiet "${HM_QUIET_WAIT:-0}"   # auto-update: let running agent turns finish
+  hm_activate "$ver"              # atomic cutover
+  hm_service_restart
+
+  if hm_health_probe "$ver"; then
+    hm_log "Update to $ver live and healthy."
+    hm_prune_releases 3
+  else
+    hm_log "New release unhealthy — rolling back."
+    hm_rollback || die "ROLLBACK FAILED — service may be down, manual intervention needed"
+    die "update to $ver failed health probe; rolled back to $(hm_current_version)"
+  fi
+}
+
+cmd_install() {
+  _parse_flags "$@"
+  local ver="${REST[0]:-}"
+  [[ -n "$BUNDLE" ]]     || die "install needs --from <bundle>"
+  [[ -n "$EXPECT_SHA" ]] || die "install needs --expect-sha <sha>"
+  # Derive the version from the bundle's VERSION if not given, by staging first.
+  if [[ -z "$ver" ]]; then
+    # Peek: clone to a temp, read VERSION, discard — stage_release will redo it
+    # under the real name. Cheap (bundle is local) and keeps one staging path.
+    local tmp; tmp="$(mktemp -d)"
+    git clone --quiet "$BUNDLE" "$tmp/peek" && ver="$(tr -d '[:space:]' < "$tmp/peek/VERSION")"
+    rm -rf "$tmp"
+    [[ -n "$ver" ]] || die "could not read VERSION from bundle; pass it explicitly"
+  fi
+  local rel; rel="$(hm_stage_release "$ver" "$BUNDLE" "$EXPECT_SHA")" || die "staging failed"
+  hm_log "Staged $ver at $rel"
+  _provision_release "$rel"
+  hm_activate "$ver"
+  sudo ln -sfn "$HM_CURRENT/deploy/harman" /usr/local/bin/harman
+  hm_service_restart
+  hm_health_probe "$ver" && hm_log "Install of $ver live and healthy." \
+    || die "install of $ver failed health probe (service may still be starting)"
+  hm_setup_code || true
+}
+
+# Private update feed (Card 121). Config lives OUTSIDE releases so it survives
+# every swap: $HM_PREFIX/update.env with HARMAN_FEED_TOKEN (per-customer, from
+# deploy/release-feed.sh token-add on the release Mac) and optionally
+# HARMAN_FEED_URL. No token → auto-update is off and this is a silent no-op.
+# Trust: the manifest must verify against the release key shipped IN the
+# running release (deploy/release-pubkey.txt), and the bundle must match the
+# signed sha256 — the feed itself is untrusted transport.
+cmd_auto_update() {
+  local env_file="$HM_PREFIX/update.env"
+  [[ -f "$env_file" ]] && source "$env_file"
+  [[ -n "${HARMAN_FEED_TOKEN:-}" ]] || { hm_log "auto-update off (no HARMAN_FEED_TOKEN in $env_file)"; return 0; }
+  local feed="${HARMAN_FEED_URL:-https://releases.suhai.ai}"
+  local cur py pubkey
+  cur="$(hm_current_version)"; py="$(hm_py "$HM_CURRENT")"
+  pubkey="$(cat "$HM_CURRENT/deploy/release-pubkey.txt")" || die "no release-pubkey.txt in the running release"
+
+  local envelope out rc=0
+  envelope="$(curl -fsS --max-time 30 -H "Authorization: Bearer $HARMAN_FEED_TOKEN" "$feed/latest.json")" \
+    || die "feed unreachable or token refused ($feed)"
+  out="$(printf '%s' "$envelope" | "$py" "$HM_CURRENT/deploy/release_manifest.py" verify "$pubkey" "$cur")" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) hm_log "up to date ($cur)"; return 0 ;;
+    *) die "feed manifest REJECTED (bad signature or shape) — not installing anything" ;;
+  esac
+  local ver sha bsha bsize; read -r ver sha bsha bsize <<<"$out"
+
+  # One failed attempt per version, not one per hour: a release that failed its
+  # health probe stays rolled back until a newer one is published.
+  local failed="$HM_PREFIX/.auto-update-failed"
+  [[ "$(cat "$failed" 2>/dev/null)" == "$ver" ]] && { hm_log "skipping $ver (failed earlier; waiting for a newer release)"; return 0; }
+
+  local dl="$HM_PREFIX/downloads"; mkdir -p "$dl"
+  local bundle="$dl/$ver.bundle"
+  curl -fsS --max-time 600 -H "Authorization: Bearer $HARMAN_FEED_TOKEN" -o "$bundle.part" "$feed/bundles/$ver.bundle" \
+    || die "bundle download failed"
+  [[ "$(sha256sum "$bundle.part" | cut -d' ' -f1)" == "$bsha" && "$(wc -c < "$bundle.part" | tr -d " ")" == "$bsize" ]] \
+    || { rm -f "$bundle.part"; die "bundle does not match the signed manifest — discarded"; }
+  mv -f "$bundle.part" "$bundle"
+
+  hm_log "Auto-updating $cur → $ver"
+  # A half-staged dir from an interrupted run would make staging refuse forever.
+  [[ "$ver" != "$cur" && -d "$HM_RELEASES/$ver" ]] && rm -rf "${HM_RELEASES:?}/$ver"
+  if ( HM_QUIET_WAIT="${HARMAN_QUIET_WAIT:-600}" cmd_update "$ver" --from "$bundle" --expect-sha "$sha" ); then
+    rm -f "$failed"
+  else
+    echo "$ver" > "$failed"
+    rm -f "$bundle"
+    die "auto-update to $ver failed; still on $(hm_current_version)"
+  fi
+  rm -f "$bundle"
+}
+
+cmd_status() {
+  local cur; cur="$(hm_current_version || true)"
+  echo "prefix:   $HM_PREFIX"
+  echo "current:  ${cur:-<none>}"
+  if [[ -d "$HM_RELEASES" ]]; then
+    echo "releases: $(ls -1 "$HM_RELEASES" 2>/dev/null | sort -V | tr '\n' ' ')"
+  fi
+  echo "--- /healthz ---"
+  curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" || echo "(no response on :$PORT)"
+  echo
+}
+
+main() {
+  local sub="${1:-}"; shift || true
+  [[ -z "$sub" || "$sub" == "-h" || "$sub" == "--help" ]] && usage 0
+
+  # Serialize everything that could mutate releases/current behind one lock.
+  # /opt is root-owned on a fresh box: create the prefix once, owned by the
+  # invoking (service) user, so the lock and every release write work unprivileged.
+  [[ -w "$HM_PREFIX" ]] || sudo install -d -o "$(id -un)" "$HM_PREFIX" \
+    || die "cannot create $HM_PREFIX"
+  # Braces scope the 2>/dev/null to this exec; a bare `exec 9>f 2>/dev/null`
+  # would redirect the WHOLE script's stderr and silence every later failure.
+  { exec 9>"$HM_LOCK"; } 2>/dev/null || true
+  flock -w 300 9 || die "another harman run holds the lock"
+
+  # shellcheck source=deploy/lib.sh
+  source "$(_lib)"
+
+  case "$sub" in
+    install)  cmd_install  "$@" ;;
+    update)   cmd_update   "$@" ;;
+    status)   cmd_status   "$@" ;;
+    rollback) hm_rollback  "${1:-}" ;;
+    restart)  hm_service_restart ;;
+    setup-code) hm_setup_code ;;
+    auto-update) cmd_auto_update ;;
+    *)        die "unknown command '$sub' (try: install update auto-update status rollback restart setup-code)" ;;
+  esac
+}
+
+main "$@"

@@ -3,6 +3,7 @@ session summary/analysis, skill scans, and the Host local/remote seam."""
 import json
 import os
 import posixpath
+import queue
 import re
 import secrets
 import shlex
@@ -13,10 +14,11 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
+from datetime import datetime
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, claude_bin,
-    claude_version_gate, invalidate_claude_bin_cache,
+    CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, session_plugin_dirs, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
 )
 from viewer.browser import (
     ensure_mcp_browser,
@@ -34,109 +36,113 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
+from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
+from viewer.sessions import last_cwd_in_file
+
+
 # ===== Loops (recurring prompts per session) and session meta =====
-LOOPS_FILE = Path.home() / ".claude" / ".viewer-loops.json"
-META_FILE = Path.home() / ".claude" / ".viewer-meta.json"
-LOOPS_LOCK = threading.Lock()
-# Guards SESSION_META across its scattered read-modify-write + save sites. Without
-# it, a setdefault/pop in one worker thread races a json.dumps snapshot in another
-# ("dict changed size during iteration") and drops updates. Hold it around the whole
-# mutate-then-save so writes are atomic w.r.t. each other.
-META_LOCK = threading.Lock()
+# Both stores live in Postgres now (viewer.db) — the single source of truth. Call
+# sites read/write per row through db.loop_* / db.session_meta_* instead of mutating
+# a shared in-memory dict and rewriting a whole JSON file. Postgres gives the
+# atomicity the old module-level locks used to provide.
 
 
-def load_json_file(path, default):
+def _newer(latest, obj):
+    """The later of `latest` and a user/assistant record's ISO `timestamp` (epoch
+    seconds). Bookkeeping records (cost-state, last-prompt, …) carry no timestamp
+    and so never count as activity."""
+    ts = obj.get("timestamp")
+    if obj.get("type") not in ("user", "assistant") or not isinstance(ts, str):
+        return latest
     try:
-        return json.loads(path.read_text())
-    except Exception:
-        return default
-
-
-def save_json_file(path, data):
-    # SESSION_META/HOSTS/LOOPS aren't lock-guarded across their scattered mutation
-    # sites; a concurrent add/remove of a key while we dump raises "dict changed
-    # size during iteration". Retry the snapshot, then write atomically (temp +
-    # os.replace) so a crash mid-write can't corrupt or drop the file.
-    text = None
-    for _ in range(5):
-        try:
-            text = json.dumps(data, indent=1)
-            break
-        except RuntimeError:
-            time.sleep(0.005)
-    if text is None:
-        return
-    try:
-        tmp = path.parent / (path.name + ".tmp")
-        tmp.write_text(text)
-        os.replace(tmp, path)
-    except Exception as e:
-        # A write failure here is real data loss (session meta / loops not persisted),
-        # so surface it instead of swallowing silently.
-        print(f"[engine] save_json_file failed for {path}: {e}", flush=True)
-
-
-LOOPS = load_json_file(LOOPS_FILE, {})     # id -> {session, path, prompt, interval, nextRun, runs, lastRc, enabled}
-SESSION_META = load_json_file(META_FILE, {})  # session_id -> {goal, systemPrompt}
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return latest
+    return t if latest is None or t > latest else latest
 
 
 def _session_title(session_id):
-    """The session's display name, matching the chat list: a custom title if set,
-    else the agent name, else the first user message, else ''. Best-effort."""
+    """(explicit title, first user message) from the transcript head: the
+    explicit one is a custom title or agent name, as the chat list shows it.
+    Kept apart so a name the session was created with outranks a prompt's
+    opening line (the "session:Setup run. Create a note…" label). Best-effort.
+
+    Cached per transcript (mtime, size): the decision feed asks for every
+    open decision's session title on a 4 s poll from every open board, and a
+    parse of the transcript head per call is an N+1 disk read on that hot
+    path. An idle session's file never changes, so its title is read once."""
     try:
-        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
-        if not matches:
-            return ""
-        title = first_user = ""
-        with open(matches[0], errors="replace") as f:
-            for i, line in enumerate(f):
-                if i > 200 or title:
-                    break
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                t = obj.get("type")
-                if t == "custom-title" and obj.get("customTitle"):
-                    title = obj["customTitle"]
-                elif t == "agent-name" and obj.get("agentName"):
-                    title = obj["agentName"]
-                elif not first_user and t == "user":
-                    msg = (obj.get("message") or {}).get("content")
-                    if isinstance(msg, str):
-                        first_user = msg
-                    elif isinstance(msg, list):
-                        first_user = " ".join(
-                            b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
-                        )
-        return " ".join((title or first_user).split())[:60]
+        path = transcript_path(session_id)
+        if not path:
+            return "", ""
+        st = os.stat(path)
+        stamp = (st.st_mtime, st.st_size)
+        hit = _TITLE_CACHE.get(session_id)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        title = _read_session_title(path)
+        _TITLE_CACHE[session_id] = (stamp, title)
+        return title
     except Exception:
-        return ""
+        return "", ""
+
+
+_TITLE_CACHE = {}
+
+
+def _read_session_title(path):
+    title = first_user = ""
+    with open(path, errors="replace") as f:
+        for i, line in enumerate(f):
+            if i > 200 or title:
+                break
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            t = obj.get("type")
+            if t == "custom-title" and obj.get("customTitle"):
+                title = obj["customTitle"]
+            elif t == "agent-name" and obj.get("agentName"):
+                title = obj["agentName"]
+            elif not first_user and t == "user":
+                msg = (obj.get("message") or {}).get("content")
+                if isinstance(msg, str):
+                    first_user = msg
+                elif isinstance(msg, list):
+                    first_user = " ".join(
+                        b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
+                    )
+    return " ".join(title.split())[:60], " ".join(first_user.split())[:60]
 
 
 def _project_label(session_id):
     """The project the session's transcript lives in, read off the CLAUDE_DIR
-    layout (the project dir is the cwd with '/' -> '-', so its last segment is
-    the project folder). The last resolvable name before a raw id: a session
-    with no title, no goal and no cwd still gets a project name."""
+    layout (the project dir is the cwd with '/' -> '-', e.g.
+    -Users-alice-src-agents -> 'agents'). The last resolvable name
+    before a raw id: a session with no custom title, no goal and no cwd still
+    gets 'agents' instead of 'Chat 65cf166a'."""
     try:
-        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
-        if not matches:
+        path = transcript_path(session_id)
+        if not path:
             return ""
-        return os.path.basename(matches[0].parent.name.replace("-", "/").rstrip("/"))
+        return os.path.basename(str(path.parent).replace("-", "/").rstrip("/"))
     except Exception:
         return ""
 
 
 def _push_label(session_id, cwd=""):
-    """A short human title for a push notification: the session's display name
-    (matching the chat list), else its goal, else the working-directory basename,
-    else the project the transcript lives in, else a short session id. The raw
-    id is the LAST resort: a bare 'Chat <id>' can't tell the owner who asks."""
-    name = _session_title(session_id)
+    """A short human title for a push notification: the session's explicit name
+    (transcript title, else the name it was created with), else its first message,
+    else its goal, else the working-directory basename,
+    else the project the transcript lives in, else a short session id. The raw-id
+    fallback is the LAST resort — a bare 'Chat <id>' is useless for the owner to
+    tell which session is asking (#31/#42)."""
+    meta = db.session_meta_get(session_id) or {}
+    title, first_user = _session_title(session_id)
+    name = title or (meta.get("title") or "").strip() or first_user
     if name:
         return name
-    meta = SESSION_META.get(session_id) or {}
     goal = (meta.get("goal") or "").strip()
     if goal:
         return goal[:60]
@@ -150,22 +156,141 @@ def _push_label(session_id, cwd=""):
     return f"Chat {str(session_id)[:8]}"
 
 
-def parse_interval(text):
-    """'30s' / '5m' / '2h' / plain seconds -> seconds (min 30, max 24h)."""
-    text = str(text).strip().lower()
-    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smh]?)", text)
-    if not m:
-        return None
-    val = float(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
-    return int(min(max(val, 30), 86400))
-
-
 CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final status
+# A persisted run credential with no live job is kept this long before the hourly
+# sweep drops it — long enough for a remote child that outlived a restart to keep
+# calling back for a working day, short enough that a dead session's token does
+# not stay valid indefinitely.
+SESSION_TOKEN_MAX_AGE = 86400
+_PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_tick's self-throttle idiom)
+_last_purge = 0.0
+
+
+def fire_due_loops(launch, now):
+    """One pass of the loop-firing section of loop_scheduler, extracted so its
+    invariants (busy-defer, one-shot fire-once, audit-row ordering) are unit
+    testable without a live thread. All state changes go through the db and the
+    `launch` callback (run_loop_iteration); returns nothing.
+
+    Firing is gated by TWO facts, both read fresh each pass:
+      1. the loop_control mode — which ORIGINS are licensed to run;
+      2. the automation master switch — a runtime halt on the autonomous side.
+         With it off, agent-origin (harman) loops do not fire; the owner's own
+         (user) loops follow the mode alone, because they are a human's asking —
+         the machine being unattended does not pause them. Off, then, means
+         exactly "nothing starts without a person asking": no
+         agent-scheduled work — the switch's documented contract.
+    A failed read falls back to 'user' with the switch treated as off — the
+    same fail-safe direction the settings seed to. An empty origin set ('none'
+    mode, or an agent-only mode while the switch is off) skips the query
+    entirely: nothing fires, and nothing is bumped — paused, not skipped.
+    """
+    from viewer.orchestrator import automation_enabled, loop_mode
+    from viewer.loops import AGENT_ORIGIN, allowed_origins
+    try:
+        origins = allowed_origins(loop_mode())
+        autonomous = automation_enabled()
+    except Exception:
+        origins, autonomous = allowed_origins("user"), False
+    # The master switch halts the autonomous side of the licensed set. Loops
+    # left out here keep their schedule untouched (below) — a resume fires each
+    # once, on its own cadence, instead of replaying the whole pause window.
+    if not autonomous:
+        origins = origins - {AGENT_ORIGIN}
+    if not origins:
+        return
+
+    # Fire due loops. Per-tick bumps (nextRun/runs/lastRun) are written to the
+    # loop's row atomically; job_runs records each firing for the audit trail.
+    due = []
+    for lp in db.loops_due(now, origins):
+        job = CHAT_JOBS.get(lp["session"])
+        if job and job["running"]:
+            db.loop_update(lp["id"], {"nextRun": now + 30})  # session busy; retry shortly
+            continue
+        # One-shot ("at") tasks die on this fire, but the row is NOT deleted here:
+        # the job_runs audit row is opened in the launch loop below and its loop_id
+        # foreign key points at this loops row — deleting first makes that insert
+        # violate the FK (the best-effort except swallows it) and the audit row is
+        # lost. The launch loop deletes the row right after the audit row exists;
+        # the FK's ON DELETE SET NULL then detaches the audit record instead of
+        # destroying it, so the full history survives. A one-shot that then fails
+        # to start (session busy/missing) is recorded in job_runs and done — never
+        # retried tick after tick.
+        if lp.get("kind") == "once":
+            due.append(lp)
+            continue
+        # Cron-based jobs compute their next run from the cron expression;
+        # interval-based ones just add the interval.
+        cron_expr = lp.get("cron")
+        if cron_expr:
+            from viewer.loops import cron_next_run
+            nxt = cron_next_run(cron_expr, now)
+            next_run = nxt if nxt else now + 86400
+        else:
+            next_run = now + (lp.get("interval") or 0)
+        db.loop_update(lp["id"], {
+            "nextRun": next_run, "runs": (lp.get("runs") or 0) + 1, "lastRun": now})
+        due.append(lp)
+    for lp in due:
+        lid, session, prompt = lp["id"], lp["session"], lp["prompt"]
+        # Open a history row now; the run thread closes it via on_done. A run
+        # that never starts (session busy/missing) is finalized here as an
+        # error so no row is left dangling "running" forever.
+        try:
+            run_id = db.job_run_start(lid, session, prompt)
+        except Exception:
+            run_id = None
+        # One-shot: the audit row exists now (its loop_id still points at the
+        # live loops row), so retire the schedule — the FK's ON DELETE SET NULL
+        # detaches the audit record instead of destroying it.
+        if lp.get("kind") == "once":
+            db.loop_delete(lid)
+
+        def _on_done(rc, detail="", lid=lid, run_id=run_id):
+            try:
+                db.job_run_finish(run_id, rc, detail)
+                db.loop_update(lid, {"lastRc": rc})
+            except Exception:
+                pass
+
+        try:
+            started = launch(session, lp["path"], prompt,
+                             lp.get("model", ""), lp.get("provider", ""), _on_done)
+        except Exception as e:
+            started = False
+            if run_id is not None:
+                try:
+                    db.job_run_finish(run_id, -1, str(e)[:2000])
+                except Exception:
+                    pass
+        if not started and run_id is not None:
+            try:
+                db.job_run_finish(run_id, -1, "did not start (session busy or missing)")
+            except Exception:
+                pass
 
 
 def loop_scheduler(launch):
-    """Background thread: fire due loops, and reap finished chat jobs so
-    CHAT_JOBS doesn't grow unbounded (one entry per session ever driven)."""
+    """Background thread: fire due loops, reap finished chat jobs so CHAT_JOBS
+    doesn't grow unbounded, and hourly purge old job-run history.
+
+    This thread is the ONLY place work starts without a human asking for it, and it
+    carries two INDEPENDENT gates that must not be conflated:
+
+    - scheduled-loop firing is gated by the loop_control mode (user|harman|both|none)
+      — which origins' loops may run (fire_due_loops). The master switch plays no part.
+    - Harman's manager tick is gated ONLY by the automation master switch (read fresh
+      each pass; unreadable → treated as OFF).
+
+    The owner can thus pause Harman's autonomy while their own scheduled loops keep
+    running, and vice-versa. Paused means paused, not queued: a loop whose origin is
+    disallowed keeps its nextRun untouched, so on resume it fires at most ONCE rather
+    than replaying every run that came due in the meantime. Reaping and the retention
+    purge still run regardless — they free memory, expire session tokens and bound the
+    audit table, and holding stale credentials open would be the opposite of safe.
+    """
+    global _last_purge
     while True:
         time.sleep(5)
         now = time.time()
@@ -176,30 +301,55 @@ def loop_scheduler(launch):
                      if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
             for sid in stale:
                 CHAT_JOBS.pop(sid, None)
-        due = []
-        with LOOPS_LOCK:
-            for lid, lp in LOOPS.items():
-                if lp.get("enabled", True) and now >= lp.get("nextRun", 0):
-                    job = CHAT_JOBS.get(lp["session"])
-                    if job and job["running"]:
-                        lp["nextRun"] = now + 30  # session busy; retry shortly
-                        continue
-                    lp["nextRun"] = now + lp["interval"]
-                    lp["runs"] = lp.get("runs", 0) + 1
-                    lp["lastRun"] = now
-                    due.append(dict(lp, id=lid))
-            if due:
-                save_json_file(LOOPS_FILE, LOOPS)
-        for lp in due:
+                # The run is truly over — drop its persisted tokens too, so a
+                # stale credential can't authorize an MCP call after the session
+                # ends (preserves the "only live sessions" guarantee).
+                try:
+                    db.session_token_delete(sid)
+                except Exception:
+                    pass
+        # Retention: bound job-run history so it can never overflow. Runs on THIS
+        # thread (no second timer) and self-throttles to hourly. Caps come from the
+        # settings table so a SaaS-admin portal can tune them per plan without a
+        # deploy. Independent of the master switch — pruning old audit rows is
+        # housekeeping, not unattended WORK, and must keep the table bounded even
+        # while automation is paused.
+        if now - _last_purge >= _PURGE_INTERVAL:
+            _last_purge = now
             try:
-                launch(lp["session"], lp["path"], lp["prompt"], lp.get("model", ""))
+                rc = db.retention_config()
+                db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
+                db.ui_events_purge(rc["ui_events_days"])
             except Exception:
                 pass
-        # Harman's autonomous manager tick — hooks into THIS scheduler (no second
-        # thread). Self-throttles to its own interval; exception-safe internally.
+            # Credentials of runs this process never saw (they predate a restart)
+            # are outside the per-job reaper above; sweep them once they are far
+            # older than any run can live, so a dead session's token expires too.
+            try:
+                with CHAT_LOCK:
+                    live = list(CHAT_JOBS.keys())
+                db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
+            except Exception:
+                pass
+        fire_due_loops(launch, now)
+        # The hourly maintenance window (viewer.maintenance): applies queued
+        # restart requests at :50. Not gated by the master switch — agents only
+        # QUEUE restarts; applying them is the owner's standing policy (Card 133).
         try:
-            from viewer.orchestrator import harman_tick
-            harman_tick()
+            from viewer import maintenance
+            maintenance.tick(now)
+        except Exception:
+            pass
+        # The 30-minute board sweep — a safety net for event wakes the action
+        # path missed. Its wakes are harman-origin, so it only runs when the
+        # autonomous side may act (master switch ON and the loop mode licenses
+        # harman) — otherwise it would stamp the interval and drop the event
+        # the wakes could never fire. Idle board = zero cost either way.
+        try:
+            from viewer import board_wake
+            from viewer.orchestrator import automation_enabled, loop_mode
+            if automation_enabled() and loop_mode() in ("harman", "both"):
+                board_wake.sweep()
         except Exception:
             pass
 
@@ -255,6 +405,46 @@ def stream_user_message(proc, text):
     msg = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
     proc.stdin.write(json.dumps(msg) + "\n")
     proc.stdin.flush()
+
+
+_STDOUT_EOF = object()
+
+
+def iter_stdout_until(proc, idle_timeout):
+    """Yield stdout lines, killing the turn only after `idle_timeout` of SILENCE.
+
+    `for line in proc.stdout` blocks in readline() until the child writes, so a
+    total-wall-clock deadline can only be checked when a line arrives; a child
+    that goes silent mid-turn (a hung claude -p) parks the reader forever and
+    the turn never ends. We drain stdout on a helper thread and pull lines
+    through a queue with a per-wait timeout that RE-ARMS on every line, so the
+    window measures the gap since the last output, not total run time. A
+    genuinely-working agent (streaming assistant text / tool calls / results)
+    runs indefinitely; only true silence longer than `idle_timeout` raises
+    TimeoutError. Returns on clean EOF. Uniform for local pipes and the
+    paramiko RemoteProc stream.
+
+    Note: a long-running tool call is silent on the stream until it returns, so
+    `idle_timeout` must exceed the longest legitimate quiet gap (see
+    CHAT_IDLE_TIMEOUT)."""
+    q = queue.Queue()
+
+    def _pump():
+        try:
+            for line in proc.stdout:
+                q.put(line)
+        finally:
+            q.put(_STDOUT_EOF)
+
+    threading.Thread(target=_pump, daemon=True).start()
+    while True:
+        try:
+            item = q.get(timeout=idle_timeout)
+        except queue.Empty:
+            raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+        if item is _STDOUT_EOF:
+            return
+        yield item
 
 
 class RemoteProc:
@@ -761,60 +951,171 @@ def start_copilot_new(message, cwd, host="local"):
 
 def _write_perm_mcp_config():
     """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
-    'viewerperm' (permission_mcp.py) and 'viewerkanban' (kanban_mcp.py). Additive —
+    'viewerperm' (permission_mcp.py) and 'viewer' (viewer_mcp.py). Additive —
     the driven claude still loads the user's ambient MCP servers (Playwright etc.)
-    since we omit --strict-mcp-config. The kanban tool is only *usable* when the run
-    also sets VIEWER_KANBAN_* env (employee sessions); without it the tool's calls
-    fail auth server-side, which is harmless."""
+    since we omit --strict-mcp-config. Every run sets VIEWER_KANBAN_* env (the token
+    is minted unconditionally, see start_claude_run), so viewer_mcp's tools are always
+    reachable; the server resolves the caller to at least 'ic' and scopes each write by
+    the session's responsibility level — it never fails auth for a run with no role."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
     perm = str(Path(__file__).parent / "permission_mcp.py")
-    kanban = str(Path(__file__).parent / "kanban_mcp.py")
+    viewer_mcp = str(Path(__file__).parent / "viewer_mcp.py")
     py = sys.executable or "python3"
     cfg = {"mcpServers": {
         "viewerperm": {"command": py, "args": [perm]},
-        "viewerkanban": {"command": py, "args": [kanban]},
+        "viewer": {"command": py, "args": [viewer_mcp]},
     }}
-    with open(path, "w") as f:
-        json.dump(cfg, f)
+    # One shared file, rewritten by every run start, read by every claude child
+    # some time after spawn. An in-place open(path, "w") truncates first, so a
+    # child reading during a concurrent start sees "" or a prefix and dies with
+    # "Invalid MCP configuration". Write beside it and rename: the swap is
+    # atomic, and a reader holding the old inode still gets a complete document.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".agents_viewerperm_mcp.", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 
-def _resolve_employee(session_id):
-    """Map a session to its (employee_row_or_None, responsibility_level). A session
-    is linked to an employee via its session-meta provider preset id (the employee's
-    provider). No link → (None, 'ic') — least authority, the safe default."""
+def _run_settings(provider_env=None):
+    """The `--settings` JSON every driven claude run starts with.
+
+    `permissions.allow` pre-approves the viewer's own MCP tools (`mcp__viewer__*`,
+    the board/org/loop bridge registered by _write_perm_mcp_config). Without it, a
+    run in default/acceptEdits mode routes each viewer tool call through the
+    permission-prompt tool like any unknown MCP tool — a gate nobody answers for a
+    loop-fired or wake-fired agent, so the call sits for PERM_TIMEOUT and is denied,
+    and the agent's board steering silently rots. The server that registers the
+    tools is the one place that knows their name, so the allow rule lives here, not
+    in any machine's ~/.claude/settings.json (which merges with this, never
+    conflicts). The rule does not bypass the viewer's own authority checks: every
+    call still carries the per-run token and is scoped server-side by level.
+
+    provider_env (Agent mode) becomes the `env` block that points the harness at a
+    custom endpoint; see start_claude_run for why it must travel via --settings."""
+    settings = {"permissions": {"allow": ["mcp__viewer__*"]}}
+    if provider_env:
+        penv = {k: str(v) for k, v in provider_env.items()}
+        # Clear any inherited small-fast model so background calls don't leak to
+        # a different endpoint's model namespace.
+        penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
+        settings["env"] = penv
+    return settings
+
+
+RUN_SETTINGS_PREFIX = "viewer-run-"
+
+
+def run_settings_sweep_orphans(live_paths, tmpdir=None):
+    """Boot-time reconciliation for the per-run --settings files.
+
+    start_claude_run unlinks its file in the run thread's `finally`, which never
+    executes when the server is SIGKILLed (`launchctl kickstart -k`), so every
+    restart leaks one file per in-flight run — each holding the provider's
+    ANTHROPIC_* credentials in $TMPDIR. `live_paths` are the files still held open
+    on a running child's argv (from `ps`); everything else with our prefix belongs
+    to a run that died with the previous process. Returns the paths removed."""
+    root = Path(tmpdir or tempfile.gettempdir())
+    live = {str(Path(p)) for p in live_paths}
+    removed = []
+    for path in root.glob(RUN_SETTINGS_PREFIX + "*.json"):
+        if str(path) in live:
+            continue
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except FileNotFoundError:
+            pass
+    return removed
+
+
+def run_settings_paths_in_use():
+    """Settings paths referenced by any live `--settings` argv on this machine —
+    the previous server's children survive a SIGKILL of the parent only when
+    launchd does not take the process group, so ps, not our own bookkeeping, is
+    the authority on which files are still in use."""
     try:
-        meta = SESSION_META.get(session_id) or {}
-        provider_id = meta.get("provider")
-        if not provider_id:
-            return None, "ic"
-        from viewer import db
-        for emp in db.employee_list():
-            if emp.get("provider") == provider_id:
-                return emp, emp.get("level") or _emp_level(emp)
+        out = subprocess.run(["ps", "-axo", "args="], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return set()
+    paths = set()
+    for line in out.splitlines():
+        for tok in line.split():
+            if RUN_SETTINGS_PREFIX in tok and tok.endswith(".json"):
+                paths.add(tok)
+    return paths
+
+
+def resolve_level(session_id):
+    """The Harman authority level (ic < lead < manager) a session runs at.
+
+    One resolution, in order: the owner's per-chat override (session_meta.level,
+    set through the Red session_level_set action), then the level of the agent
+    role the chat was started from (Agents tab template), else 'ic' — least
+    authority, the safe default. A DB hiccup also lands on 'ic', so a storage
+    failure can never raise a session's authority on its own.
+    """
+    try:
+        meta = db.session_meta_get(session_id) or {}
+        if meta.get("level") in orglogic.LEVELS:
+            return meta["level"]
+        tid = meta.get("agentTemplate")
+        tpl = db.agent_template_get(tid) if tid else None
+        if tpl and tpl.get("level") in orglogic.LEVELS:
+            return tpl["level"]
     except Exception:
         pass
-    return None, "ic"
-
-
-def _emp_level(emp):
-    """Derive a responsibility level from an employee's role when no explicit level
-    column is set. Conservative: only obvious lead/manager role names elevate."""
-    role = (emp.get("role") or "").lower()
-    if any(w in role for w in ("manager", "head", "director", "lead")):
-        return "manager" if ("manager" in role or "head" in role or "director" in role) else "lead"
     return "ic"
 
 
-def validate_kanban_token(session_id, token):
-    """Called by the org routes for an MCP caller: confirm the per-run kanban token
-    matches this session's job, and return {'employee', 'level'} for scoping. None
-    if unknown/unauthorized — the handler then 401s."""
+def validate_session_credential(session_id, token):
+    """Authenticate an MCP subprocess by its per-run token. Returns
+    {'level', 'label'} for the run, or None if unknown/unauthorized
+    (the server then 401s before any handler runs). `label` is the display name
+    the run started with (start_claude_run's snapshot) — the same name the chat
+    list and pushes use — so the server's principal can name an UNLINKED
+    session ("session:RSI") instead of a bare id without rescanning the
+    transcript on every request.
+
+    Either per-run token authenticates. `perm_token` and `kanban_token` are two
+    secrets for ONE principal: both are minted by the same start_claude_run, for
+    the same session, and shipped in the same env to the same child process
+    (engine.py ~1109-1199). They are not separate authority scopes — authority is
+    the session's level, identical whichever token is presented — so treating
+    them as one credential keeps the promise that a caller is resolved exactly
+    once, and avoids two near-identical validators drifting apart.
+
+    Falls back to the persisted session_tokens row when CHAT_JOBS has no entry,
+    so a durable pending question/plan can still be answered.
+    """
+    if not session_id or not token:
+        return None
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
-        if not job or not job.get("kanban_token") or job.get("kanban_token") != token:
+        if job:
+            if token not in (job.get("kanban_token") or None,
+                             job.get("perm_token") or None):
+                return None
+            return {"level": job.get("level") or "ic",
+                    "label": job.get("label") or ""}
+    # No live job (restart): validate against the persisted tokens. The label
+    # is a per-run snapshot (not persisted), so a run outliving a restart
+    # degrades to "" — the caller falls back to the session's short id.
+    try:
+        row = db.session_token_get(session_id)
+        if not row or token not in (row.get("kanban_token") or None,
+                                    row.get("perm_token") or None):
             return None
-        return {"employee": job.get("employee"), "level": job.get("employee_level") or "ic"}
+        return {"level": row.get("level") or "ic", "label": ""}
+    except Exception:
+        return None
 
 
 def _perm_mcp_config_path(host):
@@ -831,6 +1132,12 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     """Block a driven claude's AskUserQuestion until the user answers (or timeout),
     returning the CLI-consumable permission decision. Also persists a durable
     pending_questions row so the app can render the card and it survives restart.
+
+    On TIMEOUT this method does NOT clear the durable row: the question stays
+    open (the card, the next heartbeat) and is answered later by resuming the
+    session — a skipped question resurfaces instead of being silently dropped.
+    An ANSWERED question is consumed exactly once, by the accept path
+    (decisions.accept_answer), before this wait even releases.
     """
     from viewer import questions
     q_list = questions.questions_from_input(tinput)
@@ -843,14 +1150,28 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         job.setdefault("pending_approvals", []).append(
             {"id": pid, "tool_name": "AskUserQuestion", "input": tinput,
              "tool_use_id": tool_use_id, "event": ev, "decision": None,
-             "answer": None, "question": True, "created": time.time()})
+             "answer": None, "question": True, "created": time.time(),
+             "run_id": job.get("run_id") or "",
+             "revision": 0})
         cwd = job.get("cwd", "")
         host = job.get("host", "local")
+        run_id = job.get("run_id") or ""
     # Durable row: the app renders the card from this; survives app-close/restart.
+    # record returns the row's revision; the live waiter keeps it so the exact
+    # identity travels with the wait.
+    revision = 0
     try:
-        questions.record(session_id, {"tool_use_id": tool_use_id, "questions": q_list}, host)
+        revision = questions.record(session_id,
+                                    {"tool_use_id": tool_use_id, "questions": q_list},
+                                    host, run_id) or 0
     except Exception:
         pass
+    with CHAT_LOCK:
+        job = CHAT_JOBS.get(session_id)
+        pend = job.get("pending_approvals", []) if job else []
+        entry = next((e for e in pend if e["id"] == pid), None)
+        if entry:
+            entry["revision"] = revision
     # Background push so the user knows a question is waiting (works app-closed).
     try:
         from viewer.push import notify_all
@@ -867,10 +1188,9 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         if entry:
             pend.remove(entry)
     answer = (entry.get("answer") if entry else None) or ""
-    try:
-        questions.clear(session_id)  # row consumed; the resumed turn is the record
-    except Exception:
-        pass
+    # No clear here, on either path: an answer consumed the exact row at accept
+    # time (decisions.accept_answer); a timeout leaves the row open so the
+    # question resurfaces. (questions.clear is session-delete-only now.)
     if not decided or not answer:
         # No answer in time: hand back the CLI's own "unanswered" so it can proceed.
         return {"behavior": "deny", "message": "The user did not answer the questions."}
@@ -917,10 +1237,9 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
             pend.remove(entry)
     decision = entry.get("decision") if entry else None
     feedback = (entry.get("feedback") if entry else None) or ""
-    try:
-        questions.clear_plan(session_id)
-    except Exception:
-        pass
+    # No clear here, on either path: an answered plan consumed the row at accept
+    # time (decisions.decide_plan); a timeout leaves the row open so the plan
+    # resurfaces for a later decision. (clear_plan is session-delete-only now.)
     if not decided:
         return {"behavior": "deny", "message": "No response (timed out) — plan not approved."}
     if decision == "approve":
@@ -935,8 +1254,17 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
     (or PERM_TIMEOUT -> deny). Returns {'behavior': 'allow'|'deny', ...}."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
-        if not job or not job.get("perm_token") or job.get("perm_token") != token:
-            return {"behavior": "deny", "message": "Unknown or unauthorized session"}
+        authed = bool(job and job.get("perm_token") and job.get("perm_token") == token)
+    if not authed:
+        # No live job (e.g. server restarted) — validate against the persisted
+        # token so a durable AskUserQuestion/ExitPlanMode can still be answered.
+        try:
+            row = db.session_token_get(session_id)
+            authed = bool(row and row.get("perm_token") and row["perm_token"] == token)
+        except Exception:
+            authed = False
+    if not authed:
+        return {"behavior": "deny", "message": "Unknown or unauthorized session"}
     # AskUserQuestion routes through the permission tool (the CLI's own design:
     # checkPermissions returns behavior:"ask"). We BLOCK here until the user picks
     # an answer, then return {behavior:"deny", message:<answer>} — the shape the CLI
@@ -975,6 +1303,18 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
                    data={"session": session_id, "host": host, "approval": pid})
     except Exception:
         pass
+    # Mirror into the owner's inbox: the live registry above stays the one
+    # source of truth (it disappears on restart — so does this row's open
+    # state); the inbox row carries the cold-reader context and a reply
+    # path. Exception-safe: never fail the permission request on delivery.
+    try:
+        from viewer import inbox
+        inbox.deliver_decision(session_id, "approval", pid,
+                               inbox.format_approval(_push_label(session_id, cwd),
+                                                     tool_name,
+                                                     _perm_push_body(tool_name, tinput, host)))
+    except Exception:
+        pass
     decided = ev.wait(timeout=PERM_TIMEOUT)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -1006,13 +1346,20 @@ def answer_live_question(session_id, answer):
     """UI answers a live (blocked) AskUserQuestion for a session: set the answer on
     the waiting entry and release its Event so the blocked permission call returns
     the pick to the CLI, continuing the SAME turn. Returns True if a live question
-    was waiting, False otherwise (caller falls back to resume)."""
+    was waiting, False otherwise (caller falls back to resume).
+
+    First-writer-wins in memory too: a question already answered (by another
+    device/surface) is not answerable a second time. The durable row is the
+    real guard (decisions.accept_answer consumes it first); this stops a
+    duplicate from reaching the CLI even if a caller skips the gate."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
             return False
         entry = next((e for e in job.get("pending_approvals", []) if e.get("question")), None)
         if not entry:
+            return False
+        if entry.get("answer") is not None:
             return False
         entry["answer"] = answer
         entry["event"].set()
@@ -1022,13 +1369,17 @@ def answer_live_question(session_id, answer):
 def decide_plan(session_id, decision, feedback=""):
     """UI approves or denies a live (blocked) ExitPlanMode. approve -> the agent
     starts executing; deny -> the agent revises using `feedback`. Returns True if a
-    live plan decision was waiting, else False."""
+    live plan decision was waiting, else False. First-writer-wins: a plan already
+    decided is not decidable again (the durable row is the real guard —
+    decisions.decide_plan consumes it first)."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:
             return False
         entry = next((e for e in job.get("pending_approvals", []) if e.get("plan")), None)
         if not entry:
+            return False
+        if entry.get("decision") is not None:
             return False
         entry["decision"] = "approve" if decision == "approve" else "deny"
         entry["feedback"] = feedback or ""
@@ -1050,10 +1401,53 @@ def pending_approvals_public(session_id):
                 if not e.get("question") and not e.get("plan")]
 
 
+def pending_approvals_all_public():
+    """Live Allow/Deny tool approvals across ALL sessions — the raw rows for the
+    cross-session decision queue (card #60). Same exclusion as the per-session
+    view: AskUserQuestion and ExitPlanMode entries are NOT plain approvals, they
+    are their own durable question/plan rows. Each row carries a secret-safe
+    preview (the same one the permission push uses), never the raw input."""
+    out = []
+    with CHAT_LOCK:
+        for sid, job in CHAT_JOBS.items():
+            host = job.get("host", "local")
+            for e in job.get("pending_approvals", []):
+                if e.get("question") or e.get("plan"):
+                    continue
+                out.append({"session": sid, "host": host, "id": e["id"],
+                            "tool_name": e["tool_name"],
+                            "preview": _perm_preview(e["tool_name"], e["input"]),
+                            "created": float(e.get("created") or time.time())})
+    return out
+
+
+def effective_permission_mode(session_id, requested):
+    """The permission mode a run of `session_id` actually starts with.
+
+    The session's STORED mode (set by the owner via the session-mode route — the
+    way a trusted agent runs its loop without a Bash approval per command)
+    OVERRIDES the per-request mode: a loop run requests "acceptEdits", a chat
+    requests whatever the composer picked, but the owner's stored call wins at
+    this single point, so both run kinds behave the same. Best-effort: an
+    unknown/stale value or a DB hiccup leaves `requested` untouched, so a
+    storage failure can never change a run's security posture on its own.
+    """
+    if not session_id:
+        return requested
+    try:
+        stored = (db.session_meta_get(session_id) or {}).get("permission_mode")
+        if stored in orglogic.PERMISSION_MODES:
+            return stored
+    except Exception:
+        pass
+    return requested
+
+
 def _redact_secrets(text):
     """Redact obvious credential material before it reaches a LOCK-SCREEN
-    notification: Bearer tokens and token/key/password/api-key assignments.
-    The command's shape stays readable; only the value goes."""
+    notification (APNs bodies are shown to anyone who can read the screen):
+    Bearer tokens and token/key/password/api-key assignments. The command's
+    shape stays readable; only the value goes."""
     return re.sub(
         r"(?i)((?:bearer|token|secret|api[_-]?key|access[_-]?key|password|passwd|pwd)\s*[=:]?\s+)\S+",
         r"\1***",
@@ -1063,10 +1457,14 @@ def _redact_secrets(text):
 
 def _perm_preview(tool_name, tinput):
     """A bounded, secret-safe one-liner for what a gated tool call would do.
-    The CLI sends the tool input as a dict or a JSON string, so parse
-    leniently. Only identity fields are previewed (command / file path / url /
-    name / pattern / query / question), never payload fields (content,
-    message, data), which may hold the work itself."""
+    The CLI sends the tool input as a dict or a JSON string (both shapes
+    seen in the wild), so parse leniently; a string-shaped input used to
+    crash this function and silently kill the whole push.
+
+    Only identity-shaped fields are previewed (command / file path / url /
+    name / pattern / query / question) — never the tool's payload fields
+    (content, message, data), which may hold the work itself. Everything is
+    redacted and capped before it leaves the server."""
     if isinstance(tinput, str):
         try:
             tinput = json.loads(tinput)
@@ -1083,15 +1481,21 @@ def _perm_preview(tool_name, tinput):
             v = tinput.get(key)
             if v is None or v == "":
                 continue
-            raw = str(v) if key in ("question", "header") else f"{key}={v}"
+            if key in ("question", "header"):
+                raw = str(v)
+            else:
+                raw = f"{key}={v}"
             break
     return _redact_secrets(re.sub(r"\s+", " ", raw).strip())
 
 
 def _perm_push_body(tool_name, tinput, host):
-    """The push body for a gated tool call: WHAT is being asked, so the owner
-    can judge from the notification alone. A capped, redacted preview of the
-    command (or the tool's identity field), plus the host when remote."""
+    """The push body for a gated tool call: WHAT is being asked. The old body
+    was 'Approve Bash? The agent needs your permission to continue.' — no way
+    for the owner to judge from the notification alone. Now it carries a
+    bounded, secret-safe preview of the command (or the tool's identity
+    fields), and the host when the run is remote (a local machine's label is
+    noise). The preview is capped and redacted (see _perm_preview)."""
     body = f"Approve {tool_name}?"
     try:
         preview = _perm_preview(tool_name, tinput)
@@ -1104,21 +1508,20 @@ def _perm_push_body(tool_name, tinput, host):
     return body
 
 
-def permission_args(mode):
-    """CLI flags for a run's permission mode.
+def _integrations_summary():
+    """What this run may use right now (accounts, services, operations, local
+    folders), so an agent knows its integrations natively. Built per run from
+    the same rules the routes enforce; a failure never blocks the turn."""
+    try:
+        from viewer import integrations
+        return integrations.agent_summary(
+            integrations.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
+    except Exception as e:
+        print(f"[engine] integrations summary failed: {e}", flush=True)
+        return ""
 
-    Bypass also removes EnterPlanMode: the agent calling it switches the live run
-    into plan mode, where every non-read-only tool falls through to the permission
-    prompt — so an owner-granted bypass session would start asking again until it
-    called ExitPlanMode (seen in a real transcript). The owner's grant must hold."""
-    if mode in ("bypass", "bypassPermissions"):
-        return ["--dangerously-skip-permissions", "--disallowedTools=EnterPlanMode"]
-    if mode in ("acceptEdits", "plan", "default"):
-        return ["--permission-mode", mode]
-    return []
 
-
-def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None):
+def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
@@ -1128,7 +1531,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     ANTHROPIC_MODEL} dict that points the harness at a custom Anthropic-compatible
     endpoint (our llama-server). None = the normal Anthropic-cloud Claude run,
     byte-identical to before.
+
+    on_done(rc, detail): optional callback fired once when the run thread finishes
+    (used by the loop scheduler to record the outcome to job-run history). Not
+    called when the run never starts because a job is already running — the caller
+    sees the False return and records that itself.
     Returns False if the session already has a running job."""
+    mode = effective_permission_mode(session_id, mode)
     remote = bool(host) and host != "local"
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -1139,13 +1548,31 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "queue": [], "proc": None, "turns": 0, "steered": 0,
                "stdin_open": False, "mode": mode, "model": model, "cwd": cwd,
                "interrupted": False, "host": host,
-               "pending_approvals": [], "perm_token": "", "version_gate": ""}
+               "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
+               "pending_approvals": [], "perm_token": "", "version_gate": "",
+               "endpoint_issue": "", "model_wait": inference_health.ModelWait(),
+               # The last message sent has had no result yet: a run that ends
+               # with this set was cut off mid-turn (resume.was_cut_off).
+               "turn_open": True}
         CHAT_JOBS[session_id] = job
+    # Durable "this turn is in flight" record: a restart that kills the run
+    # leaves the row behind and boot resumes it (viewer/resume.py).
+    try:
+        db.inflight_run_start(session_id, host, cwd, mode, model, job["started"])
+    except Exception as e:
+        print(f"  ⚠ could not record in-flight turn {session_id[:8]} (a restart will not resume it): {e}")
 
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
-    cmd += permission_args(mode)
+    if mode in ("bypass", "bypassPermissions"):
+        cmd.append("--dangerously-skip-permissions")
+    elif mode in ("acceptEdits", "plan"):
+        cmd += ["--permission-mode", mode]
+    elif mode == "default":
+        cmd += ["--permission-mode", "default"]
+    if effort and effort in ("low", "medium", "high", "xhigh", "max") and not provider_env:
+        cmd += ["--effort", effort]
     # Always attach the viewer permission tool. In "default" mode it gates each
     # tool call (Allow/Deny); in every mode it is ALSO how AskUserQuestion reaches
     # the user (the CLI routes AUQ's checkPermissions "ask" to this tool, even under
@@ -1153,55 +1580,94 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
-    # Kanban (org board) tool token: an employee's agent session can create/move
-    # cards from inside a turn. Minted per run; the route handler validates it and
-    # scopes writes by the employee's responsibility level (see routes/orchestrator).
+    # Kanban (org board) tool token: the agent session can create/move cards from
+    # inside a turn. Minted per run; the route handler validates it and scopes
+    # writes by the session's authority level (see actions.execute).
     kanban_token = secrets.token_hex(16)
     job["kanban_token"] = kanban_token
-    # Resolve which employee (and authority level) this session runs as, from its
-    # session-meta provider link. No employee → default 'ic' scope.
-    job["employee"], job["employee_level"] = _resolve_employee(session_id)
+    # Resolve the authority level this run acts at (override → agent role → ic).
+    job["level"] = resolve_level(session_id)
+    # Display-name snapshot for the principal the server derives from this run
+    # (read back via validate_session_credential, so the auth path is one dict
+    # lookup, never a transcript rescan). Same name the chat list and pushes
+    # use; a failure here must not block the run from starting.
+    try:
+        job["label"] = _push_label(session_id, cwd)
+    except Exception:
+        job["label"] = f"Chat {str(session_id)[:8]}"
+    # Persist the per-run tokens so they survive a server restart: CHAT_JOBS is
+    # in-memory, but the durable pending question/plan (and a still-running MCP
+    # subprocess) must stay authorized after a restart. Cleared when the job is
+    # reaped. Best-effort — a DB hiccup must not block the run from starting.
+    try:
+        db.session_token_set(session_id, perm_token, kanban_token,
+                             job["level"], cwd, host)
+    except Exception:
+        pass
     cmd += ["--mcp-config", _perm_mcp_config_path(host),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
     # clients persist it as a literal, which would run `claude --model default`
     # (an invalid model id). Treat it — and blank — as "omit --model".
-    if model and model != "default" and re.fullmatch(r"[A-Za-z0-9._-]+", model):
+    if model and model != "default" and len(model) <= 256 and not re.search(r"[\s\x00-\x1f\x7f]", model):
         cmd += ["--model", model]
 
-    # Custom-provider agent mode: point the harness at the preset's endpoint. The
-    # claude CLI reads env from ~/.claude/settings.json and that WINS over the
-    # subprocess environment — so injecting ANTHROPIC_* into env alone is silently
-    # overridden by any base URL pinned in settings.json (e.g. a LiteLLM proxy).
-    # A `--settings <file>` with the endpoint in its `env` DOES take precedence
-    # (verified: it forces /v1/messages to the given base URL). We write a temp
-    # settings file and pass it, so the session's provider actually routes to its
-    # model (e.g. Qwen on :8081) instead of leaking to the global default.
-    provider_settings_path = None
-    if provider_env:
+    # Per-run --settings: the viewer's own tool allowlist, plus the provider env in
+    # Agent mode. The CLI reads env from ~/.claude/settings.json and that WINS over
+    # the subprocess environment — so injecting ANTHROPIC_* into env alone is
+    # silently overridden by any base URL pinned in settings.json (e.g. a LiteLLM
+    # proxy). A `--settings` env block DOES take precedence (verified: it forces
+    # /v1/messages to the given base URL). Locally the JSON goes through a 0600
+    # temp file so provider secrets stay out of argv. A remote run gets the JSON
+    # inline (the CLI accepts a path or a JSON string): a local temp path means
+    # nothing on the other host, and its shell command already carries the
+    # per-run tokens as exports, so argv adds no new exposure there.
+    # A custom endpoint driven from this machine gets a liveness Watch (below),
+    # so the CLI's own blind ceilings are lifted and the Watch decides when the
+    # endpoint has actually failed. Remote runs keep the CLI defaults: a probe
+    # from here says nothing about that host's route to the endpoint.
+    watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if not remote else ""
+    if watch_url:
+        provider_env = {**provider_env, **inference_health.WATCHED_ENV}
+    run_settings = _run_settings(provider_env)
+    settings_path = None
+    if remote:
+        cmd += ["--settings", json.dumps(run_settings)]
+    else:
         try:
-            import tempfile
-            penv = {k: str(v) for k, v in provider_env.items()}
-            # Clear any inherited small-fast model so background calls don't leak to
-            # a different endpoint's model namespace.
-            penv.setdefault("ANTHROPIC_SMALL_FAST_MODEL", penv.get("ANTHROPIC_MODEL", ""))
-            fd, provider_settings_path = tempfile.mkstemp(prefix="viewer-prov-", suffix=".json")
+            fd, settings_path = tempfile.mkstemp(prefix=RUN_SETTINGS_PREFIX, suffix=".json")
             with os.fdopen(fd, "w") as f:
-                json.dump({"env": penv}, f)
-            os.chmod(provider_settings_path, 0o600)
-            cmd += ["--settings", provider_settings_path]
+                json.dump(run_settings, f)
+            os.chmod(settings_path, 0o600)
+            cmd += ["--settings", settings_path]
         except Exception as e:
-            print(f"[engine] provider settings write failed: {e}", flush=True)
+            print(f"[engine] run settings write failed: {e}", flush=True)
 
-    # Per-session system prompt and goal, managed from the viewer's panel.
-    meta = SESSION_META.get(session_id) or {}
+    # System prompt = a global Harman system-awareness preamble (so every session
+    # knows it is a node in the orchestration system and how its mcp__viewer__*
+    # power is gated), then the per-session prompt and goal from the viewer's panel.
+    # The preamble lives in settings (db, runtime-editable) — empty string disables it.
+    meta = db.session_meta_get(session_id) or {}
     extra = []
+    preamble = db.setting_get("system_preamble", "") or ""
+    if preamble.strip():
+        extra.append(preamble)
+    summary = _integrations_summary()
+    if summary:
+        extra.append(summary)
     if meta.get("systemPrompt"):
         extra.append(meta["systemPrompt"])
     if meta.get("goal"):
         extra.append("Active goal (keep working toward this; check it before stopping): " + meta["goal"])
     if extra:
         cmd += ["--append-system-prompt", "\n\n".join(extra)]
+    # The chat's plugins (its agent's, any the owner added), its own extras
+    # folder, and every project plugin this machine has on (an app sharing the
+    # project's folder, e.g. Sift) — skills, MCP, hooks. Local runs only: the
+    # folders live here.
+    if not remote:
+        for plugin_dir in session_plugin_dirs(session_id, meta) + project_plugins.plugin_dirs():
+            cmd += ["--plugin-dir", str(plugin_dir)]
 
     def run():
         proc = None
@@ -1209,6 +1675,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         try:
             env = dict(os.environ)
             env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            # The session's name, for tools that sign their edits with it (a
+            # project plugin's MCP server, e.g. Sift's "edited by" line).
+            env["HARMAN_SESSION_LABEL"] = job.get("label") or ""
             # CRITICAL: never let the SERVER'S OWN model/provider env leak into the
             # child claude. If the viewer was launched from a shell that exported
             # ANTHROPIC_* or CLAUDE_CODE_MAX_* (e.g. pointing at a LiteLLM proxy),
@@ -1226,10 +1695,23 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
                 env["VIEWER_PERM_TOKEN"] = perm_token
-            if kanban_token:  # let kanban_mcp.py reach the org board for this session
+            if kanban_token:  # let viewer_mcp.py reach the viewer for this session
                 env["VIEWER_KANBAN_SESSION"] = session_id
                 env["VIEWER_KANBAN_PORT"] = str(PORT)
                 env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                # Scope the session's kanban tools to its own project's board:
+                # find-or-create the org project for this (host, cwd) so the agent
+                # only ever sees/edits tasks under the project it's working in.
+                try:
+                    proj = db.project_ensure(host, cwd, os.path.basename(cwd.rstrip("/")) or cwd)
+                    kanban_project = str(proj["id"])
+                    env["VIEWER_KANBAN_PROJECT"] = kanban_project
+                    # Persist session -> project so read-only consumers (the
+                    # board route's ?session= resolution) can find it without
+                    # re-deriving the session's cwd. Meta dies with the session.
+                    db.session_meta_patch(session_id, {"kanbanProject": kanban_project})
+                except Exception:
+                    kanban_project = ""
             # Fall back to a setup-token captured by the viewer's login flow
             # when no regular OAuth credentials exist.
             if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and VIEWER_TOKEN_FILE.exists():
@@ -1271,6 +1753,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     if kanban_token:
                         rperm_env["VIEWER_KANBAN_SESSION"] = session_id
                         rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
+                        if kanban_project:
+                            rperm_env["VIEWER_KANBAN_PROJECT"] = kanban_project
                         if base:
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
@@ -1287,11 +1771,23 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 stderr_buf.append(data.decode("utf-8", "replace") if isinstance(data, bytes) else data)
             threading.Thread(target=_drain_stderr, daemon=True).start()
             stream_user_message(proc, message)
+            if watch_url:
+                threading.Thread(target=_watch_endpoint, args=(job, proc, watch_url,
+                                 provider_env.get("ANTHROPIC_MODEL", ""),
+                                 provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
-            deadline = time.time() + CHAT_TIMEOUT
-            for line in proc.stdout:
-                if time.time() > deadline:
-                    raise TimeoutError(f"Timed out after {CHAT_TIMEOUT}s")
+            # Map lens: when this project has it on, a file the agent writes
+            # lights up on the map while the agent works (code_index.touched).
+            map_project = None
+            if kanban_project and not remote:
+                try:
+                    proj = db.project_get(int(kanban_project))
+                    if proj and "map" in (proj.get("lenses") or []):
+                        map_project = proj
+                except Exception:
+                    pass
+
+            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
                 # (the code + human sentence survive JSON escaping) so it works
@@ -1301,20 +1797,34 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     gate = claude_version_gate(line)
                     if gate:
                         job["version_gate"] = gate
+                if not job["endpoint_issue"]:
+                    job["endpoint_issue"] = inference_health.diagnose(line) or ""
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if watch_url:
+                    job["model_wait"].update(ev, time.time())
+                if map_project:
+                    try:
+                        for rel in codemap.edited_paths(ev, map_project["cwd"]):
+                            db.code_index_touch(map_project["id"], rel, session_id)
+                    except Exception as e:  # a highlight, never a reason to fail a run
+                        print(f"[map] touch failed: {e}", flush=True)
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1
+                job["turn_open"] = False
                 # Capture the final assistant text so the push notification can
                 # show the actual reply, not a generic "finished" message.
                 res_text = ev.get("result") or ev.get("subtype") or ""
                 if isinstance(res_text, str) and res_text.strip():
                     job["last_result"] = res_text.strip()
                 # Turn finished: feed the next queued message, or shut down.
-                if not feed_next_queued(job, proc):
+                if feed_next_queued(session_id, job, proc):
+                    if watch_url:
+                        job["model_wait"].turn_sent(time.time())
+                else:
                     try:
                         proc.stdin.close()
                     except OSError:
@@ -1323,7 +1833,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             job["returncode"] = proc.returncode
         except Exception as e:
             job["returncode"] = -1
-            job["stderr"] = str(e)[:500]
+            job["stderr"] = f"{type(e).__name__}: {e}"[:500]
+            # The job is reaped after CHAT_JOB_TTL; without this line the cause
+            # of an rc=-1 run is gone for good.
+            print(f"  ⚠ run {session_id[:8]} failed: {type(e).__name__}: {e}")
+            traceback.print_exc()
             if proc:
                 try:
                     proc.kill()
@@ -1332,6 +1846,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         finally:
             # Must never raise: the running/queue cleanup below has to run so the
             # session doesn't stay wedged as "busy" after the process exits.
+            if settings_path:
+                try:
+                    os.unlink(settings_path)
+                except OSError:
+                    pass
             try:
                 if stderr_buf and stderr_buf[0]:
                     tail = stderr_buf[0]
@@ -1351,7 +1870,27 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 interrupted = job.get("interrupted")
                 last_result = job.get("last_result", "")
                 version_gate = job.get("version_gate", "")
-                requeued = job.pop("requeued", False)
+                endpoint_issue = job.get("endpoint_issue", "")
+                if endpoint_issue:
+                    # The clients show the stderr tail as the turn's error: lead
+                    # with the explanation, not the CLI's "try again in a moment".
+                    job["stderr"] = endpoint_issue
+            # A run that died mid-turn (CLI crash, killed, idle timeout) resumes
+            # itself, so the owner never has to type "Continue"; one that ended
+            # on its own (finished, failed with a reason, interrupted) clears its
+            # in-flight row — not for boot to resume. Before the leftovers
+            # follow-up below records its own row.
+            resumed = False
+            try:
+                if resume.was_cut_off(job["turn_open"], interrupted,
+                                      bool(version_gate or endpoint_issue)):
+                    resumed = _resume_cut_turn(session_id, job, leftovers)
+                else:
+                    db.inflight_run_clear(session_id, job["started"])
+            except Exception as e:
+                print(f"  ⚠ could not resume cut-off turn {session_id[:8]}: {e}")
+            if resumed:
+                leftovers = []  # the resumed run carries them; don't also notify
             # Self-heal the stale half of the 2.1.84 incident: the provider
             # rejected this run for a too-old CLI, so force the next run to
             # re-resolve the binary from disk — if the user has since run
@@ -1360,13 +1899,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # bare `claude` on the host and never consult this cache.
             if version_gate and job.get("host", "local") == "local":
                 invalidate_claude_bin_cache()
-            # Messages queued in the closing race get a fresh resumed run — and
-            # so does one put back after its stdin write failed (the run likely
-            # died, so rc is nonzero, but the owner's message must not be lost).
-            if leftovers and (job["returncode"] == 0 or requeued):
+            # Messages queued in the closing race get a fresh resumed run.
+            if leftovers and job["returncode"] == 0:
                 first, rest = leftovers[0], leftovers[1:]
                 if start_claude_run(session_id, ["--resume", session_id], first,
-                                    job["mode"], job["cwd"], job["model"], job.get("host", "local")):
+                                    job["mode"], job["cwd"], job["model"], job.get("host", "local"),
+                                    provider_env=job.get("provider_env"), effort=job.get("effort", "")):
                     with CHAT_LOCK:
                         CHAT_JOBS[session_id]["queue"].extend(rest)
                     leftovers = []  # a follow-up run is now carrying them; don't also notify
@@ -1376,7 +1914,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # Background push: tell the app the turn finished (best-effort, async).
             # Skip when a follow-up resumed run is still carrying queued work, and
             # when the user interrupted (they're already looking).
-            if not leftovers and not interrupted:
+            # A run that hit the resume cap already asked the owner, in the
+            # inbox, whether to keep retrying — a second, vaguer push is noise.
+            if not leftovers and not interrupted and not resumed and not job.get("owner_told"):
                 try:
                     from viewer.push import notify_all, push_preview
                     label = _push_label(session_id, cwd)
@@ -1384,13 +1924,24 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     if rc == 0 and last_result:
                         body = push_preview(last_result)
                         notify_all(label, body, data={"session": session_id, "host": phost})
-                    elif version_gate:
+                    elif version_gate or endpoint_issue:
                         # Actionable, self-contained: a human reading this on a
                         # phone with no context knows exactly what to do.
-                        notify_all(label, version_gate, data={"session": session_id, "host": phost})
+                        notify_all(label, version_gate or endpoint_issue,
+                                   data={"session": session_id, "host": phost})
                     else:
                         body = "Your agent finished a turn." if rc == 0 else "The run ended with an error."
                         notify_all(label, body, data={"session": session_id, "host": phost})
+                except Exception:
+                    pass
+            # Loop-run history hook: record the outcome exactly once, when this
+            # run's process exits. Fired on every finish (independent of the push
+            # notification's leftovers/interrupt gating) so a job_runs row is never
+            # left dangling "running": this run() thread finalizes once, and a
+            # leftovers follow-up is a separate start_claude_run without on_done.
+            if on_done:
+                try:
+                    on_done(rc if rc is not None else -1, job.get("stderr", ""))
                 except Exception:
                     pass
 
@@ -1398,17 +1949,69 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     return True
 
 
-def feed_next_queued(job, proc):
+RESUME_SETTLE = 5  # s: launchd's restart SIGTERMs the whole process group at once
+
+
+def _resume_cut_turn(session_id, job, leftovers):
+    """Resume a run that died mid-turn, through the same path a restart uses.
+    A server restart kills the whole process group, this thread included; if we
+    are still here after RESUME_SETTLE the cut was not a restart, and boot's
+    resume_inflight is not about to resume the same row."""
+    time.sleep(RESUME_SETTLE)
+    row = db.inflight_run_get(session_id, job["started"])
+    if not row:
+        return False  # a newer run of this session already replaced the row
+    row["queue"] = leftovers
+    if resume.capped(row):
+        job["owner_told"] = True
+    print(f"  ↻ turn {session_id[:8]} was cut off mid-way (rc={job.get('returncode')}); resuming it")
+    return resume.resume_one(row, reason=job.get("stderr", ""))
+
+
+def _watch_endpoint(job, proc, base_url, model, api_key=""):
+    """Liveness watch for a run on a custom model endpoint: while the CLI waits
+    on the model, probe the endpoint every POLL_INTERVAL; stop the turn only on
+    the Watch's verdict (unreachable, or no longer working on our request), and
+    record why so the finalizer surfaces it. A slow but progressing prefill is
+    never cut off by a clock."""
+    watch = inference_health.Watch(base_url)
+    while True:
+        time.sleep(inference_health.POLL_INTERVAL)
+        if not job["running"] or job.get("proc") is not proc:
+            return
+        since = job["model_wait"].since
+        if since is None:
+            watch.reset()
+            continue
+        verdict = watch.observe(inference_health.probe(base_url, model, api_key),
+                                time.time() - since)
+        if verdict and job["running"] and job["model_wait"].since is not None:
+            job["endpoint_issue"] = verdict
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            return
+
+
+def feed_next_queued(session_id, job, proc):
     """At a turn's end, write the next queued message into the run's stdin.
     Returns True if one was sent. Never loses a message: once stdin is closed
     (the CLI can still emit more turns after that, e.g. on a background-task
-    notification), the queue is left intact for the finalizer's follow-up run,
-    and a write that fails puts the message back at the front for it."""
+    notification), the queue is left intact for the finalizer's follow-up run.
+    A write that fails means the pipe is broken (the child is dying, so this
+    run ends rc!=0, which the finalizer's rc==0 follow-up would skip): put the
+    message back at the front and leave turn_open set, so the restored message
+    rides the proven cut-off resume path (_resume_cut_turn carries leftovers
+    regardless of rc) instead of being stranded."""
     with CHAT_LOCK:
         nxt = job["queue"].pop(0) if job["queue"] and job["stdin_open"] else None
         if nxt is None:
             job["stdin_open"] = False
             return False
+        job["turn_open"] = True
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
     try:
         stream_user_message(proc, nxt)
         return True
@@ -1416,8 +2019,18 @@ def feed_next_queued(job, proc):
         with CHAT_LOCK:
             job["queue"].insert(0, nxt)
             job["stdin_open"] = False
-            job["requeued"] = True
+            backlog = list(job["queue"])
+        _persist_queue(session_id, backlog)
         return False
+
+
+def _persist_queue(session_id, backlog):
+    """Mirror a run's message queue into its in-flight row, so messages queued
+    behind a turn survive a restart with it. Best-effort."""
+    try:
+        db.inflight_run_queue(session_id, backlog)
+    except Exception:
+        pass
 
 
 def interrupt_chat(session_id):
@@ -1455,7 +2068,9 @@ def enqueue_chat(session_id, text):
         if not job or not job["running"]:
             return None
         job["queue"].append(text)
-        return len(job["queue"])
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
+    return len(backlog)
 
 
 def steer_chat(session_id, text):
@@ -1474,18 +2089,72 @@ def steer_chat(session_id, text):
             except (OSError, ValueError):
                 job["stdin_open"] = False
         job["queue"].append(text)
-        return "queued"
+        backlog = list(job["queue"])
+    _persist_queue(session_id, backlog)
+    return "queued"
 
 
-def run_loop_iteration(session_id, rel_path, prompt, model=""):
-    """Fire one loop run against a session (used by the scheduler)."""
+def run_loop_iteration(session_id, rel_path, prompt, model="", provider="", on_done=None):
+    """Fire one loop run against a session (used by the scheduler). Returns True if
+    a run actually started. on_done(rc, detail) is called when the run finishes so
+    the scheduler can record the outcome to job-run history; if the run can't start
+    (missing file / session busy / unresolvable provider) it is called here with an
+    error rc and False is returned, so no history row is left dangling."""
+    if not rel_path:
+        # The loop row carries no path (the MCP `path` field is optional): resolve
+        # the transcript by session id — it is <project-dir>/<id>.jsonl under the
+        # projects root (the same one-level glob the session-list code uses). The
+        # claude CLI can't resume from a bare id in an arbitrary cwd, so an
+        # unresolvable one-shot fails here, loudly, instead of resuming into a
+        # foreign working directory and dying without a trace.
+        path = transcript_path(session_id)
+        if not path:
+            if on_done:
+                on_done(-1, f"session not found: {session_id} (loop has no path and no transcript)")
+            return False
+        rel_path = str(path.relative_to(CLAUDE_DIR.parent))
     full = CLAUDE_DIR.parent / rel_path
-    if not full.exists():
-        return
+    if not full.is_file():
+        if on_done:
+            on_done(-1, f"session file missing: {rel_path}")
+        return False
     cwd = extract_cwd(full)
     if not os.path.isdir(cwd):
         cwd = str(Path.home())
-    start_claude_run(session_id, ["--resume", session_id], prompt, "acceptEdits", cwd, model)
+    from viewer import ai, providers
+    try:
+        resolved = ai.resolve(db.session_meta_get(session_id) or {}, model,
+                              provider_override=provider, model_override=model)
+    except ValueError as exc:
+        if on_done:
+            on_done(-1, str(exc))
+        return False
+    provider_env = None
+    if resolved["provider"]:
+        provider_env = providers.anthropic_env(resolved["provider"], model=resolved["model"],
+                                               preset=resolved["preset"])
+    return start_claude_run(session_id, ["--resume", session_id], prompt,
+                            "acceptEdits", cwd, "" if provider_env else resolved["model"],
+                            provider_env=provider_env, effort=resolved["effort"], on_done=on_done)
+
+
+
+def _session_project(jsonl_file):
+    """The folder a chat belongs to: the cwd its transcript records (the last
+    one, as resume uses). Claude's project-dir name is only a fallback: it
+    encodes '/', ' ' and other characters all as '-', so decoding it guesses
+    wrong for any folder with a space or a dash in its name."""
+    try:
+        with open(jsonl_file, "rb") as fh:
+            cwd = last_cwd_in_file(fh)
+        if cwd:
+            return cwd
+    except OSError:
+        pass
+    pdir = jsonl_file.parent.name
+    if pdir.startswith(_HOME_ENC + "-"):
+        pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
+    return pdir.replace("--", "/").replace("-", "/")
 
 
 def extract_cwd(session_file):
@@ -1809,9 +2478,12 @@ def _permission_denied_hint(p):
     except ValueError:
         return "Permission denied"
     if sys.platform == "darwin" and rel.parts and rel.parts[0] in _TCC_GUARDED:
+        exe = sys.executable or "the python interpreter running this server"
         return (f"macOS blocks this server from reading ~/{rel.parts[0]} (privacy consent). "
-                "Grant it in System Settings → Privacy & Security → Files and Folders (or Full Disk Access) "
-                "for the Python that runs Harman, then restart the server.")
+                "Open System Settings → Privacy & Security → Full Disk Access, click +, press ⌘⇧G, "
+                f"and paste this exact path:  {exe}  — it lists under that binary's own name "
+                "(e.g. “Python”), not “Harman”, because that is the interpreter the server runs as. "
+                "Enable it, then restart the server.")
     return "Permission denied"
 
 
@@ -1830,6 +2502,56 @@ class Host:
     def resolve(self, sid): raise NotImplementedError
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
+
+
+def machine_plugins(cwd=None):
+    """[(name, install dir)] of the Claude Code plugins this Mac turns on for a
+    run in `cwd`: installed (installed_plugins.json — user scope, or project
+    scope for this folder) AND enabled in user or project settings. The cache
+    keeps every old version and other projects' plugins, so globbing it would
+    list things no run of this session ever loads."""
+    home = Path.home() / ".claude"
+    try:
+        installed = json.loads((home / "plugins" / "installed_plugins.json").read_text()).get("plugins") or {}
+    except Exception:
+        return []
+    enabled = {}
+    settings = [home / "settings.json"]
+    if cwd:
+        settings += [Path(cwd) / ".claude" / "settings.json", Path(cwd) / ".claude" / "settings.local.json"]
+    for f in settings:
+        try:
+            enabled.update(json.loads(f.read_text()).get("enabledPlugins") or {})
+        except Exception:
+            continue
+    out = []
+    for key, entries in installed.items():
+        if not enabled.get(key):
+            continue
+        for e in entries if isinstance(entries, list) else []:
+            if e.get("scope") == "user" or (cwd and e.get("projectPath") == str(cwd)):
+                root = Path(e.get("installPath") or "")
+                if root.is_dir():
+                    out.append((key.split("@", 1)[0], root))
+                break
+    return sorted(out)
+
+
+def plugin_mcp_servers(root):
+    """{name: config} a plugin folder declares in its .mcp.json ({} when none)."""
+    try:
+        data = json.loads((Path(root) / ".mcp.json").read_text())
+    except Exception:
+        return {}
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def plugin_description(root):
+    try:
+        return json.loads((Path(root) / ".claude-plugin" / "plugin.json").read_text()).get("description") or ""
+    except Exception:
+        return ""
 
 
 class LocalHost(Host):
@@ -1894,10 +2616,10 @@ class LocalHost(Host):
                 add_skill(f, "project", True)
         for f in sorted((Path.home() / ".claude" / "skills").glob("*/SKILL.md")):
             add_skill(f, "user", True)
-        plugins_root = Path.home() / ".claude" / "plugins" / "cache"
-        if plugins_root.is_dir():
-            for f in sorted(plugins_root.glob("*/*/*/skills/*/SKILL.md")):
-                add_skill(f, f"plugin:{f.parents[2].parent.name}", False)
+        machine = machine_plugins(cwd)
+        for name, root in machine:
+            for f in sorted((root / "skills").glob("*/SKILL.md")):
+                add_skill(f, f"plugin:{name}", False)
 
         mcp = []
 
@@ -1924,15 +2646,12 @@ class LocalHost(Host):
                     add_mcp(name, cfg, "project", True)
             except Exception:
                 pass
-        if plugins_root.is_dir():
-            for pm_file in plugins_root.glob("*/*/*/.mcp.json"):
-                try:
-                    pd = json.loads(pm_file.read_text())
-                except Exception:
-                    continue
-                for name, cfg in (pd.get("mcpServers") or {}).items():
-                    add_mcp(name, cfg, f"plugin:{pm_file.parents[1].name}", False)
-        return {"skills": skills, "mcp": mcp}
+        for pname, root in machine:
+            for name, cfg in plugin_mcp_servers(root).items():
+                add_mcp(name, cfg, f"plugin:{pname}", False)
+        plugins = [{"name": name, "description": plugin_description(root), "source": "machine",
+                    "included": False, "active": True} for name, root in machine]
+        return {"skills": skills, "mcp": mcp, "plugins": plugins}
 
     def _resolve_full(self, rel):
         try:
@@ -1962,9 +2681,9 @@ class LocalHost(Host):
         return data
 
     def resolve(self, sid):
-        matches = list(CLAUDE_DIR.glob(f"*/{sid}.jsonl"))
-        if matches:
-            return {"found": True, "path": str(matches[0].relative_to(CLAUDE_DIR.parent))}
+        path = transcript_path(sid)
+        if path:
+            return {"found": True, "path": str(path.relative_to(CLAUDE_DIR.parent))}
         return {"found": False}
 
     @staticmethod
@@ -1995,26 +2714,30 @@ class LocalHost(Host):
             if "subagents" in str(jsonl_file):
                 continue
             stat = jsonl_file.stat()
-            title, session_id, preview = "", jsonl_file.stem, ""
+            title, session_id, preview, last_message = "", jsonl_file.stem, "", None
             try:
-                if stat.st_size > 50000:
-                    # The tail scan already runs for titles — the last-message
-                    # preview rides along in the same pass at no extra I/O.
-                    with open(jsonl_file, "r") as f:
-                        f.seek(max(0, stat.st_size - 50000)); f.readline()
-                        for line in f:
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if obj.get("type") == "custom-title":
-                                title = obj.get("customTitle", "")
-                            if obj.get("type") == "agent-name" and not title:
-                                title = obj.get("agentName", "")
-                            p = self._preview_from(obj)
-                            if p:
-                                preview = p
-                if not title or not preview:
+                # The last 50KB (the whole file when smaller) holds the newest
+                # title, preview and message time in one pass.
+                with open(jsonl_file, "r") as f:
+                    if stat.st_size > 50000:
+                        f.seek(stat.st_size - 50000); f.readline()
+                    for line in f:
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if obj.get("type") == "custom-title":
+                            title = obj.get("customTitle", "")
+                        if obj.get("type") == "agent-name" and not title:
+                            title = obj.get("agentName", "")
+                        p = self._preview_from(obj)
+                        if p:
+                            preview = p
+                        last_message = _newer(last_message, obj)
+                # A long chat's title may sit only near its start: the head
+                # fills it, never replacing the tail's newer preview.
+                tail_preview = preview
+                if stat.st_size > 50000 and (not title or not preview):
                     with open(jsonl_file, "r") as f:
                         for i, line in enumerate(f):
                             if i > 200:
@@ -2028,17 +2751,21 @@ class LocalHost(Host):
                             if obj.get("type") == "agent-name" and not title:
                                 title = obj.get("agentName", "")
                             p = self._preview_from(obj)
-                            if p:
+                            if p and not tail_preview:
                                 preview = p
+                            last_message = _newer(last_message, obj)
             except Exception:
                 pass
-            pdir = str(jsonl_file.parent.name)
-            if pdir.startswith(_HOME_ENC + "-"):
-                pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
-            project = pdir.replace("--", "/").replace("-", "/")
+            project = _session_project(jsonl_file)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
                              "size": stat.st_size, "modified": stat.st_mtime,
+                             # When the last message was written. The
+                             # file's mtime also moves when Claude appends
+                             # bookkeeping on resume/exit (cost-state,
+                             # last-prompt, permission-mode), so unread and the
+                             # list's time read this, not `modified`.
+                             "last_message": last_message or stat.st_mtime,
                              "preview": preview})
         sessions.sort(key=lambda s: s["modified"], reverse=True)
         return sessions

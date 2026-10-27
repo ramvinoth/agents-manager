@@ -1,7 +1,13 @@
 # ORCHESTRATOR — the company charter
 
+> **Superseded in part (2026-10-08, card 146):** the Employees roster, card
+> assignment and the Harman manager tick described below were removed. Authority
+> now comes from the agent role (agent_templates.level) or a per-chat override
+> (session_meta.level); see SESSIONS.md "Two trust layers". Read the rest as
+> design history.
+
 Status: **charter (v0)** — the operating contract. No orchestrator code ships until this reads true.
-Owner: Ram. Operator ("the brain"): the manager agent driving the viewer APIs.
+Owner: The owner. Operator ("the brain"): the manager agent driving the viewer APIs.
 Decisions locked (2026-08-14): **wide autonomy / narrow gate**, **build a real orchestrator**, **charter first**.
 
 ---
@@ -30,7 +36,7 @@ management discipline layered on the existing viewer APIs (`viewer/routes/sessio
 
 ## 2. Authority model — WIDE AUTONOMY, narrow gate
 
-Default is **act**. Ram is asked only when an action can (a) irreversibly destroy work/data,
+Default is **act**. The owner is asked only when an action can (a) irreversibly destroy work/data,
 (b) spend real money or expose a key, or (c) break a **shared** service others depend on.
 Everything else I do and report. Reversibility is the test, not category.
 
@@ -46,7 +52,7 @@ Everything else I do and report. Reversibility is the test, not category.
   verify health after. I report what changed + the health check.
 - Provisioning that's cheap and self-cleaning (throwaway test sessions, then off-board them).
 
-### Red — propose first, act only on Ram's explicit approval (kept deliberately small)
+### Red — propose first, act only on the owner's explicit approval (kept deliberately small)
 - **Irreversible data loss**: delete a session/transcript, `git reset --hard`/force-push,
   delete a provider preset, wipe files. (Anything with no undo.)
 - **Secrets/keys**: create, read-to-expose, rotate, or write any API key/credential.
@@ -79,20 +85,20 @@ I never assume a host — I read it from config/memory. Off-perimeter = out of b
 - Never claim a live action succeeded without a verify read (same discipline as the ship gate).
 
 ## 5. The loop (how a mandate flows)
-1. **Intake** — a goal from Ram (or a standing objective).
+1. **Intake** — a goal from the owner (or a standing objective).
 2. **Plan** — decide departments/employees needed; Green steps listed, Red steps flagged.
 3. **Staff** — hire/assign sessions with the right role (provider/model/mode) + job description.
 4. **Execute** — task them; monitor via transcript reads; steer/unblock.
 5. **Review** — read outputs, verify against the goal's success test.
-6. **Report** — concise status to Ram; surface Red asks batched, not drip-fed.
+6. **Report** — concise status to the owner; surface Red asks batched, not drip-fed.
 
 ## 6. Where the brain lives (runtime) — TO BUILD
 Decision: **a real orchestrator module in the viewer**, so org state survives restarts.
 Not built yet. Sketch (for the next design doc, not this charter):
 - `viewer/orchestrator.py`: employee registry, task queue, mandate log — persisted like SESSION_META.
 - A tick (manager heartbeat) that checks in-flight employees, unblocks/reassigns within Green,
-  and parks Red asks for Ram.
-- Read-only status surface in the app (an "Org" view) so Ram sees the company at a glance.
+  and parks Red asks for the owner.
+- Read-only status surface in the app (an "Org" view) so the owner sees the company at a glance.
 - **This charter is the spec's section 0.** Code follows a separate approved design (like
   PROVIDERS/SECRETS designs), not this file.
 

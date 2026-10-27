@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 from viewer.config import (
-    CHAT_JOBS, CHAT_LOCK,
+    CHAT_JOBS, CHAT_LOCK, transcript_path,
 )
 from viewer.adapters import resolve_agent_session
 from viewer.engine import (
@@ -157,49 +157,21 @@ class ChatMixin:
             if not os.path.isdir(cwd):
                 cwd = str(Path.home())
 
-        # A session can opt into a custom provider (its meta carries a preset id)
-        # with a conversation mode: "chat" (plain proxy, one-shot) or "agent" (the
-        # full Claude Code harness pointed at the custom endpoint). Local only.
-        provider_env = None
-        if host == "local":
-            from viewer.engine import SESSION_META
-            from viewer import providers
-            meta = SESSION_META.get(session_id) or {}
-            preset_id = meta.get("provider", "")
-            if preset_id:
-                # A provider is SET but must actually resolve. A deleted/renamed
-                # preset id is an ERROR — never silently fall through to Default
-                # (which would reroute the turn to the inherited base URL the user
-                # never chose, e.g. a LiteLLM proxy). Fail loudly and actionably.
-                # (preset_id == "" means "Default/Claude" and is handled by falling
-                # through with provider_env=None — that path is intentional.)
-                if not providers.get_preset(preset_id):
-                    self.send_json({"error": "The model provider set for this chat no longer "
-                                    "exists. Open Session settings and choose a provider."},
-                                   status=400)
-                    return
-                conv_mode = meta.get("convMode", "chat")
-                if conv_mode == "agent":
-                    provider_env = providers.anthropic_env(preset_id)
-                    # Fall through to start_claude_run below (with provider_env);
-                    # queue/steer work because it's a real CHAT_JOBS claude job.
-                else:
-                    from viewer.customrun import start_custom_run
-                    if not start_custom_run(session_id, preset_id, message, cwd, host, mode):
-                        self.send_json({"error": "A message is already being processed for this session"}, status=409)
-                        return
-                    self.send_json({"started": True, "session": session_id})
-                    return
-
-        # While a run is active: queue (next turn) instead of rejecting.
+        # Queued messages belong to the active launch configuration, even if the
+        # saved selection changed while that process was running.
         if body.get("queue"):
+            if (CHAT_JOBS.get(session_id) or {}).get("agent") == "custom":
+                self.send_json({"error": "Queueing is not supported for plain custom chat"}, status=409)
+                return
             pos = enqueue_chat(session_id, message)
             if pos is not None:
                 self.send_json({"queued": pos, "session": session_id})
                 return
-        if not start_claude_run(session_id, ["--resume", session_id], message, mode, cwd,
-                                "" if provider_env else model, host, provider_env=provider_env):
-            self.send_json({"error": "A message is already being processed for this session"}, status=409)
+        from viewer.turn import start_turn
+        failure = start_turn(session_id, message, mode, cwd, model, host)
+        if failure:
+            status, error = failure
+            self.send_json({"error": error}, status=status)
             return
         self.send_json({"started": True, "session": session_id})
 
@@ -237,7 +209,7 @@ class ChatMixin:
                 "returncode": job["returncode"],
                 "stderr": job["stderr"],
                 "started": job["started"],
-                "queue": [q[:200] for q in job.get("queue", [])],
+                "queue": list(job.get("queue", [])),
                 "turns": job.get("turns", 0),
                 "steered": job.get("steered", 0),
                 "interrupted": job.get("interrupted", False),
@@ -245,6 +217,18 @@ class ChatMixin:
                 "pending_question": pending_q,
                 "pending_plan": pending_plan,
             })
+
+    def _g_decisions_open(self, req):
+        """The cross-session decision queue (card #60): every open durable
+        question, durable plan, live tool approval, and board card parked in
+        Review/Needs-info — one read of the EXISTING sources (no parallel
+        store), oldest first, with a total count. Items the owner snoozed
+        (Inbox or cockpit — one snooze) are held back until the snooze lapses.
+        This route only lists; deciding an item goes through the existing
+        per-session routes, which are race-safe via the decisions gate."""
+        from viewer import inbox
+        from viewer.routes.inbox import open_decisions_items
+        self.send_json(inbox.visible_queue(open_decisions_items()))
 
     def _p_chat_permission(self, req):
         """Internal (called by permission_mcp.py, authed by a per-run token):
@@ -264,29 +248,50 @@ class ChatMixin:
         self.send_json({"ok": ok})
 
     def _p_chat_question_answer(self, req):
-        """UI answers an AskUserQuestion. Body: {session, picks:[label,...]}.
-        Fast path: a live permission call is BLOCKED waiting on this answer — set it
-        and the SAME turn continues (works mid-conversation, all modes, remote).
-        Fallback: no live block (run ended / server restarted) — RESUME the session
-        on its original host with the composed answer as a fresh turn."""
-        from viewer import questions
-        from viewer.engine import answer_live_question
+        """UI answers an AskUserQuestion. Body: {session, picks:[label,...],
+        note?}. `note` is the owner's own words — the follow-up path when no
+        offered option fits (picks may then be empty) or a condition on a pick;
+        it rides the same race-safe consume as a pick, so a follow-up is an
+        answer, never a queued chat message stuck behind the blocked run.
+        The decision goes through decisions.accept_answer: the exact row is
+        consumed first-writer-wins (a racing second tap gets 409, never a
+        double resume), then — only if the consume won — a live blocked waiter
+        is unblocked (same turn continues) or, failing that, the session is
+        RESUMED on its original host with the composed answer as a fresh turn
+        (run ended / server restarted). A question nobody answered in time was
+        never cleared, so a late tap lands here and resumes — it resurfaces."""
+        from viewer import decisions, questions
         body = self.read_body() or {}
         rel = body.get("session", "")
         picks = body.get("picks") or []
+        note = str(body.get("note") or "")
+        if not any(picks) and not note.strip():
+            self.send_json({"error": "Pick an option or write a reply"}, status=400)
+            return
         sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
         pending = questions.get_open(sid) if sid else None
         if not pending:
             self.send_json({"error": "No question is awaiting an answer"}, status=409)
             return
         host = pending.get("host") or "local"
-        message = questions.answer_message(pending["questions"], picks)
-        # Fast path: unblock the waiting permission call — the turn resumes in place.
-        if answer_live_question(sid, message):
+        message = questions.answer_message(pending["questions"], picks, note)
+        accepted, delivered = decisions.accept_answer(
+            sid, pending["tool_use_id"], message, host,
+            pending.get("run_id") or "", pending.get("revision") or 0)
+        if delivered:
             self.send_json({"answered": True, "session": sid})
             return
-        # Fallback: the block is gone; resume the session as a fresh turn.
-        questions.resolve(sid, pending["tool_use_id"])
+        if not accepted:
+            # A racing answer (another device, a double tap) committed first.
+            self.send_json({"error": "This question was already answered"}, status=409)
+            return
+        # The block is gone (timeout / restart); resume as a fresh turn.
+        self._resume_with_reply(rel, sid, host, message, body)
+
+    def _resume_with_reply(self, rel, sid, host, message, body):
+        """A durable question/plan was decided after its live waiter ended (timeout
+        or server restart): the run that asked is gone, so the decision reaches the
+        session as a fresh resumed turn on its original host."""
         if host != "local":
             try:
                 r = remote_resolve(host, sid)
@@ -294,7 +299,9 @@ class ChatMixin:
             except Exception:
                 cwd = "~"
         else:
-            full = self.resolve_session_quiet(rel) or None
+            # `rel` is a transcript path from the chat view, or a bare id from
+            # the decision cockpit — either must resume in the session's own cwd.
+            full = self.resolve_session_quiet(rel) or transcript_path(sid)
             cwd = extract_cwd(full) if full else str(Path.home())
             if not cwd or not os.path.isdir(cwd):
                 cwd = str(Path.home())
@@ -306,21 +313,32 @@ class ChatMixin:
         self.send_json({"resumed": True, "session": sid})
 
     def _p_chat_plan_decide(self, req):
-        """UI approves or denies a live (blocked) ExitPlanMode.
-        Body: {session, decision:"approve"|"deny", feedback?}. Approve -> the agent
-        starts executing; deny -> it revises using `feedback`. Same-turn (the run is
-        blocked waiting), like the question answer fast-path."""
-        from viewer import questions
-        from viewer.engine import decide_plan
+        """UI approves or denies an ExitPlanMode. Body: {session,
+        decision:"approve"|"deny", feedback?}. Fast path: the run is blocked waiting —
+        approve lets it execute, deny returns `feedback` so it revises, same turn.
+        Same durable-first shape as the question answer (decisions.decide_plan):
+        the exact row is consumed first-writer-wins, then the live waiter is
+        unblocked or — waiter gone (timeout / server restart) — the session is
+        RESUMED with the decision in words, so a late decision on a timed-out
+        plan lands instead of 409ing forever."""
+        from viewer import decisions, questions
         body = self.read_body() or {}
         rel = body.get("session", "")
         sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "") if rel else ""
-        if not (sid and questions.get_open_plan(sid)):
+        pending = questions.get_open_plan(sid) if sid else None
+        if not pending:
             self.send_json({"error": "No plan is awaiting a decision"}, status=409)
             return
         decision = "approve" if body.get("decision") == "approve" else "deny"
-        if decide_plan(sid, decision, body.get("feedback", "")):
+        feedback = body.get("feedback", "")
+        accepted, delivered = decisions.decide_plan(
+            sid, pending["tool_use_id"], decision, feedback)
+        if delivered:
             self.send_json({"decided": True, "session": sid})
-        else:
-            self.send_json({"error": "No live plan decision is waiting"}, status=409)
+            return
+        if not accepted:
+            self.send_json({"error": "This plan was already decided"}, status=409)
+            return
+        self._resume_with_reply(rel, sid, pending.get("host") or "local",
+                                questions.plan_decision_message(decision, feedback), body)
 

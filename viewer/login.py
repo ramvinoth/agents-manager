@@ -1,4 +1,4 @@
-"""viewer.login — Claude & Codex OAuth login managers and auth status."""
+"""viewer.login — Claude, Codex, Copilot and MCP-server OAuth login managers and auth status."""
 import fcntl
 import json
 import os
@@ -46,6 +46,35 @@ def auth_status():
     return info
 
 
+def _pty_spawn(argv, cols=2000, cwd=None):
+    """Fork argv onto a fresh pty; returns (pid, fd). The child must never
+    return into the server: a failed exec (binary missing) would otherwise run
+    on as a second copy of the viewer holding the pty open, and the flow would
+    sit at "starting" forever. Instead it prints a plain reason and exits 127,
+    which the reader turns into an error stage."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            if cwd:
+                os.chdir(cwd)
+            os.execvp(argv[0], argv)
+        except BaseException as e:
+            os.write(1, f"Could not start {argv[0]}: {e}\n".encode())
+        finally:
+            os._exit(127)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, cols, 0, 0))
+    return pid, fd
+
+
+def _missing_cli(name, binpath):
+    """A plain, actionable error when a CLI is not installed — checked before
+    forking so the owner sees why, not a spinner."""
+    if shutil.which(binpath) or os.access(binpath, os.X_OK):
+        return ""
+    return (f"{name} is not installed on this computer, so sign-in cannot start. "
+            f"Install it (or update Harman, which installs it), then try again.")
+
+
 class LoginManager:
     """Drives `claude setup-token` through a pty: exposes the OAuth URL,
     forwards the pasted code, and reports completion."""
@@ -71,15 +100,15 @@ class LoginManager:
                 return  # already in progress; frontend will pick up the URL
             self.cancel_locked()
             self.reset()
+            missing = _missing_cli("Claude Code", claude_bin())
+            if missing:
+                self.stage, self.error = "error", missing
+                return
             self.stage = "starting"
             self.started = time.time()
-            pid, fd = pty.fork()
-            if pid == 0:
-                os.execvp(claude_bin(), [claude_bin(), "setup-token"])
             # Wide terminal so the URL is not hard-wrapped by the pty.
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-            self.pid, self.fd = pid, fd
-            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+            self.pid, self.fd = _pty_spawn([claude_bin(), "setup-token"])
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
 
     def _reader(self, pid, fd):
         while True:
@@ -277,14 +306,14 @@ class CodexLoginManager:
                 return
             self.cancel_locked()
             self.reset()
+            missing = _missing_cli("Codex", codex_bin())
+            if missing:
+                self.stage, self.error = "error", missing
+                return
             self.stage = "starting"
             self.started = time.time()
-            pid, fd = pty.fork()
-            if pid == 0:
-                os.execvp(codex_bin(), [codex_bin(), "login"])
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-            self.pid, self.fd = pid, fd
-            threading.Thread(target=self._reader, args=(pid, fd), daemon=True).start()
+            self.pid, self.fd = _pty_spawn([codex_bin(), "login"])
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
 
     def _reader(self, pid, fd):
         while True:
@@ -385,6 +414,151 @@ class CodexLoginManager:
 
 
 CODEX_LOGIN = CodexLoginManager()
+
+
+class McpLoginManager:
+    """Signs the owner in to one OAuth MCP server (e.g. Microsoft 365) by
+    driving `claude mcp login <name> --no-browser` through a pty, so the token
+    lands in the same store every Claude Code session on this machine reads.
+
+    The CLI listens on the server's localhost callback port: a browser on this
+    Mac completes on its own; a phone's redirect fails to load, so the owner
+    pastes that address and it is typed into the CLI's paste prompt. One
+    sign-in at a time — it is a person at a keyboard."""
+
+    URL_RE = re.compile(r"Visit this URL to authorize:\s*(https://\S+)")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        self.pid = None
+        self.fd = None
+        self.buffer = ""
+        self.url = None
+        self.name = ""
+        self.stage = "idle"  # idle | starting | url | done | error
+        self.error = ""
+        self.started = 0
+
+    def start(self, name, cwd=None, plugin_dir=None, project_server=False):
+        """name as `claude mcp list` shows it (plugin:chat:<n> for an extras
+        folder, which plugin_dir loads). project_server pre-approves a
+        project .mcp.json entry, which the CLI otherwise refuses to sign in."""
+        argv = [claude_bin()]
+        if plugin_dir:
+            argv += ["--plugin-dir", str(plugin_dir)]
+        if project_server:
+            argv += ["--settings", json.dumps({"enabledMcpjsonServers": [name]})]
+        argv += ["mcp", "login", name, "--no-browser"]
+        with self.lock:
+            if self.stage in ("starting", "url") and self.pid and self.name == name:
+                return
+            self.cancel_locked()
+            self.reset()
+            self.name, self.stage, self.started = name, "starting", time.time()
+            missing = _missing_cli("Claude Code", argv[0])
+            if missing:
+                self.stage, self.error = "error", missing
+                return
+            self.pid, self.fd = _pty_spawn(argv, cols=4000, cwd=cwd)
+            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
+
+    def _reader(self, pid, fd):
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            with self.lock:
+                if self.pid != pid:
+                    return
+                if chunk:
+                    self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
+                    m = not self.url and self.URL_RE.search(self.buffer)
+                    if m:
+                        self.url, self.stage = m.group(1), "url"
+                    continue
+            try:
+                _, status = os.waitpid(pid, 0)
+            except ChildProcessError:
+                status = 0
+            with self.lock:
+                if self.pid != pid:
+                    return
+                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
+                if code == 0:
+                    self.stage = "done"
+                else:
+                    self.stage = "error"
+                    # Drop the authorize URL and any pasted code: neither belongs on a screen.
+                    tail = re.sub(r"https://\S+", "", self.buffer[-500:]).strip()
+                    self.error = tail.splitlines()[-1] if tail else "Sign-in failed."
+                self.pid = None
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                self.fd = None
+                return
+
+    def submit(self, redirect_url):
+        """Type the pasted redirect address into the CLI's paste prompt. Enter
+        goes as its own keystroke: a one-chunk write reads as a paste and loses
+        its newline (same as LoginManager.submit_code)."""
+        u = urlparse((redirect_url or "").strip())
+        if u.scheme not in ("http", "https") or "code=" not in u.query:
+            return False
+        with self.lock:
+            if not self.fd or self.stage != "url":
+                return False
+            fd = self.fd
+            try:
+                os.write(fd, redirect_url.strip().encode())
+            except OSError:
+                return False
+        time.sleep(0.3)
+        with self.lock:
+            if self.fd == fd:
+                try:
+                    os.write(fd, b"\r")
+                except OSError:
+                    pass
+        return True
+
+    def cancel_locked(self):
+        if self.pid:
+            # Kill the group so the CLI's localhost callback listener dies with it.
+            try:
+                os.killpg(os.getpgid(self.pid), signal.SIGKILL)
+            except Exception:
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        self.pid = None
+        self.fd = None
+
+    def cancel(self):
+        with self.lock:
+            self.cancel_locked()
+            self.stage = "idle"
+
+    def poll(self):
+        with self.lock:
+            if self.stage in ("starting", "url") and time.time() - self.started > 900:
+                self.cancel_locked()
+                self.stage, self.error = "error", "Sign-in timed out after 15 minutes."
+            return {"name": self.name, "stage": self.stage, "url": self.url, "error": self.error}
+
+
+MCP_LOGIN = McpLoginManager()
 
 
 class RemoteCodexLoginManager:
@@ -606,12 +780,12 @@ class CopilotLoginManager:
                     self.chan = chan
                     threading.Thread(target=self._reader_remote, args=(chan,), daemon=True).start()
                 else:
-                    pid, fd = pty.fork()
-                    if pid == 0:
-                        os.execvp(copilot_bin(), [copilot_bin(), "login"])
-                    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 2000, 0, 0))
-                    self.pid, self.fd = pid, fd
-                    threading.Thread(target=self._reader_local, args=(pid, fd), daemon=True).start()
+                    missing = _missing_cli("GitHub Copilot CLI", copilot_bin())
+                    if missing:
+                        self.stage, self.error = "error", missing
+                        return
+                    self.pid, self.fd = _pty_spawn([copilot_bin(), "login"])
+                    threading.Thread(target=self._reader_local, args=(self.pid, self.fd), daemon=True).start()
             except Exception as e:
                 self.stage = "error"
                 self.error = str(e)

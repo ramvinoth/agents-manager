@@ -5,10 +5,14 @@ const { shared } = require("./wdio.shared.conf")
 const caps = {
   platformName: "iOS",
   "appium:automationName": "XCUITest",
-  "appium:deviceName": process.env.E2E_DEVICE || "iPhone 15",
-  "appium:platformVersion": process.env.E2E_IOS_VERSION || "17.5",
+  "appium:deviceName": process.env.E2E_DEVICE,
+  "appium:platformVersion": process.env.E2E_IOS_VERSION,
+  "appium:autoAcceptAlerts": true,
   "appium:app": process.env.APP_PATH,
   "appium:newCommandTimeout": 240,
+  // WebDriverAgent defaults to :8100, which another local service may own —
+  // then every WDA probe hits that service and the session never starts.
+  "appium:wdaLocalPort": Number(process.env.E2E_WDA_PORT || 8100),
 }
 // Pin the exact booted simulator when the runner provides its UDID.
 if (process.env.E2E_UDID) caps["appium:udid"] = process.env.E2E_UDID

@@ -10,16 +10,25 @@ The base is single-owner: the first signup claims the instance, after which
 signup is closed and it's login-only. The schema is deliberately plain."""
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import psycopg2
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor
+
+# orglogic is pure (no viewer imports) — importing it here cannot cycle, and the
+# default pipeline shape lives ONCE there (orglogic.PIPELINE_COLUMNS).
+from viewer import orglogic
+# config is the package's bottom layer (imports nothing from viewer), so importing
+# it here is cycle-free. init_db() stamps config.VERSION into app_meta on every boot.
+from viewer import config
 
 DATABASE_URL = os.environ.get("DATABASE_URL") or "dbname=viewer"
 SESSION_COOKIE = "viewer_session"
@@ -55,6 +64,83 @@ def _db():
         pool.putconn(conn)
 
 
+# Harman's DB schema generation. The big CREATE/ALTER block in init_db() is
+# additive-idempotent, so additive changes (new table, new nullable column) need
+# NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
+# destructive step is added to _run_migrations() below. The stamp lives in the
+# settings table (app_meta), so there is no separate schema_version table.
+SCHEMA_VERSION = 4
+
+
+def _run_migrations(prev):
+    """Ordered / non-additive schema steps, run after the additive DDL in
+    init_db(). `prev` is the schema_version the DB was last stamped with (0 on a
+    fresh install). Each step is guarded `if prev < N:`, applied in order, and
+    written IF EXISTS so a fresh install (which never had the old shape) is a
+    no-op."""
+    if prev < 2:
+        # The Employees roster is retired: a session's authority now comes from
+        # its agent role (agent_templates.level) or the owner's per-chat
+        # override (session_meta.level) — see engine.resolve_level. Drop the
+        # roster and every column that pointed at it.
+        with _db() as cur:
+            cur.execute("""
+                ALTER TABLE cards DROP COLUMN IF EXISTS assignee;
+                ALTER TABLE skills_learned DROP COLUMN IF EXISTS origin_employee;
+                ALTER TABLE session_tokens DROP COLUMN IF EXISTS employee_id;
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'session_tokens' AND column_name = 'employee_level')
+                  THEN ALTER TABLE session_tokens RENAME COLUMN employee_level TO level;
+                  END IF;
+                END $$;
+                DROP TABLE IF EXISTS employees;
+                -- The manager tick's knobs (enabled/interval/budget/projects/
+                -- default_provider) went with it; keep only the master switch.
+                UPDATE settings SET value = jsonb_build_object(
+                    'automation_enabled', COALESCE((value->>'automation_enabled')::boolean, false))
+                  WHERE key = 'harman';
+            """)
+    if prev < 3:
+        # An agent template held ONE job (cron + job_prompt columns); it now
+        # holds a list (agent_templates.jobs). Carry a user template's job
+        # over, then drop the pair. Builtins are re-seeded from code anyway.
+        with _db() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'agent_templates' AND column_name = 'job_prompt')
+                  THEN
+                    UPDATE agent_templates
+                       SET jobs = jsonb_build_array(jsonb_build_object('prompt', job_prompt, 'cron', cron))
+                     WHERE cron IS NOT NULL AND job_prompt IS NOT NULL AND jobs = '[]'::jsonb;
+                    ALTER TABLE agent_templates DROP COLUMN cron, DROP COLUMN job_prompt;
+                  END IF;
+                END $$;
+            """)
+    if prev < 4:
+        # An agent named a Claude alias (agent_templates.model: sonnet/opus/...);
+        # it now holds a whole AI selection (agent_templates.ai: provider + model
+        # + mode + effort, the shape viewer/ai.py validates), so an agent can run
+        # on any of the owner's providers. A user agent's alias becomes the
+        # built-in provider with that model; builtins keep NULL (= the owner's
+        # defaults), because pinning Claude would override a custom-provider default.
+        with _db() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                  IF EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'agent_templates' AND column_name = 'model')
+                  THEN
+                    UPDATE agent_templates
+                       SET ai = jsonb_build_object('provider', '', 'convMode', 'agent', 'effort', '',
+                                                   'model', jsonb_build_object('kind', 'id', 'id', model))
+                     WHERE NOT is_builtin AND model <> '' AND ai IS NULL;
+                    ALTER TABLE agent_templates DROP COLUMN model;
+                  END IF;
+                END $$;
+            """)
+
+
 def init_db():
     with _db() as cur:
         cur.execute(
@@ -64,6 +150,7 @@ def init_db():
               username   TEXT UNIQUE NOT NULL,
               pw_hash    TEXT NOT NULL,
               salt       TEXT NOT NULL,
+              role       TEXT NOT NULL DEFAULT 'viewer',
               created_at DOUBLE PRECISION NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sessions (
@@ -80,7 +167,9 @@ def init_db():
               token      TEXT PRIMARY KEY,
               user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               platform   TEXT NOT NULL DEFAULT 'ios',
-              created_at DOUBLE PRECISION NOT NULL
+              created_at DOUBLE PRECISION NOT NULL,
+              app_version TEXT,
+              app_build   TEXT
             );
             CREATE TABLE IF NOT EXISTS pending_questions (
               session_id  TEXT PRIMARY KEY,
@@ -88,9 +177,47 @@ def init_db():
               questions   JSONB NOT NULL,
               status      TEXT NOT NULL DEFAULT 'open',
               host        TEXT NOT NULL DEFAULT 'local',
+              run_id      TEXT NOT NULL DEFAULT '',
+              revision    INTEGER NOT NULL DEFAULT 1,
               created_at  DOUBLE PRECISION NOT NULL
             );
+            -- Turns in flight, so a server restart or a run that dies mid-turn
+            -- pauses them instead of dropping them: boot resumes every row left
+            -- behind, and the run finalizer resumes its own (viewer/resume.py). Written when a run starts, kept in step
+            -- with its message queue, deleted when the run ends.
+            CREATE TABLE IF NOT EXISTS inflight_runs (
+              session_id TEXT PRIMARY KEY,
+              host       TEXT NOT NULL DEFAULT 'local',
+              cwd        TEXT NOT NULL DEFAULT '',
+              mode       TEXT NOT NULL DEFAULT '',
+              model      TEXT NOT NULL DEFAULT '',
+              queue      JSONB NOT NULL DEFAULT '[]',
+              resumes    INTEGER NOT NULL DEFAULT 0,
+              started_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_tokens (
+              session_id     TEXT PRIMARY KEY,
+              perm_token     TEXT NOT NULL DEFAULT '',
+              kanban_token   TEXT NOT NULL DEFAULT '',
+              level          TEXT NOT NULL DEFAULT 'ic',
+              cwd            TEXT NOT NULL DEFAULT '',
+              host           TEXT NOT NULL DEFAULT 'local',
+              created_at     DOUBLE PRECISION NOT NULL
+            );
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
+            ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'viewer';
+            -- What app a device runs, reported by the client on push-register.
+            -- NULL = a build from before this column (we simply can't see it).
+            ALTER TABLE push_tokens ADD COLUMN IF NOT EXISTS app_version TEXT;
+            ALTER TABLE push_tokens ADD COLUMN IF NOT EXISTS app_build TEXT;
+            -- Existing installs: the first account IS the owner (signup closes after
+            -- it, see routes/auth.py), so promote it rather than locking the only
+            -- user out of their own instance. Idempotent: only fires while no owner
+            -- exists, so a later demotion is not silently undone.
+            UPDATE users SET role = 'owner' WHERE id = (SELECT MIN(id) FROM users)
+              AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'owner');
             CREATE TABLE IF NOT EXISTS pending_plans (
               session_id  TEXT PRIMARY KEY,
               tool_use_id TEXT NOT NULL,
@@ -101,19 +228,8 @@ def init_db():
             );
             -- ── Orchestrator ("Harman") empire tables ─────────────────────────
             -- ONE canonical Kanban board: a single cards table; every per-session
-            -- / project / employee / CEO "board" is a filtered VIEW of it. See
+            -- / project / CEO "board" is a filtered VIEW of it. See
             -- ORCHESTRATOR_KANBAN.md + viewer/orglogic.py.
-            CREATE TABLE IF NOT EXISTS employees (
-              id         SERIAL PRIMARY KEY,
-              name       TEXT NOT NULL,
-              role       TEXT NOT NULL DEFAULT '',
-              provider   TEXT NOT NULL DEFAULT '',
-              model      TEXT NOT NULL DEFAULT '',
-              conv_mode  TEXT NOT NULL DEFAULT 'chat',
-              avatar     TEXT NOT NULL DEFAULT '',
-              status     TEXT NOT NULL DEFAULT 'active',
-              created_at DOUBLE PRECISION NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS projects (
               id          SERIAL PRIMARY KEY,
               name        TEXT NOT NULL,
@@ -124,16 +240,16 @@ def init_db():
               created_at  DOUBLE PRECISION NOT NULL
             );
             CREATE TABLE IF NOT EXISTS board_columns (
-              id       SERIAL PRIMARY KEY,
-              name     TEXT NOT NULL,
-              position INTEGER NOT NULL DEFAULT 0
+              id         SERIAL PRIMARY KEY,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              name       TEXT NOT NULL,
+              position   INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS cards (
               id         SERIAL PRIMARY KEY,
               title      TEXT NOT NULL,
               body       TEXT NOT NULL DEFAULT '',
               column_id  INTEGER REFERENCES board_columns(id) ON DELETE SET NULL,
-              assignee   INTEGER REFERENCES employees(id) ON DELETE SET NULL,
               project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
               session_id TEXT,
               position   DOUBLE PRECISION NOT NULL DEFAULT 1.0,
@@ -141,6 +257,134 @@ def init_db():
               created_at DOUBLE PRECISION NOT NULL,
               updated_at DOUBLE PRECISION NOT NULL
             );
+            -- The discussion thread on a card: where the owner and the card's
+            -- session talk about the work (decisions, questions, status). `author`
+            -- is the resolved principal actor, same string audit_log carries
+            -- (user:<name> / session:<label>) — no FK, because an
+            -- agent's identity is a name, not a row.
+            CREATE TABLE IF NOT EXISTS card_comments (
+              id         SERIAL PRIMARY KEY,
+              card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              author     TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL,
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            -- Task dependencies: an edge A -> B means "A cannot move forward
+            -- until B is done". Both endpoints cascade with their cards. The
+            -- self-edge guard lives in card_dep_add (an SQL check could express
+            -- it too, but the rejection message belongs with the code that
+            -- receives the intent).
+            CREATE TABLE IF NOT EXISTS card_deps (
+              id         SERIAL PRIMARY KEY,
+              card_id    INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              depends_on INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              UNIQUE (card_id, depends_on)
+            );
+            -- Notes: the org's knowledge ledger, next to cards (its work ledger).
+            -- A note is markdown owned by whoever wrote it (`created_by` is the
+            -- same principal string audit_log carries), scoped like a card: to a
+            -- project and/or the chat session it was written in. `kind` is the
+            -- note's template (note / journal / meeting / ...); `archived`
+            -- follows the owning session's archive flag (routes/sessions) and a
+            -- deleted session takes its notes with it.
+            CREATE TABLE IF NOT EXISTS notes (
+              id         SERIAL PRIMARY KEY,
+              title      TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL DEFAULT '',
+              kind       TEXT NOT NULL DEFAULT 'note',
+              project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              session_id TEXT,
+              pinned     BOOLEAN NOT NULL DEFAULT FALSE,
+              archived   BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
+            CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
+            -- Canvases: the on-demand visual pane a session opens to SHOW its
+            -- work (a diagram, a walkthrough, a small HTML app) when a picture
+            -- beats prose. One row per (session, title) — re-showing a title
+            -- replaces it and bumps `version`. Session output like the
+            -- transcript (not org state), so it is not audited; a deleted
+            -- session takes its canvases with it (routes/sessions).
+            CREATE TABLE IF NOT EXISTS canvases (
+              id         SERIAL PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              title      TEXT NOT NULL,
+              kind       TEXT NOT NULL,
+              content    TEXT NOT NULL DEFAULT '',
+              version    INTEGER NOT NULL DEFAULT 1,
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL,
+              UNIQUE (session_id, title)
+            );
+            -- A note's discussion (the message board): Reddit-style threaded
+            -- replies under any note — how agents and the owner talk ABOUT a
+            -- piece of knowledge. `parent_id` NULL = top-level comment. `author`
+            -- is the resolved principal actor (as on card_comments);
+            -- `session_id` is the writing session ('' for a human) — the address
+            -- a reply to this comment wakes.
+            CREATE TABLE IF NOT EXISTS note_comments (
+              id         SERIAL PRIMARY KEY,
+              note_id    INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+              parent_id  INTEGER REFERENCES note_comments(id) ON DELETE CASCADE,
+              author     TEXT NOT NULL DEFAULT '',
+              session_id TEXT NOT NULL DEFAULT '',
+              body       TEXT NOT NULL,
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS note_comments_note_idx ON note_comments(note_id);
+            -- One vote per voter per comment (+1 / -1); the score is their sum.
+            -- `voter` is the session id for an agent, the actor for a human.
+            CREATE TABLE IF NOT EXISTS note_votes (
+              comment_id INTEGER NOT NULL REFERENCES note_comments(id) ON DELETE CASCADE,
+              voter      TEXT NOT NULL,
+              value      SMALLINT NOT NULL,
+              PRIMARY KEY (comment_id, voter)
+            );
+            -- Inbox: the owner's and the agents' message ledger. A message is
+            -- owned by a session (session_id = the chat it was written in or
+            -- addressed to) and lives and dies with that chat exactly like a
+            -- note: an archived chat shelves its messages, a deleted chat
+            -- takes them. `kind` separates free messages from the
+            -- auto-delivered decision items — a session's open question, an
+            -- open plan, a live tool approval, or a card parked in
+            -- Review/Needs-info. A decision message's ref_id points at the
+            -- EXISTING durable source (pending_questions/pending_plans/the
+            -- approval registry/the card) and its open-vs-resolved state is
+            -- DERIVED from that source at read time, never stored here: the
+            -- board columns and the per-session answer routes remain the only
+            -- decision system, and the inbox is their delivery surface.
+            CREATE TABLE IF NOT EXISTS inbox_messages (
+              id              SERIAL PRIMARY KEY,
+              session_id      TEXT NOT NULL,
+              project_id      INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              sender_type     TEXT NOT NULL DEFAULT 'user',
+              sender_id       TEXT NOT NULL DEFAULT '',
+              recipient_type  TEXT NOT NULL DEFAULT 'user',
+              recipient_id    TEXT NOT NULL DEFAULT '',
+              body            TEXT NOT NULL DEFAULT '',
+              kind            TEXT NOT NULL DEFAULT 'message',
+              ref_id          TEXT NOT NULL DEFAULT '',
+              in_reply_to     INTEGER NOT NULL DEFAULT 0,
+              status          TEXT NOT NULL DEFAULT 'sent',
+              snoozed_until   DOUBLE PRECISION NOT NULL DEFAULT 0,
+              archived        BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at      DOUBLE PRECISION NOT NULL,
+              updated_at      DOUBLE PRECISION NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS inbox_session_idx ON inbox_messages(session_id);
+            CREATE INDEX IF NOT EXISTS inbox_recipient_idx ON inbox_messages(recipient_type, recipient_id);
+            CREATE INDEX IF NOT EXISTS inbox_kind_ref_idx ON inbox_messages(kind, ref_id);
+            -- A decision item has exactly one durable message: re-delivery of
+            -- the same open question/plan/approval/card refreshes that row
+            -- (its body carries the newest context) instead of piling up a
+            -- second copy. Free messages (ref_id = '') are never deduped.
+            CREATE UNIQUE INDEX IF NOT EXISTS inbox_kind_ref_uniq
+              ON inbox_messages(kind, ref_id) WHERE ref_id <> '';
             CREATE TABLE IF NOT EXISTS approvals (
               id          SERIAL PRIMARY KEY,
               kind        TEXT NOT NULL,
@@ -160,20 +404,430 @@ def init_db():
               outcome    TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS session_backups (
+              id              SERIAL PRIMARY KEY,
+              session_id      TEXT NOT NULL,
+              backup_path     TEXT NOT NULL,
+              original_bytes  BIGINT NOT NULL,
+              trimmed_bytes   BIGINT,
+              reason          TEXT NOT NULL DEFAULT 'auto_trim',
+              created_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_sb_session ON session_backups(session_id);
             CREATE TABLE IF NOT EXISTS skills_learned (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
               path           TEXT NOT NULL DEFAULT '',
-              origin_employee INTEGER REFERENCES employees(id) ON DELETE SET NULL,
               origin_card    INTEGER,
               origin_session TEXT,
               status         TEXT NOT NULL DEFAULT 'proposed',
               created_at     DOUBLE PRECISION NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS agent_templates (
+              id             SERIAL PRIMARY KEY,
+              name           TEXT NOT NULL,
+              description    TEXT NOT NULL DEFAULT '',
+              category       TEXT NOT NULL DEFAULT 'general',
+              icon           TEXT NOT NULL DEFAULT 'sparkle',
+              system_prompt  TEXT NOT NULL DEFAULT '',
+              goal           TEXT NOT NULL DEFAULT '',
+              model          TEXT NOT NULL DEFAULT '',
+              is_builtin     BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by     TEXT NOT NULL DEFAULT 'system',
+              created_at     DOUBLE PRECISION NOT NULL DEFAULT (extract(epoch from now()))
+            );
+            -- The AI a chat from this agent runs on: an ai.validate selection
+            -- {provider, model, convMode, effort}. NULL = the owner's AI defaults.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS ai JSONB;
+            -- An agent = persona + an optional Claude Code plugin (a folder under
+            -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
+            -- The Harman authority level (ic < lead < manager) a chat started
+            -- from this role acts at on the board (engine.resolve_level).
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
+            -- The scheduled jobs a chat started from this agent begins with:
+            -- [{prompt, cron} | {prompt, interval}], the same shape New chat sends.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS jobs JSONB NOT NULL DEFAULT '[]';
+            -- The Harman plugins a chat from this agent starts with, saved from a
+            -- chat (chatplugins.save_to_template). NULL = just `plugin`. Never
+            -- seeded, so the owner's saved setup survives a builtin re-seed.
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugins JSONB;
+            -- A personal agent belongs to the account that made it: only that
+            -- account sees, edits or deletes it. NULL = shared with every account
+            -- (the builtins, and agents made before agents had owners).
+            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS owner_user_id INTEGER;
+            -- Lenses are views over a PROJECT (two engineer chats share one Map).
+            ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
+            -- Map lens cache: one row per parsed file; re-parsed only when its stamp
+            -- (mtime:size) changes. touched_* is the live "an agent just edited
+            -- this" mark, written by the engine on Write/Edit.
+            CREATE TABLE IF NOT EXISTS code_index (
+              project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              path        TEXT NOT NULL,
+              stamp       TEXT NOT NULL DEFAULT '',
+              symbols     JSONB NOT NULL DEFAULT '[]',
+              imports     JSONB NOT NULL DEFAULT '[]',
+              touched_by  TEXT NOT NULL DEFAULT '',
+              touched_at  DOUBLE PRECISION NOT NULL DEFAULT 0,
+              PRIMARY KEY (project_id, path)
+            );
+            -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
+            -- The JSON files used to be the second persistence layer; this closes
+            -- that split so Postgres is the single source of truth (and the only
+            -- thing a SaaS deployment needs to carry). migrate_legacy_files()
+            -- backfills them once, on first run.
+            CREATE TABLE IF NOT EXISTS loops (
+              id          TEXT PRIMARY KEY,
+              session     TEXT NOT NULL DEFAULT '',
+              path        TEXT NOT NULL DEFAULT '',
+              prompt      TEXT NOT NULL DEFAULT '',
+              interval_sec INTEGER NOT NULL DEFAULT 0,
+              cron        TEXT,
+              next_run    DOUBLE PRECISION NOT NULL DEFAULT 0,
+              runs        INTEGER NOT NULL DEFAULT 0,
+              last_run    DOUBLE PRECISION,
+              last_rc     INTEGER,
+              created     DOUBLE PRECISION NOT NULL DEFAULT 0,
+              model       TEXT NOT NULL DEFAULT '',
+              -- Custom provider preset id this loop's runs should use. '' = inherit
+              -- the resumed session's own provider (the common case). Set to pin a
+              -- loop to a specific endpoint regardless of the session's setting; the
+              -- preset carries the model, so `model` above only applies to Default
+              -- (built-in Claude) runs. Resolved at fire time in run_loop_iteration.
+              provider    TEXT NOT NULL DEFAULT '',
+              enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+              -- WHO scheduled this loop: 'user' (a human, via the UI) or 'harman'
+              -- (an agent, via the gated loop_create action). The loop_control
+              -- setting gates firing per-origin, INDEPENDENT of the automation
+              -- master switch. Existing rows backfill to 'user' (the ALTER below),
+              -- so a human's own schedules keep running after the upgrade.
+              origin      TEXT NOT NULL DEFAULT 'user',
+              -- 'recurring' (the default: cron or interval, re-advances every
+              -- fire) or 'once' (a one-shot `at` task: the scheduler deletes the
+              -- row when it fires — job_runs keeps the audit, so the loops table
+              -- never accumulates spent one-shots).
+              kind        TEXT NOT NULL DEFAULT 'recurring'
+            );
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'user';
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '';
+            ALTER TABLE loops ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'recurring';
+            -- Epoch of the last board event on a card made by someone OTHER than
+            -- the card's own session (a move, comment, edit, dependency), reset
+            -- to 0 once that session acts on the card again. The board sweep
+            -- wakes on this, not on updated_at: a session's own writes are not
+            -- news to it, and waking it on them made it comment "nothing new",
+            -- which bumped updated_at, which woke it again next sweep.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS attention_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
+            -- convMode/effort/favorite/pinned/avatar/archived). The payload is
+            -- free-form JSONB on purpose: the app adds keys over time and a typed
+            -- schema would silently drop any it does not know yet.
+            CREATE TABLE IF NOT EXISTS session_meta (
+              session_id  TEXT PRIMARY KEY,
+              data        JSONB NOT NULL DEFAULT '{}'::jsonb,
+              updated_at  DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS hosts (
+              id             TEXT PRIMARY KEY,
+              label          TEXT NOT NULL DEFAULT '',
+              host           TEXT NOT NULL,
+              "user"         TEXT NOT NULL,
+              port           INTEGER NOT NULL DEFAULT 22,
+              claude_home    TEXT NOT NULL DEFAULT '.claude',
+              password       TEXT NOT NULL DEFAULT '',
+              key_file       TEXT NOT NULL DEFAULT '',
+              key_passphrase TEXT NOT NULL DEFAULT '',
+              created_at     DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS host_env (
+              host  TEXT NOT NULL,
+              key   TEXT NOT NULL,
+              value TEXT NOT NULL,
+              PRIMARY KEY (host, key)
+            );
+            -- Cloud-storage drives: the third leg of the file layer (local /
+            -- SSH host / cloud drive). The bytes live on the vendor; this row
+            -- holds only the OAuth tokens (`config`) and the plugin lifecycle
+            -- (status active|paused, hidden). `kind` selects the adapter in
+            -- viewer/drives.py — a new vendor is one adapter class + one
+            -- registry entry, nothing else.
+            CREATE TABLE IF NOT EXISTS drives (
+              id         TEXT PRIMARY KEY,
+              label      TEXT NOT NULL DEFAULT '',
+              kind       TEXT NOT NULL,
+              config     JSONB NOT NULL DEFAULT '{}'::jsonb,
+              status     TEXT NOT NULL DEFAULT 'active',
+              hidden     BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at DOUBLE PRECISION NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS providers (
+              id            TEXT PRIMARY KEY,
+              name          TEXT NOT NULL DEFAULT '',
+              base_url      TEXT NOT NULL DEFAULT '',
+              model         TEXT NOT NULL DEFAULT '',
+              api_key       TEXT NOT NULL DEFAULT '',
+              context_limit INTEGER NOT NULL DEFAULT 0,
+              is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at    DOUBLE PRECISION NOT NULL
+            );
+            -- Per-model context facts for a connection: {model: {discovered?,
+            -- maxOutput?, override?}} (viewer.providers.model_rows reads it).
+            ALTER TABLE providers ADD COLUMN IF NOT EXISTS model_limits JSONB NOT NULL DEFAULT '{}'::jsonb;
+            -- Legacy: the old single per-connection context_limit seeds the
+            -- default model's override once (while model_limits is still empty).
+            -- It is not zeroed here so a server still running the old code keeps
+            -- working until its restart; every new-code write zeroes it instead.
+            UPDATE providers SET model_limits = jsonb_build_object(model, jsonb_build_object('override', context_limit))
+              WHERE context_limit > 0 AND model <> '' AND model_limits = '{}'::jsonb;
+            -- Append-only history: one row per loop firing, for auditability.
+            -- loop_id is SET NULL (not CASCADE) on delete so a run's audit trail
+            -- OUTLIVES the schedule it came from — a deleted/edited loop must not
+            -- erase the record that it once ran. Bounded purely by retention
+            -- (age + per-loop count, see job_runs_purge), never by unbounded growth.
+            CREATE TABLE IF NOT EXISTS job_runs (
+              id          SERIAL PRIMARY KEY,
+              loop_id     TEXT REFERENCES loops(id) ON DELETE SET NULL,
+              session_id  TEXT NOT NULL DEFAULT '',
+              prompt      TEXT NOT NULL DEFAULT '',
+              status      TEXT NOT NULL DEFAULT 'running',
+              rc          INTEGER,
+              detail      TEXT NOT NULL DEFAULT '',
+              started_at  DOUBLE PRECISION NOT NULL,
+              finished_at DOUBLE PRECISION
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_runs_loop ON job_runs(loop_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_job_runs_started ON job_runs(started_at);
+            -- Singleton key/value store; holds the Harman config and the retention
+            -- policy (job-run history caps — tunable at runtime for SaaS plan tiers).
+            CREATE TABLE IF NOT EXISTS settings (
+              key   TEXT PRIMARY KEY,
+              value JSONB NOT NULL
+            );
+            -- Job-run retention defaults. Kept in settings (not code constants) so a
+            -- future SaaS-admin portal can set per-plan caps without a deploy. DO
+            -- NOTHING so an operator/admin edit always wins over the seed.
+            INSERT INTO settings (key, value) VALUES ('retention',
+              $${"job_runs_days": 90, "job_runs_per_loop": 500}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- Fresh installs get Harman's config seeded (master switch OFF: an
+            -- unattended machine must never start running on its own). DO NOTHING
+            -- so the legacy-file backfill and any later user edit always win.
+            INSERT INTO settings (key, value) VALUES ('harman',
+              $${"automation_enabled": false}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- Loop-firing control. 'mode' is one of user|harman|both|none: which
+            -- loop ORIGINS are licensed to fire. It is a different fact from the
+            -- automation master switch (a runtime halt on the agent side of the
+            -- same set — they intersect at fire time in engine.fire_due_loops).
+            -- Default 'user' — a human's own scheduled loops run out of the box;
+            -- harman-created loops additionally need the master switch on.
+            -- DO NOTHING so a later user edit always wins over the seed.
+            INSERT INTO settings (key, value) VALUES ('loop_control',
+              $${"mode": "user"}$$::jsonb)
+              ON CONFLICT (key) DO NOTHING;
+            -- System-awareness preamble prepended to EVERY session's system prompt
+            -- (engine.append_system_prompt). Without it a session sees the raw
+            -- mcp__viewer__* tool list but is never told it is a node in the Harman
+            -- orchestration system or how the steering rules gate its power. Stored
+            -- here (not a code constant) so it is editable at runtime with no deploy;
+            -- to_jsonb(...::text) makes it a JSON string without escaping the body.
+            -- DO NOTHING so any operator edit always wins over this seed.
+            INSERT INTO settings (key, value) VALUES ('system_preamble',
+              to_jsonb($preamble$You are one agent session inside the Harman system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
+
+Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/analysis/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.
+
+Authority: your power is the weaker of the human owner's role and this session's level: Own work (key ic: its own cards, notes, messages) < Workspace (lead: also projects, loops, columns) < Organization (manager: also org-wide settings). A session's level comes from the agent it was started from (Agents tab) or the owner's per-chat setting; with neither it runs at Own work, the least authority. To the owner say Own work/Workspace/Organization, never the key ic. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.
+
+Steering rules: you may create/edit loops for OTHER sessions, never your own. session_mode_set changes another session's permission mode (up to 'bypass' — no tool gating at all): it is Red, so an agent's request queues for the owner, and a session may never set its own (the owner grants trust, a model never requests it of itself). Agent-scheduled (harman) loops fire only when the loop-control mode (user|harman|both|none) licenses that origin AND the automation master switch (harman.automation_enabled) is ON — it defaults OFF, so nothing agent-made runs unattended. Your own (user) scheduled loops follow the loop-control mode alone: the switch never stops work a human explicitly scheduled. Destructive ops (e.g. loop_delete) queue for the owner's approval rather than executing. Board/card writes are scoped to your level.
+
+## The board pipeline (decisions live on the board)
+Every project's board is the default pipeline: Todo → Doing → Review → Approved → Declined → Blocked → Needs-info → Done. "Review" is the holding state for work that needs the owner's decision — when you are done but a call is required, move your card to Review and comment with the question. The owner decides by moving the card to Approved or Declined, or by commenting; that move or comment reaches you as a [board-watch] wake. On a wake, read the card and its comments (card_comments) and act: Approved means proceed with that work (move it to Done when it is complete), Declined means stop it. If your work is stuck on a dependency, move the card to Blocked and comment on what is stuck; if you need a fact or a decision from the owner, move it to Needs-info and comment with the question — your comment pushes to the owner. A fresh comment on your card is a message for you — answer on the card. Comment on your card to report status: the owner gets a push when an agent comments. Never decide for the owner: a card in Review waits for their call, and a decision in Approved/Declined is theirs to make, not yours.
+
+## Writing for the owner (every card, comment, push, inbox message and chat line)
+The owner reads your words cold — on a phone, hours later, with no memory of your session and often several agents' work interleaved. The recipient has no context beyond the message itself, so write it for a stranger. Never refer to work by a bare number ("card 53", "#82", "the build"): always give the card number AND its title AND a one-line plain-language statement of what that work is, every time you mention it. Every message that needs something from the owner starts with what you need, in one sentence, as a question they can answer with one word or one tap — put context after, never before. If a card is waiting on the owner, its column must say so (Review or Needs-info); a card in Approved or Doing is understood as "the agent is working, nothing is asked of me". Never leave a question for the owner in a column that does not signal it.
+
+## Inbox (the channel — messages both ways)
+Every session owns a mailbox (inbox_list / inbox_send): the owner's words, messages from peer sessions, and the decisions you left for the owner. On a wake, read your inbox first: a fresh message is often the reason for the wake. Send to 'user' to reach the owner (they get a push), or to 'session:<id>' to hand work to a peer (it is woken with your text). Every decision you raise (a question, a plan, an approval, or a card parked in Review/Needs-info) is delivered into the owner's inbox automatically — the "Writing for the owner" standard above applies to its body, since that is exactly the text they will judge from. A snoozed or skipped decision is never dropped: it resurfaces on the next tick. The deciding tap itself stays in the chat UI; the inbox is the channel, not a second decision system. The owner sees every mailbox, including messages between sessions — there is no private channel; write accordingly.
+
+## Ask for help early (guessing is the expensive failure)
+The owner is a collaborator, not an escalation of last resort. Send to 'user' the moment any of these is true: a fact you need exists only in the owner's head (a credential, a preference, a business decision, what "done" means); you have made two attempts at the same problem and are about to try a third; a path forward would spend real money, touch shared infrastructure, or is hard to reverse; or two reasonable interpretations of the task lead to different work. One message, one question, answerable in a tap — then keep working on whatever does not depend on the answer; never stall the whole task on it and never sit silent. Guessing at the owner's intent and discovering the miss an hour later costs far more than the question. Peers are the other half of collaboration: before you rebuild something, ask the session that owns it (session_list / inbox_send to 'session:<id>') — it has the context you lack, and a handoff to the right owner beats a parallel implementation. Asking is not weakness; a session that asks well is the one the owner trusts with more.
+
+## Decisions you raise (native tools, delivered by the system)
+Asking the owner a question is Claude's built-in AskUserQuestion; proposing a plan for sign-off is ExitPlanMode; a gated tool call raises an approval. All three persist when your run ends, land in the owner's inbox as decisions with full context, and resume your session with the answer — never build a second ask path (no polling, no "did you see my question" messages). Write the question or plan body to the "Writing for the owner" standard: it is the only text the owner will judge from.
+
+Full design: docs_read ORCHESTRATOR_MCP.md (§8A is the shipped tool list); docs_read system-status shows this machine's live posture (automation switch, loop mode, this preamble).
+
+## Work discipline (board = the durable ledger, notes = the durable knowledge)
+In-conversation todos are scratch for the current task only. Work that outlives this conversation — parked or deferred items, follow-ups, work handed to another session — becomes a board card via card_create before the session ends. When asked what work is pending, answer from the board (card_list), not from memory. If your card cannot move until another card is done, record that with card_dep_add instead of waiting silently — the owner sees the same edge. Knowledge that outlives the conversation — research, a decision and why it was taken, meeting notes — goes in a note (note_create), not in chat text; read note_list before researching what a peer may already have written. A repeatable PROCEDURE a teammate could follow (how to deploy X, how to diagnose Y) is a skill, not a note: skill_list shows what the team already knows (each skill is invocable as /<name>), skill_read gives the full text, and skill_propose adds what you learned so every session inherits it. The owner sees the same board and notes; nothing should live only in a session's head.$preamble$::text))
+              ON CONFLICT (key) DO NOTHING;
+            -- The Employees roster retired (authority = agent role / per-chat
+            -- level): rewrite those lines in an installed preamble. Each replace
+            -- is a no-op when its old text is absent (an operator rewrite).
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$org — employee_list, project_list,$o$, $n$org — project_list,$n$))
+              WHERE key = 'system_preamble' AND position($o$org — employee_list, project_list,$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$card_create/move/assign/update/comment$o$, $n$card_create/move/update/comment$n$))
+              WHERE key = 'system_preamble' AND position($o$card_create/move/assign/update/comment$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$trust — session_mode_set;$o$, $n$trust — session_mode_set, session_level_set;$n$))
+              WHERE key = 'system_preamble' AND position($o$trust — session_mode_set;$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.$o$, $n$A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs at ic, the least authority. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.$n$))
+              WHERE key = 'system_preamble' AND position($o$A session not linked to an employee still authenticates — at ic, the least authority: you can observe the whole system, but most writes are gated and will queue for the owner's approval or be refused.$o$ in value #>> '{}') > 0;
+            -- "ic" is an internal key, not words a person knows: name the levels.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$this session's level (ic < lead < manager). A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs at ic, the least authority.$o$, $n$this session's level: Worker (key ic: its own cards, notes, messages) < Lead (lead: also projects, loops, columns) < Manager (manager: also org settings). A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs as a Worker, the least authority. To the owner say Worker/Lead/Manager, never the key ic.$n$))
+              WHERE key = 'system_preamble' AND position($o$this session's level (ic < lead < manager).$o$ in value #>> '{}') > 0;
+            -- Levels renamed by REACH, not job title (so they can't be confused
+            -- with an agent like "Product Manager"): Worker→Own work, Lead→
+            -- Workspace, Manager→Organization. Rewrite the whole level clause in
+            -- one replace; a no-op once converged or on an operator rewrite.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$this session's level: Worker (key ic: its own cards, notes, messages) < Lead (lead: also projects, loops, columns) < Manager (manager: also org settings). A session's level comes from its agent role (Agents tab) or the owner's per-chat setting; with neither it runs as a Worker, the least authority. To the owner say Worker/Lead/Manager, never the key ic.$o$, $n$this session's level: Own work (key ic: its own cards, notes, messages) < Workspace (lead: also projects, loops, columns) < Organization (manager: also org-wide settings). A session's level comes from the agent it was started from (Agents tab) or the owner's per-chat setting; with neither it runs at Own work, the least authority. To the owner say Own work/Workspace/Organization, never the key ic.$n$))
+              WHERE key = 'system_preamble' AND position($o$this session's level: Worker (key ic:$o$ in value #>> '{}') > 0;
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$handed to another session or employee —$o$, $n$handed to another session —$n$))
+              WHERE key = 'system_preamble' AND position($o$handed to another session or employee —$o$ in value #>> '{}') > 0;
+            -- Note discussions shipped after installs seeded their preamble:
+            -- name the tools in the notes line. A targeted, idempotent edit —
+            -- an operator-rewritten preamble without that line is left alone.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$notes — note_list, note, note_create/update/delete;$o$,
+                $n$notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree);$n$))
+              WHERE key = 'system_preamble'
+                AND position('note_comments' in value #>> '{}') = 0;
+            -- Sessions run headless (claude -p): name what that means for
+            -- long-running processes. Appended once; a no-op when present or
+            -- when an operator rewrote the preamble without the board section.
+            UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
+
+## Running headless (claude -p, not the interactive CLI)
+You run as `claude -p` (print mode), not the interactive CLI: no terminal watches your output, and nothing you start in the foreground outlives your turn. Never block a turn on a long-running process (a server, a watcher, a dev build). Before starting one, check whether it is already running (pgrep -fl '<command>'; for a port, /usr/sbin/lsof -nP -iTCP:PORT -sTCP:LISTEN on macOS or ss -ltnp on Linux) and reuse it — a duplicate wastes the machine, fights over the port and confuses the next session. When you must start one, detach it (nohup <cmd> > <log> 2>&1 & disown) — a tool's own background mode (run_in_background) is killed when your turn ends, so it is not detached — then record its PID, port and log path on your card so the next session finds it instead of starting another. Stop throwaway processes you started once the work is done.$n$)
+              WHERE key = 'system_preamble'
+                AND position('## Running headless' in value #>> '{}') = 0
+                AND position('## Work discipline' in value #>> '{}') > 0;
+            -- The first headless text named a bare `lsof` (not on launchd's
+            -- PATH) and a plain `&` (a tool's background task still dies with
+            -- the turn). Rewrite installs that hold it; no-op once updated.
+            UPDATE settings SET value = to_jsonb(replace(replace(value #>> '{}',
+                $o$check whether it is already running (lsof -i :PORT, pgrep -f '<command>') and reuse it$o$, $n$check whether it is already running (pgrep -fl '<command>'; for a port, /usr/sbin/lsof -nP -iTCP:PORT -sTCP:LISTEN on macOS or ss -ltnp on Linux) and reuse it$n$),
+                $o$detach it (nohup <cmd> > <log> 2>&1 &), then$o$, $n$detach it (nohup <cmd> > <log> 2>&1 & disown) — a tool's own background mode (run_in_background) is killed when your turn ends, so it is not detached — then$n$))
+              WHERE key = 'system_preamble'
+                AND position('lsof -i :PORT' in value #>> '{}') > 0;
+            -- Canvas: name the tools, and the one rule that keeps the pane rare
+            -- (a picture only when it beats prose). Two idempotent edits — a
+            -- fresh seed already names the tools but still needs the section.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$inbox — inbox_list, inbox_send.$o$,
+                $n$inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.$n$))
+              WHERE key = 'system_preamble'
+                AND position('canvas_show' in value #>> '{}') = 0;
+            UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
+
+## Canvas (show, don't tell — only when a picture wins)
+canvas_show opens a visual pane beside the chat on the owner's screen: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update it at milestones, and say in chat what changed.$n$)
+              WHERE key = 'system_preamble'
+                AND position('## Canvas (' in value #>> '{}') = 0
+                AND position('## Work discipline' in value #>> '{}') > 0;
+            -- Per-reader unread cursor: the last time a given reader OPENED a
+            -- session. A session is unread for that reader when it changed after
+            -- their cursor. Server-side (not per-device) so the signal is the same
+            -- on web, mobile, and to an agent asking over MCP. `reader` is the
+            -- resolved principal actor (user:<name> for a human — stable across
+            -- their devices — or session:<label> for an agent), never a
+            -- device id. No FK to sessions: transcripts are files, not rows.
+            CREATE TABLE IF NOT EXISTS session_seen (
+              reader    TEXT NOT NULL,
+              session   TEXT NOT NULL,
+              last_seen DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (reader, session)
+            );
+            -- First-party product usage: what the owner's clients actually touch.
+            -- One row per tap / screen view / control-seen / feedback, written by
+            -- the owner's own web and phone clients to the owner's own server —
+            -- nothing leaves the box. Bounded by retention (ui_events_days).
+            CREATE TABLE IF NOT EXISTS ui_events (
+              id       BIGSERIAL PRIMARY KEY,
+              ts       DOUBLE PRECISION NOT NULL,
+              actor    TEXT NOT NULL DEFAULT '',
+              client   TEXT NOT NULL DEFAULT '',
+              surface  TEXT NOT NULL DEFAULT '',
+              element  TEXT NOT NULL DEFAULT '',
+              kind     TEXT NOT NULL,
+              detail   TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS ui_events_ts ON ui_events (ts);
+            -- Intake channels: inbound doors from the outside world onto ONE board.
+            -- Anything that can POST (a website form, a CI job, a monitoring alert,
+            -- the owner's own in-app feedback) lands as a card on `project_id`,
+            -- bound to `session_id` so the board-watch wake hands it to that
+            -- session — the same path as a card the owner types. Only the token's
+            -- sha256 is kept; the token itself is shown once, at creation.
+            -- `app_feedback` marks the (at most one) channel that also receives
+            -- the owner's in-app feedback notes (viewer.usage kind 'feedback').
+            CREATE TABLE IF NOT EXISTS intake_channels (
+              id           TEXT PRIMARY KEY,
+              name         TEXT NOT NULL,
+              project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              session_id   TEXT NOT NULL DEFAULT '',
+              token_hash   TEXT NOT NULL,
+              app_feedback BOOLEAN NOT NULL DEFAULT FALSE,
+              created_by   TEXT NOT NULL DEFAULT '',
+              created_at   DOUBLE PRECISION NOT NULL,
+              last_used    DOUBLE PRECISION NOT NULL DEFAULT 0,
+              received     INTEGER NOT NULL DEFAULT 0
+            );
+            -- Restart requests for the hourly maintenance window (viewer/
+            -- maintenance.py). Agents queue here instead of restarting the
+            -- server themselves; the :50 window applies them all with one
+            -- restart. status: queued → restarting → done | failed.
+            CREATE TABLE IF NOT EXISTS restart_requests (
+              id           SERIAL PRIMARY KEY,
+              requested_by TEXT NOT NULL DEFAULT '',
+              session_id   TEXT NOT NULL DEFAULT '',
+              commit_sha   TEXT NOT NULL DEFAULT '',
+              reason       TEXT NOT NULL DEFAULT '',
+              status       TEXT NOT NULL DEFAULT 'queued',
+              created_at   DOUBLE PRECISION NOT NULL,
+              handled_at   DOUBLE PRECISION NOT NULL DEFAULT 0
+            );
             """
         )
-    # Seed the one board's default columns (idempotent).
-    board_columns_seed()
+    _seed_agent_templates()
+    migrate_legacy_files()
+    # The decision pipeline is a board SHAPE, like the four defaults above:
+    # every project carries it, so every start runs the idempotent ensure
+    # (no-op on an install that already converged). One bad project must not
+    # wedge the server's boot, so each is guarded.
+    for proj in project_list():
+        try:
+            board_columns_ensure(proj["id"])
+        except Exception:
+            pass
+    # Version + schema stamp. The additive DDL above already ran idempotently;
+    # now apply any ordered steps and record what this boot converged to. The
+    # stamp is an upsert (NOT seed-once) so app_meta always reflects the running
+    # release — which is how /healthz can report the live version and detect a
+    # half-applied upgrade (code on disk vs what the DB was last stamped with).
+    #
+    # Skipped under PREFLIGHT: a spare-port preflight shares the live server's
+    # Postgres, and both of these MUTATE it — the stamp rewrites app_meta (it
+    # would mislabel the shared DB as the preflight code's version), and
+    # _run_migrations is the seam for ordered/destructive steps that must never
+    # run against a live DB from a validation boot. The additive IF-NOT-EXISTS
+    # DDL above is idempotent and stays unguarded; only the forward-moving
+    # convergence is gated. The real restart does the stamp.
+    if not config.VIEWER_PREFLIGHT:
+        meta = setting_get("app_meta", {}) or {}
+        _run_migrations(int(meta.get("schema_version", 0)))
+        setting_set("app_meta", {
+            "version": config.VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "stamped_at": time.time(),
+        })
 
 
 def close_pool():
@@ -197,8 +851,13 @@ def user_count():
 
 
 def create_user(username, password):
-    """Create a user; returns {id, username}. Raises ValueError on bad input or a
-    taken username."""
+    """Create a user; returns {id, username, role}. Raises ValueError on bad input
+    or a taken username.
+
+    The FIRST account is the owner: signup closes once a user exists
+    (routes/auth.py), so the account that bootstraps an install is by definition
+    the person who owns it. Everyone created after starts as `viewer` and is
+    promoted deliberately — authority is granted, never assumed."""
     username = (username or "").strip()
     # A username or an email address.
     if not re.fullmatch(r"[A-Za-z0-9._%+@-]{3,64}", username):
@@ -208,11 +867,18 @@ def create_user(username, password):
     salt = secrets.token_hex(16)
     try:
         with _db() as cur:
+            # Decided in SQL, in the same statement as the INSERT, so two
+            # concurrent first-signups cannot both see an empty table and both
+            # become owner.
             cur.execute(
-                "INSERT INTO users(username, pw_hash, salt, created_at) VALUES(%s,%s,%s,%s) RETURNING id",
+                "INSERT INTO users(username, pw_hash, salt, role, created_at) "
+                "VALUES(%s,%s,%s,"
+                "  CASE WHEN EXISTS(SELECT 1 FROM users) THEN 'viewer' ELSE 'owner' END,"
+                "  %s) RETURNING id, role",
                 (username, _hash(password, salt), salt, time.time()),
             )
-            return {"id": cur.fetchone()["id"], "username": username}
+            row = cur.fetchone()
+            return {"id": row["id"], "username": username, "role": row["role"]}
     except psycopg2.IntegrityError:
         raise ValueError("That username is taken")
 
@@ -225,14 +891,14 @@ def delete_user(username):
 
 
 def verify_user(username, password):
-    """{id, username} if the password matches, else None (constant-time compare)."""
+    """{id, username, role} if the password matches, else None (constant-time compare)."""
     with _db() as cur:
         cur.execute("SELECT * FROM users WHERE username = %s", ((username or "").strip(),))
         row = cur.fetchone()
     if not row:
         return None
     if hmac.compare_digest(_hash(password or "", row["salt"]), row["pw_hash"]):
-        return {"id": row["id"], "username": row["username"]}
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
     return None
 
 
@@ -247,7 +913,7 @@ def create_session(user_id):
 
 
 def user_for_session(token):
-    """{id, username} for a live session token, else None. Cached ~60s so the
+    """{id, username, role} for a live session token, else None. Cached ~60s so the
     per-request auth check isn't a DB round-trip every time."""
     if not token:
         return None
@@ -258,7 +924,7 @@ def user_for_session(token):
         return hit[0]
     with _db() as cur:
         cur.execute(
-            "SELECT u.id, u.username, s.expires_at FROM sessions s "
+            "SELECT u.id, u.username, u.role, s.expires_at FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token = %s",
             (token,),
         )
@@ -266,7 +932,8 @@ def user_for_session(token):
         if row and row["expires_at"] < now:
             cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
             row = None
-    user = {"id": row["id"], "username": row["username"]} if row else None
+    user = ({"id": row["id"], "username": row["username"], "role": row["role"]}
+            if row else None)
     with _session_cache_lock:
         # Bound the cache: on overflow drop the oldest entry (FIFO) so a stream of
         # distinct/invalid tokens can't grow it without limit.
@@ -274,6 +941,24 @@ def user_for_session(token):
             _session_cache.pop(next(iter(_session_cache)), None)
         _session_cache[token] = (user, now)
     return user
+
+
+def owner_user_id():
+    """The install owner's account id — whose personal agents an unattended
+    agent session (no logged-in human) acts for. None before an owner exists."""
+    with _db() as cur:
+        cur.execute("SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1")
+        row = cur.fetchone()
+    return row["id"] if row else None
+
+
+def owner_role():
+    """The install owner's role, for requests with no logged-in human (a loop or
+    cron spawn). Returns 'owner' once an owner account exists, else '' — a fresh
+    install with no accounts confers no authority rather than assuming it."""
+    with _db() as cur:
+        cur.execute("SELECT 1 FROM users WHERE role = 'owner' LIMIT 1")
+        return "owner" if cur.fetchone() else ""
 
 
 def delete_session(token):
@@ -301,17 +986,26 @@ def set_prefs(user_id, data):
         )
 
 
-def add_push_token(user_id, token, platform="ios"):
+def add_push_token(user_id, token, platform="ios", app_version=None, app_build=None):
     """Register a device push token for a user. Idempotent: re-registering the
-    same token re-points it at this user (a device can only serve one account)."""
+    same token re-points it at this user (a device can only serve one account).
+    app_version/app_build are what the client declares it runs. TestFlight
+    builds share one version string (0.1.0) and differ only in the build
+    number, so the build is the identity that matters."""
     if not token:
         return
     with _db() as cur:
         cur.execute(
-            "INSERT INTO push_tokens(token, user_id, platform, created_at) VALUES(%s,%s,%s,%s) "
+            "INSERT INTO push_tokens(token, user_id, platform, created_at, app_version, app_build) "
+            "VALUES(%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, "
-            "platform = excluded.platform, created_at = excluded.created_at",
-            (token, user_id, platform or "ios", time.time()),
+            "platform = excluded.platform, created_at = excluded.created_at, "
+            # COALESCE: a pre-telemetry build re-registering must not erase a
+            # newer declaration for the same token.
+            "app_version = COALESCE(excluded.app_version, push_tokens.app_version), "
+            "app_build = COALESCE(excluded.app_build, push_tokens.app_build)",
+            (token, user_id, platform or "ios", time.time(),
+             app_version or None, app_build or None),
         )
 
 
@@ -321,13 +1015,6 @@ def remove_push_token(token):
         return
     with _db() as cur:
         cur.execute("DELETE FROM push_tokens WHERE token = %s", (token,))
-
-
-def push_tokens_for_user(user_id):
-    """All device tokens registered for a user (may be several devices)."""
-    with _db() as cur:
-        cur.execute("SELECT token FROM push_tokens WHERE user_id = %s", (user_id,))
-        return [r["token"] for r in cur.fetchall()]
 
 
 def all_push_tokens():
@@ -345,50 +1032,197 @@ def all_push_tokens():
 # open question per session at a time (PRIMARY KEY on session_id).
 
 
-def pending_question_set(session_id, tool_use_id, questions, host="local"):
-    """Record (or replace) the open question for a session, remembering which host
-    the run was on so the answer can resume there."""
+def pending_question_set(session_id, tool_use_id, questions, host="local", run_id=""):
+    """Record (or replace) the open question for a session, remembering which
+    host and which run it came from, and returning the row's new revision.
+
+    The row is keyed by session (one open question per session, replaced on
+    re-ask). The revision is the request's version within that row: it bumps
+    when the SAME (run, tool) is re-recorded and resets to 1 when a different
+    run or a different question replaces it. A cleanup that carries the
+    revision can only ever match the exact request it belongs to — see
+    pending_question_clear_exact."""
     with _db() as cur:
         cur.execute(
-            "INSERT INTO pending_questions(session_id, tool_use_id, questions, status, host, created_at) "
-            "VALUES(%s,%s,%s,'open',%s,%s) "
+            "INSERT INTO pending_questions(session_id, tool_use_id, questions, status, host, run_id, created_at) "
+            "VALUES(%s,%s,%s,'open',%s,%s,%s) "
             "ON CONFLICT(session_id) DO UPDATE SET tool_use_id = excluded.tool_use_id, "
             "questions = excluded.questions, status = 'open', host = excluded.host, "
-            "created_at = excluded.created_at",
-            (session_id, tool_use_id, Json(questions or []), host or "local", time.time()),
+            "run_id = excluded.run_id, created_at = excluded.created_at, "
+            "revision = CASE WHEN pending_questions.run_id = excluded.run_id "
+            "AND pending_questions.tool_use_id = excluded.tool_use_id "
+            "THEN pending_questions.revision + 1 ELSE 1 END "
+            "RETURNING revision",
+            (session_id, tool_use_id, Json(questions or []), host or "local",
+             run_id or "", time.time()),
         )
+        row = cur.fetchone()
+        return int(row["revision"]) if row else 1
 
 
 def pending_question_get_open(session_id):
     """The open question for a session, else None. Shape:
-    {tool_use_id, questions, host}."""
+    {tool_use_id, questions, host, run_id, revision}."""
     with _db() as cur:
         cur.execute(
-            "SELECT tool_use_id, questions, host FROM pending_questions "
+            "SELECT tool_use_id, questions, host, run_id, revision FROM pending_questions "
             "WHERE session_id = %s AND status = 'open'",
             (session_id,),
         )
         row = cur.fetchone()
     return {"tool_use_id": row["tool_use_id"], "questions": row["questions"],
-            "host": row["host"]} if row else None
+            "host": row["host"], "run_id": row["run_id"] or "",
+            "revision": int(row["revision"] or 1)} if row else None
 
 
-def pending_question_resolve(session_id, tool_use_id):
-    """Mark the session's open question answered. Returns True if one was open and
-    matched (guards a double-submit / stale card). Deletes the row (answered
-    questions carry no further state — the resumed run is the record)."""
+def pending_question_open_all():
+    """Every OPEN question, across all sessions, oldest first — the raw rows
+    for the cross-session decision queue (card #60). One row per session (the
+    table is keyed by session); shaping lives in decisions.open_decisions."""
     with _db() as cur:
         cur.execute(
-            "DELETE FROM pending_questions WHERE session_id = %s AND tool_use_id = %s AND status = 'open'",
-            (session_id, tool_use_id),
+            "SELECT session_id, tool_use_id, questions, host, run_id, revision, created_at "
+            "FROM pending_questions WHERE status = 'open' ORDER BY created_at",
+        )
+        rows = cur.fetchall()
+    return [{"session_id": r["session_id"], "tool_use_id": r["tool_use_id"],
+             "questions": r["questions"], "host": r["host"] or "local",
+             "run_id": r["run_id"] or "", "revision": int(r["revision"] or 1),
+             "created_at": float(r["created_at"] or 0)} for r in rows]
+
+
+def pending_question_clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
+    """Delete the session's question row only if it still holds exactly the
+    identity of the request being cleaned up (tool + host + run + revision).
+    A session-only DELETE is the wrong primitive: the row is keyed by session
+    and replaced on re-ask, so a stale cleanup from an old waiter would
+    otherwise erase a NEWER request the same session recorded meanwhile.
+    Returns True if a row was removed."""
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM pending_questions "
+            "WHERE session_id = %s AND tool_use_id = %s AND host = %s "
+            "AND run_id = %s AND revision = %s AND status = 'open'",
+            (session_id, tool_use_id, host or "local", run_id or "", int(revision or 0)),
         )
         return cur.rowcount > 0
+
+
+def decision_answer_accept(session_id, tool_use_id, host="local", run_id="", revision=0):
+    """First-writer-wins acceptance of an answer for the session's open
+    question: consumes the exact row. Returns True if THIS call won the race —
+    a concurrent second answer (another device, a double tap) finds the row
+    gone and loses instead of double-firing the session. Acceptance is
+    committed before any delivery, so the decision is durable at the moment
+    it is made."""
+    return pending_question_clear_exact(session_id, tool_use_id, host, run_id, revision)
 
 
 def pending_question_delete(session_id):
     """Drop any pending question for a session (e.g. session deleted)."""
     with _db() as cur:
         cur.execute("DELETE FROM pending_questions WHERE session_id = %s", (session_id,))
+
+
+# ---- session tokens (survive a server restart) --------------------------------
+# The per-run perm/kanban tokens live in the server's in-memory CHAT_JOBS, which
+# is wiped on restart. Persist them here so a session's still-running MCP tools
+# (and the durable pending question/plan that references them) stay authorized
+# across a restart. Cleared when the run's job is reaped.
+
+def inflight_run_start(session_id, host, cwd, mode, model, started):
+    """Record a turn as in flight. `resumes` is kept across upserts: it counts
+    automatic restart-resumes and only resets when a run ends normally (row
+    deleted), so a turn that keeps killing the server cannot resume forever."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at) "
+            "VALUES(%s,%s,%s,%s,%s,'[]',%s) ON CONFLICT (session_id) DO UPDATE SET "
+            "host = EXCLUDED.host, cwd = EXCLUDED.cwd, mode = EXCLUDED.mode, "
+            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at",
+            (session_id, host or "local", cwd or "", mode or "", model or "", started))
+
+
+def inflight_run_queue(session_id, queue):
+    with _db() as cur:
+        cur.execute("UPDATE inflight_runs SET queue = %s WHERE session_id = %s",
+                    (json.dumps(list(queue)), session_id))
+
+
+def inflight_run_clear(session_id, started=None):
+    """Delete the row; with `started`, only if it is still that run's row (a
+    follow-up run of the same session may already have replaced it)."""
+    with _db() as cur:
+        if started is None:
+            cur.execute("DELETE FROM inflight_runs WHERE session_id = %s", (session_id,))
+        else:
+            cur.execute("DELETE FROM inflight_runs WHERE session_id = %s AND started_at = %s",
+                        (session_id, started))
+
+
+def inflight_runs_all():
+    with _db() as cur:
+        cur.execute("SELECT * FROM inflight_runs ORDER BY started_at")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def inflight_run_get(session_id, started):
+    """The row of the run that started at `started`, or None (already replaced)."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM inflight_runs WHERE session_id = %s AND started_at = %s",
+                    (session_id, started))
+        r = cur.fetchone()
+        return dict(r) if r else None
+
+
+def inflight_run_bump_resumes(session_id):
+    with _db() as cur:
+        cur.execute("UPDATE inflight_runs SET resumes = resumes + 1 WHERE session_id = %s",
+                    (session_id,))
+
+
+def session_token_set(session_id, perm_token, kanban_token, level="ic", cwd="",
+                      host="local"):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_tokens(session_id, perm_token, kanban_token, "
+            "level, cwd, host, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (session_id) DO UPDATE SET "
+            "perm_token = EXCLUDED.perm_token, kanban_token = EXCLUDED.kanban_token, "
+            "level = EXCLUDED.level, "
+            "cwd = EXCLUDED.cwd, host = EXCLUDED.host, created_at = EXCLUDED.created_at",
+            (session_id, perm_token or "", kanban_token or "",
+             level or "ic", cwd or "", host or "local", _now()),
+        )
+
+
+def session_token_get(session_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM session_tokens WHERE session_id = %s", (session_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def session_token_delete(session_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM session_tokens WHERE session_id = %s", (session_id,))
+
+
+def session_tokens_purge_stale(live_session_ids, max_age_secs):
+    """Drop credentials whose run is gone. The per-job reaper only sees runs THIS
+    process started, so a restart leaves every previous run's row behind and a
+    dead session's token would authorize MCP calls forever. A row is stale when
+    no live job holds it and it is older than max_age_secs — the age floor keeps
+    the one legitimate cross-restart case (a child that outlived the server and
+    is still calling back) authorized. Returns the rows removed."""
+    cutoff = _now() - float(max_age_secs)
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM session_tokens WHERE created_at < %s "
+            "AND NOT (session_id = ANY(%s)) RETURNING session_id",
+            (cutoff, list(live_session_ids)))
+        return len(cur.fetchall())
 
 
 # ---- pending plans (ExitPlanMode approval) -------------------------------------
@@ -419,6 +1253,32 @@ def pending_plan_get_open(session_id):
             "host": row["host"]} if row else None
 
 
+def pending_plan_open_all():
+    """Every OPEN plan, across all sessions, oldest first — the raw rows for
+    the cross-session decision queue (card #60). One row per session."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT session_id, tool_use_id, plan, host, created_at "
+            "FROM pending_plans WHERE status = 'open' ORDER BY created_at",
+        )
+        rows = cur.fetchall()
+    return [{"session_id": r["session_id"], "tool_use_id": r["tool_use_id"],
+             "plan": r["plan"], "host": r["host"] or "local",
+             "created_at": float(r["created_at"] or 0)} for r in rows]
+
+
+def pending_plan_resolve(session_id, tool_use_id):
+    """Mark the session's open plan decided. Returns True if one was open and
+    matched (guards a double-submit / a second device deciding the same plan).
+    Deletes the row — the resumed run is the record, as for questions."""
+    with _db() as cur:
+        cur.execute(
+            "DELETE FROM pending_plans WHERE session_id = %s AND tool_use_id = %s AND status = 'open'",
+            (session_id, tool_use_id),
+        )
+        return cur.rowcount > 0
+
+
 def pending_plan_delete(session_id):
     with _db() as cur:
         cur.execute("DELETE FROM pending_plans WHERE session_id = %s", (session_id,))
@@ -432,50 +1292,16 @@ def _now():
     return time.time()
 
 
-# Employees -------------------------------------------------------------------
-
-def employee_create(name, role="", provider="", model="", conv_mode="chat", avatar="", status="active"):
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO employees(name, role, provider, model, conv_mode, avatar, status, created_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (name, role, provider, model, conv_mode, avatar, status, _now()),
-        )
-        return dict(cur.fetchone())
-
-
-def employee_list():
-    with _db() as cur:
-        cur.execute("SELECT * FROM employees ORDER BY id")
-        return [dict(r) for r in cur.fetchall()]
-
-
-def employee_get(emp_id):
-    with _db() as cur:
-        cur.execute("SELECT * FROM employees WHERE id = %s", (emp_id,))
-        row = cur.fetchone()
-    return dict(row) if row else None
-
-
-def employee_update(emp_id, **fields):
-    """Update the given columns (name/role/provider/model/conv_mode/avatar/status)."""
-    allowed = ("name", "role", "provider", "model", "conv_mode", "avatar", "status")
-    sets = {k: v for k, v in fields.items() if k in allowed}
-    if not sets:
-        return employee_get(emp_id)
-    cols = ", ".join(f"{k} = %s" for k in sets)
-    with _db() as cur:
-        cur.execute(f"UPDATE employees SET {cols} WHERE id = %s RETURNING *",
-                    (*sets.values(), emp_id))
-        row = cur.fetchone()
-    return dict(row) if row else None
-
-
-def employee_set_status(emp_id, status):
-    return employee_update(emp_id, status=status)
-
-
 # Projects --------------------------------------------------------------------
+
+# Every project gets this column layout the moment it's created. The decision
+# pipeline (Review = needs the owner's call, then Approved / Declined) sits
+# between Doing and Done; Done stays last (task_done and the position fallbacks
+# key on the final column). New projects get the full tuple here; projects
+# created before the decision columns existed are fixed up by
+# board_columns_ensure at every server start (idempotent no-op once done).
+_DEFAULT_COLUMNS = orglogic.PIPELINE_COLUMNS
+
 
 def project_create(name, description="", host="local", cwd="", created_by=""):
     with _db() as cur:
@@ -484,7 +1310,13 @@ def project_create(name, description="", host="local", cwd="", created_by=""):
             "VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
             (name, description, host, cwd, created_by, _now()),
         )
-        return dict(cur.fetchone())
+        proj = dict(cur.fetchone())
+        for i, cname in enumerate(_DEFAULT_COLUMNS):
+            cur.execute(
+                "INSERT INTO board_columns(project_id, name, position) VALUES(%s,%s,%s)",
+                (proj["id"], cname, i),
+            )
+    return proj
 
 
 def project_list():
@@ -500,43 +1332,248 @@ def project_get(project_id):
     return dict(row) if row else None
 
 
-# Board columns (the ONE board's layout) --------------------------------------
-
-_DEFAULT_COLUMNS = ("Todo", "Doing", "Review", "Done")
-
-
-def board_columns_seed():
-    """Idempotently seed the default columns if the board has none yet."""
+def project_get_by_cwd(host, cwd):
+    cwd = _norm_cwd(host, cwd)
     with _db() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM board_columns")
-        if cur.fetchone()["n"]:
-            return
-        for i, name in enumerate(_DEFAULT_COLUMNS):
-            cur.execute("INSERT INTO board_columns(name, position) VALUES(%s,%s)", (name, i))
+        cur.execute("SELECT * FROM projects WHERE host = %s AND cwd = %s ORDER BY id LIMIT 1",
+                    (host, cwd))
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
-def board_columns_list():
+def project_ensure(host, cwd, name, created_by=""):
+    """Find-or-create the org project for a (host, cwd) directory. The single
+    bridge between the LHS's cwd-keyed projects and the org board — resolved
+    server-side so no client duplicates the mapping. cwd is normalized (tilde
+    expanded on local) so the web entry point and a spawned agent session, which
+    may pass the same dir in different forms, always land on ONE project. New
+    projects get the default columns via project_create."""
+    cwd = _norm_cwd(host, cwd)
+    existing = project_get_by_cwd(host, cwd)
+    if existing:
+        return existing
+    return project_create(name or cwd, "", host, cwd, created_by)
+
+
+def project_delete(project_id, move_to=None):
+    """Delete a project (its board) in one transaction. With `move_to`, its cards
+    and notes join that project first — each card into the column of the same
+    name, else the target's first column — and sessions bound to it rebind there,
+    so no work item is left on no board. Without it the FKs decide: cards and
+    notes keep their rows with project NULL, columns/intake/code index cascade.
+    Returns the deleted row, or None if it did not exist."""
     with _db() as cur:
-        cur.execute("SELECT * FROM board_columns ORDER BY position, id")
+        cur.execute("SELECT * FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        if move_to is not None:
+            cur.execute(
+                "UPDATE cards c SET project_id = %(to)s, column_id = COALESCE("
+                "  (SELECT t.id FROM board_columns s JOIN board_columns t "
+                "     ON t.project_id = %(to)s AND lower(t.name) = lower(s.name) "
+                "   WHERE s.id = c.column_id ORDER BY t.position LIMIT 1),"
+                "  (SELECT id FROM board_columns WHERE project_id = %(to)s "
+                "   ORDER BY position, id LIMIT 1)) "
+                "WHERE c.project_id = %(from)s",
+                {"to": move_to, "from": project_id})
+            cur.execute("UPDATE notes SET project_id = %s WHERE project_id = %s",
+                        (move_to, project_id))
+            cur.execute("UPDATE session_meta SET data = data || jsonb_build_object("
+                        "'kanbanProject', %s::text) WHERE data->>'kanbanProject' = %s",
+                        (str(move_to), str(project_id)))
+        else:
+            cur.execute("UPDATE session_meta SET data = data - 'kanbanProject' "
+                        "WHERE data->>'kanbanProject' = %s", (str(project_id),))
+        cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+    return dict(row)
+
+
+def project_card_count(project_id):
+    with _db() as cur:
+        cur.execute("SELECT count(*) AS n FROM cards WHERE project_id = %s", (project_id,))
+        return cur.fetchone()["n"]
+
+
+# Lenses: views over a project that an agent turns on (Software Engineer → the
+# code Map). A closed set — each needs its own server code and UI.
+LENSES = ("map",)
+
+
+def project_lens_enable(host, cwd, lens, name=""):
+    """Turn a lens on for the (host, cwd) project, creating the project if
+    needed. Idempotent; returns the project row."""
+    if lens not in LENSES:
+        raise ValueError(f"unknown lens: {lens}")
+    project = project_ensure(host, cwd, name)
+    with _db() as cur:
+        cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
+                    "WHERE id = %s AND NOT lenses ? %s RETURNING *",
+                    (lens, project["id"], lens))
+        row = cur.fetchone()
+    return dict(row) if row else project
+
+
+def project_lens_set(project_id, lens, on):
+    """The owner's switch for one lens on one project. Returns the new list."""
+    if lens not in LENSES:
+        raise ValueError(f"unknown lens: {lens}")
+    with _db() as cur:
+        if on:
+            cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
+                        "WHERE id = %s AND NOT lenses ? %s", (lens, project_id, lens))
+        else:
+            cur.execute("UPDATE projects SET lenses = lenses - %s WHERE id = %s",
+                        (lens, project_id))
+        cur.execute("SELECT lenses FROM projects WHERE id = %s", (project_id,))
+        row = cur.fetchone()
+    return row["lenses"] if row else None
+
+
+# Code index (the Map lens's parse cache) ----------------------------------------
+# One row per source file of a project with the map lens: its symbols and its
+# resolved in-repo imports, keyed by an mtime:size stamp so only changed files
+# re-parse. touched_by/at record the last agent session that wrote the file.
+
+def code_index_load(project_id):
+    """{path: row} for one project."""
+    with _db() as cur:
+        cur.execute("SELECT path, stamp, symbols, imports, touched_by, touched_at "
+                    "FROM code_index WHERE project_id = %s", (project_id,))
+        return {r["path"]: dict(r) for r in cur.fetchall()}
+
+
+def code_index_sync(project_id, upserts, live_paths):
+    """Write re-parsed files and drop rows for files that no longer exist.
+    upserts: [(path, stamp, symbols, imports)]. A touched mark survives."""
+    with _db() as cur:
+        for path, stamp, symbols, imports in upserts:
+            cur.execute(
+                "INSERT INTO code_index (project_id, path, stamp, symbols, imports) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
+                "SET stamp = EXCLUDED.stamp, symbols = EXCLUDED.symbols, imports = EXCLUDED.imports",
+                (project_id, path, stamp, Json(symbols), Json(imports)))
+        cur.execute("DELETE FROM code_index WHERE project_id = %s AND NOT (path = ANY(%s))",
+                    (project_id, list(live_paths)))
+
+
+def code_index_touch(project_id, path, session_id):
+    """An agent session just wrote `path`. Stamp '' forces a re-parse."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO code_index (project_id, path, touched_by, touched_at) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
+            "SET stamp = '', touched_by = EXCLUDED.touched_by, touched_at = EXCLUDED.touched_at",
+            (project_id, path, session_id or "", _now()))
+
+
+def _norm_cwd(host, cwd):
+    """Canonical form of a directory used as a project key. On the local host we
+    expand a leading ~ and strip a trailing slash so "~/x", "/home/u/x" and
+    "/home/u/x/" don't fork into separate projects. Remote paths are left as-is
+    (their home dir isn't ours to expand)."""
+    cwd = (cwd or "").rstrip("/")
+    if host in (None, "", "local") and cwd.startswith("~"):
+        cwd = os.path.expanduser(cwd)
+    return cwd or "/"
+
+
+# Board columns (per project) -------------------------------------------------
+
+def board_columns_list(project_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM board_columns WHERE project_id = %s ORDER BY position, id",
+                    (project_id,))
         return [dict(r) for r in cur.fetchall()]
+
+
+def board_column_names(column_ids):
+    """{id: name} for the columns that still exist among `column_ids`."""
+    if not column_ids:
+        return {}
+    with _db() as cur:
+        cur.execute("SELECT id, name FROM board_columns WHERE id = ANY(%s)", (list(column_ids),))
+        return {r["id"]: r["name"] for r in cur.fetchall()}
+
+
+def board_column_create(project_id, name, position=0):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO board_columns(project_id, name, position) VALUES(%s,%s,%s) RETURNING *",
+            (project_id, name, position),
+        )
+        return dict(cur.fetchone())
+
+
+def board_column_update(column_id, **fields):
+    allowed = {k: v for k, v in fields.items() if k in ("name", "position") and v is not None}
+    if not allowed:
+        return board_column_get(column_id)
+    sets = ", ".join(f"{k} = %s" for k in allowed)
+    with _db() as cur:
+        cur.execute(f"UPDATE board_columns SET {sets} WHERE id = %s RETURNING *",
+                    (*allowed.values(), column_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def board_column_get(column_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM board_columns WHERE id = %s", (column_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def board_column_delete(column_id):
+    """Delete a column. Cards in it keep existing (column_id FK is ON DELETE
+    SET NULL) so no task is lost when its column is removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM board_columns WHERE id = %s", (column_id,))
+        return cur.rowcount > 0
+
+
+def board_columns_ensure(project_id):
+    """Guarantee the default pipeline is present on this project's board.
+
+    Applies the pure orglogic.ensure_pipeline_columns plan: a pipeline-named
+    column missing gets created at its canonical position; one present out of
+    place gets its position canonicalised (the name is the contract — see
+    orglogic.project_columns, which resolves the same way). Custom columns are
+    never touched. Idempotent, and called at every server start (init_db) so
+    projects created before the decision columns existed converge on the same
+    shape as new ones — the pipeline is default everywhere, not opt-in.
+    Returns the plan it applied (for tests/inspection)."""
+    cols = board_columns_list(project_id)
+    plan = orglogic.ensure_pipeline_columns(cols)
+    current = {c["id"]: c["position"] for c in cols}
+    applied = 0
+    for item in plan:
+        if item["id"] is None:
+            board_column_create(project_id, item["name"], item["position"])
+            applied += 1
+        elif current.get(item["id"]) != item["position"]:
+            board_column_update(item["id"], position=item["position"])
+            applied += 1
+    return plan
+
 
 
 # Cards (the ONLY card store) -------------------------------------------------
 
-def card_create(title, body="", column_id=None, assignee=None, project_id=None,
+def card_create(title, body="", column_id=None, project_id=None,
                 session_id=None, position=1.0, created_by=""):
     with _db() as cur:
         cur.execute(
-            "INSERT INTO cards(title, body, column_id, assignee, project_id, session_id, "
+            "INSERT INTO cards(title, body, column_id, project_id, session_id, "
             "position, created_by, created_at, updated_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (title, body, column_id, assignee, project_id, session_id, position,
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (title, body, column_id, project_id, session_id, position,
              created_by, _now(), _now()),
         )
         return dict(cur.fetchone())
 
 
-def card_list(session_id=None, project_id=None, assignee=None, column_id=None):
+def card_list(session_id=None, project_id=None, column_id=None):
     """All cards, optionally narrowed by any combination of filters (AND). The
     canonical fetch behind every board VIEW; ordering by position is applied in
     viewer.orglogic for the pure/testable path."""
@@ -545,8 +1582,6 @@ def card_list(session_id=None, project_id=None, assignee=None, column_id=None):
         clauses.append("session_id = %s"); params.append(session_id)
     if project_id is not None:
         clauses.append("project_id = %s"); params.append(project_id)
-    if assignee is not None:
-        clauses.append("assignee = %s"); params.append(assignee)
     if column_id is not None:
         clauses.append("column_id = %s"); params.append(column_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -562,8 +1597,17 @@ def card_get(card_id):
     return dict(row) if row else None
 
 
+def card_titles(card_ids):
+    """{id: title} for the cards that still exist among `card_ids`."""
+    if not card_ids:
+        return {}
+    with _db() as cur:
+        cur.execute("SELECT id, title FROM cards WHERE id = ANY(%s)", (list(card_ids),))
+        return {r["id"]: r["title"] for r in cur.fetchall()}
+
+
 def card_update(card_id, **fields):
-    allowed = ("title", "body", "column_id", "assignee", "project_id", "session_id", "position")
+    allowed = ("title", "body", "column_id", "project_id", "session_id", "position")
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return card_get(card_id)
@@ -580,16 +1624,493 @@ def card_move(card_id, column_id, position):
     return card_update(card_id, column_id=column_id, position=position)
 
 
-def card_assign(card_id, assignee):
-    return card_update(card_id, assignee=assignee)
+def card_last_move(card_id, seconds):
+    """The column this card's most recent column-moving write landed in, if
+    that write happened within the last `seconds` — else None.
+
+    Derived from audit_log: every board write is audited AFTER it runs, with the
+    full intent as `target`, so `target->'args'->>'column_id'` is where a
+    card_move / card_update-with-column actually put the card. The caller
+    validates the column against the card's OWN board, so a row from a refused
+    cross-board drag or a since-deleted column is ignored upstream, not here.
+    (task_done resolves its column at run time, so its audit row carries no
+    column_id and is invisible here by construction — see actions' guard.)
+    Returns (column_id, created_at) or None."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT target->'args'->>'column_id' AS column_id, created_at "
+            "FROM audit_log "
+            "WHERE action IN ('card_move', 'card_update') "
+            "  AND target->'args'->>'card_id' = %s "
+            "  AND target->'args'->>'column_id' IS NOT NULL "
+            "  AND created_at > %s "
+            "ORDER BY id DESC LIMIT 1",
+            (str(card_id), _now() - seconds))
+        row = cur.fetchone()
+    return (row["column_id"], row["created_at"]) if row else None
 
 
 def card_delete(card_id):
-    """Hard-delete a card (a pure work item — no provenance to preserve, unlike an
-    employee). Returns True if a row was removed."""
+    """Hard-delete a card (a pure work item — no provenance to preserve).
+    Returns True if a row was removed."""
     with _db() as cur:
         cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
         return cur.rowcount > 0
+
+
+# Notes (the ONLY note store) -------------------------------------------------
+
+NOTE_KINDS = ("note", "journal", "meeting", "idea", "checklist", "discussion")
+
+
+def note_create(title="", body="", kind="note", project_id=None, session_id=None,
+                created_by="", pinned=False):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO notes(title, body, kind, project_id, session_id, pinned, "
+            "created_by, created_at, updated_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (title, body, kind if kind in NOTE_KINDS else "note", project_id, session_id,
+             bool(pinned), created_by, _now(), _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def note_list(session_id=None, project_id=None, archived=False):
+    """Notes narrowed by any combination of filters (AND). `archived` selects
+    the shelf: live notes by default, the archive when True. Pinned first, then
+    most recently edited — the reading order of every notes app."""
+    clauses, params = ["archived = %s"], [bool(archived)]
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    with _db() as cur:
+        cur.execute("SELECT * FROM notes WHERE " + " AND ".join(clauses) +
+                    " ORDER BY pinned DESC, updated_at DESC, id DESC", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def note_get(note_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM notes WHERE id = %s", (note_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_update(note_id, **fields):
+    allowed = ("title", "body", "kind", "project_id", "pinned", "archived")
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if "kind" in sets and sets["kind"] not in NOTE_KINDS:
+        del sets["kind"]
+    if not sets:
+        return note_get(note_id)
+    sets["updated_at"] = _now()
+    cols = ", ".join(f"{k} = %s" for k in sets)
+    with _db() as cur:
+        cur.execute(f"UPDATE notes SET {cols} WHERE id = %s RETURNING *",
+                    (*sets.values(), note_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_delete(note_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+        return cur.rowcount > 0
+
+
+def notes_archive_for_session(session_id, archived):
+    """Archiving a chat shelves its notes; unarchiving brings them back. Returns
+    how many notes changed shelf."""
+    with _db() as cur:
+        cur.execute("UPDATE notes SET archived = %s, updated_at = %s "
+                    "WHERE session_id = %s AND archived <> %s",
+                    (bool(archived), _now(), session_id, bool(archived)))
+        return cur.rowcount
+
+
+def notes_delete_for_session(session_id):
+    """A deleted chat takes its notes with it (same lifecycle as its loops and
+    meta), and its comments on OTHER notes stop being a wake address (their
+    text stays — it is part of someone else's thread). Returns the ids of the
+    notes removed, so the caller can clear each note's discussion wakes — those
+    are addressed to the RECIPIENT sessions, not this one, so a plain
+    loop_delete_for_session(session_id) would miss them (see
+    discussion.purge_session_notes)."""
+    with _db() as cur:
+        cur.execute("UPDATE note_comments SET session_id = '' WHERE session_id = %s",
+                    (session_id,))
+        cur.execute("DELETE FROM notes WHERE session_id = %s RETURNING id", (session_id,))
+        return [r["id"] for r in cur.fetchall()]
+
+
+# Canvases (the on-demand visual pane) ----------------------------------------
+
+def canvas_upsert(session_id, title, kind, content, max_per_session):
+    """Create or replace one canvas by title. Returns the row, or None when the
+    session already holds `max_per_session` canvases and this title is new.
+    The count check and insert share one transaction, under a per-session
+    advisory lock so two concurrent shows cannot both slip under the cap."""
+    now = _now()
+    with _db() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("canvas:" + session_id,))
+        cur.execute("SELECT 1 FROM canvases WHERE session_id = %s AND title = %s",
+                    (session_id, title))
+        if not cur.fetchone():
+            cur.execute("SELECT count(*) AS n FROM canvases WHERE session_id = %s", (session_id,))
+            if cur.fetchone()["n"] >= max_per_session:
+                return None
+        cur.execute(
+            "INSERT INTO canvases (session_id, title, kind, content, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (session_id, title) DO UPDATE SET kind = EXCLUDED.kind, "
+            "content = EXCLUDED.content, version = canvases.version + 1, "
+            "updated_at = EXCLUDED.updated_at RETURNING *",
+            (session_id, title, kind, content, now, now))
+        return dict(cur.fetchone())
+
+
+def canvas_list(session_id):
+    """A session's canvases (metadata, no content), most recently updated first."""
+    with _db() as cur:
+        cur.execute("SELECT id, session_id, title, kind, version, created_at, updated_at, "
+                    "length(content) AS size FROM canvases WHERE session_id = %s "
+                    "ORDER BY updated_at DESC",
+                    (session_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def canvas_get(session_id, title):
+    with _db() as cur:
+        cur.execute("SELECT * FROM canvases WHERE session_id = %s AND title = %s",
+                    (session_id, title))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def canvas_delete(session_id, title):
+    with _db() as cur:
+        cur.execute("DELETE FROM canvases WHERE session_id = %s AND title = %s RETURNING id",
+                    (session_id, title))
+        return cur.fetchone() is not None
+
+
+def canvas_delete_for_session(session_id):
+    with _db() as cur:
+        cur.execute("DELETE FROM canvases WHERE session_id = %s", (session_id,))
+
+
+# Note discussions (the message board under every note) ----------------------
+
+def note_comment_add(note_id, parent_id, author, session_id, body):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO note_comments(note_id, parent_id, author, session_id, body, created_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            (note_id, parent_id, author, session_id or "", body, _now()))
+        return {**dict(cur.fetchone()), "score": 0, "my_vote": 0}
+
+
+def note_comment_get(comment_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM note_comments WHERE id = %s", (comment_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def note_comment_list(note_id, voter=""):
+    """A note's comments, flat in posting order, each with its vote `score` and
+    `voter`'s own vote (`my_vote`). discussion.thread() shapes them."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, COALESCE(SUM(v.value), 0)::int AS score, "
+            "COALESCE(MAX(CASE WHEN v.voter = %s THEN v.value END), 0)::int AS my_vote "
+            "FROM note_comments c LEFT JOIN note_votes v ON v.comment_id = c.id "
+            "WHERE c.note_id = %s GROUP BY c.id ORDER BY c.created_at, c.id",
+            (voter or "", note_id))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def note_vote_set(comment_id, voter, value):
+    """Cast (+1/-1) or withdraw (0) one voter's vote. Returns the new score."""
+    with _db() as cur:
+        if value:
+            cur.execute("INSERT INTO note_votes(comment_id, voter, value) VALUES(%s,%s,%s) "
+                        "ON CONFLICT (comment_id, voter) DO UPDATE SET value = EXCLUDED.value",
+                        (comment_id, voter, value))
+        else:
+            cur.execute("DELETE FROM note_votes WHERE comment_id = %s AND voter = %s",
+                        (comment_id, voter))
+        cur.execute("SELECT COALESCE(SUM(value), 0)::int AS score FROM note_votes "
+                    "WHERE comment_id = %s", (comment_id,))
+        return cur.fetchone()["score"]
+
+
+def note_comment_stats():
+    """{note_id: {"replies": n, "last_reply_at": t}} — the list rows'
+    "3 replies · active 2h ago"."""
+    with _db() as cur:
+        cur.execute("SELECT note_id, COUNT(*) AS n, MAX(created_at) AS last_at "
+                    "FROM note_comments GROUP BY note_id")
+        return {r["note_id"]: {"replies": r["n"], "last_reply_at": r["last_at"]}
+                for r in cur.fetchall()}
+
+
+# Inbox messages (the owner's and the agents' message ledger) ----------------
+
+# "red" is an org Red approval (the approvals table) — see inbox.REF_FIELD.
+INBOX_KINDS = ("message", "question", "plan", "approval", "card", "red")
+
+_DECISION_KINDS = ("question", "plan", "approval", "card", "red")
+
+
+def inbox_create(sender_type, sender_id, recipient_type, recipient_id, body,
+                 kind="message", ref_id="", in_reply_to=0,
+                 session_id="", project_id=None):
+    """One inbox row. Decision kinds with a ref_id upsert on (kind, ref_id):
+    re-delivering an open item refreshes the existing message — and puts it
+    back to 'sent' unless the owner snoozed it (a snoozed item stays out of
+    sight until its grace period lapses, then resurfaces; see inbox_list)."""
+    if kind not in INBOX_KINDS:
+        kind = "message"
+    now = _now()
+    if kind in _DECISION_KINDS and ref_id:
+        sql = ("INSERT INTO inbox_messages(session_id, project_id, sender_type, "
+               "sender_id, recipient_type, recipient_id, body, kind, ref_id, "
+               "in_reply_to, status, archived, created_at, updated_at) "
+               "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'sent',FALSE,%s,%s) "
+               "ON CONFLICT (kind, ref_id) WHERE ref_id <> '' DO UPDATE SET "
+               "body = EXCLUDED.body, "
+               "status = CASE WHEN inbox_messages.status = 'snoozed' "
+               "THEN 'snoozed' ELSE 'sent' END, "
+               "updated_at = EXCLUDED.updated_at RETURNING *")
+    else:
+        sql = ("INSERT INTO inbox_messages(session_id, project_id, sender_type, "
+               "sender_id, recipient_type, recipient_id, body, kind, ref_id, "
+               "in_reply_to, status, archived, created_at, updated_at) "
+               "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'sent',FALSE,%s,%s) RETURNING *")
+    with _db() as cur:
+        cur.execute(sql, (session_id, project_id, sender_type, sender_id,
+                          recipient_type, recipient_id, body, kind, ref_id,
+                          int(in_reply_to or 0), now, now))
+        return dict(cur.fetchone())
+
+
+def inbox_list(session_id=None, project_id=None, kind=None,
+               unread_only=False, archived=False, limit=200):
+    """The owner's inbox as a filtered VIEW. `session_id` narrows to one chat
+    (its messages in both directions), `project_id` to a project, `kind` to one
+    of INBOX_KINDS, `unread_only` to messages that need the owner's eye
+    (status 'sent' and any snooze lapsed). Newest first."""
+    clauses, params = ["archived = %s"], [bool(archived)]
+    if session_id is not None:
+        clauses.append("session_id = %s"); params.append(session_id)
+    if project_id is not None:
+        clauses.append("project_id = %s"); params.append(project_id)
+    if kind is not None and kind in INBOX_KINDS:
+        clauses.append("kind = %s"); params.append(kind)
+    if unread_only:
+        clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
+        params.append(_now())
+    with _db() as cur:
+        cur.execute("SELECT * FROM inbox_messages WHERE " + " AND ".join(clauses) +
+                    " ORDER BY created_at DESC, id DESC LIMIT %s",
+                    (*params, int(limit)))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def inbox_get(message_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM inbox_messages WHERE id = %s", (message_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_mark_read(message_id):
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = %s AND status = 'snoozed' RETURNING *",
+                    (_now(), message_id))
+        row = cur.fetchone()
+    if row:
+        return dict(row)
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = %s AND status = 'sent' RETURNING *",
+                    (_now(), message_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_snooze(message_id, until):
+    """Snooze a message out of the owner's sight until `until` (epoch). It
+    resurfaces automatically when the clock passes `until` (inbox_list's
+    unread filter treats a lapsed snooze as unread again) — a skipped
+    question is never silently dropped, it waits and comes back."""
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'snoozed', "
+                    "snoozed_until = %s, updated_at = %s WHERE id = %s "
+                    "RETURNING *", (float(until or 0), _now(), message_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def inbox_decision_refs():
+    """Every live decision row's (kind, ref_id) → its inbox id and snooze
+    deadline. The decision queue joins this onto its items so a snooze taken
+    anywhere (Inbox or board cockpit) hides the item everywhere until it
+    lapses, and so a client can snooze an item by its inbox id."""
+    with _db() as cur:
+        cur.execute("SELECT kind, ref_id, id, status, snoozed_until FROM inbox_messages "
+                    "WHERE kind IN %s AND ref_id <> '' AND archived = FALSE",
+                    (_DECISION_KINDS,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def inbox_archive_for_session(session_id, archived):
+    """Archiving a chat shelves its inbox messages; unarchiving brings them
+    back (the notes rule, applied to messages). Returns how many changed."""
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET archived = %s, updated_at = %s "
+                    "WHERE session_id = %s AND archived <> %s",
+                    (bool(archived), _now(), session_id, bool(archived)))
+        return cur.rowcount
+
+
+def inbox_delete_for_session(session_id):
+    """A deleted chat takes its inbox messages with it (same lifecycle as its
+    notes, loops and meta). Returns how many were removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM inbox_messages WHERE session_id = %s", (session_id,))
+        return cur.rowcount
+
+
+# Card comments (the discussion thread on a card) ----------------------------
+
+def card_comment_add(card_id, author, body):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO card_comments(card_id, author, body, created_at) "
+            "VALUES(%s,%s,%s,%s) RETURNING *",
+            (card_id, author or "", body, _now()),
+        )
+        return dict(cur.fetchone())
+
+
+def card_comment_list(card_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM card_comments WHERE card_id = %s ORDER BY created_at, id",
+                    (card_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def card_comment_counts():
+    """{card_id: n} over every card that has at least one comment — the badge
+    the board lists render without N+1 per-card queries."""
+    with _db() as cur:
+        cur.execute("SELECT card_id, COUNT(*) AS n FROM card_comments GROUP BY card_id")
+        return {r["card_id"]: r["n"] for r in cur.fetchall()}
+
+
+# Card dependencies (A cannot move forward until B is done) ------------------
+
+def card_dep_add(card_id, depends_on, created_by=""):
+    """Record the edge `card_id` -> `depends_on`. A card may not depend on
+    itself (that blocks itself forever); an existing edge is a no-op (the
+    UNIQUE constraint, not a duplicate row). Returns the stored row, or
+    {"exists": True} when the edge was already there."""
+    if card_id == depends_on:
+        return {"error": "a card cannot depend on itself"}
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO card_deps(card_id, depends_on, created_by, created_at) "
+            "VALUES(%s,%s,%s,%s) ON CONFLICT (card_id, depends_on) DO NOTHING "
+            "RETURNING *",
+            (card_id, depends_on, created_by or "", _now()),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else {"exists": True}
+
+
+def card_dep_remove(card_id, depends_on):
+    """Remove the edge; True if a row was deleted."""
+    with _db() as cur:
+        cur.execute("DELETE FROM card_deps WHERE card_id=%s AND depends_on=%s",
+                    (card_id, depends_on))
+        return cur.rowcount > 0
+
+
+def card_deps_batch(card_ids):
+    """{card_id: [dep, ...]} where dep = {id, title, column_name, done}.
+    `done` follows the board's name contract: the dep's column named (case
+    insensitive) "Done" — the same rule project_columns resolves by, so the
+    web board, a woken session, and the owner's view all agree on what is done."""
+    if not card_ids:
+        return {}
+    with _db() as cur:
+        cur.execute(
+            "SELECT d.card_id, d.depends_on AS id, c.title, bc.name AS column_name "
+            "FROM card_deps d "
+            "JOIN cards c ON c.id = d.depends_on "
+            "LEFT JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE d.card_id = ANY(%s) ORDER BY d.card_id, d.id",
+            (list(card_ids),),
+        )
+        out = {}
+        for r in cur.fetchall():
+            col = (r.get("column_name") or "").lower()
+            out.setdefault(r["card_id"], []).append(
+                {"id": r["id"], "title": r.get("title", ""),
+                 "column_name": r.get("column_name") or "",
+                 "done": col == "done"})
+        return out
+
+
+def card_mark_attention(card_id, by_own_session):
+    """Record who last acted on a card, for the board sweep. A FOREIGN actor (the
+    owner, another session) stamps `attention_since` = now — the card's session
+    has something to read. The card's OWN session acting clears it to 0 — it
+    has seen the board. Idempotent per state, so re-stamping an already
+    pending card only moves the time forward."""
+    with _db() as cur:
+        cur.execute("UPDATE cards SET attention_since = %s WHERE id = %s",
+                    (0 if by_own_session else _now(), card_id))
+
+
+def cards_awaiting_owner():
+    """Open cards parked in a column whose NAME says the owner's call is needed
+    (Review, Needs-info), with the column name and the time of the last write
+    on the card (its newest comment, else its last update) — the moment the
+    wait began. The decision queue's fourth source: a card an agent left for
+    the owner is a decision exactly like a question or a plan, and it must
+    surface in the same one place, not depend on the owner scanning columns."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
+            "bc.name AS column_name, "
+            "coalesce((SELECT max(created_at) FROM card_comments cc "
+            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since "
+            "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE lower(bc.name) IN ('review', 'needs-info') "
+            "ORDER BY waiting_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def cards_needing_attention():
+    """Open cards (not in a Done-named column) whose last board event came from
+    someone other than their own session, with that column's name, oldest
+    event first. Each row: {card fields..., column_name}. Cards with no
+    session cannot be woken and are excluded; the sweep reads only this."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, bc.name AS column_name FROM cards c "
+            "LEFT JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE c.attention_since > 0 AND c.session_id IS NOT NULL "
+            "AND c.session_id <> '' "
+            "AND lower(coalesce(bc.name, '')) <> 'done' "
+            "ORDER BY c.attention_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
 
 
 # Approvals -------------------------------------------------------------------
@@ -610,12 +2131,22 @@ def approval_list_open():
         return [dict(r) for r in cur.fetchall()]
 
 
+def approval_get(approval_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM approvals WHERE id = %s", (approval_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def approval_resolve(approval_id, resolution):
-    """Mark an approval resolved ('approved'/'denied'/free text)."""
+    """Mark an approval resolved ('approved'/'denied'/free text). Only an OPEN
+    approval resolves: the row carries an intent that EXECUTES on approval, so
+    without this an already-approved row could be re-resolved and the action run
+    a second time. Returns None if it was not open."""
     with _db() as cur:
         cur.execute(
             "UPDATE approvals SET status = 'resolved', resolution = %s, resolved_at = %s "
-            "WHERE id = %s RETURNING *",
+            "WHERE id = %s AND status = 'open' RETURNING *",
             (resolution, _now(), approval_id),
         )
         row = cur.fetchone()
@@ -634,12 +2165,20 @@ def audit_append(actor, action, target=None, outcome=""):
         return cur.fetchone()["id"]
 
 
-def audit_list(limit=100, actor=None, action=None):
+def audit_list(limit=100, actor=None, action=None, *, before_id=None, result=None):
+    """Newest recorded IDs; optional display filtering happens before the limit."""
     clauses, params = [], []
     if actor is not None:
         clauses.append("actor = %s"); params.append(actor)
     if action is not None:
         clauses.append("action = %s"); params.append(action)
+    if before_id is not None:
+        clauses.append("id < %s"); params.append(before_id)
+    if result is not None:
+        from viewer.audit import outcome_filter
+        clause, values = outcome_filter(result)
+        if clause:
+            clauses.append(clause); params.extend(values)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(int(limit))
     with _db() as cur:
@@ -649,13 +2188,13 @@ def audit_list(limit=100, actor=None, action=None):
 
 # Learned skills (provenance ledger; content stays a SKILL.md file) -----------
 
-def skill_learned_record(name, path="", origin_employee=None, origin_card=None,
-                         origin_session=None, status="proposed"):
+def skill_learned_record(name, path="", origin_card=None, origin_session=None,
+                         status="proposed"):
     with _db() as cur:
         cur.execute(
-            "INSERT INTO skills_learned(name, path, origin_employee, origin_card, "
-            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (name, path, origin_employee, origin_card, origin_session, status, _now()),
+            "INSERT INTO skills_learned(name, path, origin_card, "
+            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            (name, path, origin_card, origin_session, status, _now()),
         )
         return dict(cur.fetchone())
 
@@ -676,3 +2215,1097 @@ def skill_learned_set_status(skill_id, status):
                     (status, skill_id))
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+# --------------------------------------------------------------------------- #
+# Session backups                                                              #
+# --------------------------------------------------------------------------- #
+
+def backup_create(session_id, backup_path, original_bytes, trimmed_bytes=None,
+                  reason="auto_trim"):
+    """Record a new session backup. Returns the row dict."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_backups(session_id, backup_path, original_bytes, "
+            "trimmed_bytes, reason) VALUES(%s,%s,%s,%s,%s) RETURNING *",
+            (session_id, backup_path, original_bytes, trimmed_bytes, reason),
+        )
+        return dict(cur.fetchone())
+
+
+def backup_list(session_id):
+    """List all backups for a session, newest first."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT * FROM session_backups WHERE session_id = %s ORDER BY created_at DESC",
+            (session_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def backup_get(backup_id):
+    """Get a single backup by id."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM session_backups WHERE id = %s", (backup_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def backup_delete(backup_id):
+    """Delete a backup row (caller is responsible for deleting the file)."""
+    with _db() as cur:
+        cur.execute("DELETE FROM session_backups WHERE id = %s RETURNING backup_path",
+                    (backup_id,))
+        row = cur.fetchone()
+        return row["backup_path"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Agent templates — curated session presets
+# ---------------------------------------------------------------------------
+
+_BUILTIN_TEMPLATES = [
+    # Personal
+    {"name": "Writing Coach", "description": "Review and improve your writing for clarity, tone, and structure.",
+     "category": "personal", "icon": "book",
+     "system_prompt": "You are a professional writing coach. Review the user's text for clarity, grammar, tone, and structure. Provide specific, actionable suggestions. Be encouraging but honest. Focus on making the writing more effective for its intended audience.",
+     "goal": "Help the user produce clear, compelling writing."},
+    {"name": "Learning Tutor", "description": "Explain concepts using the Socratic method, adapted to your level.",
+     "category": "personal", "icon": "school",
+     "system_prompt": "You are a patient, adaptive tutor. Use the Socratic method: ask guiding questions before giving answers. Gauge the user's level from their questions and adjust complexity. Use analogies and concrete examples. When the user is stuck, break the problem into smaller steps rather than giving the full answer.",
+     "goal": "Help the user deeply understand the topic, not just memorize answers."},
+    {"name": "Fitness Planner", "description": "Create personalized workout and nutrition plans.",
+     "category": "personal", "icon": "barbell",
+     "jobs": [{"cron": "0 7 * * *", "prompt": "Good morning! Check in on yesterday's workout. Any soreness or energy changes? Adjust today's plan accordingly."}],
+     "system_prompt": "You are a certified personal trainer and nutritionist. Ask about the user's fitness goals, current fitness level, available equipment, and dietary preferences before creating plans. Provide structured weekly workout routines with sets, reps, and rest periods. Include warm-up and cool-down. Offer meal prep suggestions that are practical and sustainable.",
+     "goal": "Create a realistic, sustainable fitness and nutrition plan tailored to the user's goals."},
+    {"name": "Travel Planner", "description": "Build detailed itineraries with local tips and logistics.",
+     "category": "personal", "icon": "airplane",
+     "system_prompt": "You are an experienced travel planner. When creating itineraries, consider: budget, travel style (adventure/relaxation/culture), season, visa requirements, local transportation, and must-see vs hidden gems. Organize by day with specific timings. Include practical tips: best neighborhoods to stay, local food to try, common scams to avoid, and packing essentials.",
+     "goal": "Create a complete, day-by-day travel itinerary the user can follow immediately."},
+    # Engineering
+    {"name": "Software Engineer", "description": "Builds, reviews and designs code from the project's spec, and keeps the spec true.",
+     "category": "engineering", "icon": "code",
+     "plugin": "software-engineer", "lens": "map",
+     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code through the project's code map; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
+     "goal": "Ship correct, maintainable code that matches the spec, with every design decision reasoned."},
+    {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
+     "category": "engineering", "icon": "bug",
+     "system_prompt": "You are an expert debugger. Follow a systematic approach: 1) Reproduce the issue, 2) Form hypotheses about the root cause, 3) Test each hypothesis with the smallest possible experiment, 4) Fix the root cause, not just symptoms. Ask for: error messages, logs, reproduction steps, and what changed recently. Consider: race conditions, state corruption, configuration drift, and dependency version mismatches.",
+     "goal": "Find and fix the root cause of bugs, not just patch symptoms."},
+    {"name": "DevOps Engineer", "description": "Infrastructure, CI/CD, monitoring, and deployment automation.",
+     "category": "engineering", "icon": "cloud",
+     "jobs": [{"cron": "0 */6 * * *", "prompt": "Run a health check: review recent logs, check error rates, and report any infrastructure alerts or anomalies."}],
+     "system_prompt": "You are a senior DevOps engineer. Help with: CI/CD pipelines, infrastructure as code (Terraform, Pulumi), container orchestration (Docker, K8s), monitoring/alerting, secrets management, and deployment strategies. Prioritize: reliability, security, automation, and observability. Always consider failure modes and rollback strategies. Prefer immutable infrastructure and declarative configuration.",
+     "goal": "Build reliable, automated infrastructure with proper monitoring and rollback capabilities."},
+    # Design
+    {"name": "UX Researcher", "description": "User research, usability analysis, and interview planning.",
+     "category": "design", "icon": "eye",
+     "system_prompt": "You are a UX researcher. Help plan and analyze user research: interviews, surveys, usability tests, and A/B tests. Write unbiased interview scripts. Identify cognitive biases in research design. Synthesize findings into actionable insights. Present recommendations with supporting evidence. Consider accessibility and inclusive design in all recommendations.",
+     "goal": "Generate actionable user insights that improve product decisions."},
+    {"name": "UI Designer", "description": "Component design, layout patterns, and accessibility.",
+     "category": "design", "icon": "brush",
+     "system_prompt": "You are a senior UI designer. Help with: component design, layout patterns, responsive design, design tokens, accessibility (WCAG), animation/micro-interactions, and design system maintenance. Consider: visual hierarchy, whitespace, typography scale, color contrast, and touch targets. Always design for the worst case (long text, missing images, error states, loading states, empty states).",
+     "goal": "Create polished, accessible UI components that handle all edge cases gracefully."},
+    # Business
+    {"name": "Marketing Strategist", "description": "Campaign planning, copywriting, and analytics strategy.",
+     "category": "business", "icon": "megaphone",
+     "system_prompt": "You are a marketing strategist. Help with: campaign planning, content strategy, copywriting, social media, email marketing, SEO, and marketing analytics. Tailor strategies to the business size, budget, and target audience. Provide specific, measurable goals. Write copy that is clear, compelling, and on-brand. Always consider the customer journey and conversion funnel.",
+     "goal": "Create data-driven marketing strategies with measurable outcomes."},
+    {"name": "Product Manager", "description": "PRDs, specs and the board cards that build them.",
+     "category": "business", "icon": "clipboard",
+     "plugin": "product-manager",
+     # Shapes the board (columns, projects, schedules), not just its own cards.
+     "level": "lead",
+     "system_prompt": "You are a senior product manager. Write PRDs and specs as project notes and break specs into board cards (your write-prd, write-spec and spec-to-cards skills). Help with: writing PRDs, feature prioritization (RICE, ICE, MoSCoW), user story mapping, roadmap planning, stakeholder communication, and metrics definition. Ask clarifying questions about business goals, user needs, and technical constraints. Focus on outcomes over outputs. Define clear success metrics for every feature.",
+     "goal": "Define products that solve real user problems and drive business outcomes."},
+    {"name": "Legal Advisor", "description": "Contract review, compliance guidance, and risk assessment.",
+     "category": "business", "icon": "shield",
+     "system_prompt": "You are a knowledgeable legal advisor. Help review contracts, identify risks, explain legal concepts in plain language, and suggest protective clauses. Cover: intellectual property, liability, termination, confidentiality, and regulatory compliance. Always caveat that you're providing general guidance, not legal advice, and recommend consulting a licensed attorney for specific situations.",
+     "goal": "Identify legal risks and suggest protective measures in clear, plain language."},
+    {"name": "Financial Analyst", "description": "Budgets, forecasts, financial modeling, and reporting.",
+     "category": "business", "icon": "calculator",
+     "jobs": [{"cron": "0 9 * * 1", "prompt": "Generate the weekly financial summary: review this week's activity, flag anomalies, and update the forecast."}],
+     "system_prompt": "You are a financial analyst. Help with: budget planning, financial forecasting, P&L analysis, cash flow management, pricing strategy, and financial reporting. Build clear financial models with assumptions stated explicitly. Use sensitivity analysis to show best/worst/expected cases. Present findings in a way that non-finance stakeholders can understand.",
+     "goal": "Provide clear financial analysis that drives informed business decisions."},
+    {"name": "Privacy Guard", "description": "Watches for your personal data in breaches and on data-broker sites, and tells you what to lock down.",
+     "category": "personal", "icon": "eye", "plugin": "privacy-guard", "jobs": [{"cron": "43 8 * * *", "prompt": "Daily privacy check: search the owner's mail from the last 24 hours for breach notices, data-broker or people-search mentions, new-login and password-reset alerts, and credit-bureau messages. For each finding, attribute it (is it the owner's own action?) before alerting. Append confirmed findings to the Privacy log note and post one plain yes/no question on the privacy board card for anything the owner must do. If nothing new, append one line 'quiet' with the date and stop."},
+              {"cron": "17 9 * * 1", "prompt": "Weekly data-broker sweep: read the Privacy log first. Search the major people-search sites (TruePeopleSearch, FastPeopleSearch, Spokeo, Whitepages, BeenVerified, Radaris) for the owner's name and city using the browser. For each listing found, note the site's opt-out link and what it requires (ID upload, phone code, payment). Do not submit any opt-out without the owner's yes; list them on the privacy board card as one question. If a site blocks you, record 'blocked' and move on. Append a dated table (site, listed, opt-out link, status) to the Privacy log."}],
+     "system_prompt": "You are the owner's privacy guard. Your job: find where their personal data is exposed (breaches, data brokers, people-search sites, over-shared accounts) and tell them exactly what to do about it, in order of risk.\n\nOn your first run: create a 'Privacy log' note (baseline: which accounts and email addresses you can see, what you checked, what you could not check) and one board card 'Privacy: actions for the owner' listing the manual steps only a human can take (credit freezes, opt-out requests, password changes), each with the exact site and why.\n\nRules:\n- Read-only by default. Never change an account, submit an opt-out, or contact anyone without the owner's explicit yes.\n- Attribute before alerting: check whether a login or reset was the owner's own action before calling it a threat.\n- Never paste personal data (full addresses, SSNs, card numbers, passwords) into cards, comments or notes. Refer to it ('the home address on file').\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- Never spend money or sign up for a paid service without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the context a stranger needs.",
+     "goal": "Shrink the owner's personal-data exposure and catch breaches the day they happen."},
+    {"name": "Cyber Security", "description": "Watches your accounts, devices and code for threats, and explains each finding in plain language.",
+     "category": "engineering", "icon": "shield", "plugin": "cyber-security", "jobs": [{"cron": "37 7 * * *", "prompt": "Daily security check: triage the owner's mail from the last 24 hours for security alerts (new sign-ins, password or 2FA changes, new devices, OAuth grants, suspicious payments, phishing). Attribute each before alerting. Then check this machine's posture: listening ports open to the network (/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN), the firewall state (/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate) and pending updates (/usr/sbin/softwareupdate -l). Append findings, ranked HIGH/MEDIUM/LOW, to the Security log note; for anything the owner must decide, post one yes/no question on the security board card. If nothing changed, append one 'quiet' line with the date and stop."},
+              {"cron": "13 10 * * 3", "prompt": "Weekly code check, read-only: in each code repository you can read, run the package manager's audit (e.g. npm audit --omit=dev, pip-audit) and list only high and critical findings with their fix version. Scan the last 8 days of git history for committed secrets (private keys, cloud and API tokens) and report the commit and file only, never the value. List authorized SSH keys on machines you can reach (count and comments only) and flag any new one. Append to the Security log; a HIGH goes on the security board card as one yes/no question with the exact fix command."}],
+     "system_prompt": "You are the owner's security analyst. You watch their accounts, this machine and their code for threats, and you explain each finding so someone with no security background can decide in one tap.\n\nOn your first run: create a 'Security log' note with a baseline (accounts visible to you, listening ports and what owns them, firewall and disk-encryption state, pending updates, secrets committed to repositories you can read) and one board card 'Security: decisions for the owner' for anything that needs their call.\n\nRules:\n- Read-only by default. Never change firewall rules, kill processes, rotate keys, edit configs or touch shared infrastructure without the owner's explicit yes for that exact change.\n- Attribute before alerting: a new sign-in or open port may be the owner's own doing; check before raising it.\n- Rank findings HIGH / MEDIUM / LOW by real-world exploitability, not by scanner noise. Say what an attacker could actually do.\n- Never paste secrets, tokens, passwords or personal data into cards, comments or notes. Name where they live instead.\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- macOS system tools live in /usr/sbin and /usr/libexec; call them by full path.\n- Never spend money without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the risk, the fix and its side effects stated.",
+     "goal": "Catch account, device and code threats early and get each one fixed with a single owner decision."},
+]
+
+
+def _seed_agent_templates():
+    """Upsert the builtin templates by name, and delete builtins this release no
+    longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
+    so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
+    cols = ("description", "category", "icon", "system_prompt", "goal",
+            "jobs", "plugin", "lens", "level")
+    defaults = {"jobs": [], "plugin": "", "lens": "", "level": "ic"}
+    with _db() as cur:
+        for t in _BUILTIN_TEMPLATES:
+            vals = [t.get(c, defaults.get(c)) for c in cols]
+            vals[cols.index("jobs")] = Json(vals[cols.index("jobs")])
+            cur.execute("SELECT id FROM agent_templates WHERE name = %s AND is_builtin = TRUE", (t["name"],))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE agent_templates SET " + ", ".join(c + "=%s" for c in cols)
+                            + " WHERE id=%s", (*vals, row["id"]))
+            else:
+                cur.execute("INSERT INTO agent_templates (name, " + ", ".join(cols)
+                            + ", is_builtin, created_by, created_at) VALUES (%s, "
+                            + ", ".join(["%s"] * len(cols))
+                            + ", TRUE, 'system', extract(epoch from now()))", (t["name"], *vals))
+        cur.execute("DELETE FROM agent_templates WHERE is_builtin = TRUE AND NOT (name = ANY(%s))",
+                    ([t["name"] for t in _BUILTIN_TEMPLATES],))
+
+
+def agent_template_get(template_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM agent_templates WHERE id = %s", (template_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def agent_templates_list(user_id):
+    """The agents `user_id` can see: every shared one plus its own personal ones."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM agent_templates WHERE owner_user_id IS NULL OR owner_user_id = %s"
+                    " ORDER BY is_builtin DESC, category, name", (user_id,))
+        return cur.fetchall()
+
+
+# The fields an agent's owner edits; every write goes through these names only.
+TEMPLATE_FIELDS = ("name", "description", "category", "icon", "system_prompt", "goal",
+                   "ai", "jobs", "plugin", "lens", "level")
+
+
+def _template_values(fields):
+    def value(c):
+        v = fields[c]
+        return Json(list(v)) if c == "jobs" else Json(v) if c == "ai" and v is not None else v
+    return [value(c) for c in TEMPLATE_FIELDS]
+
+
+def agent_template_create(fields, owner_user_id, created_by="user", plugins=None):
+    """Create a personal agent from validated TEMPLATE_FIELDS (`jobs` is a
+    [{prompt, cron|interval}]). `plugins` carries a kept plugin list over (a
+    duplicate). Returns the new row."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO agent_templates (" + ", ".join(TEMPLATE_FIELDS)
+            + ", plugins, owner_user_id, is_builtin, created_by, created_at) VALUES ("
+            + ", ".join(["%s"] * len(TEMPLATE_FIELDS))
+            + ", %s, %s, FALSE, %s, extract(epoch from now())) RETURNING *",
+            (*_template_values(fields), Json(list(plugins)) if plugins is not None else None,
+             owner_user_id, created_by))
+        return dict(cur.fetchone())
+
+
+def agent_template_update(template_id, fields):
+    """Replace a user agent's TEMPLATE_FIELDS (builtins are never edited).
+    Returns the updated row, or None when there is no such user agent."""
+    with _db() as cur:
+        cur.execute("UPDATE agent_templates SET " + ", ".join(c + "=%s" for c in TEMPLATE_FIELDS)
+                    + " WHERE id = %s AND is_builtin = FALSE RETURNING *",
+                    (*_template_values(fields), template_id))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def agent_template_set_plugins(template_id, plugins):
+    with _db() as cur:
+        cur.execute("UPDATE agent_templates SET plugins = %s WHERE id = %s", (Json(list(plugins)), template_id))
+
+
+def agent_template_delete(template_id):
+    """Delete a user-created template (builtins cannot be deleted)."""
+    with _db() as cur:
+        cur.execute("DELETE FROM agent_templates WHERE id = %s AND is_builtin = FALSE RETURNING id",
+                    (template_id,))
+        return cur.fetchone() is not None
+
+
+# Loops (recurring prompts) ---------------------------------------------------
+# Moved out of ~/.claude/.viewer-loops.json into Postgres. Per-row CRUD: each
+# scheduler edit touches ONE loop, so nothing rewrites the whole set. Rows come
+# back in the historical JSON shape (camelCase keys like nextRun) so the routes
+# and clients are unchanged.
+
+# JSON key -> SQL column -> default. Explicit (not **row) so a stray client key
+# can't inject a column and the name mapping lives in exactly one place.
+_LOOP_COLS = (
+    ("session", "session", ""), ("path", "path", ""), ("prompt", "prompt", ""),
+    ("interval", "interval_sec", 0), ("cron", "cron", None),
+    ("nextRun", "next_run", 0), ("runs", "runs", 0), ("lastRun", "last_run", None),
+    ("lastRc", "last_rc", None), ("created", "created", 0), ("model", "model", ""),
+    ("provider", "provider", ""),
+    ("enabled", "enabled", True), ("origin", "origin", "user"),
+    ("kind", "kind", "recurring"),
+)
+
+
+def _loop_row(r):
+    """A DB row -> the historical loop dict shape (without the id, which callers
+    attach as needed)."""
+    return {jk: r[col] for jk, col, _ in _LOOP_COLS}
+
+
+def loop_list(session=None):
+    """All loops (optionally only those for one session) as {id: {...}}, ordered
+    by creation so the UI list is stable."""
+    with _db() as cur:
+        if session:
+            cur.execute("SELECT * FROM loops WHERE session = %s ORDER BY created", (session,))
+        else:
+            cur.execute("SELECT * FROM loops ORDER BY created")
+        return {r["id"]: _loop_row(r) for r in cur.fetchall()}
+
+
+def loop_get(lid):
+    with _db() as cur:
+        cur.execute("SELECT * FROM loops WHERE id = %s", (lid,))
+        row = cur.fetchone()
+    return _loop_row(row) if row else None
+
+
+def loop_upsert(lid, entry):
+    """Create or fully replace one loop from an entry dict (historical JSON keys).
+    Missing keys fall back to their column default."""
+    cols = [col for _, col, _ in _LOOP_COLS]
+    vals = [entry.get(jk, dflt) for jk, _, dflt in _LOOP_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        cur.execute(
+            f"INSERT INTO loops (id, {', '.join(cols)}) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            (lid, *vals),
+        )
+
+
+def loop_update(lid, fields):
+    """Patch only the given JSON keys of one loop. Returns the updated row (or None
+    if the id is gone). Used by the scheduler's per-tick nextRun/runs bumps and the
+    edit-loop route, so a concurrent edit to a different field isn't clobbered."""
+    jk_to_col = {jk: col for jk, col, _ in _LOOP_COLS}
+    sets, vals = [], []
+    for jk, v in fields.items():
+        col = jk_to_col.get(jk)
+        if col:
+            sets.append(f"{col} = %s")
+            vals.append(v)
+    if not sets:
+        return loop_get(lid)
+    with _db() as cur:
+        cur.execute(f"UPDATE loops SET {', '.join(sets)} WHERE id = %s RETURNING *",
+                    (*vals, lid))
+        row = cur.fetchone()
+    return _loop_row(row) if row else None
+
+
+def loop_delete(lid):
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE id = %s RETURNING id", (lid,))
+        return cur.fetchone() is not None
+
+
+def loop_delete_for_session(session):
+    """Drop every loop tied to a session (called when the session is deleted).
+    Returns how many were removed."""
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE session = %s RETURNING id", (session,))
+        return len(cur.fetchall())
+
+
+def loop_delete_prefix(prefix):
+    """Drop every loop whose id starts with `prefix` (the % and _ wildcards in
+    it are escaped, so it is a literal prefix). For a target whose wakes share
+    an id stem but span several rows — a note discussion wakes one row per
+    recipient session (nd<note>:<sid>) — so deleting the note must clear them
+    all. Returns how many were removed."""
+    like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    with _db() as cur:
+        cur.execute("DELETE FROM loops WHERE id LIKE %s RETURNING id", (like,))
+        return len(cur.fetchall())
+
+
+def loops_due(now, origins=None):
+    """Enabled loops whose nextRun has arrived, each as a dict with its id — the
+    scheduler's read side. Ordered by nextRun so the earliest-due fire first.
+
+    `origins` gates by WHO scheduled the loop (see the loop_control setting and
+    loops.allowed_origins): a collection of allowed origin strings restricts the
+    result to those; None means no origin filter (every origin). An EMPTY
+    collection returns nothing — 'none' mode fires no loops at all."""
+    with _db() as cur:
+        if origins is None:
+            cur.execute(
+                "SELECT * FROM loops WHERE enabled = TRUE AND next_run <= %s "
+                "ORDER BY next_run", (now,))
+        else:
+            cur.execute(
+                "SELECT * FROM loops WHERE enabled = TRUE AND next_run <= %s "
+                "AND origin = ANY(%s) ORDER BY next_run", (now, list(origins)))
+        return [dict(_loop_row(r), id=r["id"]) for r in cur.fetchall()]
+
+
+# Job runs (append-only history) ----------------------------------------------
+# One row per loop firing. Distinct from `loops` (the schedule definition): a
+# schedule is one row that fires forever; each firing is one job_runs row. This
+# is the audit trail — retention-bounded, never unbounded.
+
+def job_run_start(loop_id, session_id, prompt):
+    """Record that a loop just fired. Returns the new run's id, which the caller
+    hands to job_run_finish when the run completes. Best-effort at the call site:
+    a failure to log history must never stop the actual run."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO job_runs (loop_id, session_id, prompt, status, started_at) "
+            "VALUES (%s, %s, %s, 'running', %s) RETURNING id",
+            (loop_id, session_id, prompt, _now()))
+        return cur.fetchone()["id"]
+
+
+def job_runs_abandon_running(detail="server restarted mid-run"):
+    """Boot-time reconciliation: a run is finalized by the thread that spawned it,
+    so when the server dies (launchd kills the whole process group, children
+    included) every row still 'running' belongs to a run that no longer exists
+    and would otherwise read as in-flight forever. Called once before the
+    scheduler starts — at that moment nothing can legitimately be running.
+    Returns the rows closed."""
+    with _db() as cur:
+        cur.execute(
+            "UPDATE job_runs SET status = 'error', rc = -1, detail = %s, finished_at = %s "
+            "WHERE status = 'running' RETURNING id",
+            (detail, _now()))
+        return len(cur.fetchall())
+
+
+def job_run_finish(run_id, rc, detail=""):
+    """Finalize a run row: status from the return code (ok/error), rc, a bounded
+    detail (stderr tail), and the finish time."""
+    if run_id is None:
+        return
+    status = "ok" if rc == 0 else "error"
+    with _db() as cur:
+        cur.execute(
+            "UPDATE job_runs SET status = %s, rc = %s, detail = %s, finished_at = %s "
+            "WHERE id = %s",
+            (status, rc, (detail or "")[:2000], _now(), run_id))
+
+
+def job_runs_purge(max_age_days, max_per_loop):
+    """Enforce the retention policy on job_runs so history can't overflow. Two
+    independent caps, whichever removes a row first:
+      • age: drop runs finished more than max_age_days ago (tidiness).
+      • count: keep only the newest max_per_loop runs per loop (the real overflow
+        guard — a 30s loop is ~2,880 runs/day, so age alone wouldn't bound it).
+    Detached runs (loop_id NULL, from a deleted schedule) are aged out by the age
+    cap only — they have no loop to count against. Returns the rows removed."""
+    removed = 0
+    with _db() as cur:
+        if max_age_days and max_age_days > 0:
+            cutoff = _now() - float(max_age_days) * 86400
+            # started_at is always set; finished_at may be NULL for a wedged run,
+            # so age off the start time (a run older than the window is stale
+            # regardless of whether it recorded a finish).
+            cur.execute("DELETE FROM job_runs WHERE started_at < %s RETURNING id", (cutoff,))
+            removed += len(cur.fetchall())
+        if max_per_loop and max_per_loop > 0:
+            # Per loop, rank newest-first and delete beyond the cap. Only non-NULL
+            # loop_ids: detached runs aren't grouped under a live schedule.
+            cur.execute(
+                "DELETE FROM job_runs WHERE id IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, row_number() OVER "
+                "      (PARTITION BY loop_id ORDER BY started_at DESC) AS rn"
+                "    FROM job_runs WHERE loop_id IS NOT NULL"
+                "  ) ranked WHERE rn > %s) RETURNING id",
+                (max_per_loop,))
+            removed += len(cur.fetchall())
+    return removed
+
+
+# Session meta ----------------------------------------------------------------
+# Per-session extras (title/goal/systemPrompt/provider/convMode/effort/favorite/
+# pinned/avatar/archived). Moved out of ~/.claude/.viewer-meta.json. The payload
+# is JSONB so keys the app adds later survive without a schema change. Per-row
+# CRUD with a JSONB merge for patches, so two concurrent field edits on the same
+# session don't clobber each other.
+
+def session_meta_get(sid):
+    """One session's meta dict (empty dict if none)."""
+    with _db() as cur:
+        cur.execute("SELECT data FROM session_meta WHERE session_id = %s", (sid,))
+        row = cur.fetchone()
+    return (row["data"] or {}) if row else {}
+
+
+def session_meta_all():
+    """All session meta as {session_id: {...}} — for the list overlay and the
+    apply-provider-to-all route."""
+    with _db() as cur:
+        cur.execute("SELECT session_id, data FROM session_meta")
+        return {r["session_id"]: (r["data"] or {}) for r in cur.fetchall()}
+
+
+def session_meta_patch(sid, fields):
+    """Merge `fields` into one session's meta (JSONB concat, so untouched keys
+    survive a concurrent writer) and return the full merged dict. `fields` values
+    of None are stored as-is; callers that mean 'remove' should handle that
+    explicitly — no current caller does."""
+    fields = dict(fields)
+    merge = "session_meta.data || EXCLUDED.data"
+    if set(fields) & {"provider", "convMode", "effort", "modelSelection"}:
+        fields["aiRevision"] = 1
+        # Legacy clients participate in the AI revision domain too. Changing a
+        # provider cannot carry the previous provider's explicit model across.
+        if "provider" in fields and "modelSelection" not in fields:
+            merge = "(CASE WHEN session_meta.data->>'provider' IS DISTINCT FROM EXCLUDED.data->>'provider' " \
+                    "THEN session_meta.data - 'modelSelection' ELSE session_meta.data END) || EXCLUDED.data"
+        merge += " || jsonb_build_object('aiRevision', COALESCE((session_meta.data->>'aiRevision')::int, 0) + 1)"
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, %s, %s) "
+            f"ON CONFLICT (session_id) DO UPDATE SET data = {merge}, "
+            "updated_at = EXCLUDED.updated_at RETURNING data",
+            (sid, Json(fields), _now()),
+        )
+        return cur.fetchone()["data"]
+
+
+def session_meta_set(sid, data):
+    """Replace one session's meta wholesale (used where the caller builds the full
+    dict, e.g. a fresh spawn)."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, %s, %s) "
+            "ON CONFLICT (session_id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+            (sid, Json(data or {}), _now()),
+        )
+
+
+def session_ai_cas(sid, revision, fields):
+    """Lock the row through compare + AI-only merge; unrelated metadata survives."""
+    with _db() as cur:
+        cur.execute("INSERT INTO session_meta (session_id, data, updated_at) VALUES (%s, '{}'::jsonb, %s) "
+                    "ON CONFLICT DO NOTHING", (sid, _now()))
+        cur.execute("SELECT data FROM session_meta WHERE session_id = %s FOR UPDATE", (sid,))
+        data = cur.fetchone()["data"] or {}
+        if data.get("aiRevision", 0) != revision:
+            return None
+        patch = {**fields, "aiRevision": revision + 1}
+        cur.execute("UPDATE session_meta SET data = data || %s, updated_at = %s "
+                    "WHERE session_id = %s RETURNING data", (Json(patch), _now(), sid))
+        return cur.fetchone()["data"]
+
+
+def ai_defaults_cas(revision, selection):
+    with _db() as cur:
+        cur.execute("INSERT INTO settings (key, value) VALUES ('ai_defaults', '{}'::jsonb) ON CONFLICT DO NOTHING")
+        cur.execute("SELECT value FROM settings WHERE key = 'ai_defaults' FOR UPDATE")
+        record = cur.fetchone()["value"] or {}
+        if record.get("revision", 0) != revision:
+            return None
+        record = {"revision": revision + 1, "selection": selection}
+        cur.execute("UPDATE settings SET value = %s WHERE key = 'ai_defaults'", (Json(record),))
+        return record
+
+
+def session_meta_delete(sid):
+    with _db() as cur:
+        cur.execute("DELETE FROM session_meta WHERE session_id = %s RETURNING session_id", (sid,))
+        return cur.fetchone() is not None
+
+
+# Per-reader unread cursors ---------------------------------------------------
+# One row per (reader, session): when that reader last OPENED the session. Unread
+# is derived, never stored: a session is unread for a reader when its transcript
+# changed after the reader's cursor. Kept server-side so web, mobile and an agent
+# over MCP all agree, unlike the old per-device seen-map this replaced.
+
+def session_seen_get(reader):
+    """{session_id: last_seen_epoch} for one reader — empty when they've opened
+    nothing. The list handler joins this against each session's mtime to flag
+    unread, so it's a single fetch per list request, not one query per session."""
+    with _db() as cur:
+        cur.execute("SELECT session, last_seen FROM session_seen WHERE reader = %s", (reader,))
+        return {r["session"]: r["last_seen"] for r in cur.fetchall()}
+
+
+def session_seen_set(reader, session, ts=None):
+    """Advance a reader's cursor on one session to `ts` (default now). Idempotent
+    upsert; a later open always moves the cursor forward, never back."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO session_seen (reader, session, last_seen) VALUES (%s, %s, %s) "
+            "ON CONFLICT (reader, session) DO UPDATE SET last_seen = EXCLUDED.last_seen",
+            (reader, session, ts if ts is not None else _now()),
+        )
+
+
+# Product usage (ui_events) ----------------------------------------------------
+
+def ui_events_insert(actor, events):
+    """Append a validated batch (viewer.usage.clean_events) for one actor.
+    One statement per batch; returns the number written."""
+    if not events:
+        return 0
+    rows = [(e["ts"], actor, e["client"], e["surface"], e["element"],
+             e["kind"], e["detail"]) for e in events]
+    with _db() as cur:
+        cur.executemany(
+            "INSERT INTO ui_events (ts, actor, client, surface, element, kind, detail) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)", rows)
+    return len(rows)
+
+
+def ui_usage_rows(since):
+    """Per (client, surface, element, kind) counts over the whole retained
+    history, split at `since`: n = events in the window, actors = distinct
+    actors in the window, n_before = events before it (what lets the report
+    tell a control that went cold from one that was never used)."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT client, surface, element, kind, "
+            "  count(*) FILTER (WHERE ts >= %s) AS n, "
+            "  count(DISTINCT actor) FILTER (WHERE ts >= %s) AS actors, "
+            "  count(*) FILTER (WHERE ts < %s) AS n_before, "
+            "  max(ts) AS last_ts "
+            "FROM ui_events WHERE kind <> 'feedback' "
+            "GROUP BY client, surface, element, kind", (since, since, since))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def ui_feedback_list(since, limit=50):
+    """Newest feedback notes in the window, with where they were written."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT ts, actor, client, surface, detail FROM ui_events "
+            "WHERE kind = 'feedback' AND ts >= %s ORDER BY ts DESC LIMIT %s",
+            (since, int(limit)))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def ui_events_purge(max_age_days):
+    """Drop usage older than the retention window. Returns rows removed."""
+    if not max_age_days or max_age_days <= 0:
+        return 0
+    with _db() as cur:
+        cur.execute("DELETE FROM ui_events WHERE ts < %s", (_now() - float(max_age_days) * 86400,))
+        return cur.rowcount
+
+
+# Hosts (SSH registry) --------------------------------------------------------
+# The hosts store keeps the same {id: {label, host, user, port, claudeHome,
+# password, keyFile, keyPassphrase}} shape the config file had, so remote.py /
+# routes/auth.py read it unchanged. Secrets live in these columns; the list
+# route already strips them before returning to a client. `user` is a reserved
+# word in Postgres, so it's double-quoted wherever it's named in DDL/DML.
+_HOST_COLS = (
+    ("label", "label", ""), ("host", "host", ""), ("user", '"user"', ""),
+    ("port", "port", 22), ("claudeHome", "claude_home", ".claude"),
+    ("password", "password", ""), ("keyFile", "key_file", ""),
+    ("keyPassphrase", "key_passphrase", ""),
+)
+
+
+def hosts_load():
+    with _db() as cur:
+        cur.execute("SELECT * FROM hosts")
+        # The `user` column comes back under its plain name in the row dict.
+        cols_by_json = {jk: (col.strip('"')) for jk, col, _ in _HOST_COLS}
+        out = {}
+        for r in cur.fetchall():
+            out[r["id"]] = {jk: r[col] for jk, col in cols_by_json.items()}
+    return out
+
+
+def host_upsert(hid, entry):
+    cols = [col for _, col, _ in _HOST_COLS]  # already quoted where needed
+    vals = [entry.get(jk, dflt) for jk, _, dflt in _HOST_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        cur.execute(
+            f"INSERT INTO hosts (id, {', '.join(cols)}, created_at) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}, %s) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}",
+            (hid, *vals, _now()),
+        )
+
+
+def host_delete(hid):
+    with _db() as cur:
+        cur.execute("DELETE FROM hosts WHERE id = %s RETURNING id", (hid,))
+        return cur.fetchone() is not None
+
+
+# Drives (cloud storage registry) --------------------------------------------
+# A drive is a cloud account (Google Drive, Dropbox, OneDrive) that the file
+# routes serve as just one more disk. The bytes live on the vendor; these
+# columns hold only the OAuth tokens (`config`, JSONB) and the plugin
+# lifecycle (status active|paused, hidden). The list route must strip `config`
+# before returning to a client, exactly as the hosts list route strips
+# password/key_file.
+def _drive_row(r):
+    return {
+        "id": r["id"],
+        "label": r["label"],
+        "kind": r["kind"],
+        "config": r["config"] or {},
+        "status": r["status"],
+        "hidden": bool(r["hidden"]),
+        "created_at": r["created_at"],
+    }
+
+
+def drives_load():
+    """{id: {label, kind, config, status, hidden, created_at}} for every drive."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM drives ORDER BY created_at")
+        return {r["id"]: _drive_row(r) for r in cur.fetchall()}
+
+
+def drive_get(did):
+    with _db() as cur:
+        cur.execute("SELECT * FROM drives WHERE id = %s", (did,))
+        r = cur.fetchone()
+        return None if r is None else _drive_row(r)
+
+
+def drive_upsert(did, entry):
+    """Create or update one drive row. `entry` uses the JSON keys the API
+    uses: label, kind, config, status, hidden."""
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO drives (id, label, kind, config, status, hidden, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            "label = EXCLUDED.label, kind = EXCLUDED.kind, config = EXCLUDED.config, "
+            "status = EXCLUDED.status, hidden = EXCLUDED.hidden",
+            (
+                did,
+                entry.get("label") or did,
+                entry.get("kind") or "",
+                Json(entry.get("config") or {}),
+                entry.get("status") or "active",
+                bool(entry.get("hidden")),
+                _now(),
+            ),
+        )
+
+
+def drive_delete(did):
+    with _db() as cur:
+        cur.execute("DELETE FROM drives WHERE id = %s RETURNING id", (did,))
+        return cur.fetchone() is not None
+
+
+def drive_set_status(did, status=None, hidden=None):
+    """Plugin lifecycle: pause/resume (`status`) and hide/show (`hidden`)
+    from the file UI. Either may be given; a paused or hidden drive is
+    refused by viewer.drives.adapter_for."""
+    sets, vals = [], []
+    if status is not None:
+        sets.append("status = %s")
+        vals.append(status)
+    if hidden is not None:
+        sets.append("hidden = %s")
+        vals.append(bool(hidden))
+    if not sets:
+        return
+    vals.append(did)
+    with _db() as cur:
+        cur.execute(f"UPDATE drives SET {', '.join(sets)} WHERE id = %s", vals)
+
+
+# Per-host env vars -----------------------------------------------------------
+
+def host_env_load(hid):
+    """The {KEY: VALUE} map for a host id."""
+    with _db() as cur:
+        cur.execute("SELECT key, value FROM host_env WHERE host = %s", (hid,))
+        return {r["key"]: r["value"] for r in cur.fetchall()}
+
+
+def host_env_set(hid, key, value):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO host_env (host, key, value) VALUES (%s, %s, %s) "
+            "ON CONFLICT (host, key) DO UPDATE SET value = EXCLUDED.value",
+            (hid, key, str(value)),
+        )
+
+
+def host_env_unset(hid, key):
+    with _db() as cur:
+        cur.execute("DELETE FROM host_env WHERE host = %s AND key = %s", (hid, key))
+
+
+def host_env_unset_all(hid):
+    with _db() as cur:
+        cur.execute("DELETE FROM host_env WHERE host = %s", (hid,))
+
+
+# Provider presets ------------------------------------------------------------
+# {id: {name, baseUrl, model, apiKey, isDefault, modelLimits}};
+# modelLimits is JSONB, wrapped on write.
+_PROVIDER_COLS = (
+    ("name", "name", ""), ("baseUrl", "base_url", ""), ("model", "model", ""),
+    ("apiKey", "api_key", ""), ("isDefault", "is_default", False),
+    ("modelLimits", "model_limits", {}),
+)
+
+
+def providers_load():
+    with _db() as cur:
+        cur.execute("SELECT * FROM providers")
+        out = {}
+        for r in cur.fetchall():
+            out[r["id"]] = {jk: r[col] for jk, col, _ in _PROVIDER_COLS}
+    return out
+
+
+def provider_upsert(pid, rec, default_change=None):
+    cols = [col for _, col, _ in _PROVIDER_COLS]
+    vals = [Json(rec.get(jk) or {}) if jk == "modelLimits" else rec.get(jk, dflt)
+            for jk, _, dflt in _PROVIDER_COLS]
+    setclause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+    with _db() as cur:
+        # The old-client default flag is an adapter once canonical defaults exist.
+        # Lock the same settings row as the new CAS endpoint before changing it.
+        if default_change is not None:
+            cur.execute("INSERT INTO settings (key, value) VALUES ('ai_defaults', '{}'::jsonb) ON CONFLICT DO NOTHING")
+            cur.execute("SELECT value FROM settings WHERE key = 'ai_defaults' FOR UPDATE")
+            defaults = cur.fetchone()["value"] or {}
+            if defaults and (default_change or defaults["selection"]["provider"] == pid):
+                selection = {"provider": pid if default_change else "", "model": {"kind": "default"},
+                             "convMode": "chat" if default_change else "agent", "effort": ""}
+                cur.execute("UPDATE settings SET value = %s WHERE key = 'ai_defaults'",
+                            (Json({"revision": defaults["revision"] + 1, "selection": selection}),))
+        # Preserve the legacy default only until canonical defaults are configured.
+        if rec.get("isDefault"):
+            cur.execute("UPDATE providers SET is_default = FALSE WHERE id <> %s", (pid,))
+        cur.execute(
+            f"INSERT INTO providers (id, {', '.join(cols)}, created_at) "
+            f"VALUES (%s, {', '.join(['%s'] * len(cols))}, %s) "
+            f"ON CONFLICT (id) DO UPDATE SET {setclause}, context_limit = 0",
+            (pid, *vals, _now()),
+        )
+
+
+def provider_limits_set(pid, limits):
+    """Replace only a connection's per-model facts (discovery cache), so a
+    concurrent edit of its name/key/default is never clobbered."""
+    with _db() as cur:
+        cur.execute("UPDATE providers SET model_limits = %s, context_limit = 0 WHERE id = %s", (Json(limits), pid))
+
+
+def provider_delete(pid):
+    with _db() as cur:
+        cur.execute("DELETE FROM providers WHERE id = %s RETURNING id", (pid,))
+        return cur.fetchone() is not None
+
+
+# Restart requests (viewer.maintenance) ---------------------------------------
+
+def restart_request_add(requested_by, session_id, commit_sha, reason):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO restart_requests(requested_by, session_id, commit_sha, reason, created_at) "
+            "VALUES(%s,%s,%s,%s,%s) RETURNING *",
+            (requested_by, session_id or "", commit_sha or "", reason, _now()))
+        return dict(cur.fetchone())
+
+
+def restart_requests_by_status(status):
+    with _db() as cur:
+        cur.execute("SELECT * FROM restart_requests WHERE status = %s ORDER BY id", (status,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def restart_requests_set_status(ids, status):
+    if not ids:
+        return
+    with _db() as cur:
+        cur.execute("UPDATE restart_requests SET status = %s, handled_at = %s WHERE id = ANY(%s)",
+                    (status, _now(), list(ids)))
+
+
+# Intake channels (viewer.intake) --------------------------------------------
+
+def intake_create(cid, name, project_id, session_id, token_hash, app_feedback, created_by):
+    with _db() as cur:
+        if app_feedback:
+            cur.execute("UPDATE intake_channels SET app_feedback = FALSE WHERE app_feedback")
+        cur.execute(
+            "INSERT INTO intake_channels(id, name, project_id, session_id, token_hash, "
+            "app_feedback, created_by, created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (cid, name, project_id, session_id or "", token_hash, bool(app_feedback),
+             created_by, _now()))
+        return dict(cur.fetchone())
+
+
+def intake_list():
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels ORDER BY created_at")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def intake_get(cid):
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels WHERE id = %s", (cid,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_feedback_channel():
+    """The channel the owner's in-app feedback goes to, or None."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM intake_channels WHERE app_feedback LIMIT 1")
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_update(cid, **fields):
+    """Change name / session_id / app_feedback. Turning app_feedback on clears it
+    on every other channel in the same transaction (at most one receives it)."""
+    allowed = {k: v for k, v in fields.items() if k in ("name", "session_id", "app_feedback")}
+    if not allowed:
+        return intake_get(cid)
+    with _db() as cur:
+        if allowed.get("app_feedback"):
+            cur.execute("UPDATE intake_channels SET app_feedback = FALSE "
+                        "WHERE app_feedback AND id <> %s", (cid,))
+        sets = ", ".join(f"{k} = %s" for k in allowed)
+        cur.execute(f"UPDATE intake_channels SET {sets} WHERE id = %s RETURNING *",
+                    (*allowed.values(), cid))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_set_token(cid, token_hash):
+    with _db() as cur:
+        cur.execute("UPDATE intake_channels SET token_hash = %s WHERE id = %s RETURNING *",
+                    (token_hash, cid))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_delete(cid):
+    with _db() as cur:
+        cur.execute("DELETE FROM intake_channels WHERE id = %s RETURNING id", (cid,))
+        return cur.fetchone() is not None
+
+
+def intake_touch(cid):
+    """Record one delivery: bump the counter, stamp last_used. Returns the count
+    of cards this channel created in the last hour (the rate-limit input)."""
+    with _db() as cur:
+        cur.execute("UPDATE intake_channels SET received = received + 1, last_used = %s "
+                    "WHERE id = %s", (_now(), cid))
+        cur.execute("SELECT count(*) AS n FROM cards WHERE created_by = %s AND created_at > %s",
+                    (f"intake:{cid}", _now() - 3600))
+        return cur.fetchone()["n"]
+
+
+# Settings (singleton key/value) ----------------------------------------------
+
+def setting_get(key, default=None):
+    with _db() as cur:
+        cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+    return row["value"] if row else default
+
+
+def setting_set(key, value):
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (key, Json(value)),
+        )
+
+
+# The owner's local-disk rules (Integrations → Local disk): which folders and
+# operations agents may use on this machine. One reader for the engine and the
+# routes, so core code never imports a route module to learn them.
+LOCAL_DISK_KEY = "local_disk"
+
+
+def local_disk_rules():
+    from viewer import integrations
+    return integrations.local_rules(setting_get(LOCAL_DISK_KEY))
+
+
+def local_disk_set(rules):
+    setting_set(LOCAL_DISK_KEY, rules)
+
+
+# Cloud-drive OAuth CLIENTS: the viewer's own identity to each vendor (a
+# vendor's per-user tokens live in the drives table). settings['drive_clients']
+# = {kind: {client_id, client_secret?}}. Edited from the app's Integrations
+# dialog; the secret is read only by the token exchange/refresh, never listed.
+
+def drive_clients_load():
+    return setting_get("drive_clients", {}) or {}
+
+
+def drive_client_get(kind):
+    return drive_clients_load().get(kind)
+
+
+def drive_client_set(kind, client_id, client_secret=None):
+    """Store one vendor client. `client_secret=None` keeps the secret already
+    on record (the UI never has it to send back); '' clears it."""
+    clients = drive_clients_load()
+    prev = clients.get(kind) or {}
+    entry = {"client_id": client_id}
+    secret = prev.get("client_secret") if client_secret is None else client_secret
+    if secret:
+        entry["client_secret"] = secret
+    clients[kind] = entry
+    setting_set("drive_clients", clients)
+    return entry
+
+
+def drive_client_delete(kind):
+    clients = drive_clients_load()
+    if kind not in clients:
+        return False
+    del clients[kind]
+    setting_set("drive_clients", clients)
+    return True
+
+
+# Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
+# per plan/license without a deploy; falls back to the seeded defaults when the
+# row is missing or a value is malformed (never returns junk the purge can't use).
+_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500, "ui_events_days": 180}
+
+
+def retention_config():
+    cfg = setting_get("retention", {}) or {}
+    out = {}
+    for k, dflt in _RETENTION_DEFAULTS.items():
+        try:
+            out[k] = int(cfg.get(k, dflt))
+        except (TypeError, ValueError):
+            out[k] = dflt
+    return out
+
+
+# One-time backfill -----------------------------------------------------------
+
+# The legacy files. After a successful backfill each is moved aside (not deleted)
+# so a first Postgres run is reversible and nothing is lost if the migration is
+# wrong. Keyed name -> (path, migrate_fn).
+_LEGACY_DIR = Path.home() / ".claude"
+_TRASH_DIR = _LEGACY_DIR / ".viewer-migrated"
+
+
+def _read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _table_empty(table):
+    with _db() as cur:
+        cur.execute(f"SELECT 1 FROM {table} LIMIT 1")
+        return cur.fetchone() is None
+
+
+def migrate_legacy_files():
+    """Backfill the six ~/.claude/*.json stores into Postgres ONCE, then move each
+    file into ~/.claude/.viewer-migrated/ so the old second-source is gone but
+    recoverable. Idempotent: a file already moved (or absent) is skipped, and each
+    table is only seeded when EMPTY so a later user edit is never clobbered by a
+    stale file that somehow reappears."""
+    _TRASH_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _retire(path):
+        try:
+            path.replace(_TRASH_DIR / path.name)
+        except Exception:
+            pass
+
+    # loops
+    p = _LEGACY_DIR / ".viewer-loops.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("loops"):
+            for lid, entry in data.items():
+                loop_upsert(lid, entry)
+        _retire(p)
+
+    # session meta
+    p = _LEGACY_DIR / ".viewer-meta.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("session_meta"):
+            for sid, meta in data.items():
+                session_meta_set(sid, meta)
+        _retire(p)
+
+    # hosts
+    p = _LEGACY_DIR / ".viewer-hosts.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("hosts"):
+            for hid, entry in data.items():
+                host_upsert(hid, entry)
+        _retire(p)
+
+    # per-host env
+    p = _LEGACY_DIR / ".viewer-env.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("host_env"):
+            for hid, kv in (data or {}).items():
+                for k, v in (kv or {}).items():
+                    host_env_set(hid, k, v)
+        _retire(p)
+
+    # providers
+    p = _LEGACY_DIR / ".viewer-providers.json"
+    data = _read_json(p)
+    if data is not None:
+        if _table_empty("providers"):
+            for pid, rec in data.items():
+                limit = int(rec.pop("contextLimit", 0) or 0)
+                if limit and rec.get("model"):
+                    rec["modelLimits"] = {rec["model"]: {"override": limit}}
+                provider_upsert(pid, rec)
+        _retire(p)
+
+    # harman config -> settings['harman']
+    p = _LEGACY_DIR / ".viewer-harman.json"
+    data = _read_json(p)
+    if data is not None:
+        # Seed only if the row is still the untouched default (no automation flip
+        # since install). setting_get returns the seeded default on a fresh DB.
+        cur_cfg = setting_get("harman", {}) or {}
+        # Only the master switch survives; the file's other keys fed the retired
+        # manager tick (card 146).
+        if not cur_cfg.get("automation_enabled") and isinstance(data, dict):
+            setting_set("harman", {"automation_enabled": bool(data.get("automation_enabled"))})
+        _retire(p)
+
+    # cloud-drive vendor clients -> settings['drive_clients']
+    p = _LEGACY_DIR / ".viewer-drives-oauth.json"
+    data = _read_json(p)
+    if isinstance(data, dict):
+        if not drive_clients_load():
+            for kind, c in data.items():
+                if isinstance(c, dict) and c.get("client_id"):
+                    drive_client_set(kind, c["client_id"], c.get("client_secret") or "")
+        _retire(p)

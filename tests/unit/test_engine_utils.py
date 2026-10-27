@@ -1,6 +1,7 @@
 """Unit tests for pure helpers in viewer.engine: loop-interval parsing (clamped)
 and SKILL.md/command frontmatter description extraction."""
-from viewer.engine import frontmatter_description, parse_interval
+from viewer.engine import frontmatter_description
+from viewer.loops import parse_interval
 
 
 class TestParseInterval:
@@ -56,8 +57,12 @@ class TestPermissionDeniedHint:
         from pathlib import Path
         from viewer import engine
         monkeypatch.setattr(engine.sys, "platform", "darwin")
+        monkeypatch.setattr(engine.sys, "executable", "/opt/py/bin/python3")
         msg = engine._permission_denied_hint(Path.home() / "Downloads")
         assert "~/Downloads" in msg and "Privacy & Security" in msg
+        # the actionable fact is WHICH binary needs the grant — it must name the
+        # live interpreter path, not a hardcoded product name the list can't show.
+        assert "/opt/py/bin/python3" in msg
 
     def test_other_paths_stay_plain(self, monkeypatch):
         from pathlib import Path

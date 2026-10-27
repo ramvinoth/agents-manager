@@ -106,6 +106,23 @@ def _send_one(token, payload, jwt_token):
         return False, str(e)
 
 
+def build_payload(title, body, data=None):
+    """The APNs JSON payload for one notification.
+
+    Deep-link contract: expo-notifications 0.28's EXNotificationSerializer
+    exposes a REMOTE notification's `content.data` as the userInfo value of the
+    ROOT `body` key only (the `aps.alert.body` string is not it). So a tappable
+    payload must carry its data dict there — before this, the data keys were
+    merged at the root, the serializer read `userInfo[@"body"]` = null, and a
+    tap just opened the app instead of the chat it belonged to.
+    """
+    payload = {"aps": {"alert": {"title": title, "body": (body or "")[:300]},
+                       "sound": "default"}}
+    if data:
+        payload["body"] = data
+    return payload
+
+
 def notify_all(title, body, data=None):
     """Push to every registered device (the base is single-owner). No-ops when
     unconfigured or no devices. Daemon thread so callers never block on the net."""
@@ -119,13 +136,7 @@ def notify_all(title, body, data=None):
             tokens = []
         if not tokens:
             return
-        aps = {"aps": {"alert": {"title": title, "body": (body or "")[:300]},
-                       "sound": "default"}}
-        if data:
-            # Merge caller data as top-level keys, but never let it clobber the
-            # constructed "aps" alert (which would silently drop the notification).
-            aps.update({k: v for k, v in data.items() if k != "aps"})
-        payload = json.dumps(aps)
+        payload = json.dumps(build_payload(title, body, data))
         try:
             jwt_token = _auth_jwt()
         except Exception:

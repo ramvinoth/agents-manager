@@ -43,3 +43,7 @@ web/dist/
 .playwright-mcp/
 .apns.env
 private_keys/
+
+# Hetzner migration backup — contains service secrets, do not commit
+deploy/hetzner-backup/
+.wrangler/

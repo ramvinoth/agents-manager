@@ -23,6 +23,8 @@ export function TextFieldDialog({
   value,
   placeholder,
   multiline = true,
+  saveLabel = "Save",
+  clearable = true,
   onSave,
   onClose,
 }: {
@@ -31,6 +33,9 @@ export function TextFieldDialog({
   value: string
   placeholder?: string
   multiline?: boolean
+  saveLabel?: string
+  /** A field that holds a value offers Clear; a one-shot message does not. */
+  clearable?: boolean
   onSave: (value: string) => void
   onClose: () => void
 }) {
@@ -43,7 +48,7 @@ export function TextFieldDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
@@ -67,8 +72,8 @@ export function TextFieldDialog({
           />
         )}
 
-        <DialogFooter className="sm:justify-between">
-          <Button
+        <DialogFooter className={clearable ? "sm:justify-between" : undefined}>
+          {clearable && <Button
             variant="ghost"
             className="text-destructive hover:text-destructive"
             disabled={!draft.trim()}
@@ -79,10 +84,10 @@ export function TextFieldDialog({
             }}
           >
             Clear
-          </Button>
+          </Button>}
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={save}>Save</Button>
+            <Button onClick={save} disabled={!clearable && !draft.trim()}>{saveLabel}</Button>
           </div>
         </DialogFooter>
       </DialogContent>

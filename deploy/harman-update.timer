@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the Harman release feed hourly
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+# Spread customer boxes so a release doesn't land everywhere in the same minute.
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,11 +1,12 @@
 import React, { useState } from "react"
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api } from "../api/client"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "./styles"
+import { useStyles } from "../lib/styles"
+import { userError } from "../lib/errors"
 
 type Props = NativeStackScreenProps<RootStackParamList, "HostEdit">
 
@@ -54,7 +55,7 @@ export default function HostEditScreen({ route, navigation }: Props) {
       setOk(!!r.ok)
     } catch (e) {
       setStatus("")
-      setError((e as Error).message)
+      setError(userError(e, "this server", "test"))
     } finally {
       setBusy(false)
     }
@@ -68,15 +69,14 @@ export default function HostEditScreen({ route, navigation }: Props) {
       if (r?.error) throw new Error(r.error)
       navigation.goBack()
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "this server", "save"))
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled">
+    <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" automaticallyAdjustKeyboardInsets>
         <Text style={styles.label}>Name</Text>
         <TextInput testID="host-label" style={styles.input} placeholder="Mac Personal" value={label} onChangeText={setLabel} />
 
@@ -152,11 +152,10 @@ export default function HostEditScreen({ route, navigation }: Props) {
             onPress={save}
             disabled={incomplete || busy}
           >
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save</Text>}
+            {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Save</Text>}
           </TouchableOpacity>
         </View>
         <View style={{ height: 40 }} />
       </ScrollView>
-    </KeyboardAvoidingView>
   )
 }

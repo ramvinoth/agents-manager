@@ -6,8 +6,9 @@
  * (`wantToken: true`), stored in the OS keystore (Keychain / Android Keystore)
  * via expo-secure-store. It is server-specific — issued by and valid for only
  * one backend — so it travels with that server's entry in the list rather than
- * as a single global value. The ACTIVE server's url + token are what the API
- * client reads via serverUrl()/token(); switching servers just re-points those.
+ * as a single global value. The ACTIVE server's routes + token are what
+ * src/api/transport.ts reads via activeServer()/token(); switching servers just
+ * re-points those.
  */
 import * as SecureStore from "expo-secure-store"
 import {
@@ -22,6 +23,7 @@ import {
   type ServerEntry,
   type ServerState,
 } from "../lib/servers"
+import type { RelayRoute } from "../lib/pairLink"
 
 export type { ServerEntry } from "../lib/servers"
 
@@ -31,10 +33,8 @@ const SERVERS_KEY = "servers"
 const SERVER_KEY = "serverUrl" // legacy (pre-multi-server) — migration source only
 const TOKEN_KEY = "token" // legacy — migration source only
 const HOST_KEY = "currentHost"
-const SEEN_KEY = "seenMap"
 const PREFS_KEY = "composerPrefs"
 const THEME_KEY = "themePref"
-const DRAWER_KEY = "drawerSections"
 const NOTIFY_KEY = "notifyEveryReply"
 const DRAFTS_KEY = "composerDrafts"
 
@@ -45,13 +45,11 @@ export type ThemePref = "system" | "light" | "dark"
 // server's url + token are derived from this list on demand.
 let _servers: ServerState = EMPTY_STATE
 let _host = "local"
-let _seen: Record<string, number> = {}
 // Unsent composer text per session (keyed by path/id), so a draft survives
 // navigating back and app restarts. Kept small via trimDrafts.
 let _drafts: Record<string, string> = {}
 let _prefs: { mode: string; model: string } = { mode: "default", model: "default" }
 let _theme: ThemePref = "system"
-let _drawer: Record<string, boolean> = {}
 let _notify = true
 
 // Tiny pub-sub so a theme change repaints the whole tree without prop-drilling.
@@ -72,6 +70,17 @@ function notifyServer() {
   _serverListeners.forEach((fn) => fn())
 }
 
+// Pub-sub for the active machine (host), so every host-scoped screen — Chats,
+// Files, the Profile row — re-roots the moment it changes, wherever it changed.
+const _hostListeners = new Set<() => void>()
+export function subscribeHost(fn: () => void): () => void {
+  _hostListeners.add(fn)
+  return () => _hostListeners.delete(fn)
+}
+function notifyHost() {
+  _hostListeners.forEach((fn) => fn())
+}
+
 // Persist the whole server list (best-effort). In-memory state is the source of
 // truth for the session, so a keychain failure never breaks the running app.
 async function persistServers() {
@@ -82,52 +91,15 @@ async function persistServers() {
   }
 }
 
-// Shared chat-filter state (active host + project). The Hosts/Projects tabs set
-// these and the Chats tab subscribes, so switching in one tab reflects in
-// another without prop-drilling across the tab navigator. Project is
-// session-only (not persisted); host persists via HOST_KEY below.
-let _project: string | null = null
-const _filterListeners = new Set<() => void>()
-export function subscribeChatFilter(fn: () => void): () => void {
-  _filterListeners.add(fn)
-  return () => _filterListeners.delete(fn)
-}
-function notifyFilter() {
-  _filterListeners.forEach((fn) => fn())
-}
+// Shared chat-filter state (active host). The Hosts tab sets this and the
+// Chats tab reads it. Host persists via HOST_KEY below.
 
-/** The project filter applied to the chat list (null = all chats). */
-export function activeProject(): string | null {
-  return _project
-}
-export function setActiveProject(p: string | null): void {
-  _project = p
-  notifyFilter()
-}
-
-// The set of projects discovered on the active host. Chats derives this from
-// its session list and publishes it so the Projects tab can render the same
-// filter options without re-fetching.
-let _projects: string[] = []
-export function knownProjects(): string[] {
-  return _projects
-}
-export function setKnownProjects(p: string[]): void {
-  _projects = p
-  notifyFilter()
-}
-
-export async function loadConfig(): Promise<{ serverUrl: string; token: string }> {
+export async function loadConfig(): Promise<void> {
   // Best-effort: if the secure store is unavailable, fall back to empty
   // in-memory state rather than throwing (which would brick app startup).
   try {
     _servers = await loadServers()
     _host = (await SecureStore.getItemAsync(HOST_KEY)) || "local"
-    try {
-      _seen = JSON.parse((await SecureStore.getItemAsync(SEEN_KEY)) || "{}")
-    } catch {
-      _seen = {}
-    }
     try {
       _prefs = { ..._prefs, ...JSON.parse((await SecureStore.getItemAsync(PREFS_KEY)) || "{}") }
     } catch {
@@ -135,11 +107,6 @@ export async function loadConfig(): Promise<{ serverUrl: string; token: string }
     }
     const tp = (await SecureStore.getItemAsync(THEME_KEY)) as ThemePref | null
     _theme = tp === "light" || tp === "dark" ? tp : "system"
-    try {
-      _drawer = JSON.parse((await SecureStore.getItemAsync(DRAWER_KEY)) || "{}")
-    } catch {
-      _drawer = {}
-    }
     _notify = (await SecureStore.getItemAsync(NOTIFY_KEY)) !== "0"
     try {
       _drafts = JSON.parse((await SecureStore.getItemAsync(DRAFTS_KEY)) || "{}")
@@ -150,7 +117,6 @@ export async function loadConfig(): Promise<{ serverUrl: string; token: string }
     _servers = EMPTY_STATE
     _host = "local"
   }
-  return { serverUrl: serverUrl(), token: token() }
 }
 
 /**
@@ -182,8 +148,7 @@ export function currentHost(): string {
 
 export async function setCurrentHost(h: string): Promise<void> {
   _host = h || "local"
-  _project = null // a different host has different projects; clear the filter
-  notifyFilter()
+  notifyHost()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)
   } catch {
@@ -191,10 +156,14 @@ export async function setCurrentHost(h: string): Promise<void> {
   }
 }
 
-/** The active server's base URL (empty when no server is configured). This is
- *  what src/api/client.ts prefixes onto every request. */
-export function serverUrl(): string {
-  return activeEntry(_servers)?.url || ""
+/** The active saved server (routes + token), or undefined when none. */
+export function activeServer(): ServerEntry | undefined {
+  return activeEntry(_servers)
+}
+
+/** Whether a server is configured at all (direct, relay, or both). */
+export function hasServer(): boolean {
+  return !!activeEntry(_servers)
 }
 
 /** The active server's auth token (empty when signed out / no server). Sent as
@@ -214,12 +183,13 @@ export function activeServerId(): string {
 }
 
 /**
- * Add a server to the list (or return the existing entry with the same URL,
- * updating its nickname). Does NOT switch to it — call switchServer next. New
+ * Add a server to the list (or return the existing entry — same relay
+ * serverId or same URL — refreshing its routes and nickname). Pass url "" with
+ * a relay route for a server reachable only through the relay. Does NOT switch to it — call switchServer next. New
  * entries start tokenless, so the caller routes to Login. Returns the entry.
  */
-export async function addServer(url: string, name?: string): Promise<ServerEntry> {
-  const { state, entry } = addToList(_servers, url, name)
+export async function addServer(url: string, name?: string, relay?: RelayRoute): Promise<ServerEntry> {
+  const { state, entry } = addToList(_servers, url, name, relay)
   _servers = state
   await persistServers()
   notifyServer()
@@ -234,7 +204,7 @@ export async function addServer(url: string, name?: string): Promise<ServerEntry
 export async function switchServer(id: string): Promise<void> {
   _servers = switchInList(_servers, id)
   _host = "local"
-  _project = null
+  notifyHost()
   await persistServers()
   try {
     await SecureStore.setItemAsync(HOST_KEY, _host)
@@ -242,7 +212,6 @@ export async function switchServer(id: string): Promise<void> {
     /* not persisted */
   }
   notifyServer()
-  notifyFilter()
 }
 
 /** Remove a saved server. If it was active, the active selection falls back to
@@ -251,40 +220,21 @@ export async function removeServer(id: string): Promise<void> {
   _servers = removeFromList(_servers, id)
   await persistServers()
   notifyServer()
-  notifyFilter()
-}
-
-/**
- * Legacy shim: set "the" server URL. Preserved so the cold-start ServerScreen
- * keeps working unchanged — it adds the server and switches to it in one call.
- */
-export async function setServerUrl(url: string): Promise<void> {
-  const entry = await addServer(url)
-  await switchServer(entry.id)
 }
 
 /** Store the auth token onto the ACTIVE server (sign-in), or clear it (sign-out
- *  when passed null). No active server → no-op. */
-export async function setToken(t: string | null): Promise<void> {
-  _servers = setActiveToken(_servers, t || "")
+ *  when passed null). The username (when given) is stored alongside so actor
+ *  labels can render "you" without a round trip. No active server → no-op. */
+export async function setToken(t: string | null, username?: string): Promise<void> {
+  _servers = setActiveToken(_servers, t || "", t ? username : "")
   await persistServers()
   notifyServer()
 }
 
-import { trimSeen } from "../lib/search"
-
-/** When each chat (by path) was last opened — drives the unread indicators. */
-export function seenMap(): Record<string, number> {
-  return _seen
-}
-
-export async function markSeen(path: string): Promise<void> {
-  _seen = trimSeen({ ..._seen, [path]: Date.now() / 1000 })
-  try {
-    await SecureStore.setItemAsync(SEEN_KEY, JSON.stringify(_seen))
-  } catch {
-    /* best-effort; in-memory map still works this session */
-  }
+/** The signed-in username on the active server ("" when unknown). Feeds the
+ *  actor-label rule in lib/board.ts so "user:ram" renders as "you". */
+export function username(): string {
+  return activeEntry(_servers)?.username || ""
 }
 
 /** Unsent composer draft for a session (empty string if none). */
@@ -342,20 +292,6 @@ export async function setThemePref(v: ThemePref): Promise<void> {
     await SecureStore.setItemAsync(THEME_KEY, v)
   } catch {
     /* best-effort; in-memory value still drives this session */
-  }
-}
-
-/** Which drawer sections are collapsed (by key). Missing key = expanded. */
-export function drawerSections(): Record<string, boolean> {
-  return _drawer
-}
-
-export async function setDrawerSection(key: string, open: boolean): Promise<void> {
-  _drawer = { ..._drawer, [key]: open }
-  try {
-    await SecureStore.setItemAsync(DRAWER_KEY, JSON.stringify(_drawer))
-  } catch {
-    /* best-effort */
   }
 }
 

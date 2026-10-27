@@ -14,14 +14,17 @@ export function AuthGate() {
 
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [setupCode, setSetupCode] = useState("")
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
 
   async function submit() {
-    if (!username.trim() || !password || busy) return
+    if (!username.trim() || !password || (signupOpen && !setupCode.trim()) || busy) return
     setBusy(true)
     setErr("")
-    const msg = await (signupOpen ? signup : signin)(username.trim(), password)
+    const msg = signupOpen
+      ? await signup(username.trim(), password, setupCode.trim())
+      : await signin(username.trim(), password)
     if (msg) {
       setErr(msg)
       setBusy(false)
@@ -39,7 +42,7 @@ export function AuthGate() {
           <h1 className="text-base font-semibold">{signupOpen ? "Create your account" : "Sign in"}</h1>
           <p className="mt-1 text-xs text-muted-foreground">
             {signupOpen
-              ? "First run — this account owns the instance."
+              ? "First run — this account owns the instance. Enter the setup code shown when Harman was installed."
               : "This viewer is private to your account."}
           </p>
         </div>
@@ -66,8 +69,22 @@ export function AuthGate() {
             placeholder="Password"
             autoComplete={signupOpen ? "new-password" : "current-password"}
           />
+          {signupOpen && (
+            <Input
+              value={setupCode}
+              onChange={(e) => setSetupCode(e.target.value)}
+              placeholder="Setup code"
+              autoComplete="one-time-code"
+              autoCapitalize="characters"
+              spellCheck={false}
+            />
+          )}
           {err && <p className="text-xs text-destructive">{err}</p>}
-          <Button type="submit" disabled={busy || !username.trim() || !password} className="mt-1 gap-1.5">
+          <Button
+            type="submit"
+            disabled={busy || !username.trim() || !password || (signupOpen && !setupCode.trim())}
+            className="mt-1 gap-1.5"
+          >
             {busy ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (

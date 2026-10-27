@@ -1,5 +1,6 @@
 """viewer.remote — SSH transport + all remote_* helpers (sessions, fs,
 capabilities, edits) and the python-over-SSH script payloads."""
+import ipaddress
 import json
 import os
 import posixpath
@@ -12,8 +13,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from viewer.config import (
-    HOSTS, MAX_POLL_BYTES, read_back_f, split_lines,
+    MAX_POLL_BYTES, read_back_f, split_lines,
 )
+from viewer import db, toml
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local
 from viewer.adapters import normalize_lines
 
@@ -57,7 +59,7 @@ class SSHManager:
         self.chan_gates = {}   # hid -> BoundedSemaphore(MAX_CHANNELS): concurrent short ops/host
 
     def config(self, hid):
-        return HOSTS.get(hid)
+        return db.hosts_load().get(hid)
 
     @contextmanager
     def lock_for(self, hid):
@@ -270,7 +272,13 @@ for f in glob.glob(base + '/*/*.jsonl'):
     except Exception:
         pass
     rel = 'projects/' + os.path.relpath(f, base)
-    proj = os.path.basename(os.path.dirname(f)).replace('-home-', '~/').replace('--', '/').replace('-', '/')
+    try:
+        with open(f, 'rb') as fh:
+            proj = last_cwd_in_file(fh)
+    except OSError:
+        proj = None
+    # The dir name is a lossy fallback: '/', ' ' and '-' all encode as '-'.
+    proj = proj or os.path.basename(os.path.dirname(f)).replace('-home-', '~/').replace('--', '/').replace('-', '/')
     out.append({'id': os.path.splitext(os.path.basename(f))[0], 'path': rel,
                 'title': title or os.path.splitext(os.path.basename(f))[0][:8],
                 'project': proj, 'size': st.st_size, 'modified': st.st_mtime})
@@ -437,14 +445,12 @@ def save_browser_mcp_all(config, name="playwright"):
 
     if is_installed_local(AGENTS_BY_ID["codex"]):
         try:
-            import tomllib
-            import tomli_w
             p = Path.home() / ".codex" / "config.toml"
-            data = tomllib.loads(p.read_text()) if p.exists() else {}
+            data = toml.loads(p.read_text()) if p.exists() else {}
             backup(p)
             data.setdefault("mcp_servers", {})[name] = cfg
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(tomli_w.dumps(data))
+            p.write_text(toml.dumps(data))
             results["codex"] = "ok"
         except Exception as e:
             results["codex"] = f"error: {e}"
@@ -480,7 +486,9 @@ def remote_install_agent(hid, agent):
 
 
 def remote_list_sessions(hid):
-    txt = remote_run_python(hid, REMOTE_LIST_SCRIPT)
+    import inspect
+    from viewer.sessions import last_cwd_in_file
+    txt = remote_run_python(hid, inspect.getsource(last_cwd_in_file) + REMOTE_LIST_SCRIPT)
     try:
         return json.loads(txt.strip().splitlines()[-1])
     except Exception:
@@ -924,27 +932,31 @@ def remote_read_session(hid, rel, q):
 
 
 def remote_extract_cwd(hid, rel):
-    with SSH.sftp(hid) as sftp:
-        full = remote_full_path(hid, rel)
-        if not full:
-            return None
-        try:
-            f = sftp.open(full, "r")
-            try:
-                for _ in range(100):
-                    line = f.readline()
-                    if not line:
-                        break
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if o.get("cwd"):
-                        return o["cwd"]
-            finally:
-                f.close()
-        except IOError:
-            pass
+    """Extract the cwd from a remote session using the unified last-cwd strategy.
+    Ships last_cwd_in_file to the host via remote_run_python so the
+    algorithm is identical to local — the LAST cwd wins (correct for forks)."""
+    full = remote_full_path(hid, rel)
+    if not full:
+        return None
+    import inspect
+    from viewer.sessions import last_cwd_in_file
+    script = ("import json, sys\n"
+              + inspect.getsource(last_cwd_in_file)
+              + "P = json.loads(%r)\n" % json.dumps({"path": full})
+              + "try:\n"
+                "    with open(P['path'], 'rb') as fh:\n"
+                "        cwd = last_cwd_in_file(fh)\n"
+                "except OSError:\n"
+                "    cwd = None\n"
+                "print(json.dumps(cwd))\n")
+    txt = remote_run_python(hid, script)
+    try:
+        cwd = json.loads(txt.strip().splitlines()[-1])
+    except Exception:
+        cwd = None
+    if cwd:
+        return cwd
+    with SSH.lock_for(hid):
         return SSH.get(hid)["home"]
 
 
@@ -1282,19 +1294,63 @@ print(json.dumps({"deleted":True,"trash":dst}))
 _REMOTE_PERM_DIR = ".claude/.viewer-perm"
 _viewer_tailnet_ip = None
 
+# Tailscale hands every node an address in the CGNAT range (RFC 6598); the
+# kernel's interface table is where that fact is true no matter which Tailscale
+# variant is installed. The `tailscale` CLI is asked first because it is the
+# canonical answer, but on the macOS App-Store/standalone variants the Homebrew
+# binary wants a tailscaled socket that does not exist and the app's own CLI
+# fails under launchd's bare environment — so the interface table is the
+# fallback that actually works for the viewer as a launchd service.
+_TAILNET_NET = ipaddress.ip_network("100.64.0.0/10")
+_TAILNET_PROBES = (
+    ["tailscale", "ip", "-4"],
+    ["ip", "-4", "-o", "addr"],
+    ["/sbin/ip", "-4", "-o", "addr"],
+    ["ifconfig"],
+    ["/sbin/ifconfig"],
+)
+_INET_RE = re.compile(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b")
+
+
+def tailnet_ipv4_from_text(text):
+    """First CGNAT-range IPv4 in a `tailscale ip -4` / `ip -o addr` / `ifconfig`
+    dump, or None. Pure, so the parser is unit-testable without a network."""
+    candidates = _INET_RE.findall(text) or text.split()
+    for tok in candidates:
+        try:
+            addr = ipaddress.ip_address(tok.strip())
+        except ValueError:
+            continue
+        if addr.version == 4 and addr in _TAILNET_NET:
+            return str(addr)
+    return None
+
+
+def tailnet_ipv4(_run=None):
+    """This machine's Tailscale IPv4, or None. A successful answer is cached for
+    the process lifetime; a failed lookup is NOT, so a tailnet that comes up
+    after the viewer boots is found on the next call."""
+    global _viewer_tailnet_ip
+    if _viewer_tailnet_ip:
+        return _viewer_tailnet_ip
+    import subprocess
+    run = _run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout)
+    for cmd in _TAILNET_PROBES:
+        try:
+            ip = tailnet_ipv4_from_text(run(cmd) or "")
+        except Exception:
+            continue
+        if ip:
+            _viewer_tailnet_ip = ip
+            return ip
+    return None
+
 
 def viewer_tailnet_base(port):
     """The viewer's own tailnet URL a remote host can call back to
     (http://<tailscale-ip>:<port>), or None if tailscale isn't available."""
-    global _viewer_tailnet_ip
-    if _viewer_tailnet_ip is None:
-        import subprocess
-        try:
-            r = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
-            _viewer_tailnet_ip = (r.stdout or "").strip().splitlines()[0].strip() if r.stdout else ""
-        except Exception:
-            _viewer_tailnet_ip = ""
-    return f"http://{_viewer_tailnet_ip}:{port}" if _viewer_tailnet_ip else None
+    ip = tailnet_ipv4()
+    return f"http://{ip}:{port}" if ip else None
 
 
 def remote_setup_perm_mcp(hid, port):
@@ -1304,7 +1360,7 @@ def remote_setup_perm_mcp(hid, port):
     if not viewer_tailnet_base(port):
         raise RuntimeError("no tailnet address for the viewer (remote AUQ needs it)")
     helper_src = (Path(__file__).parent / "permission_mcp.py").read_text()
-    kanban_src = (Path(__file__).parent / "kanban_mcp.py").read_text()
+    viewer_mcp_src = (Path(__file__).parent / "viewer_mcp.py").read_text()
     with SSH.sftp(hid) as sftp:
         home = SSH.get(hid)["home"].rstrip("/")
         d = f"{home}/{_REMOTE_PERM_DIR}"
@@ -1317,16 +1373,26 @@ def remote_setup_perm_mcp(hid, port):
             except IOError:
                 pass
         helper_path = f"{d}/permission_mcp.py"
-        kanban_path = f"{d}/kanban_mcp.py"
+        viewer_mcp_path = f"{d}/viewer_mcp.py"
         cfg_path = f"{d}/mcp.json"
         with sftp.open(helper_path, "w") as f:
             f.write(helper_src)
-        with sftp.open(kanban_path, "w") as f:
-            f.write(kanban_src)
+        with sftp.open(viewer_mcp_path, "w") as f:
+            f.write(viewer_mcp_src)
         cfg = {"mcpServers": {
             "viewerperm": {"command": "python3", "args": [helper_path]},
-            "viewerkanban": {"command": "python3", "args": [kanban_path]},
+            "viewer": {"command": "python3", "args": [viewer_mcp_path]},
         }}
+        # Merge user MCP servers from ~/.claude/mcp.json on the remote host
+        try:
+            user_mcp_path = f"{home}/.claude/mcp.json"
+            with sftp.open(user_mcp_path, "r") as uf:
+                user_cfg = json.loads(uf.read())
+            for name, srv in (user_cfg.get("mcpServers") or {}).items():
+                if name not in cfg["mcpServers"]:
+                    cfg["mcpServers"][name] = srv
+        except Exception:
+            pass
         with sftp.open(cfg_path, "w") as f:
             f.write(json.dumps(cfg))
     return cfg_path

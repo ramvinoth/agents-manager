@@ -3,7 +3,7 @@ import { Text, TouchableOpacity, View } from "react-native"
 import Icon from "./Icon"
 import SheetModal from "./SheetModal"
 import { useTheme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
 
 export type MsgTarget = { uuid?: string; text: string; isUser: boolean }
 

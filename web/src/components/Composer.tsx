@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Send, Square, X, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal } from "lucide-react"
+import { Send, Square, X, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal, File, Folder } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -13,16 +13,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
+import { DEFAULT_PERM_MODE } from "@/store/chat"
 import { api } from "@/lib/api"
+import { applyMention, hashTerm, type HashTerm } from "@/lib/fileMention"
 
 // Model + permission options are per-agent. Claude uses --permission-mode +
 // its model aliases; Copilot maps to native --mode (interactive/plan/autopilot)
 // and its own model ids (the CLI can't enumerate models, so this is curated).
+// The first entry of each list is that agent's default.
 const PERM_MODES_CLAUDE = [
+  { v: DEFAULT_PERM_MODE, label: "Bypass" },
   { v: "acceptEdits", label: "Accept edits" },
   { v: "default", label: "Ask" },
   { v: "plan", label: "Plan" },
-  { v: "bypassPermissions", label: "Bypass" },
 ]
 const PERM_MODES_COPILOT = [
   { v: "autopilot", label: "Autopilot" },
@@ -124,6 +127,7 @@ function StashButton({
                 <button
                   className="min-w-0 flex-1 truncate text-left text-xs"
                   title={s}
+                  data-track="stashed draft"
                   onClick={() => {
                     onRestore(s)
                     setOpen(false)
@@ -153,7 +157,9 @@ function StashButton({
 
 export function Composer() {
   const [text, setText] = useState("")
-  const [slashSel, setSlashSel] = useState(0)
+  const [sel, setSel] = useState(0)
+  const [hash, setHash] = useState<HashTerm | null>(null)
+  const [fileHits, setFileHits] = useState<{ path: string; dir: boolean }[]>([])
   const taRef = useRef<HTMLTextAreaElement>(null)
   const currentSessionPath = useStore((s) => s.currentSessionPath)
   const chatRunning = useStore((s) => s.chatRunning)
@@ -170,6 +176,7 @@ export function Composer() {
   const currentHost = useStore((s) => s.currentHost)
   const caps = useStore((s) => s.caps)
   const continueInteractively = useStore((s) => s.continueInteractively)
+  const cwd = useStore((s) => s.meta?.cwd)
   const pendingDraft = useStore((s) => s.pendingDraft)
   const clearPendingDraft = useStore((s) => s.clearPendingDraft)
   const agentLabel = useAgentLabel()
@@ -228,10 +235,12 @@ export function Composer() {
     else localStorage.removeItem("draft:" + currentSessionPath)
   }, [text, currentSessionPath])
 
-  // Fork/revert hand the removed message back to the composer to edit & resend.
+  // Fork/revert and un-queue hand a message back to the composer to edit & resend.
+  // Prepend (not replace) so an in-progress draft is preserved when a queued
+  // message is pulled back — mirrors mobile's unqueue.
   useEffect(() => {
     if (pendingDraft != null) {
-      setText(pendingDraft)
+      setText((cur) => (cur.trim() ? `${pendingDraft}\n\n${cur}` : pendingDraft))
       clearPendingDraft()
       taRef.current?.focus()
     }
@@ -256,13 +265,61 @@ export function Composer() {
 
   const slashOpen = slashMatches.length > 0
 
+  // "#word" at the caret searches the project's files (lib/fileMention.ts).
+  // Debounced; a reply for an older query is dropped so results never lag
+  // behind what is typed.
+  const hashQuery = hash?.query ?? null
   useEffect(() => {
-    setSlashSel(0)
-  }, [term])
+    if (hashQuery === null || !cwd) {
+      setFileHits([])
+      return
+    }
+    let live = true
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.fsSearch(cwd, hashQuery)
+        if (live) setFileHits(Array.isArray(r?.results) ? r.results : [])
+      } catch {
+        if (live) setFileHits([])
+      }
+    }, 120)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [hashQuery, cwd])
+
+  const fileOpen = !slashOpen && hash !== null && fileHits.length > 0
+  const pickCount = slashOpen ? slashMatches.length : fileOpen ? fileHits.length : 0
+
+  useEffect(() => {
+    setSel(0)
+  }, [term, hashQuery])
+
+  function trackCaret(el: HTMLTextAreaElement) {
+    setHash(el.selectionStart === el.selectionEnd ? hashTerm(el.value, el.selectionStart) : null)
+  }
 
   function selectSlash(name: string) {
     setText("/" + name + " ")
     taRef.current?.focus()
+  }
+
+  function selectFile(path: string) {
+    const el = taRef.current
+    if (!el || !hash) return
+    const r = applyMention(text, hash, el.selectionStart, path)
+    setText(r.text)
+    setHash(null)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(r.caret, r.caret)
+    })
+  }
+
+  function pick(i: number) {
+    if (slashOpen) selectSlash(slashMatches[i].name)
+    else if (fileOpen) selectFile(fileHits[i].path)
   }
 
   async function send() {
@@ -308,11 +365,11 @@ export function Composer() {
             {slashMatches.map((c, i) => (
               <button
                 key={c.name}
-                onMouseEnter={() => setSlashSel(i)}
+                onMouseEnter={() => setSel(i)}
                 onClick={() => selectSlash(c.name)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
-                  i === slashSel && "bg-accent"
+                  i === sel && "bg-accent"
                 )}
               >
                 <span className="shrink-0 font-medium">/{c.name}</span>
@@ -325,6 +382,33 @@ export function Composer() {
             ))}
           </div>
         )}
+        {fileOpen && (
+          <div
+            data-testid="file-mention-list"
+            className="absolute bottom-full left-0 z-30 mb-2 max-h-64 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-md"
+          >
+            {fileHits.map((f, i) => {
+              const cut = f.path.lastIndexOf("/") + 1
+              const Icon = f.dir ? Folder : File
+              return (
+                <button
+                  key={f.path}
+                  onMouseEnter={() => setSel(i)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => selectFile(f.path)}
+                  className={cn(
+                    "flex w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
+                    i === sel && "bg-accent"
+                  )}
+                >
+                  <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="shrink-0 font-medium">{f.path.slice(cut) + (f.dir ? "/" : "")}</span>
+                  <span className="truncate text-xs text-muted-foreground">{f.path.slice(0, cut)}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
         <StatusLine />
         <QueueRow />
 
@@ -333,22 +417,32 @@ export function Composer() {
           <Textarea
             ref={taRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value)
+              trackCaret(e.target)
+            }}
+            onSelect={(e) => trackCaret(e.currentTarget)}
+            onBlur={() => setHash(null)}
             onKeyDown={(e) => {
-              if (slashOpen) {
+              if (pickCount > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault()
-                  setSlashSel((s) => (s + 1) % slashMatches.length)
+                  setSel((s) => (s + 1) % pickCount)
                   return
                 }
                 if (e.key === "ArrowUp") {
                   e.preventDefault()
-                  setSlashSel((s) => (s - 1 + slashMatches.length) % slashMatches.length)
+                  setSel((s) => (s - 1 + pickCount) % pickCount)
                   return
                 }
                 if (e.key === "Enter" || e.key === "Tab") {
                   e.preventDefault()
-                  selectSlash(slashMatches[slashSel].name)
+                  pick(Math.min(sel, pickCount - 1))
+                  return
+                }
+                if (e.key === "Escape" && fileOpen) {
+                  e.preventDefault()
+                  setHash(null)
                   return
                 }
               }
@@ -364,7 +458,7 @@ export function Composer() {
                 ? "Load a session to chat"
                 : chatRunning
                 ? "Steer the current turn, or queue for the next…"
-                : `Message ${agentLabel}…  (/ for commands, Enter to send)`
+                : `Message ${agentLabel}…  (/ for commands, # for files, Enter to send)`
             }
             disabled={disabled}
             className="max-h-52 min-h-14 resize-none border-0 shadow-none focus-visible:ring-0"

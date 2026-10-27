@@ -7,14 +7,9 @@ import time
 import uuid as uuid_mod
 from collections import deque
 from pathlib import Path
-from viewer import db, hostenv
-from viewer.config import (
-    HOSTS, HOSTS_FILE, HOSTS_LOCK,
-)
+from viewer import db, hostenv, pairing, relay, setupcode
+from viewer.config import PUBLIC_URL
 from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
-from viewer.engine import (
-    save_json_file,
-)
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
 )
@@ -139,12 +134,23 @@ class AuthMixin:
         if db.user_count() > 0:
             self.send_json({"error": "Signup is closed on this instance"}, status=403)
             return
+        # Same throttle as sign-in: the setup code must not be brute-forceable.
+        ip = _client_ip(self.client_address[0] if self.client_address else "?", self.headers)
+        if _login_over_limit(ip):
+            self.send_json({"error": "Too many attempts — wait a minute and try again."}, status=429)
+            return
         body = self.read_body() or {}
+        setupcode.ensure()   # a missing file (deleted by hand) must not wedge first-run
+        if not setupcode.matches(body.get("setupCode")):
+            self.send_json({"error": "Wrong setup code. Find it in the install output, the server log, "
+                                     "or run `harman setup-code` on the server."}, status=403)
+            return
         try:
             user = db.create_user(body.get("username", ""), body.get("password", ""))
         except ValueError as e:
             self.send_json({"error": str(e)}, status=400)
             return
+        setupcode.clear()
         token = db.create_session(user["id"])
         self.set_session_cookie(token)
         # `wantToken` lets non-browser clients (mobile) receive the token in the
@@ -166,6 +172,65 @@ class AuthMixin:
         self.set_session_cookie(token)
         self.send_json({"user": user, **({"token": token} if body.get("wantToken") else {})})
 
+    def _p_auth_pair_start(self, req):
+        """Mint a one-time pairing code for the signed-in human (web shows it as a
+        QR). Agents can't: a code is a login, and only a person hands one out."""
+        p = req.principal or {}
+        if p.get("kind") != "app" or not p.get("user"):
+            self.send_json({"error": "Only a signed-in person can pair a device"}, status=403)
+            return
+        if not p["user"].get("id"):   # VIEWER_NO_AUTH's synthetic user has no account
+            self.send_json({"error": "This server runs without accounts, so there is nothing to pair"},
+                           status=400)
+            return
+        code, expires = pairing.create(p["user"]["id"])
+        # `relay` (or null): how a phone reaches this server through the Harman
+        # relay when it has no direct route — see viewer.relay.offer.
+        self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
+                        "publicUrl": PUBLIC_URL, "relay": relay.offer()})
+
+    def _g_relay(self, req):
+        """Is the relay on, may the owner change that, is it connected now."""
+        self.send_json(relay.status())
+
+    def _p_relay(self, req):
+        """The owner's relay switch (Pair a phone). Owner only: turning it on
+        opens a route to this server from the internet, end-to-end encrypted
+        but still a route — the same call Paseo asks before relaying."""
+        p = req.principal or {}
+        if p.get("kind") != "app" or (p.get("user") or {}).get("role") != "owner":
+            self.send_json({"error": "Only the owner can turn the relay on or off"}, status=403)
+            return
+        body = self.read_body() or {}
+        if not isinstance(body.get("enabled"), bool):
+            self.send_json({"error": "enabled (true/false) required"}, status=400)
+            return
+        try:
+            self.send_json(relay.set_enabled(body["enabled"]))
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=409)
+
+    def _p_auth_pair_redeem(self, req):
+        """Swap a pairing code for a session token (the scanning phone). Public:
+        the code IS the credential. Throttled like sign-in."""
+        ip = _client_ip(self.client_address[0] if self.client_address else "?", self.headers)
+        if _login_over_limit(ip):
+            self.send_json({"error": "Too many attempts — wait a minute and try again."}, status=429)
+            return
+        body = self.read_body() or {}
+        uid = pairing.redeem(body.get("code"))
+        if uid is None:
+            self.send_json({"error": "This pairing code is used or expired. Make a new one on the computer."},
+                           status=401)
+            return
+        token = db.create_session(uid)
+        user = db.user_for_session(token)
+        if not user:   # account deleted between minting and scanning
+            db.delete_session(token)
+            self.send_json({"error": "That account no longer exists"}, status=401)
+            return
+        self.send_json({"user": user, "token": token})
+
     def _p_auth_signout(self, req):
         # Revoke via cookie (web) or Bearer header (mobile), whichever carried it.
         db.delete_session(self._auth_token())
@@ -173,11 +238,13 @@ class AuthMixin:
         self.send_json({"ok": True})
 
     def _g_prefs(self, req):
-        u = self.current_user()
+        # Gated route: the principal is resolved. Prefs belong to a HUMAN account,
+        # so an agent's MCP principal (user None) simply has none.
+        u = req.principal.get("user")
         self.send_json(db.get_prefs(u["id"]) if u and u.get("id") else {})
 
     def _p_prefs(self, req):
-        u = self.current_user()
+        u = req.principal.get("user")
         if u and u.get("id"):
             db.set_prefs(u["id"], self.read_body() or {})
         self.send_json({"ok": True})
@@ -211,10 +278,8 @@ class AuthMixin:
 
     def _g_hosts(self, req):
         # auth + keyFile (a path, not a secret) let the edit modal prefill; the
-        # password/passphrase are never sent to the client. Snapshot under the
-        # lock so a concurrent save/delete can't 500 the iteration.
-        with HOSTS_LOCK:
-            items = list(HOSTS.items())
+        # password/passphrase are never sent to the client.
+        items = db.hosts_load().items()
         self.send_json([{"id": hid, "label": c.get("label", hid), "host": c["host"],
                          "user": c["user"], "port": c.get("port", 22),
                          "auth": "key" if c.get("keyFile") else "password",
@@ -246,7 +311,7 @@ class AuthMixin:
                 self.send_json({"error": f"{f} is required"}, status=400)
                 return
         hid = body.get("id") or uuid_mod.uuid4().hex[:12]
-        prev = HOSTS.get(hid, {})
+        prev = db.hosts_load().get(hid, {})
         editing = bool(body.get("id"))
         method = body.get("authMethod") or ("key" if body.get("keyFile") else "password")
         # Store exactly ONE auth method (password | key | agent-default). A blank
@@ -262,13 +327,7 @@ class AuthMixin:
         else:
             pw = body.get("password", "")
             entry["password"] = pw or (prev.get("password", "") if editing else "")
-        with HOSTS_LOCK:
-            HOSTS[hid] = entry
-            save_json_file(HOSTS_FILE, HOSTS)
-        try:
-            os.chmod(HOSTS_FILE, 0o600)
-        except OSError:
-            pass
+        db.host_upsert(hid, entry)
         self.send_json({"saved": hid})
 
     def _p_auth_login_code(self, req):
@@ -326,10 +385,7 @@ class AuthMixin:
         body = self.read_body() or {}
         hid = body.get("id")
         SSH.close(hid)
-        with HOSTS_LOCK:
-            removed = HOSTS.pop(hid, None) is not None
-            if removed:
-                save_json_file(HOSTS_FILE, HOSTS)
+        db.host_delete(hid)
         hostenv.unset_host(hid)   # drop this host's env vars too
         self.send_json({"deleted": True})
 

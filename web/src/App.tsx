@@ -4,15 +4,19 @@ import { GitSection } from "@/components/GitSection"
 import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
 import { Transcript } from "@/components/Transcript"
+import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { RhsPanel } from "@/components/RhsPanel"
+import { CanvasPane } from "@/components/CanvasPane"
+import { latestShow } from "@/lib/canvas"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
 import { SearchBar } from "@/components/SearchBar"
 import { LoginPanel } from "@/components/LoginPanel"
 import { AuthGate } from "@/components/AuthGate"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { useStore, useAgentLabel } from "@/store"
+import { startUsageTracking } from "@/usageTracker"
 
 // Lazy — pulls xterm + the CDP/PTY panel code only when a panel is opened.
 const PanelDock = lazy(() =>
@@ -25,6 +29,7 @@ const FileBrowser = lazy(() =>
 function App() {
   const init = useStore((s) => s.init)
   const turns = useStore((s) => s.turns)
+  const sessionCwd = useStore((s) => s.meta?.cwd)
   const turnsLen = turns.length
   const loading = useStore((s) => s.loading)
   const error = useStore((s) => s.error)
@@ -47,7 +52,13 @@ function App() {
   const loadOlder = useStore((s) => s.loadOlder)
   const auth = useStore((s) => s.auth)
   const needsAuth = useStore((s) => s.needsAuth)
+  const rhsOpen = useStore((s) => s.rhsOpen)
+  const lhsOpen = useStore((s) => s.lhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
+  const canvasOpen = useStore((s) => s.canvasOpen)
+  const loadCanvases = useStore((s) => s.loadCanvases)
+  const resetCanvases = useStore((s) => s.resetCanvases)
+  const canvasShown = useStore((s) => s.canvasShown)
   const agentLabel = useAgentLabel()
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -70,10 +81,36 @@ function App() {
     init()
   }, [init])
 
+  // Usage reporting starts once a human is signed in (the server only accepts
+  // a human's events) and runs for the life of the page.
+  const signedIn = useStore((s) => !!s.authUser)
+  useEffect(() => {
+    if (signedIn) startUsageTracking()
+  }, [signedIn])
+
   useEffect(() => {
     follow.current = true
     setShowJump(false)
   }, [currentSessionPath])
+
+  // Canvas: each session has its own. The show already in the transcript when a
+  // session loads is history (the pane stays shut); only a NEW show opens it.
+  // Tracking just the latest show means older history paging in never fires one.
+  const lastShow = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    lastShow.current = undefined
+    resetCanvases()
+    if (currentSessionPath) loadCanvases()
+  }, [currentSessionPath, resetCanvases, loadCanvases])
+  useEffect(() => {
+    if (loading) return
+    const show = latestShow(turns)
+    if (lastShow.current === undefined) lastShow.current = show?.id ?? null
+    else if (show && show.id !== lastShow.current) {
+      lastShow.current = show.id
+      canvasShown(show.title)
+    }
+  }, [turns, loading, canvasShown])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -168,7 +205,7 @@ function App() {
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <Header />
       <div className="flex min-h-0 flex-1">
-        {!needsAuth && (
+        {!needsAuth && lhsOpen && (
           <aside className="hidden w-72 shrink-0 flex-col border-r border-border md:flex">
             <LeftPanel />
           </aside>
@@ -270,7 +307,9 @@ function App() {
               <div className="flex h-64 items-center justify-center text-sm text-destructive">{error}</div>
             ) : (
               <ErrorBoundary key={currentSessionPath} label="Couldn't render this transcript">
-                <Transcript turns={turns} highlightId={searchOpen ? currentMatch : undefined} />
+                <FileLinkProvider cwd={sessionCwd}>
+                  <Transcript turns={turns} highlightId={searchOpen ? currentMatch : undefined} />
+                </FileLinkProvider>
               </ErrorBoundary>
             )}
             {chatRunning && !error && (
@@ -305,7 +344,15 @@ function App() {
             </>
           )}
         </main>
-        {!needsAuth && (
+        {!needsAuth && canvasOpen && (
+          // Wide: a resizable-by-layout column beside the chat. Narrow: a full-screen sheet.
+          <aside className="fixed inset-0 z-40 bg-background md:static md:z-auto md:w-[min(45vw,720px)] md:shrink-0 md:border-l md:border-border">
+            <ErrorBoundary label="Canvas error">
+              <CanvasPane />
+            </ErrorBoundary>
+          </aside>
+        )}
+        {!needsAuth && rhsOpen && (
           <aside className="hidden w-72 shrink-0 border-l border-border lg:block">
             <ErrorBoundary label="Skills panel error">
               <RhsPanel />

@@ -15,10 +15,12 @@
  */
 let Notifications: any = null
 let ready = false
+// The cold-start notification response is returned persistently by the OS, so we
+// track the last-handled id to avoid re-navigating on a remount.
+let _lastColdId: string | null = null
 
 async function load() {
   if (ready) return Notifications
-  ready = true
   try {
     Notifications = require("expo-notifications")
     Notifications.setNotificationHandler({
@@ -33,6 +35,8 @@ async function load() {
         shouldSetBadge: false,
       }),
     })
+    ready = true // only mark ready AFTER the handler install succeeds, so a
+    // transient throw (version skew) doesn't permanently disable notifications.
   } catch {
     Notifications = null
   }
@@ -116,17 +120,48 @@ export async function unregisterPush(send: (token: string) => Promise<unknown>):
   _pushToken = null
 }
 
-/** First line of a reply, trimmed of markdown noise — a usable notification body. */
-export function replyPreview(text: string, max = 140): string {
-  const line =
-    (text || "")
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l && !/^[#>*\-|`]+$/.test(l)) || ""
-  const clean = line
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/^#+\s*/, "")
-    .trim()
-  return clean.length > max ? clean.slice(0, max - 1) + "…" : clean
+/**
+ * Route notification taps to the right chat. The server merges `{session, host}`
+ * into every push payload (viewer/push.py:notify_all), so a tap carries enough to
+ * open the exact session. Handles BOTH cases: a tap while the app is
+ * running/backgrounded (addNotificationResponseReceivedListener) AND a cold start
+ * where the tap launched the app (getLastNotificationResponseAsync). Best-effort:
+ * on a build without the native module it simply does nothing. Returns an
+ * unsubscribe fn.
+ */
+export function onNotificationTap(handler: (data: Record<string, unknown>) => void): () => void {
+  let sub: { remove?: () => void } | null = null
+  let cancelled = false
+  ;(async () => {
+    const N = await load()
+    if (!N || cancelled) return
+    try {
+      // Cold start: the tap that launched the app. getLastNotificationResponseAsync
+      // returns it PERSISTENTLY, so a remount would re-fire it and re-navigate —
+      // dedupe by the notification id so each cold tap is handled at most once.
+      const last = await N.getLastNotificationResponseAsync?.()
+      const coldData = last?.notification?.request?.content?.data
+      const coldId = last?.notification?.request?.identifier
+      if (coldData && coldId && coldId !== _lastColdId) {
+        _lastColdId = coldId
+        handler(coldData)
+      }
+      // Warm taps while running/backgrounded.
+      sub = N.addNotificationResponseReceivedListener((resp: any) => {
+        const data = resp?.notification?.request?.content?.data
+        if (data) handler(data)
+      })
+    } catch {
+      /* tap routing is best-effort */
+    }
+  })()
+  return () => {
+    cancelled = true
+    try {
+      sub?.remove?.()
+    } catch {
+      /* already removed */
+    }
+  }
 }
+

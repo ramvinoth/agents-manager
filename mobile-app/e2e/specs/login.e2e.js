@@ -1,17 +1,18 @@
-// Smoke test for the MVP happy path: connect to a server, sign in, land on Hosts.
+// Smoke test for the MVP happy path: connect to a server, sign in, land on Chats.
 // Elements are found by accessibility id (`~name`), which maps to the `testID` +
-// `accessibilityLabel` pairs set on the screens (content-desc on Android,
-// accessibilityIdentifier on iOS).
-//
-// Config via env (never commit real credentials):
-//   E2E_SERVER_URL  default http://10.0.2.2:8091  (10.0.2.2 = host loopback from an Android emulator)
-//   E2E_USERNAME    default "owner"
-//   E2E_PASSWORD    default "changeme"
-const SERVER_URL = process.env.E2E_SERVER_URL || "http://10.0.2.2:8091"
-const USERNAME = process.env.E2E_USERNAME || "owner"
-const PASSWORD = process.env.E2E_PASSWORD || "changeme"
+// `accessibilityLabel` pairs set on the screens (accessibilityIdentifier on iOS).
+// The server is the loopback fixture every spec shares, so no real credentials.
+const assert = require("node:assert/strict")
+const { startFixture } = require("../thread-board-fixture")
 
 describe("Agents mobile — login smoke", () => {
+  let fixture
+  before(async () => {
+    assert.equal(process.env.E2E_BUNDLE_ID, "com.suhai.agents.e2e", "Never run against a production bundle")
+    fixture = await startFixture({})
+  })
+  after(() => fixture?.close())
+
   // On failure, capture the screen and dump the visible accessibility ids —
   // guessing at "element not found" from logs alone wastes whole build cycles.
   afterEach(async function () {
@@ -32,13 +33,20 @@ describe("Agents mobile — login smoke", () => {
   it("connects to a server and signs in to reach the Chats home", async () => {
     const urlField = await $("~server-url")
     await urlField.waitForDisplayed({ timeout: 20000 })
-    await urlField.setValue(SERVER_URL)
+
+    // The in-app pairing scanner opens (camera, or its permission prompt —
+    // the simulator has no camera) and Cancel returns to the connect form.
+    await (await $("~server-scan")).click()
+    await $('-ios predicate string:name IN {"pair-camera", "pair-camera-allow"}').waitForDisplayed({ timeout: 10000 })
+    await (await $("~pair-scan-cancel")).click()
+    await urlField.waitForDisplayed({ timeout: 10000 })
+    await urlField.setValue(fixture.url)
     await (await $("~server-connect")).click()
 
     const userField = await $("~login-username")
     await userField.waitForDisplayed({ timeout: 20000 })
-    await userField.setValue(USERNAME)
-    await (await $("~login-password")).setValue(PASSWORD)
+    await userField.setValue("fixture")
+    await (await $("~login-password")).setValue("fixture")
     await (await $("~login-submit")).click()
 
     // Landed on the Chats home — a WhatsApp-style list of agent sessions.

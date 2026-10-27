@@ -43,8 +43,127 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else int(
 # is the one public path (it's entirely client-side). Set VIEWER_NO_AUTH=1 only
 # when fronting the tool with your own auth/proxy.
 VIEWER_NO_AUTH = os.environ.get("VIEWER_NO_AUTH") == "1"
+# A preflight boot (spare port, same Postgres, live server still running) only
+# proves the code imports and serves. It must not act on shared state: boot
+# reconciliation would close the live server's in-flight job_runs as "restarted
+# mid-run" and sweep the settings files its runs are using, and a second
+# scheduler would fire due loops twice.
+VIEWER_PREFLIGHT = os.environ.get("VIEWER_PREFLIGHT") == "1"
+# The address phones use to reach this server from anywhere (e.g. its Cloudflare
+# Tunnel hostname). The Pair-a-phone QR defaults to it, so a customer never has
+# to know or type it. Empty = the QR falls back to the browser's own address.
+PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
+# Harman relay (relay/ — Cloudflare Worker) this server dials out to so phones
+# reach it from anywhere with no tunnel or open port. Like Paseo, a fresh
+# install ships pointed at the hosted relay but leaves it OFF until the owner
+# switches it on while pairing a phone (persisted in settings; viewer/relay.py).
+# HARMAN_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
+# "off" = never (the owner cannot switch it on from the app).
+DEFAULT_RELAY_URL = "wss://relay.suhai.ai"
+RELAY_ENV = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
+
+
+def transcript_path(session_id):
+    """The local transcript of a session, or None: <project-dir>/<id>.jsonl one
+    level under CLAUDE_DIR (the CLI's layout). The one rule every resolver
+    shares — the scheduler cannot resume a session this returns None for."""
+    if not session_id:
+        return None
+    matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if matches else None
 STATIC_DIR = Path(__file__).parent.parent   # repo root (holds shared data files, e.g. system-commands.json)
+
+# Agent plugins shipped with Harman: standard Claude Code plugin folders that an
+# agent template names (agent_templates.plugin / plugins), a chat adds or removes,
+# and the engine loads per run with --plugin-dir.
+AGENT_PLUGINS_DIR = STATIC_DIR / "viewer" / "agent_plugins"
+
+
+def agent_plugin_dir(name):
+    """The plugin folder for a name, or None when it is blank, not a plain
+    folder name (no path tricks) or not shipped here."""
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+        return None
+    path = AGENT_PLUGINS_DIR / name
+    return path if path.is_dir() else None
+
+
+def agent_plugin_names():
+    """Every plugin Harman ships, by folder name — the catalog a chat or agent picks from."""
+    if not AGENT_PLUGINS_DIR.is_dir():
+        return []
+    return sorted(p.name for p in AGENT_PLUGINS_DIR.iterdir() if agent_plugin_dir(p.name))
+
+
+# A chat's own extras (skills / MCP the owner added to ONE chat) live in a
+# plugin folder generated per session, so they ride the same --plugin-dir path
+# as an agent's plugin instead of a second loading mechanism.
+CHAT_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-chat-plugins"
+CHAT_PLUGIN_NAME = "chat"   # its namespace: skills show as chat:<skill>
+
+
+def _extras_dir(root, key, create, description):
+    """A generated extras plugin folder root/<key>, or None when the key is not
+    a plain id or (create=False) it has never been written. create=True makes
+    it a valid plugin (manifest) so a first skill or MCP server can land in it."""
+    if not key or not re.fullmatch(r"[0-9A-Za-z-]{1,64}", key):
+        return None
+    path = root / key
+    if create:
+        (path / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        manifest = path / ".claude-plugin" / "plugin.json"
+        if not manifest.exists():
+            manifest.write_text(json.dumps({"name": CHAT_PLUGIN_NAME, "description": description}))
+    return path if path.is_dir() else None
+
+
+def chat_plugin_dir(session_id, create=False):
+    """The session's extras plugin folder (see _extras_dir)."""
+    if not session_id or len(session_id) < 8:
+        return None
+    return _extras_dir(CHAT_PLUGINS_DIR, session_id, create,
+                       "Skills and MCP servers added to this chat only.")
+
+
+# An agent template's saved extras: copied into each new chat started from it,
+# so "this agent always has these skills/MCP" needs no second loading path.
+TEMPLATE_PLUGINS_DIR = Path.home() / ".claude" / ".viewer-template-plugins"
+
+
+def template_plugin_dir(template_id, create=False):
+    """The template's extras folder (same shape as a chat's), or None."""
+    return _extras_dir(TEMPLATE_PLUGINS_DIR, str(template_id), create,
+                       "Skills and MCP servers this agent starts every chat with.")
+
+
+def session_plugins(meta):
+    """The Harman plugins a session runs with. `agentPlugins` (the owner's
+    per-chat choice) wins; a session that never chose keeps its template's
+    `agentPlugin`. Unknown names are dropped, never passed to the CLI."""
+    names = meta.get("agentPlugins")
+    if not isinstance(names, list):
+        names = [meta.get("agentPlugin") or ""]
+    return [n for n in dict.fromkeys(names) if isinstance(n, str) and agent_plugin_dir(n)]
+
+
+def session_plugin_dirs(session_id, meta):
+    """Every --plugin-dir a local Claude run of this session gets: its Harman
+    plugins, then its own extras folder when it has one."""
+    dirs = [agent_plugin_dir(n) for n in session_plugins(meta)]
+    chat = chat_plugin_dir(session_id)
+    return dirs + ([chat] if chat else [])
+
+
+# Harman's own release version. Read from the top-level VERSION file relative to
+# STATIC_DIR (NOT an absolute path) so that when the server is launched from a
+# release symlink (e.g. /opt/harman/current -> releases/v1.2.0), this reports the
+# active release with no release-awareness in the code. Bare dev checkouts without
+# a VERSION file fall back to a sentinel.
+try:
+    VERSION = (STATIC_DIR / "VERSION").read_text().strip() or "0.0.0-dev"
+except OSError:
+    VERSION = "0.0.0-dev"
 
 # The UI is the built React app in web/dist — run `cd web && npm run build` first
 # (server startup warns if it's missing).
@@ -57,32 +176,50 @@ UI_DIR = REACT_DIR
 DEFAULT_SESSION = os.environ.get("VIEWER_DEFAULT_SESSION", "")
 
 MAX_POLL_BYTES = 8 * 1024 * 1024  # cap a single ?from= read
-CHAT_TIMEOUT = 3600               # seconds for one claude -p run
+CHAT_TIMEOUT = 3600               # seconds for one claude -p run (one-shot paths:
+                                  # a hard wall-clock cap on communicate())
+# Streaming chat is capped on SILENCE, not total wall-clock: a genuinely-working
+# agent (emitting assistant text / tool calls / results as stream-json lines)
+# may run for hours, but a hung claude -p that goes quiet mid-turn is killed
+# after this many seconds of NO output. Must exceed the longest legitimate
+# silent gap — a long-running tool call (build/test suite) emits nothing on the
+# stream until it returns — so keep this generous. Env-overridable for tuning.
+CHAT_IDLE_TIMEOUT = int(os.environ.get("VIEWER_CHAT_IDLE_TIMEOUT", "1800"))
 PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decision
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a
                                   # human may take a while; the CLI holds the turn)
 
 # ===== Voice (speech-to-text + text-to-speech) =====
-# STT + TTS run on the GPU box (suha-ai) as a persistent sherpa-onnx service —
+# STT + TTS run on a GPU box as a persistent sherpa-onnx service —
 # Parakeet transducer for STT, Kokoro for TTS (see deploy/speech_service.py).
 # The viewer POSTs audio/text to it. Env-overridable; empty URL disables voice.
-SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "http://100.115.120.89:8095")
+SPEECH_SERVICE_URL = os.environ.get("HARMAN_SPEECH_URL", "")
 SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/TTS call
                                      # (Qwen synthesizes a whole reply in one
                                      # pass — a long paragraph can take 30s+)
+# TTS streaming uses Pocket (:8097), which serves /synthesize_stream_aac.
+# The main speech service (:8095) handles STT + non-streaming TTS but NOT
+# streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
+TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
 VERIFY_SERVICE_URL = os.environ.get(
-    "HARMAN_VERIFY_URL", "http://100.115.120.89:8095")
+    "HARMAN_VERIFY_URL", "")
 VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
 
-# The Harman assistant voice service (deploy/harman_assistant_service.py):
-# takes a USER UTTERANCE, routes action requests to the Qwen agent (:8081),
-# and speaks the answer in the cloned assistant voice (Step-Audio :8000 + token2wav),
-# streamed as ADTS-AAC — same contract as the Pocket TTS stream, so the voice
-# route can proxy it unchanged. Selected per-request via ?assistant=1.
-ASSISTANT_SERVICE_URL = os.environ.get("HARMAN_ASSISTANT_URL", "http://100.115.120.89:8099")
+# ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====
+# A SEPARATE, single-slot GPU backend (see deploy/voicechat.md) — not the
+# sherpa-onnx STT/TTS service above. Empty URL/token-file disables it: no
+# production default, so a fresh install never proxies to a box it hasn't
+# been pointed at. The service token lives in a private file (same 0600
+# read-a-secret-file convention as VIEWER_TOKEN_FILE / viewer/login.py),
+# never in an env var a process listing could show, and is read fresh on
+# each request rather than cached in memory at import time.
+NEMOTRON_URL = os.environ.get("HARMAN_NEMOTRON_URL", "")
+NEMOTRON_TOKEN_FILE = (Path(os.environ["HARMAN_NEMOTRON_TOKEN_FILE"])
+                      if os.environ.get("HARMAN_NEMOTRON_TOKEN_FILE") else None)
+NEMOTRON_TIMEOUT = int(os.environ.get("HARMAN_NEMOTRON_TIMEOUT", "15"))  # /health only
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
@@ -315,13 +452,5 @@ VIEWER_TOKEN_FILE = Path.home() / ".claude" / ".viewer-oauth-token"
 # ===== Remote hosts (SSH) =====
 # Full remote parity: switch to a host and view/tail its sessions, chat (runs
 # claude ON the remote), browse its filesystem. Requires claude installed and
-# logged in on the remote. Credentials are stored 0600 under ~/.claude.
-HOSTS_FILE = Path.home() / ".claude" / ".viewer-hosts.json"
-
-# Configured SSH hosts, loaded once at import. Mutated in place by the hosts
-# save/delete handlers (never rebound), so every module shares this one dict.
-try:
-    HOSTS = json.loads(HOSTS_FILE.read_text()) if HOSTS_FILE.exists() else {}
-except Exception:
-    HOSTS = {}
-HOSTS_LOCK = threading.Lock()  # guard HOSTS mutate/iterate (save/delete vs /api/hosts)
+# logged in on the remote. The host registry (labels, users, credentials) lives
+# in Postgres — see viewer.db.hosts_load / host_upsert / host_delete.

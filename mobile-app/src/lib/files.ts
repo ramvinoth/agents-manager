@@ -36,3 +36,45 @@ export function baseName(path: string): string {
   const parts = path.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : path || "/"
 }
+
+/**
+ * Browser-style navigation history for the file browser: a stack of visited paths
+ * plus a cursor. `back`/`forward` move the cursor; `visit` pushes a new path and —
+ * like a web browser — DROPS any forward entries (you took a new branch). Pure so
+ * it's unit-tested without a simulator. `canBack`/`canForward` drive button state.
+ */
+export type NavHistory = { stack: string[]; index: number }
+
+export function navInit(path: string): NavHistory {
+  return { stack: [path], index: 0 }
+}
+
+export function navCurrent(h: NavHistory): string {
+  return h.stack[h.index]
+}
+
+export function navCanBack(h: NavHistory): boolean {
+  return h.index > 0
+}
+
+export function navCanForward(h: NavHistory): boolean {
+  return h.index < h.stack.length - 1
+}
+
+/** Descend/jump to a new path. No-op (same object semantics aside) if it equals the
+ * current path — re-tapping the same folder shouldn't bloat history. */
+export function navVisit(h: NavHistory, path: string): NavHistory {
+  if (navCurrent(h) === path) return h
+  const stack = h.stack.slice(0, h.index + 1)
+  stack.push(path)
+  return { stack, index: stack.length - 1 }
+}
+
+export function navBack(h: NavHistory): NavHistory {
+  return navCanBack(h) ? { stack: h.stack, index: h.index - 1 } : h
+}
+
+export function navForward(h: NavHistory): NavHistory {
+  return navCanForward(h) ? { stack: h.stack, index: h.index + 1 } : h
+}
+

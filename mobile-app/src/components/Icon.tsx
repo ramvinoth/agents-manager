@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons"
 export type IconName =
   | "menu"
   | "add"
+  | "plus"
   | "settings"
   | "attach"
   | "send"
@@ -20,6 +21,8 @@ export type IconName =
   | "copy"
   | "fork"
   | "revert"
+  | "pause"
+  | "play"
   | "folder"
   | "file"
   | "up"
@@ -29,8 +32,11 @@ export type IconName =
   | "chevronDown"
   | "chevronRight"
   | "check"
+  | "radioOn"
+  | "radioOff"
   | "flash"
   | "clock"
+  | "calendar"
   | "help"
   | "search"
   | "user"
@@ -53,10 +59,35 @@ export type IconName =
   | "starOutline"
   | "chevronLeft"
   | "pin"
+  | "mic"
+  | "micOff"
+  | "volume"
+  | "phone"
+  | "phoneOff"
+  | "more"
+  | "book"
+  | "school"
+  | "barbell"
+  | "airplane"
+  | "code"
+  | "build"
+  | "bug"
+  | "cloud"
+  | "offline"
+  | "brush"
+  | "eye"
+  | "edit"
+  | "megaphone"
+  | "clipboard"
+  | "shield"
+  | "calculator"
+  | "mail"
+  | "mailFilled"
 
 const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   menu: "menu",
   add: "create-outline",
+  plus: "add",
   settings: "options-outline",
   attach: "image-outline",
   send: "arrow-up",
@@ -66,6 +97,8 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   copy: "copy-outline",
   fork: "git-branch-outline",
   revert: "play-back-outline",
+  pause: "pause",
+  play: "play",
   folder: "folder",
   file: "document-outline",
   up: "arrow-up-outline",
@@ -75,8 +108,11 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   chevronDown: "chevron-down",
   chevronRight: "chevron-forward",
   check: "checkmark",
+  radioOn: "radio-button-on",
+  radioOff: "radio-button-off",
   flash: "flash-outline",
   clock: "time-outline",
+  calendar: "calendar-outline",
   help: "help-circle-outline",
   search: "search",
   user: "person-outline",
@@ -99,16 +135,40 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   starOutline: "star-outline",
   chevronLeft: "chevron-back",
   pin: "pin",
+  mic: "mic",
+  micOff: "mic-off",
+  volume: "volume-high-outline",
+  phone: "call",
+  phoneOff: "call-outline",
+  more: "ellipsis-vertical",
+  book: "book-outline",
+  school: "school-outline",
+  barbell: "barbell-outline",
+  airplane: "airplane-outline",
+  code: "code-slash-outline",
+  build: "build-outline",
+  bug: "bug-outline",
+  cloud: "cloud-outline",
+  offline: "cloud-offline-outline",
+  brush: "brush-outline",
+  eye: "eye-outline",
+  edit: "pencil-outline",
+  megaphone: "megaphone-outline",
+  clipboard: "clipboard-outline",
+  shield: "shield-checkmark-outline",
+  calculator: "calculator-outline",
+  mail: "mail-outline",
+  mailFilled: "mail",
 }
 
 export default function Icon({
   name,
   size = 20,
-  color = "#333",
+  color,
 }: {
   name: IconName
   size?: number
-  color?: string
+  color: string
 }) {
   return <Ionicons name={MAP[name]} size={size} color={color} />
 }

@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -9,166 +10,381 @@ import {
   TouchableOpacity,
   View,
 } from "react-native"
+import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Host, type Project } from "../api/client"
+import { api, type Project, type Provider } from "../api/client"
 import { composerPrefs, currentHost, setComposerPrefs } from "../state/config"
 import Dropdown from "../components/Dropdown"
-import { useStyles } from "./styles"
+import FolderPicker from "../components/FolderPicker"
+import Icon, { type IconName } from "../components/Icon"
+import JobScheduler from "../components/JobScheduler"
+import ProviderPicker from "../components/ProviderPicker"
+import { aiError, aiSummary, newChatAI, type AIConfig } from "../lib/aiSelection"
+import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
+import { userError } from "../lib/errors"
+import { describeSchedule } from "../lib/interval"
+import { chatLabel, MODES, modeOf, projectOptions, startBlocker, type NewChatJob } from "../lib/newChat"
+import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
 
-const LOCAL: Host = { id: "local", label: "This machine", host: "localhost", user: "", port: 0, auth: "password", keyFile: "" }
-const MODES = [
-  { v: "acceptEdits", label: "Accept edits" },
-  { v: "default", label: "Ask" },
-  { v: "plan", label: "Plan" },
-  { v: "bypassPermissions", label: "Bypass" },
-]
+// The folder menu's "Browse folders…" entry: a value no folder path starts with.
+const BROWSE = ":browse"
 
-function short(p: string): string {
-  const parts = p.split("/").filter(Boolean)
-  return parts.length ? parts[parts.length - 1] : p
-}
-
-// Start a brand-new agent session: pick the host, working directory and first
-// message, then POST /api/new-session and drop straight into the thread —
-// the mobile equivalent of the web's New Session dialog.
-export default function NewChatScreen({ navigation }: Props) {
+// Name, then message: both are required, in that order — the name is how the
+// owner tells this chat apart in every list, push and decision card later, so
+// it comes first and takes focus. Where/how/which-AI sit in one compact card
+// under them; everything optional hides behind "More options". Start lives in a bar pinned above the
+// keyboard and says why it is disabled. The chat opens the moment the server
+// accepts it (ThreadScreen's `starting`), and its jobs ride on that same
+// request so none is lost if the owner leaves.
+export default function NewChatScreen({ navigation, route }: Props) {
   const styles = useStyles()
-  const [hosts, setHosts] = useState<Host[]>([LOCAL])
-  const [host, setHost] = useState(currentHost())
+  const t = useTheme()
+  const headerHeight = useHeaderHeight()
+  const template = route.params?.template
+  const host = currentHost()
+  const local = host === "local"
+
   const [projects, setProjects] = useState<Project[]>([])
-  const [cwd, setCwd] = useState("")
+  const [projectsError, setProjectsError] = useState("")
+  // Started from a project's header: that folder, not the most recent one.
+  const [cwd, setCwd] = useState(route.params?.cwd ?? "")
+  const [customCwd, setCustomCwd] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const [message, setMessage] = useState("")
-  const [title, setTitle] = useState("")
+  const messageRef = useRef<TextInput>(null)
+  const [title, setTitle] = useState(template?.name ?? "")
+  const [systemPrompt, setSystemPrompt] = useState(template?.system_prompt ?? "")
+  const [goal, setGoal] = useState(template?.goal ?? "")
   const [mode, setModeState] = useState(composerPrefs().mode)
   const setMode = (v: string) => {
     setModeState(v)
     setComposerPrefs({ mode: v })
   }
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
+  const [aiErrorText, setAIErrorText] = useState("")
+  const ai = aiConfig?.selection
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [showMore, setShowMore] = useState(!!template)
+  const [jobs, setJobs] = useState<NewChatJob[]>(() => template?.jobs ?? [])
+  // -2 = no form, -1 = adding, ≥0 = editing that job.
+  const [jobForm, setJobForm] = useState(-2)
+  // Jobs run on this machine's scheduler only (the server refuses them for a
+  // remote chat), so a template's job is not sent when starting elsewhere.
+  const sendJobs = local ? jobs : []
+
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    setAIConfig(null); setAIErrorText("")
+    Promise.all([api.aiConfig({host}), api.providers()]).then(([config, result]) => {
+      if (!alive) return
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      setProviders(result.providers || [])
+      setAIConfig({...config, selection: newChatAI(config, composerPrefs().model, template?.ai)})
+    }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
+    return () => { alive = false }
+  }, [host, template?.id])
 
   useEffect(() => {
-    api
-      .hosts()
-      .then((r) => setHosts([LOCAL, ...r]))
-      .catch(() => {})
-  }, [])
+    let alive = true
+    api.projects(host).then((p) => {
+      if (!alive) return
+      const list = Array.isArray(p) ? p : []
+      setProjects(list)
+      setCwd((c) => c || list[0]?.cwd || "")
+    }).catch((e) => {
+      if (alive) setProjectsError(userError(e, "recent folders", "load"))
+    })
+    return () => { alive = false }
+  }, [host])
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const p = await api.projects(host)
-      setProjects(Array.isArray(p) ? p : [])
-      if (!cwd && p.length) setCwd(p[0].cwd)
-    } catch {
-      setProjects([])
-    }
-  }, [host]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    loadProjects()
-  }, [loadProjects])
+  const aiReady = !!ai && !!aiConfig?.capabilities.editable
+  const blocker = startBlocker({ title, message, aiReady, aiError: aiErrorText, busy })
+  // Type a path when asked to, or when the folder isn't one of the recent ones
+  // (e.g. typed before the list loaded) — the picker must never show a folder
+  // other than the one the chat will start in.
+  const typing = customCwd || !projects.some((p) => p.cwd === cwd)
 
   async function start() {
     const msg = message.trim()
-    if (!msg || busy) return
+    const name = title.trim()
+    if (!name || !msg || busy || !ai || !aiConfig?.capabilities.editable) return
     setError("")
     setBusy(true)
     try {
       const res = await api.newSession({
         message: msg,
+        // Sent with the create: the server stores it as the chat's name and
+        // passes it to the run (claude --name) — there is no later rename.
+        title: name,
         cwd: cwd.trim() || "~",
         mode,
+        ai,
         host,
         agent: "claude",
-        title: title.trim() || undefined,
+        systemPrompt: systemPrompt.trim() || undefined,
+        goal: goal.trim() || undefined,
+        // The server reads the template's plugin (role skills) and lens from
+        // its own row; a client can only name which template it started from.
+        template: template?.id,
+        jobs: sendJobs.length ? sendJobs : undefined,
       })
-      // Land in the new thread; its focus effect fetches status and starts
-      // polling the just-started run.
+      // A server older than the `jobs` field ignores it — say so rather than
+      // let the owner believe the schedule exists.
+      if (sendJobs.length && (res.jobs?.length ?? 0) !== sendJobs.length) {
+        Alert.alert("Chat started without its jobs", "This server didn't save the scheduled jobs. Add them from the chat's profile (tap its name).")
+      }
+      // Open it now: the thread shows the message and the working bubble,
+      // resolves the transcript once the CLI writes it, then saves the name
+      // (the rename still covers a remote host, whose run gets no --name).
       navigation.replace("Thread", {
         host,
-        label: title.trim() || short(cwd) || res.session.slice(0, 8),
+        label: chatLabel(name, cwd, res.session),
         path: res.path,
+        starting: { session: res.session, message: msg },
       })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the chat", "start"))
       setBusy(false)
     }
   }
 
-  return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled">
-        <Text style={styles.label}>Host</Text>
-        <Dropdown
-          testIDPrefix="newchat-host"
-          value={host}
-          options={hosts.map((h) => ({ v: h.id, label: h.label }))}
-          onChange={(v) => {
-            setHost(v)
-            setCwd("")
-          }}
-        />
+  function clearTemplate() {
+    navigation.setParams({ template: undefined })
+    setTitle("")
+    setSystemPrompt("")
+    setGoal("")
+    setJobs([])
+    setShowMore(false)
+  }
 
-        <Text style={styles.label}>Working directory</Text>
-        <TextInput
-          testID="newchat-cwd"
-          style={styles.input}
-          placeholder="~/path/to/project"
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={cwd}
-          onChangeText={setCwd}
-        />
-        {projects.length ? (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-            {projects.slice(0, 8).map((p) => (
-              <TouchableOpacity key={p.cwd} style={styles.pill} onPress={() => setCwd(p.cwd)}>
-                <Text style={styles.pillText} numberOfLines={1}>
-                  {short(p.cwd)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+  const catColor = template ? (TEMPLATE_CATEGORIES[template.category]?.color ?? t.accent) : t.accent
+  const iconName = (template?.icon || "sparkle") as IconName
+  const extras = [sendJobs.length && `${sendJobs.length} job${sendJobs.length > 1 ? "s" : ""}`,
+    systemPrompt.trim() && "instructions", goal.trim() && "goal"].filter(Boolean).join(" · ")
+
+  const divider = <View style={styles.ncDivider} />
+  const rowLabel = (text: string) => <Text style={styles.ncLabel}>{text}</Text>
+  const mode_ = modeOf(mode)
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.page}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={headerHeight}
+    >
+      <ScrollView
+        style={styles.flex1}
+        contentContainerStyle={styles.ncScroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
+        {template ? (
+          <View style={[styles.ncTemplate, { borderColor: catColor + "25", backgroundColor: catColor + "0C" }]}>
+            <View style={[styles.ncTemplateIcon, { backgroundColor: catColor + "1A" }]}>
+              <Icon name={iconName} size={17} color={catColor} />
+            </View>
+            <View style={styles.flex1}>
+              <Text style={styles.ncTemplateName}>{template.name}</Text>
+              {template.description ? (
+                <Text style={styles.ncTemplateDesc} numberOfLines={2}>{template.description}</Text>
+              ) : null}
+            </View>
+            <TouchableOpacity testID="newchat-clear-template" accessibilityLabel="Start without this agent" hitSlop={8} onPress={clearTemplate}
+              style={styles.ncClose}>
+              <Icon name="close" size={12} color={t.textMuted} />
+            </TouchableOpacity>
           </View>
         ) : null}
 
-        <Text style={styles.label}>Chat name (optional)</Text>
-        <TextInput
-          testID="newchat-title"
-          style={styles.input}
-          placeholder="e.g. refactor auth"
-          value={title}
-          onChangeText={setTitle}
-        />
+        {/* The two required fields, name first. */}
+        <View style={styles.ncCard}>
+          <TextInput
+            testID="newchat-title"
+            autoFocus
+            style={styles.ncName}
+            placeholder="Chat name — e.g. Refactor auth"
+            placeholderTextColor={t.textMuted + "80"}
+            value={title}
+            onChangeText={setTitle}
+            returnKeyType="next"
+            blurOnSubmit={false}
+            onSubmitEditing={() => messageRef.current?.focus()}
+            maxLength={200}
+          />
+          {divider}
+          <TextInput
+            testID="newchat-message"
+            ref={messageRef}
+            style={styles.ncMessage}
+            placeholder={template ? `What should ${template.name} do?` : "What should the agent do?"}
+            placeholderTextColor={t.textMuted + "80"}
+            value={message}
+            onChangeText={setMessage}
+            multiline
+          />
+        </View>
 
-        <Text style={styles.label}>Permission mode</Text>
-        <Dropdown testIDPrefix="newchat-mode" value={mode} options={MODES} onChange={setMode} />
+        {/* Where it works, how much it may do on its own, which AI. */}
+        <View style={styles.ncCard}>
+          <View style={styles.ncRow}>
+            {rowLabel("Folder")}
+            {projects.length ? (
+              <Dropdown
+                testIDPrefix="newchat-project"
+                value={typing ? "" : cwd}
+                options={[...projectOptions(projects), { v: BROWSE, label: "Browse folders…" }, { v: "", label: "Type a path…" }]}
+                onChange={(v) => {
+                  if (v === BROWSE) { setBrowsing(true); return }
+                  setCustomCwd(!v); if (v) setCwd(v)
+                }}
+              />
+            ) : null}
+            {typing ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: projects.length ? 8 : 0 }}>
+                <TextInput
+                  testID="newchat-cwd"
+                  style={[styles.input, { flex: 1, fontSize: 14, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                  placeholder="~/path/to/project"
+                  placeholderTextColor={t.textMuted + "80"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={cwd}
+                  onChangeText={setCwd}
+                />
+                <TouchableOpacity testID="newchat-browse" accessibilityLabel="Browse folders" hitSlop={8} onPress={() => setBrowsing(true)}>
+                  <Icon name="folder" size={22} color={t.accent} />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            {!typing && cwd ? <Text style={styles.ncSmallHint} numberOfLines={1}>{cwd}</Text> : null}
+            {projectsError ? <Text style={styles.ncSmallHint}>{projectsError} Browse or type a path instead.</Text> : null}
+          </View>
+          {divider}
+          <View style={styles.ncRow}>
+            {rowLabel("Permissions")}
+            <Dropdown testIDPrefix="newchat-mode" value={mode} options={MODES} onChange={setMode} />
+            <Text testID="newchat-mode-hint" style={[styles.ncSmallHint, mode === "bypassPermissions" && styles.ncDanger]}>{mode_.hint}</Text>
+          </View>
+          {divider}
+          <TouchableOpacity testID="newchat-ai-row" disabled={!aiConfig?.capabilities.editable || busy} onPress={() => setProviderPickerOpen(true)}
+            style={[styles.ncRow, styles.rowCenter]}>
+            <View style={styles.flex1}>
+              {rowLabel("AI")}
+              <Text style={styles.ncValue} numberOfLines={2}>{ai ? aiSummary(ai, providers) : aiErrorText || "Loading AI settings…"}</Text>
+            </View>
+            {aiConfig?.capabilities.editable ? <Icon name="chevronRight" size={14} color={t.textMuted} /> : null}
+          </TouchableOpacity>
+          {aiErrorText ? <Text testID="newchat-ai-error" style={styles.sheetHint}>{aiErrorText}</Text> : null}
+          {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for this chat" localOnly onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
+          <FolderPicker visible={browsing} host={host} start={cwd.trim() || "~"} onClose={() => setBrowsing(false)}
+            onPick={(path) => { setBrowsing(false); setCustomCwd(false); setCwd(path) }} />
+        </View>
 
-        <Text style={styles.label}>First message</Text>
-        <TextInput
-          testID="newchat-message"
-          style={[styles.input, { minHeight: 96, textAlignVertical: "top" }]}
-          placeholder="What should the agent do?"
-          multiline
-          value={message}
-          onChangeText={setMessage}
-        />
+        {/* Everything optional, collapsed until wanted; the summary says what is set. */}
+        <View style={styles.ncCard}>
+          <TouchableOpacity testID="newchat-more" style={[styles.ncRow, styles.rowCenter, styles.ncMoreRow]} onPress={() => setShowMore((v) => !v)}>
+            <Icon name={showMore ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
+            <Text style={styles.ncMoreTitle}>More options</Text>
+            <Text style={styles.ncMoreSummary} numberOfLines={1}>
+              {extras || "Jobs, instructions, goal"}
+            </Text>
+          </TouchableOpacity>
+          {showMore ? (
+            <>
+              {divider}
+              <View style={styles.ncRow}>
+                <View style={styles.ncSpread}>
+                  <Text style={styles.ncJobsLabel}>Scheduled jobs</Text>
+                  {local ? (
+                    <TouchableOpacity testID="newchat-add-job" hitSlop={8} onPress={() => setJobForm(-1)}
+                      style={styles.ncAddBtn}>
+                      <Icon name="add" size={13} color={t.accent} />
+                      <Text style={styles.ncAddText}>Add</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {!local ? (
+                  <Text style={styles.ncJobsHint}>Jobs run on this machine's scheduler — start the chat here to add one.</Text>
+                ) : !jobs.length ? (
+                  <Text style={styles.ncJobsHint}>Have the agent come back on a schedule — e.g. a daily summary.</Text>
+                ) : null}
+                {sendJobs.map((job, i) => (
+                  <View key={i}>
+                    <TouchableOpacity testID={`newchat-job-${i}`} activeOpacity={0.65} onPress={() => setJobForm(i)}
+                      style={styles.ncJob}>
+                      <Icon name="repeat" size={15} color={t.accent} />
+                      <View style={styles.flex1}>
+                        <Text style={styles.ncJobPrompt} numberOfLines={2}>{job.prompt}</Text>
+                        <Text style={styles.ncJobWhen}>{describeSchedule(job)}</Text>
+                      </View>
+                      <TouchableOpacity testID={`newchat-remove-job-${i}`} accessibilityLabel="Remove job" hitSlop={8}
+                        onPress={() => { setJobs((prev) => prev.filter((_, j) => j !== i)); setJobForm(-2) }}>
+                        <Icon name="trash" size={14} color={t.danger} />
+                      </TouchableOpacity>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                <JobScheduler
+                  visible={jobForm !== -2}
+                  styles={styles}
+                  initialValues={jobForm >= 0 ? jobs[jobForm] : undefined}
+                  onClose={() => setJobForm(-2)}
+                  onSubmit={(prompt, schedule) => {
+                    const job = { prompt, ...schedule }
+                    setJobs((prev) => jobForm >= 0 ? prev.map((j, k) => k === jobForm ? job : j) : [...prev, job])
+                    setJobForm(-2)
+                  }}
+                />
+              </View>
+              {divider}
+              <View style={styles.ncRow}>
+                {rowLabel("Instructions (system prompt)")}
+                <TextInput testID="newchat-system-prompt" style={[styles.input, { fontSize: 14, minHeight: 72, textAlignVertical: "top" }]}
+                  placeholder="How the agent should behave in this chat" placeholderTextColor={t.textMuted + "80"} multiline
+                  value={systemPrompt} onChangeText={setSystemPrompt} />
+              </View>
+              {divider}
+              <View style={styles.ncRow}>
+                {rowLabel("Goal")}
+                <TextInput testID="newchat-goal" style={[styles.input, { fontSize: 14 }]} placeholder="What counts as done — the agent checks it before stopping"
+                  placeholderTextColor={t.textMuted + "80"} value={goal} onChangeText={setGoal} />
+              </View>
+            </>
+          ) : null}
+        </View>
+      </ScrollView>
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
+      {/* Pinned above the keyboard: the error, why Start is off, and Start. */}
+      <View style={styles.ncFooter}>
+        {error ? (
+          <Text testID="newchat-error" style={styles.ncError}>{error}</Text>
+        ) : null}
         <TouchableOpacity
           testID="newchat-start"
-          style={[styles.button, !message.trim() || busy ? { opacity: 0.5 } : null]}
+          style={[styles.ncStart, (!!blocker || busy) && styles.ncStartOff]}
           onPress={start}
-          disabled={busy || !message.trim()}
+          disabled={!!blocker || busy}
         >
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Start chat</Text>}
+          {busy ? (
+            <View style={styles.ncBusy}>
+              <ActivityIndicator color={t.onAccent} size="small" />
+              <Text style={styles.ncBusyText}>Starting…</Text>
+            </View>
+          ) : (
+            <Text style={styles.ncStartText}>Start chat</Text>
+          )}
         </TouchableOpacity>
-        <Text style={styles.hint}>Creates a new session on {host === "local" ? "this machine" : host}.</Text>
-        <View style={{ height: 40 }} />
-      </ScrollView>
+        <Text testID="newchat-start-hint" style={styles.ncStartHint}>
+          {blocker || `Runs on ${local ? "this machine" : host} · ${mode_.label}`}
+        </Text>
+      </View>
     </KeyboardAvoidingView>
   )
 }

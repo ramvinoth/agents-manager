@@ -20,7 +20,9 @@
 #
 # Optional env:
 #   BUNDLE_ID     override the bundle id (default: read from app.json)
-#   BUILD_NUMBER  CFBundleVersion; default: unix timestamp (must increase)
+#   BUILD_NUMBER  CFBundleVersion; default: app.json's buildNumber + 1.
+#                 app.json is the single source of the number: expo prebuild
+#                 bakes CFBundleVersion from it into the generated Info.plist.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -36,7 +38,24 @@ log() { printf '\033[36m==> %s\033[0m\n' "$*"; }
 [ -f "$ASC_KEY_PATH" ] || { echo "ERROR: no key at $ASC_KEY_PATH" >&2; exit 1; }
 
 BUNDLE_ID="${BUNDLE_ID:-$(node -p "require('$APP_DIR/app.json').expo.ios.bundleIdentifier")}"
-BUILD_NUMBER="${BUILD_NUMBER:-$(date +%s)}"
+# Auto-increment: read the current build number from app.json, add 1. The env
+# override still works for manual control.
+if [ -z "${BUILD_NUMBER:-}" ]; then
+  _PREV="$(node -p "require('$APP_DIR/app.json').expo.ios.buildNumber || '0'")"
+  BUILD_NUMBER=$(( _PREV + 1 ))
+fi
+# Bake the number into app.json BEFORE prebuild: expo prebuild copies
+# buildNumber verbatim into the generated Info.plist's CFBundleVersion, and the
+# generated xcodeproj pins CURRENT_PROJECT_VERSION=1 (a variable Info.plist
+# never reads) — so no xcodebuild flag can change the stamp. One source of
+# truth, written before the thing that reads it.
+node -e "
+  const fs = require('fs');
+  const p = '$APP_DIR/app.json';
+  const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  j.expo.ios.buildNumber = String($BUILD_NUMBER);
+  fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+"
 # Forced on the xcodebuild command line so it applies to EVERY target, including
 # Pods that pin an older target in their podspec. app.json's expo-build-properties
 # setting only reaches the app target and the Podfile platform line, which leaves
@@ -67,6 +86,7 @@ fi
 #    removed from Xcode, so that tool is vestigial), failing the archive with
 #    "terminated with uncaught signal 0". At 15.1 the dylib is never embedded.
 [ -d "$IOS_DIR" ] || (cd "$APP_DIR" && npx expo prebuild -p ios)
+python3 "$HERE/release_identity.py" generated "$IOS_DIR/Agents/Info.plist" "$BUNDLE_ID" "$BUILD_NUMBER"
 
 # 2) Archive for real hardware, signed for distribution.
 #    The -authentication* flags let xcodebuild talk to App Store Connect with the
@@ -76,6 +96,12 @@ fi
 #    which -exportArchive then rejects for app-store-connect distribution.
 log "archive (generic/platform=iOS)"
 mkdir -p "$OUT"
+# Keep each invocation's archive/export together. Never reuse a previous IPA or
+# overwrite another release's artifacts; retain this directory for inspection.
+RUN_DIR="$(mktemp -d "$OUT/release.XXXXXX")"
+ARCHIVE="$RUN_DIR/Agents.xcarchive"
+EXPORT_DIR="$RUN_DIR/ipa"
+log "artifacts $RUN_DIR"
 AUTH=(-allowProvisioningUpdates
       -authenticationKeyPath "$ASC_KEY_PATH"
       -authenticationKeyID "$ASC_KEY_ID"
@@ -83,13 +109,17 @@ AUTH=(-allowProvisioningUpdates
 xcodebuild archive \
   -workspace "$IOS_DIR/Agents.xcworkspace" -scheme Agents -configuration Release \
   -destination 'generic/platform=iOS' \
-  -archivePath "$OUT/Agents.xcarchive" \
+  -archivePath "$ARCHIVE" \
   "${AUTH[@]}" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CODE_SIGN_STYLE=Automatic \
   IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+
+# Final artifacts must carry the resolved bundle ID AND intended build number.
+python3 "$HERE/release_identity.py" archive \
+  "$ARCHIVE/Products/Applications/Agents.app/Info.plist" "$BUNDLE_ID" "$BUILD_NUMBER"
 
 # 3) Export a signed .ipa for App Store distribution.
 log "export ipa"
@@ -101,7 +131,7 @@ log "export ipa"
 # just name them here. See scripts/README or asc-tools/.
 : "${PROFILE_NAME:=Agents Manager AppStore}"
 : "${SIGNING_CERT:=Apple Distribution}"
-cat > "$OUT/ExportOptions.plist" <<PLIST
+cat > "$RUN_DIR/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -118,13 +148,13 @@ cat > "$OUT/ExportOptions.plist" <<PLIST
 </plist>
 PLIST
 xcodebuild -exportArchive \
-  -archivePath "$OUT/Agents.xcarchive" \
-  -exportPath "$OUT/ipa" \
-  -exportOptionsPlist "$OUT/ExportOptions.plist" \
+  -archivePath "$ARCHIVE" \
+  -exportPath "$EXPORT_DIR" \
+  -exportOptionsPlist "$RUN_DIR/ExportOptions.plist" \
   "${AUTH[@]}"
 
-IPA="$(find "$OUT/ipa" -name '*.ipa' | head -1)"
-[ -n "$IPA" ] || { echo "ERROR: no .ipa produced" >&2; exit 1; }
+# One discovery, one identity gate, one exact path for BOTH altool calls.
+IPA="$(python3 "$HERE/release_identity.py" ipa "$EXPORT_DIR" "$BUNDLE_ID" "$BUILD_NUMBER")"
 
 # 4) Validate, then upload to App Store Connect → TestFlight.
 log "validate $IPA"

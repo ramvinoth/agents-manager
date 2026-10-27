@@ -1,0 +1,4 @@
+{
+  "name": "privacy-guard",
+  "description": "Breach, data-broker and sign-in monitoring that attributes each event before alerting."
+}

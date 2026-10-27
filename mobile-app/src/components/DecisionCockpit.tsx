@@ -1,0 +1,416 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { api, type ChatStatus, type OpenDecision } from "../api/client"
+import { fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
+import { SNOOZE_OPTIONS } from "../lib/inbox"
+import { useTheme } from "../lib/useTheme"
+import { useStyles } from "../lib/styles"
+import Icon from "./Icon"
+import QuestionCard from "./QuestionCard"
+import PlanCard from "./PlanCard"
+import SheetModal from "./SheetModal"
+import { userError } from "../lib/errors"
+import { success, warning } from "../lib/haptics"
+
+const KIND_ICON: Record<OpenDecision["kind"], "help" | "file" | "shield" | "clipboard" | "warning"> = {
+  question: "help",
+  plan: "file",
+  approval: "shield",
+  card: "clipboard",
+  red: "warning",
+}
+const KIND_LABEL: Record<OpenDecision["kind"], string> = {
+  question: "Question",
+  plan: "Plan approval",
+  approval: "Tool approval",
+  card: "Card for you",
+  red: "Needs your OK",
+}
+
+/**
+ * DecisionCockpit — decide the cross-session queue IN PLACE, one item at a time,
+ * without leaving the board (card #60, the owner's big-vision ask). The band hands it
+ * a FROZEN snapshot of the queue + the tapped index; the 4s board poll keeps
+ * running underneath but must NOT reshuffle the item under the reader's thumb,
+ * so the cockpit walks its own copy. New items simply appear on the next open;
+ * a skipped item's durable row is untouched, so it resurfaces next tick.
+ * "Postpone" is the Inbox's snooze, taken from here: ONE snooze on the item's
+ * inbox row (d.inbox_id) holds it out of every surface — Inbox, band, cockpit —
+ * until it lapses, then it is back. Deferred, never dropped.
+ *
+ * Full cold-reader context per kind, from the RIGHT source:
+ *  - question / plan → the human-facing content the index truncates to 120 chars
+ *    lives in the durable row; fetch chatStatus(session) on demand for the full
+ *    options / plan markdown (no secrets — this is meant-for-human text).
+ *  - approval → render the SECRET-SAFE preview the index already carries
+ *    (d.summary). We deliberately do NOT fetch chatStatus for approvals: that
+ *    route returns RAW tool input, which the cross-session index withholds on
+ *    purpose. To see raw input, open the owning chat (you're in-context there).
+ *  - card → the card IS the decision surface; open it on the board.
+ *  - red → an org approval (an agent's Red action). The index already carries
+ *    the cold-reader text (summary, risk, who asked); decided here with
+ *    orgResolveApproval. A 403 (you raised it) shows its reason.
+ *
+ * Deciding uses the EXISTING per-session routes (race-safe via the decisions
+ * gate) — the board never becomes a second approval store. A 409 ("already
+ * decided", e.g. another device won) is treated as resolved, not an error.
+ */
+export default function DecisionCockpit({
+  decisions,
+  startIndex,
+  onClose,
+  onResolved,
+  onOpenThread,
+  onOpenCard,
+}: {
+  decisions: OpenDecision[]
+  startIndex: number
+  onClose: () => void
+  onResolved: () => void
+  onOpenThread: (d: OpenDecision) => void
+  onOpenCard: (cardId: number) => void
+}) {
+  const t = useTheme()
+  const styles = useStyles()
+  const [idx, setIdx] = useState(startIndex)
+  const resolved = useRef(new Set<number>()).current
+  const [, redraw] = useState(0)
+  const bump = () => redraw((n) => n + 1)
+  const [status, setStatus] = useState<ChatStatus | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [postponing, setPostponing] = useState(false)
+
+  const len = decisions.length
+  const d = decisions[idx]
+  const needsStatus = d?.kind === "question" || d?.kind === "plan"
+
+  // Full content for question/plan comes from the durable row via chatStatus.
+  // Approvals render from the secret-safe preview already in `d`; cards open on
+  // the board — neither fetches.
+  useEffect(() => {
+    if (!d || !needsStatus) {
+      setStatus(null)
+      setLoadError("")
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setLoadError("")
+    setStatus(null)
+    api
+      .chatStatus(d.session)
+      .then((s) => {
+        if (alive) setStatus(s)
+      })
+      .catch((e) => {
+        if (alive) setLoadError(userError(e, "this item"))
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [d?.session, d?.kind, needsStatus, idx])
+
+  const goResolved = useCallback(() => {
+    resolved.add(idx)
+    const next = firstOpen(len, idx, resolved)
+    if (next < 0) {
+      onResolved()
+      onClose()
+      return
+    }
+    setIdx(next)
+    bump()
+    onResolved() // refresh the board's queue behind us
+  }, [idx, len, resolved, onResolved, onClose])
+
+  const skip = useCallback(() => {
+    // Not deciding this now: leave the durable row untouched (it resurfaces next
+    // tick) and move to the next OPEN item. Nothing left → close.
+    const next = stepDecision(len, idx, 1, resolved)
+    if (next === idx) {
+      onClose()
+      return
+    }
+    setIdx(next)
+    bump()
+  }, [idx, len, resolved, onClose])
+
+  const postpone = useCallback(
+    (hours: number) => {
+      setPostponing(false)
+      if (busy || !d || !d.inbox_id) return
+      setBusy(true)
+      api
+        .inboxSnooze(d.inbox_id, hours)
+        .then(() => goResolved()) // out of sight for now; the board's queue re-reads without it
+        .catch((e) => setLoadError(userError(e, "this item", "postpone")))
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
+  const step = (dir: 1 | -1) => {
+    const next = stepDecision(len, idx, dir, resolved)
+    if (next !== idx) {
+      setIdx(next)
+      bump()
+    }
+  }
+
+  const answerQuestion = useCallback(
+    (picks: string[], note: string) => {
+      if (busy || !d) return
+      success()
+      setBusy(true)
+      api
+        .chatQuestionAnswer({ session: d.session, picks, note })
+        .then(() => goResolved())
+        .catch((e) => {
+          // 409 = already answered elsewhere → it's resolved, advance.
+          if ((e as Error & { status?: number }).status === 409) goResolved()
+          else setLoadError(userError(e, "your answer", "send"))
+        })
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
+  const decidePlan = useCallback(
+    (decision: "approve" | "deny", feedback?: string) => {
+      if (busy || !d) return
+      decision === "approve" ? success() : warning()
+      setBusy(true)
+      api
+        .chatPlanDecide({ session: d.session, decision, feedback })
+        .then(() => goResolved())
+        .catch((e) => {
+          if ((e as Error & { status?: number }).status === 409) goResolved()
+          else setLoadError(userError(e, "your answer", "send"))
+        })
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
+  const decideApproval = useCallback(
+    (decision: "allow" | "deny") => {
+      if (busy || !d || !d.id) return
+      decision === "allow" ? success() : warning()
+      setBusy(true)
+      api
+        .chatPermissionDecide({ session: d.session, id: d.id, decision })
+        .then(() => goResolved())
+        .catch((e) => {
+          if ((e as Error & { status?: number }).status === 409) goResolved()
+          else setLoadError(userError(e, "your answer", "send"))
+        })
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
+  const decideRed = useCallback(
+    (resolution: "approved" | "denied") => {
+      if (busy || !d || !d.id) return
+      resolution === "approved" ? success() : warning()
+      setBusy(true)
+      api
+        .orgResolveApproval({ id: Number(d.id), resolution })
+        .then((r) => (r.result?.error ? setLoadError(`Approved, but it failed: ${r.result.error}`) : goResolved()))
+        .catch((e) => {
+          // 404 = decided elsewhere or gone → it's resolved, advance.
+          if ((e as Error & { status?: number }).status === 404) goResolved()
+          else setLoadError(userError(e, "your answer", "send"))
+        })
+        .finally(() => setBusy(false))
+    },
+    [busy, d, goResolved]
+  )
+
+  const who = useMemo(() => (d ? d.label || d.session.slice(0, 8) : ""), [d])
+  const openCount = len - resolved.size
+
+  if (!d) {
+    // Everything got resolved while open (or an empty snapshot slipped through).
+    return (
+      <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+        <SafeAreaView testID="decision-cockpit" style={styles.dcCaughtUp}>
+          <Icon name="check" size={28} color={t.accent} />
+          <Text style={styles.dcCaughtUpText}>All caught up</Text>
+          <TouchableOpacity testID="cockpit-done" onPress={onClose} style={[styles.permAllow, styles.dcDoneBtn]}>
+            <Text style={styles.permAllowText}>Done</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <SafeAreaView testID="decision-cockpit" style={styles.page}>
+        {/* Header: who is asking, what kind, how long they've waited, close. */}
+        <View style={styles.dcHeader}>
+          <Icon name={KIND_ICON[d.kind] || "help"} size={18} color={t.accent} />
+          <View style={styles.flex1}>
+            <Text style={styles.dcWho} numberOfLines={1}>
+              {who}
+              {d.host !== "local" ? ` · ${d.host}` : ""}
+            </Text>
+            <Text style={styles.dcSub} numberOfLines={1}>
+              {KIND_LABEL[d.kind]} · waited {fmtWaiting(d.waiting_s)}
+            </Text>
+          </View>
+          <Text testID="cockpit-count" style={styles.dcCount}>
+            {openCount} open
+          </Text>
+          <TouchableOpacity testID="cockpit-close" onPress={onClose} disabled={busy} style={styles.dcCloseBtn}>
+            <Icon name="close" size={20} color={t.textMuted} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.flex1} contentContainerStyle={styles.dcScrollContent} keyboardShouldPersistTaps="handled">
+          {/* The index's one-line summary is the cold-reader headline — always
+              shown, even before the full content loads, so the reader has
+              context immediately. */}
+          <Text style={styles.dcSummary}>{d.summary || "(no summary)"}</Text>
+
+          {loading ? <ActivityIndicator color={t.accent} /> : null}
+          {loadError ? (
+            <Text testID="cockpit-error" style={[styles.sheetHint, { color: t.danger }]}>
+              {loadError}
+            </Text>
+          ) : null}
+
+          {d.kind === "question" ? (
+            status?.pending_question ? (
+              <QuestionCard input={status.pending_question.questions} onAnswer={answerQuestion} />
+            ) : !loading && !loadError ? (
+              <ResolvedElsewhere styles={styles} onOpen={() => onOpenThread(d)} />
+            ) : null
+          ) : null}
+
+          {d.kind === "plan" ? (
+            status?.pending_plan ? (
+              <PlanCard input={status.pending_plan.plan} onDecide={decidePlan} />
+            ) : !loading && !loadError ? (
+              <ResolvedElsewhere styles={styles} onOpen={() => onOpenThread(d)} />
+            ) : null
+          ) : null}
+
+          {d.kind === "approval" ? (
+            <View testID="cockpit-approval" style={styles.permCard}>
+              <Text style={styles.permTitle}>Allow tool: {d.tool_name || "tool"}?</Text>
+              <Text style={styles.permInput}>{d.summary || "(no preview)"}</Text>
+              <View style={styles.permBtnRow}>
+                <TouchableOpacity testID="cockpit-approval-deny" style={styles.permDeny} onPress={() => decideApproval("deny")} disabled={busy}>
+                  <Text style={styles.permDenyText}>Deny</Text>
+                </TouchableOpacity>
+                <TouchableOpacity testID="cockpit-approval-allow" style={styles.permAllow} onPress={() => decideApproval("allow")} disabled={busy}>
+                  <Text style={styles.permAllowText}>Allow</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {d.kind === "red" ? (
+            <View testID="cockpit-red" style={styles.permCard}>
+              <Text style={styles.permTitle}>Why it asks</Text>
+              <Text testID="cockpit-red-reason" style={styles.permInput}>{d.reason || "No reason given — deny it and the agent can ask again with one."}</Text>
+              <Text style={styles.permTitle}>If you approve</Text>
+              <Text style={styles.permInput}>{d.risk || "The action runs."}</Text>
+              <Text style={styles.permInput}>Deny and nothing happens. The asking session is told either way.</Text>
+              <View style={styles.permBtnRow}>
+                <TouchableOpacity testID="cockpit-red-deny" style={styles.permDeny} onPress={() => decideRed("denied")} disabled={busy}>
+                  <Text style={styles.permDenyText}>Deny</Text>
+                </TouchableOpacity>
+                <TouchableOpacity testID="cockpit-red-approve" style={styles.permAllow} onPress={() => decideRed("approved")} disabled={busy}>
+                  <Text style={styles.permAllowText}>Approve</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {d.kind === "card" ? (
+            <View testID="cockpit-card" style={styles.permCard}>
+              <Text style={styles.permTitle}>{d.column ? `Parked in ${d.column}` : "Parked for you"}</Text>
+              <Text style={styles.permInput}>Open the card to read the full context and move it to Approved or Declined.</Text>
+              <View style={styles.permBtnRow}>
+                <TouchableOpacity testID="cockpit-card-open" style={styles.permAllow} onPress={() => d.card && onOpenCard(d.card)} disabled={busy}>
+                  <Text style={styles.permAllowText}>Open card</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Review-needed / need-the-full-thread escape hatch. For every kind:
+              go see the whole conversation before deciding. Leaves the item
+              open (it resurfaces). */}
+          {d.kind !== "card" && d.session ? (
+            <TouchableOpacity testID="cockpit-open-chat" onPress={() => onOpenThread(d)} style={styles.dcOpenChat}>
+              <Text style={styles.dcOpenChatText}>Open chat to see the full thread</Text>
+            </TouchableOpacity>
+          ) : null}
+        </ScrollView>
+
+        {/* Footer: browse (‹ ›), skip, postpone. Skip leaves the row durable →
+            it comes back next tick; Postpone snoozes it (hidden everywhere until
+            the snooze lapses); ‹ › browse without acting, no wrap. An item with
+            no inbox row cannot be snoozed — only skipped. */}
+        <View style={styles.dcFooter}>
+          <TouchableOpacity testID="cockpit-prev" onPress={() => step(-1)} disabled={busy} style={[styles.permDeny, styles.dcNavBtn]}>
+            <Icon name="chevronLeft" size={16} color={t.text} />
+            <Text style={styles.permDenyText}>Prev</Text>
+          </TouchableOpacity>
+          <TouchableOpacity testID="cockpit-skip" onPress={skip} disabled={busy} style={[styles.permDeny, styles.dcSkipBtn]}>
+            <Text style={styles.permDenyText}>Skip</Text>
+          </TouchableOpacity>
+          {d.inbox_id ? (
+            <TouchableOpacity testID="cockpit-postpone" onPress={() => setPostponing(true)} disabled={busy} style={[styles.permDeny, styles.dcSkipBtn]}>
+              <Text style={styles.permDenyText}>Postpone</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity testID="cockpit-next" onPress={() => step(1)} disabled={busy} style={[styles.permDeny, styles.dcNavBtn]}>
+            <Text style={styles.permDenyText}>Next</Text>
+            <Icon name="chevronRight" size={16} color={t.text} />
+          </TouchableOpacity>
+        </View>
+
+        <SheetModal visible={postponing} onClose={() => setPostponing(false)}>
+          <Text style={styles.sheetTitle}>Postpone — bring it back in</Text>
+          {SNOOZE_OPTIONS.map((o) => (
+            <TouchableOpacity key={o.hours} testID={`cockpit-postpone-${o.hours}`} onPress={() => postpone(o.hours)}
+              style={styles.dcSnoozeItem}>
+              <Text style={styles.dcSnoozeLabel}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <Text style={styles.dcSnoozeHint}>
+            Hidden from the Inbox and the board until then — never dropped.
+          </Text>
+        </SheetModal>
+      </SafeAreaView>
+    </Modal>
+  )
+}
+
+/** A question/plan whose durable row is no longer there (decided on another
+ *  device, or the row lives on a host this viewer can't read live): we have the
+ *  summary but not the full content. Offer the thread rather than a stale card. */
+function ResolvedElsewhere({ styles, onOpen }: { styles: ReturnType<typeof useStyles>; onOpen: () => void }) {
+  return (
+    <View testID="cockpit-unavailable" style={styles.permCard}>
+      <Text style={styles.permTitle}>Full details aren't loadable here</Text>
+      <Text style={styles.permInput}>It may already be answered, or the session lives on another machine. Open the chat to decide, or skip — it stays in the queue until it's handled.</Text>
+      <View style={styles.permBtnRow}>
+        <TouchableOpacity style={styles.permAllow} onPress={onOpen}>
+          <Text style={styles.permAllowText}>Open chat</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )
+}

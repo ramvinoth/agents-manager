@@ -6,11 +6,47 @@
  * decision logic stays testable without a keychain or a running app. Each
  * function takes and returns a plain `ServerState` — never mutating its input.
  */
+import { validRelay, type RelayRoute } from "./pairLink.ts"
 
-/** One saved backend: its URL, the per-server auth token, and an optional
- *  nickname. The token is server-specific (issued by that server's /api/auth),
- *  so it travels with the entry rather than living as a single global value. */
-export type ServerEntry = { id: string; url: string; token: string; name?: string }
+/** One saved backend: its URL, the per-server auth token, an optional
+ *  nickname, and the signed-in username. The token is server-specific
+ *  (issued by that server's /api/auth), so it travels with the entry rather
+ *  than living as a single global value. The username is recorded at sign-in
+ *  so actor labels ("user:ram" → you / human) can be rendered client-side
+ *  without a round trip — the server's /api/auth response carries it. */
+export type ServerEntry = {
+  id: string
+  url: string
+  token: string
+  name?: string
+  username?: string
+  /** How to reach this server through the Harman relay (end-to-end encrypted
+   *  to the server's key). Like Paseo's HostProfile.connections, an entry may
+   *  carry a direct address, a relay route, or both; the transport picks
+   *  direct when it answers and falls back to the relay. */
+  relay?: RelayRoute
+}
+
+/** The `url` of a relay-only entry: a stable, non-routable identity. Never
+ *  fetched — the transport sees `relay` and goes through the channel. */
+const RELAY_ONLY = "relay://"
+
+export function relayOnlyUrl(serverId: string): string {
+  return RELAY_ONLY + serverId
+}
+
+/** The direct HTTP address of an entry, or "" when it is reachable only
+ *  through the relay. */
+export function directUrl(entry: ServerEntry | undefined): string {
+  if (!entry || entry.url.startsWith(RELAY_ONLY)) return ""
+  return entry.url
+}
+
+/** The address to show a human for an entry — never the synthetic
+ *  relay:// identity, which means nothing to them. */
+export function displayAddress(entry: ServerEntry): string {
+  return directUrl(entry) || "Remote (via Harman relay)"
+}
 
 /** The whole persisted server selection: the list plus which entry is active. */
 export type ServerState = { servers: ServerEntry[]; activeId: string }
@@ -35,25 +71,37 @@ export function activeEntry(state: ServerState): ServerEntry | undefined {
 }
 
 /**
- * Add a server (or return the existing one with the same normalized URL, so the
- * list can't accumulate duplicates). Does NOT change which server is active —
- * callers switch explicitly. Returns the new state plus the resolved entry.
+ * Add a server (or update the existing one, so the list can't accumulate
+ * duplicates). Identity is the relay serverId when a relay route is given —
+ * the same machine re-paired from a new network or a new QR is the same
+ * server — else the normalized URL. Pass url "" for a relay-only server.
+ * Does NOT change which server is active — callers switch explicitly.
+ * Returns the new state plus the resolved entry.
  */
 export function addToList(
   state: ServerState,
   url: string,
-  name?: string
+  name?: string,
+  relay?: RelayRoute
 ): { state: ServerState; entry: ServerEntry } {
-  const normUrl = normalizeUrl(url)
+  const direct = normalizeUrl(url)
+  const normUrl = direct || (relay ? relayOnlyUrl(relay.serverId) : "")
   const cleanName = name?.trim() || undefined
-  const existing = state.servers.find((s) => s.url === normUrl)
+  const existing =
+    (relay && state.servers.find((s) => s.relay?.serverId === relay.serverId)) ||
+    state.servers.find((s) => s.url === normUrl)
   if (existing) {
-    // Update the nickname if a new one was supplied, but keep the token.
-    const entry = cleanName ? { ...existing, name: cleanName } : existing
+    // Refresh the routes and nickname, but keep the token. A relay-only
+    // re-pair never erases a direct address learned earlier.
+    const entry: ServerEntry = { ...existing }
+    if (direct) entry.url = direct
+    if (relay) entry.relay = relay
+    if (cleanName) entry.name = cleanName
     const servers = state.servers.map((s) => (s.id === existing.id ? entry : s))
     return { state: { ...state, servers }, entry }
   }
   const entry: ServerEntry = { id: makeId(), url: normUrl, token: "" }
+  if (relay) entry.relay = relay
   if (cleanName) entry.name = cleanName
   return { state: { ...state, servers: [...state.servers, entry] }, entry }
 }
@@ -76,12 +124,16 @@ export function removeFromList(state: ServerState, id: string): ServerState {
 }
 
 /** Write a token onto the active entry (used after sign-in). No active entry →
- *  unchanged. Passing "" clears the token (sign-out). */
-export function setActiveToken(state: ServerState, token: string): ServerState {
+ *  unchanged. Passing "" clears the token (sign-out); passing "" or undefined
+ *  for username clears / leaves it alone respectively. */
+export function setActiveToken(state: ServerState, token: string, username?: string): ServerState {
   if (!activeEntry(state)) return state
-  const servers = state.servers.map((s) =>
-    s.id === state.activeId ? { ...s, token } : s
-  )
+  const servers = state.servers.map((s) => {
+    if (s.id !== state.activeId) return s
+    const next: ServerEntry = { ...s, token }
+    if (username !== undefined) next.username = username || undefined
+    return next
+  })
   return { ...state, servers }
 }
 
@@ -104,10 +156,14 @@ export function parseState(raw: string | null): ServerState | null {
   try {
     const v = JSON.parse(raw) as Partial<ServerState>
     if (!Array.isArray(v.servers)) return null
-    const servers = v.servers.filter(
-      (s): s is ServerEntry =>
-        !!s && typeof s.id === "string" && typeof s.url === "string" && typeof s.token === "string"
-    )
+    const servers = v.servers
+      .filter(
+        (s): s is ServerEntry =>
+          !!s && typeof s.id === "string" && typeof s.url === "string" && typeof s.token === "string"
+      )
+      // A corrupted relay route is dropped, not trusted: the entry falls back
+      // to its direct address (or becomes unreachable, prompting a re-pair).
+      .map((s) => (s.relay === undefined || validRelay(s.relay) ? s : { ...s, relay: undefined }))
     return { servers, activeId: typeof v.activeId === "string" ? v.activeId : "" }
   } catch {
     return null

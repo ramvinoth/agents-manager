@@ -4,7 +4,7 @@
  * where this content rendered as raw markdown — the bug this module fixes.
  */
 import assert from "node:assert"
-import { parseInline, parseMarkdown } from "./markdown.ts"
+import { blockGap, parseInline, parseMarkdown } from "./markdown.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -121,6 +121,46 @@ test("real agent reply from the thread screenshot", () => {
 test("plain text passes through unchanged", () => {
   const b = parseMarkdown("just a sentence")
   assert.deepEqual(b, [{ t: "p", spans: [{ t: "text", s: "just a sentence" }] }])
+})
+
+test("block gaps: sections open wide, lists stay tight, paragraphs separate", () => {
+  const b = parseMarkdown("intro\n\n## Plan\n### Step\nfirst para\n\nsecond para\n\n- a\n- b\n\nafter\n\n### Next")
+  assert.deepEqual(b.map((x, i) => [x.t, blockGap(b[i - 1], x)]), [
+    ["p", 0], ["h", 24], ["h", 8], ["p", 6], ["p", 12], ["li", 12], ["li", 4], ["p", 12], ["h", 18],
+  ])
+})
+
+test("notes: chat text never gets note syntax", () => {
+  assert.deepEqual(parseInline("see [[Plan]] #work"), [{ t: "text", s: "see [[Plan]] #work" }])
+})
+
+test("notes: [[links]] with heading and alias", () => {
+  assert.deepEqual(parseInline("a [[Plan]] b", true), [
+    { t: "text", s: "a " }, { t: "wikilink", target: "Plan", s: "Plan" }, { t: "text", s: " b" },
+  ])
+  assert.deepEqual(parseInline("[[Plan#Risks]]", true), [{ t: "wikilink", target: "Plan", s: "Plan › Risks" }])
+  assert.deepEqual(parseInline("[[Plan|the plan]]", true), [{ t: "wikilink", target: "Plan", s: "the plan" }])
+  assert.deepEqual(parseInline("[[Alice's idea]]", true), [{ t: "wikilink", target: "Alice's idea", s: "Alice's idea" }])
+  assert.deepEqual(parseInline("[[#Local]]", true), [{ t: "text", s: "[[#Local]]" }])
+})
+
+test("notes: links inside code stay literal", () => {
+  assert.deepEqual(parseInline("`[[x]] #y`", true), [{ t: "code", s: "[[x]] #y" }])
+  const b = parseMarkdown("```\n[[x]]\n```", true)
+  assert.deepEqual(b, [{ t: "code", lang: "", text: "[[x]]" }])
+})
+
+test("notes: #tags — not numbers, not C#, nested lower-cased, trailing dash dropped", () => {
+  assert.deepEqual(parseInline("#Work and (#q4)", true), [
+    { t: "tag", s: "#Work", tag: "work" }, { t: "text", s: " and (" }, { t: "tag", s: "#q4", tag: "q4" }, { t: "text", s: ")" },
+  ])
+  assert.deepEqual(parseInline("issue #42 in C#", true), [{ t: "text", s: "issue #42 in C#" }])
+  assert.deepEqual(parseInline("#Area/Sub-", true), [{ t: "tag", s: "#Area/Sub", tag: "area/sub" }, { t: "text", s: "-" }])
+})
+
+test("notes: a heading line is a heading, its tags still chips", () => {
+  const b = parseMarkdown("# Title #idea", true)
+  assert.deepEqual(b, [{ t: "h", level: 1, spans: [{ t: "text", s: "Title " }, { t: "tag", s: "#idea", tag: "idea" }] }])
 })
 
 console.log(`${passed} passing`)

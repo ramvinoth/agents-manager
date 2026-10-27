@@ -5,7 +5,7 @@ Supersedes the LLM-only `providers.py`. Generalizes it into a typed registry tha
 the settings UI manages and chat/voice sessions pick from. Nothing is hardcoded;
 common providers ship as *seed presets*, not as code branches.
 
-## 0. The ask (from Ram)
+## 0. The ask (from the owner)
 
 1. Don't hardcode providers. A **typed model-provider registry** — each entry has a
    TYPE: `llm` | `stt` | `tts`.

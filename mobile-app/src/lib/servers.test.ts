@@ -1,5 +1,8 @@
 import assert from "node:assert"
 import {
+  directUrl,
+  displayAddress,
+  relayOnlyUrl,
   addToList,
   activeEntry,
   migrateLegacy,
@@ -131,6 +134,49 @@ test("activeEntry resolves the active server", () => {
   const s = switchInList(a.state, a.entry.id)
   assert.equal(activeEntry(s)!.url, "https://a")
   assert.equal(activeEntry(EMPTY_STATE), undefined)
+})
+
+const RELAY = { url: "wss://relay.example", serverId: "abcdefghijklmnop", publicKey: "A".repeat(43) + "=" }
+
+test("addToList relay-only: synthetic url, direct address empty, display hides it", () => {
+  const { entry } = addToList(EMPTY_STATE, "", undefined, RELAY)
+  assert.equal(entry.url, relayOnlyUrl(RELAY.serverId))
+  assert.equal(directUrl(entry), "")
+  assert.equal(displayAddress(entry), "Remote (via Harman relay)")
+  assert.deepEqual(entry.relay, RELAY)
+})
+
+test("addToList dedupes by relay serverId and keeps the token + direct url", () => {
+  const a = addToList(EMPTY_STATE, "https://home.local", undefined, RELAY)
+  const signed = setActiveToken(switchInList(a.state, a.entry.id), "tok")
+  const moved = { ...RELAY, url: "wss://relay2.example" }
+  const b = addToList(signed, "", "Office", moved)
+  assert.equal(b.state.servers.length, 1)
+  assert.equal(b.entry.token, "tok")
+  assert.equal(b.entry.url, "https://home.local")
+  assert.equal(b.entry.relay!.url, "wss://relay2.example")
+  assert.equal(b.entry.name, "Office")
+})
+
+test("addToList attaches a relay to an existing direct entry by url", () => {
+  const a = addToList(EMPTY_STATE, "https://home.local")
+  const b = addToList(a.state, "https://home.local", undefined, RELAY)
+  assert.equal(b.state.servers.length, 1)
+  assert.deepEqual(b.entry.relay, RELAY)
+  assert.equal(directUrl(b.entry), "https://home.local")
+})
+
+test("parseState keeps a valid relay and strips a corrupted one", () => {
+  const raw = JSON.stringify({
+    servers: [
+      { id: "1", url: "https://a", token: "", relay: RELAY },
+      { id: "2", url: "https://b", token: "", relay: { url: "http://x", serverId: "short", publicKey: "" } },
+    ],
+    activeId: "1",
+  })
+  const s = parseState(raw)!
+  assert.deepEqual(s.servers[0].relay, RELAY)
+  assert.equal(s.servers[1].relay, undefined)
 })
 
 // Helper: set a token on a specific url's entry (test convenience).

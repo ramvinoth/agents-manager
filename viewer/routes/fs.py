@@ -3,8 +3,13 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
+import zipfile
 from pathlib import Path
+from viewer import db, integrations
+from viewer.drives import DriveError, adapter_for
+from viewer.filesearch import search as search_project
 from viewer.engine import (
     get_host,
 )
@@ -20,6 +25,32 @@ _SECRET_BASENAMES = frozenset({
     ".viewer-providers.json",  # provider API keys
     ".credentials.json",       # ~/.claude credentials
 })
+
+
+# Types the download route may serve inline (rendered in the page) when asked
+# with ?inline=1 — the preview's PDF viewer, which then range-fetches only the
+# pages it shows. Deliberately no HTML or SVG: those would run script on this
+# origin with the owner's cookie. Every other file stays an attachment.
+_INLINE_TYPES = {"pdf": "application/pdf"}
+_STREAM_CHUNK = 256 * 1024
+
+
+def _parse_range(header, size):
+    """One byte range from a Range header, as inclusive (start, end) within a
+    file of `size` bytes. None means "send it all" (no header, a malformed one,
+    or several ranges — a full 200 is always a valid answer); False means the
+    range lies wholly outside the file (416)."""
+    m = re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", header or "")
+    if not m or m.group(1) == m.group(2) == "":
+        return None
+    if m.group(1) == "":  # suffix: the last N bytes
+        n = int(m.group(2))
+        return (max(size - n, 0), size - 1) if n and size else False
+    start = int(m.group(1))
+    end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+    if m.group(2) and int(m.group(2)) < start:
+        return None
+    return (start, end) if start < size else False
 
 
 def _safe_name(name) -> bool:
@@ -41,12 +72,167 @@ def _is_secret_path(name: str) -> bool:
     return os.path.dirname(norm) == claude and base.startswith(".")
 
 
+def _zip_local(base, names, dest):
+    """Zip `names` (files or whole directories) from `base` into `dest`;
+    entries keep their paths relative to `base`."""
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in names:
+            src = base / n
+            if src.is_dir():
+                for f in src.rglob("*"):
+                    if f.is_file():
+                        z.write(f, f.relative_to(base))
+            elif src.is_file():
+                z.write(src, src.relative_to(base))
+
+
+def _resolve_location(req, body=None):
+    """Which disk a file op targets: ("local","local") when neither host nor
+    drive is given, ("ssh", host) for an SSH host, ("drive", id) for a cloud
+    drive. GET handlers pass only req (params in the query string); POST
+    handlers also pass the parsed JSON body, since host/drive may arrive as
+    JSON instead. Exactly one of drive/host may be set — both is a 400.
+    With neither, this is exactly what the pre-drive handlers did, so local
+    and SSH requests run their original paths byte-for-byte."""
+    drive = (req.query.get("drive") or [""])[0]
+    if not drive:
+        drive = (body or {}).get("drive") or ""
+    host = (body or {}).get("host") or req.host
+    if drive:
+        if host != "local":
+            raise DriveError("Specify one of drive or host, not both", 400)
+        return "drive", drive
+    if host != "local":
+        return "ssh", host
+    return "local", "local"
+
+
+def _local_real(path):
+    return str(Path(os.path.expanduser(path or "~")).resolve())
+
+
+def _agent_refusal(req, kind, ref, path, op):
+    """Why an AGENT may not do `op` at `path`, or None. The owner's rules from
+    Integrations: on this machine's disk, the allowed folders and operations;
+    on a cloud drive, the files service's operations. A human is never
+    refused here, and SSH hosts carry their own access (their credentials)."""
+    if (getattr(req, "principal", None) or {}).get("kind") != "mcp":
+        return None
+    if kind == "local":
+        if integrations.local_allows(db.local_disk_rules(), _local_real(path), op, _local_real):
+            return None
+        return ("The owner has not allowed agents to %s %s on this machine — "
+                "ask them to add it under Integrations → Local disk"
+                % (integrations.OP_LABELS[op].lower(), path or "~"))
+    if kind == "drive":
+        drive = db.drive_get(ref)
+        sid = integrations.FILES_SERVICE.get((drive or {}).get("kind"))
+        if drive is None or sid is None or integrations.op_state(drive, sid, op) == "on":
+            return None   # unknown drive: adapter_for answers the 404
+        return ("The owner has not allowed agents to %s on this drive — they allow it in Integrations"
+                % integrations.OP_LABELS[op].lower())
+    return None
+
+
 class FsMixin:
+    def _drive_target(self, req, body, path, op):
+        """The one gate every file route passes before touching a disk.
+        Returns (True, adapter) for a cloud drive, (False, None) for local/SSH
+        (the code below the call site runs), and (None, None) after a refusal
+        has been sent: unknown drive 404, paused/hidden 403, bad params 400,
+        or an agent outside what the owner allowed for `op`
+        ("read" | "write" | "delete") at `path` 403."""
+        try:
+            kind, ref = _resolve_location(req, body)
+        except DriveError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return None, None
+        why = _agent_refusal(req, kind, ref, path, op)
+        if why:
+            self.send_json({"error": why}, status=403)
+            return None, None
+        if kind != "drive":
+            return False, None
+        try:
+            return True, adapter_for(ref)
+        except DriveError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+            return None, None
+
+    def _begin_attachment(self, name, length, ctype="application/octet-stream", inline=False):
+        self.send_response(200)
+        self._file_headers(name, length, ctype, inline)
+        self.end_headers()
+
+    def _file_headers(self, name, length, ctype, inline):
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(length))
+        disposition = content_disposition(name)
+        self.send_header("Content-Disposition", "inline" + disposition[len("attachment"):] if inline else disposition)
+        self.send_header("X-Content-Type-Options", "nosniff")
+
+    def _send_attachment(self, data, name, ctype="application/octet-stream", inline=False):
+        self._begin_attachment(name, len(data), ctype, inline)
+        self.wfile.write(data)
+
+    def _send_file(self, target, ctype, inline):
+        """Stream a local file in chunks — never whole into memory — honouring
+        one Range so a PDF viewer fetches only the pages it shows."""
+        size = target.stat().st_size
+        rng = _parse_range(self.headers.get("Range"), size)
+        if rng is False:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = rng or (0, size - 1)
+        self.send_response(206 if rng else 200)
+        self._file_headers(target.name, end - start + 1 if size else 0, ctype, inline)
+        self.send_header("Accept-Ranges", "bytes")
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        left = end - start + 1 if size else 0
+        try:
+            with open(target, "rb") as f:
+                f.seek(start)
+                while left > 0:
+                    chunk = f.read(min(_STREAM_CHUNK, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # the viewer cancelled a range it no longer needs — normal
+
     def _g_fs_download(self, req):
         fpath = (req.query.get("path") or [""])[0]
         if not fpath:
-            self.send_error(400, "Missing path")
+            self.send_json({"error": "Missing path"}, status=400)
             return
+        # ?inline=1 asks to render it in the page (the preview); honoured only
+        # for _INLINE_TYPES, so it can never turn a file into live HTML.
+        ctype = "application/octet-stream"
+        inline = False
+        if (req.query.get("inline") or [""])[0] == "1":
+            ext = os.path.splitext(fpath)[1].lstrip(".").lower()
+            if ext in _INLINE_TYPES:
+                ctype, inline = _INLINE_TYPES[ext], True
+        ok, adapter = self._drive_target(req, None, fpath, "read")
+        if ok:
+            try:
+                data, name = adapter.read_bytes(fpath)
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+                return
+            self._send_attachment(data, name, ctype, inline)
+            return
+        if ok is None:
+            return
+        # The secret-file guard protects *this machine's* credentials; a
+        # cloud drive is the owner's own account, so it applies to the local
+        # and SSH legs only.
         if _is_secret_path(fpath):
             self.send_json({"error": "Forbidden: secret file"}, status=403)
             return
@@ -59,27 +245,14 @@ class FsMixin:
             if r.get("error"):
                 self.send_json({"error": r["error"]}, status=400)
                 return
-            data, name = r["bytes"], r["name"]
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Content-Disposition", content_disposition(name))
-            self.end_headers()
-            self.wfile.write(data)
+            self._send_attachment(r["bytes"], r["name"], ctype, inline)
             return
         try:
             target = Path(os.path.expanduser(fpath)).resolve()
             if not target.is_file():
-                self.send_error(404, "File not found or is a directory")
+                self.send_json({"error": "File not found or is a directory"}, status=404)
                 return
-            # Stream file with proper Content-Disposition header
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(target.stat().st_size))
-            self.send_header("Content-Disposition", content_disposition(target.name))
-            self.end_headers()
-            with open(target, "rb") as f:
-                self.wfile.write(f.read())
+            self._send_file(target, ctype, inline)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
@@ -93,6 +266,15 @@ class FsMixin:
         name = (body.get("name") or "").strip()
         if not _safe_name(name):
             self.send_json({"error": "Invalid folder name"}, status=400)
+            return
+        ok, adapter = self._drive_target(req, body, body.get("path") or "~", "write")
+        if ok:
+            try:
+                self.send_json(adapter.mkdir(body.get("path") or "~", name))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
             return
         hh = body.get("host", "local")
         if hh != "local":
@@ -135,12 +317,29 @@ class FsMixin:
             if not _safe_name(n):
                 self.send_json({"error": "Invalid item name"}, status=400)
                 return
-            if _is_secret_path(os.path.join(path, n)):
-                self.send_json({"error": "Forbidden: secret file"}, status=403)
-                return
         arcname = archive or ((names[0] + ".zip") if len(names) == 1 else "Archive.zip")
         if not arcname.endswith(".zip"):
             arcname += ".zip"
+
+        ok, adapter = self._drive_target(req, None, path, "read")
+        if ok:
+            try:
+                data, _ = adapter.build_zip(path, names)
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+                return
+            self._send_attachment(data, arcname, "application/zip")
+            return
+        if ok is None:
+            return
+
+        # The secret-file guard protects *this machine's* credentials; it
+        # applies to the local and SSH legs. A cloud drive is the owner's own
+        # account — there is no machine secret to shield from its owner.
+        for n in names:
+            if _is_secret_path(os.path.join(path, n)):
+                self.send_json({"error": "Forbidden: secret file"}, status=403)
+                return
 
         if req.host != "local":
             try:
@@ -158,12 +357,7 @@ class FsMixin:
                     self.send_json({"error": rb["error"]}, status=400)
                     return
                 data = rb["bytes"]
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("Content-Disposition", content_disposition(arcname))
-                self.end_headers()
-                self.wfile.write(data)
+                self._send_attachment(data, arcname, "application/zip")
             finally:
                 try:
                     remote_unlink(req.host, tmp)
@@ -171,47 +365,26 @@ class FsMixin:
                     pass
             return
 
-        import tempfile
-        import zipfile
-        tmp_path = None
+        # Local is the one leg that can stream: a home-folder selection may be
+        # gigabytes, so the archive goes to a temp file and never fully into
+        # memory (the drive and SSH legs are byte-bound by their transports).
+        base = Path(os.path.expanduser(path)).resolve()
+        if not base.is_dir():
+            self.send_json({"error": "Target is not a directory"}, status=400)
+            return
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
         try:
-            base = Path(os.path.expanduser(path)).resolve()
-            if not base.is_dir():
-                self.send_json({"error": "Target is not a directory"}, status=400)
-                return
-            fd, tmp_path = tempfile.mkstemp(suffix=".zip")
-            os.close(fd)
-            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
-                for n in names:
-                    src = base / n
-                    if src.is_dir():
-                        for f in src.rglob("*"):
-                            if f.is_file():
-                                z.write(f, f.relative_to(base))
-                    elif src.is_file():
-                        z.write(src, src.relative_to(base))
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Length", str(os.path.getsize(tmp_path)))
-            self.send_header("Content-Disposition", content_disposition(arcname))
-            self.end_headers()
-            with open(tmp_path, "rb") as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except Exception as e:
             try:
+                _zip_local(base, names, tmp_path)
+            except Exception as e:
                 self.send_json({"error": str(e)}, status=500)
-            except Exception:
-                pass
+                return
+            self._begin_attachment(arcname, os.path.getsize(tmp_path), "application/zip")
+            with open(tmp_path, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
         finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+            os.unlink(tmp_path)
 
     def _p_fs_rename(self, req):
         body = self.read_body()
@@ -223,6 +396,15 @@ class FsMixin:
         name = (body.get("name") or "").strip()
         if not fpath or not _safe_name(name):
             self.send_json({"error": "Invalid name"}, status=400)
+            return
+        ok, adapter = self._drive_target(req, body, fpath, "write")
+        if ok:
+            try:
+                self.send_json(adapter.rename(fpath, name))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
             return
         if hh != "local":
             try:
@@ -254,6 +436,15 @@ class FsMixin:
         fpath = (body.get("path") or "").strip()
         if not fpath or fpath in ("/", "~", "."):
             self.send_json({"error": "Cannot delete system paths"}, status=400)
+            return
+        ok, adapter = self._drive_target(req, body, fpath, "delete")
+        if ok:
+            try:
+                self.send_json(adapter.delete(fpath))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
             return
         if hh != "local":
             try:
@@ -300,6 +491,15 @@ class FsMixin:
         if archive and ("/" in archive or "\0" in archive):
             self.send_json({"error": "Invalid archive name"}, status=400)
             return
+        ok, adapter = self._drive_target(req, body, path, "write")
+        if ok:
+            try:
+                self.send_json(adapter.compress(path, names, archive))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         if hh != "local":
             try:
                 self.send_json(remote_compress(hh, path, names, archive))
@@ -307,7 +507,6 @@ class FsMixin:
                 self.send_json({"error": f"SSH: {e}"}, status=502)
             return
         try:
-            import zipfile
             base = Path(os.path.expanduser(path)).resolve()
             if not base.is_dir():
                 self.send_json({"error": "Target is not a directory"}, status=400)
@@ -321,24 +520,42 @@ class FsMixin:
             while dest.exists():
                 dest = base / f"{stem} {i}.zip"
                 i += 1
-            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
-                for n in names:
-                    src = base / n
-                    if src.is_dir():
-                        for f in src.rglob("*"):
-                            if f.is_file():
-                                z.write(f, f.relative_to(base))
-                    elif src.is_file():
-                        z.write(src, src.relative_to(base))
+            _zip_local(base, names, dest)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
             return
         self.send_json({"created": str(dest)})
 
+    def _p_fs_write(self, req):
+        """JSON write of ONE file: {path, name, content, encoding?, host?|drive?}.
+        The agent MCP speaks JSON only, so this is the same store as the
+        multipart upload (below) behind a body it can produce. `content` is
+        text, or base64 when encoding == "base64"."""
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        if not _safe_name(name):
+            self.send_json({"error": "Invalid file name"}, status=400)
+            return
+        content = body.get("content")
+        if not isinstance(content, str):
+            self.send_json({"error": "content must be a string"}, status=400)
+            return
+        if body.get("encoding") == "base64":
+            import base64
+            try:
+                data = base64.b64decode(content, validate=True)
+            except Exception:
+                self.send_json({"error": "content is not valid base64"}, status=400)
+                return
+        else:
+            data = content.encode()
+        self._fs_store(req, body, body.get("host") or req.host, body.get("path") or "~", [(name, data)])
+
     def _p_fs_upload(self, req):
         # Multipart form-data upload: files go to a target directory (local or SSH).
-        host = req.host
-        path = req.query.get("path", ["~"])[0] or "~"
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
             self.send_json({"error": "Expected multipart/form-data"}, status=400)
@@ -375,6 +592,21 @@ class FsMixin:
         if not files:
             self.send_json({"error": "No files found in upload"}, status=400)
             return
+        self._fs_store(req, None, req.host, req.query.get("path", ["~"])[0] or "~", files)
+
+    def _fs_store(self, req, body, host, path, files):
+        """Write (name, bytes) pairs into a directory on whichever disk the
+        request targets — the one store behind both the multipart upload and
+        the JSON write."""
+        ok, adapter = self._drive_target(req, body, path, "write")
+        if ok:
+            try:
+                self.send_json(adapter.upload(path, files))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         if host != "local":
             try:
                 self.send_json(remote_upload(host, path, files))
@@ -398,9 +630,40 @@ class FsMixin:
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)
 
+    def _g_fs_search(self, req):
+        """GET /api/fs/search?cwd=&q= — the composer's "#" picker: fuzzy-ranked
+        files and folders of one project (local or SSH; drives have no project)."""
+        cwd = (req.query.get("cwd") or [""])[0]
+        q = (req.query.get("q") or [""])[0]
+        if not cwd:
+            self.send_json({"error": "Missing cwd"}, status=400)
+            return
+        ok, _ = self._drive_target(req, None, cwd, "read")
+        if ok is None:
+            return
+        if ok:
+            self.send_json({"error": "Search works on a project folder, not a drive"}, status=400)
+            return
+        try:
+            hits = search_project(req.host, cwd, q)
+        except Exception as e:
+            self.send_json({"error": f"search failed: {e}"}, status=502)
+            return
+        self.send_json({"results": [h for h in hits
+                                    if not _is_secret_path(os.path.join(cwd, h["path"]))]})
+
     def _g_fs(self, req):
         raw = (req.query.get("path") or ["~"])[0]
         show_hidden = (req.query.get("hidden") or ["0"])[0] == "1"
+        ok, adapter = self._drive_target(req, None, raw, "read")
+        if ok:
+            try:
+                self.send_host_result(adapter.fs_list(raw, show_hidden))
+            except DriveError as e:
+                self.send_json({"error": str(e)}, status=e.status)
+            return
+        if ok is None:
+            return
         try:
             self.send_host_result(get_host(req.host).fs_list(raw, show_hidden))
         except Exception as e:

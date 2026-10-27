@@ -16,32 +16,41 @@ APIs:
 """
 
 import concurrent.futures
+import gzip
+import logging
+
 import http.cookies
 import http.server
 import json
 import os
 import re
 import socket
-import subprocess
+import sys
 import threading
 from urllib.parse import urlparse, parse_qs
 
-from viewer import db
+# Below this a JSON body isn't worth the compress/decompress round trip.
+GZIP_MIN_BYTES = 1024
+
+from viewer import db, orglogic, setupcode
+from viewer.remote import tailnet_ipv4
 from viewer.config import (
-    CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, claude_bin,
+    CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, VIEWER_PREFLIGHT, claude_bin,
 )
 from viewer.engine import (
-    loop_scheduler, run_loop_iteration,
+    loop_scheduler, run_loop_iteration, run_settings_paths_in_use,
+    run_settings_sweep_orphans, validate_session_credential,
 )
 
 
 class _Req:
     """Parsed request context handed to every route handler.
 
-    Bundles the parsed URL, decoded query, and the selected host so route
-    handlers share one signature — (self, req) — and never re-parse.
+    Bundles the parsed URL, decoded query, the selected host, and the resolved
+    caller so route handlers share one signature — (self, req) — and never
+    re-parse or re-authenticate.
     """
-    __slots__ = ("parsed", "path", "raw_query", "query", "host")
+    __slots__ = ("parsed", "path", "raw_query", "query", "host", "principal")
 
     def __init__(self, parsed):
         self.parsed = parsed
@@ -49,6 +58,7 @@ class _Req:
         self.raw_query = parsed.query
         self.query = parse_qs(parsed.query)
         self.host = (self.query.get("host") or ["local"])[0]
+        self.principal = None   # set once by _resolve_principal(); see Principal
 from viewer.routes.sessions import SessionsMixin
 from viewer.routes.chat import ChatMixin
 from viewer.routes.capabilities import CapabilitiesMixin
@@ -57,32 +67,50 @@ from viewer.routes.panels import PanelsMixin
 from viewer.routes.auth import AuthMixin
 from viewer.routes.git import GitMixin
 from viewer.routes.push import PushMixin
+from viewer.routes.voice import VoiceMixin
 from viewer.routes.providers import ProvidersMixin
 from viewer.routes.orchestrator import OrchestratorMixin
+from viewer.routes.drives import DrivesMixin
+from viewer.routes.integrations import IntegrationsMixin
+from viewer.routes.inbox import InboxMixin
+from viewer.routes.project_plugins import ProjectPluginsMixin
+from viewer.routes.marketplace import MarketplaceMixin
+from viewer.routes.usage import UsageMixin
+from viewer.routes.intake import IntakeMixin
+from viewer.routes.canvas import CanvasMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
-    PanelsMixin, AuthMixin, GitMixin, PushMixin, ProvidersMixin,
-    OrchestratorMixin,
+    PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
+    OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
+    IntakeMixin, ProjectPluginsMixin, CanvasMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
 
-    # ---- access control: a logged-in session (viewer.db) gates every /api call
-    # and WebSocket. These few auth endpoints are reachable logged-out so you can
-    # sign up / sign in; the drag-drop viewer is fully client-side (no /api). ----
-    # /api/chat/permission is called by the local permission MCP subprocess (no
-    # viewer session); it authenticates with a per-run token in the body instead.
-    # The /api/org/* write paths are likewise reachable by the kanban MCP subprocess,
-    # which authenticates with a per-run kanban token; those handlers do their own
-    # current_user()-else-token check (see OrchestratorMixin).
+    # ---- access control: every /api call and WebSocket resolves ONE principal
+    # before any handler runs. Two credential kinds, one resolution point:
+    #   - cookie / Bearer            → the logged-in human   (kind "app")
+    #   - X-Viewer-Session + -Token  → an agent's MCP subprocess (kind "mcp")
+    # Authority is min(human ceiling, session level) — orglogic.effective_level.
+    #
+    # PUBLIC_API is ONLY for endpoints that must work with no credential at all:
+    # signing up/in, a phone redeeming a QR pairing code (the code is the
+    # credential), a device dropping its own push token on logout (which
+    # must succeed even though the session is already gone), and the OAuth
+    # callback a cloud-drive vendor redirects the browser to (a cross-site
+    # top-level redirect carries no SameSite=Strict cookie; that route is bound
+    # to its consent by the one-time `state` instead). Everything else
+    # authenticates. A handler must never re-derive the caller — read
+    # req.principal.
     PUBLIC_API = {"/api/auth/me", "/api/auth/signin", "/api/auth/signup", "/api/auth/state",
-                  "/api/chat/permission", "/api/push/unregister",
-                  "/api/org/board", "/api/org/cards", "/api/org/cards/move",
-                  "/api/org/cards/assign", "/api/org/cards/update", "/api/org/cards/done",
-                  "/api/org/cards/delete",
-                  "/api/org/employees", "/api/org/projects", "/api/org/skills/propose"}
+                  "/api/auth/pair/redeem",
+                  "/api/push/unregister", "/api/drive/oauth/callback"}
+    # Prefixes whose route authenticates by its OWN credential: an intake door
+    # (/api/intake/<channel>) is called by outside senders that hold only that
+    # channel's token — verified in routes/intake.py, never a login.
+    PUBLIC_PREFIX = ("/api/intake/",)
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie")
@@ -107,16 +135,80 @@ class SessionViewerHandler(
         return ""
 
     def current_user(self):
-        """The logged-in user for this request ({id, username}) or None."""
+        """The logged-in user for this request ({id, username, role}) or None."""
         if VIEWER_NO_AUTH:
-            return {"id": 0, "username": "local"}
+            return {"id": 0, "username": "local", "role": "owner"}
         return db.user_for_session(self._auth_token())
 
+    def _mcp_credential(self):
+        """(session_id, token) for an agent's MCP subprocess, from headers only.
+
+        Headers — not the JSON body — because the principal is resolved at the
+        gate, before any handler reads the (read-once) request stream. X-Kanban-*
+        is the pre-rename spelling, still accepted so a subprocess started before
+        an upgrade keeps working until its run ends.
+        """
+        sid = (self.headers.get("X-Viewer-Session")
+               or self.headers.get("X-Kanban-Session") or "")
+        tok = (self.headers.get("X-Viewer-Token")
+               or self.headers.get("X-Kanban-Token") or "")
+        return sid, tok
+
+    def _resolve_principal(self, req):
+        """Resolve the ONE caller for this request and attach it to req.
+
+        Returns the principal, or None when no valid credential was presented.
+        A principal is:
+          {kind, actor, human_role, session_level, level, user, session}
+        where `level` is the effective authority — min(human ceiling, session
+        level) — and is the only value a handler should gate on.
+
+        `actor` names the caller the way the owner sees it everywhere else:
+        `user:<name>` for a human at the UI and `session:<label-or-short-id>`
+        for an agent session. (Historical audit rows may still read
+        `employee:<name>` from the retired roster; nothing writes it now.)
+        The label is the per-run snapshot from the engine (the same name as
+        the chat list and pushes); without one (e.g. a run outliving a
+        restart) the short id stands in.
+        """
+        user = self.current_user()
+        if user:
+            # A human at the UI. No agent session is acting, so the session level
+            # does not constrain: authority is the role's ceiling.
+            req.principal = {
+                "kind": "app", "actor": f"user:{user['username']}",
+                "human_role": user.get("role", "viewer"), "session_level": "",
+                "level": orglogic.effective_level(user.get("role", "viewer"), ""),
+                "user": user, "session": "",
+            }
+            return req.principal
+        sid, tok = self._mcp_credential()
+        info = validate_session_credential(sid, tok)
+        if info:
+            level = info.get("level", "ic")
+            # An agent spawned by the loop has no logged-in human. Its ceiling is
+            # the install owner's role — never an implicit escalation, and on a
+            # fresh install with no owner it resolves to no authority at all.
+            human_role = db.owner_role()
+            # Name it for what it is — the session — with the label its live
+            # run started with, else the short id.
+            actor = f"session:{info.get('label') or str(sid)[:8]}"
+            req.principal = {
+                "kind": "mcp", "actor": actor,
+                "human_role": human_role, "session_level": level,
+                "level": orglogic.effective_level(human_role, level),
+                "user": None, "session": sid,
+            }
+            return req.principal
+        return None
+
     def _gated(self, req):
-        """True if this request must be blocked (an /api call, not public, no session)."""
-        return (req.path.startswith("/api/")
-                and req.path not in self.PUBLIC_API
-                and not self.current_user())
+        """True if this request must be blocked. Resolves the principal as a side
+        effect, so authentication happens exactly once per request."""
+        if (not req.path.startswith("/api/") or req.path in self.PUBLIC_API
+                or req.path.startswith(self.PUBLIC_PREFIX)):
+            return False
+        return self._resolve_principal(req) is None
 
     def set_session_cookie(self, token):
         """Emit a Set-Cookie on the response (token=None clears it, for logout)."""
@@ -230,12 +322,47 @@ class SessionViewerHandler(
 
     def send_json(self, data, status=200):
         body = json.dumps(data).encode("utf-8")
+        # JSON shrinks ~4x under gzip (measured: a 1.3 MB thread page → 341 KB).
+        # Only when the client asks — browsers and iOS URLSession do, and
+        # decompress transparently; the relay mux doesn't, so it stays plain.
+        gz = len(body) >= GZIP_MIN_BYTES and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:
+            body = gzip.compress(body, compresslevel=5)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_html(self, html, status=200):
+        """A finished HTML page — for the few routes a browser lands on directly
+        (an OAuth vendor's redirect) rather than the app's fetch()."""
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def request_origin(self):
+        """The origin the client reached this server on — scheme + host as the
+        browser sees it, e.g. 'https://harman.example.com' through the Cloudflare
+        tunnel or 'http://localhost:8091' on the dev box. The tunnel forwards
+        the browser's Host and sets X-Forwarded-Proto; without that header
+        only a loopback host is plain http (a public hostname is never served
+        without TLS). This is the source of truth for anything a third party
+        must call us back on, so a new deployment self-configures: nothing
+        about its hostname is stored anywhere in the viewer."""
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost"
+        proto = self.headers.get("X-Forwarded-Proto")
+        if not proto:
+            bare = host.split(":")[0].strip("[]")
+            proto = "http" if bare in ("localhost", "127.0.0.1", "::1") else "https"
+        return "%s://%s" % (proto.split(",")[0].strip(), host)
 
     def log_message(self, format, *args):
         if args and "404" in str(args[0]):
@@ -244,33 +371,55 @@ class SessionViewerHandler(
 
 
     GET_ROUTES = {
+        "/healthz": "_g_healthz",
         "/api/hosts": "_g_hosts",
         "/api/env": "_g_env",
         "/api/env/value": "_g_env_value",
         "/api/debug/stacks": "_g_debug_stacks",
         "/api/sessions": "_g_sessions",
+        "/api/project-plugins": "_g_project_plugins",
         "/api/chat/status": "_g_chat_status",
+        "/api/decisions/open": "_g_decisions_open",
         "/api/auth/status": "_g_auth_status",
         "/api/auth/me": "_g_auth_me",
+        "/api/relay": "_g_relay",
         "/api/auth/state": "_g_auth_state",
         "/api/prefs": "_g_prefs",
         "/api/auth/login/poll": "_g_auth_login_poll",
         "/api/commands": "_g_commands",
         "/api/loops": "_g_loops",
+        "/api/agent-templates": "_g_agent_templates",
+        "/api/agent-templates/extras": "_g_agent_template_extras",
         "/api/agents": "_g_agents",
         "/api/agents/login/poll": "_g_agent_login_poll",
         "/api/fs": "_g_fs",
+        "/api/fs/search": "_g_fs_search",
         "/api/fs/download": "_g_fs_download",
         "/api/fs/download-zip": "_g_fs_download_zip",
+        "/api/drives": "_g_drives",
+        "/api/drive/oauth/status": "_g_drive_oauth_status",
+        "/api/drive/oauth/callback": "_g_drive_oauth_callback",
+        "/api/integrations": "_g_integrations",
+        "/api/gmail/search": "_g_gmail_search",
+        "/api/gmail/read": "_g_gmail_read",
+        "/api/calendar/events": "_g_calendar_events",
         "/api/terminal/ws": "_g_terminal_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
+        "/api/voice/ws": "_g_voice_ws",
+        "/api/voice/nemotron/status": "_g_voice_nemotron_status",
+        "/api/call/engine": "_g_call_engine",
+        "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
-        "/api/browser/frame": "_g_browser_frame",
         "/api/capabilities": "_g_capabilities",
+        "/api/market/mcp": "_g_market_mcp",
+        "/api/market/skills": "_g_market_skills",
+        "/api/market/mcp/signin": "_g_market_mcp_signin",
         "/api/session-summary": "_g_session_summary",
+        "/api/session-detail": "_g_session_detail",
         "/api/session-analysis": "_g_session_analysis",
+        "/api/session-backups": "_g_session_backups",
         "/api/skill": "_g_skill",
         "/api/session-meta": "_g_session_meta",
         "/api/projects": "_g_projects",
@@ -279,22 +428,46 @@ class SessionViewerHandler(
         "/api/git/repos": "_g_git_repos",
         "/api/git/status": "_g_git_status",
         "/api/git/clone/status": "_g_git_clone_status",
+        "/api/voice/tts/stream": "_g_voice_tts_stream",
         "/api/providers": "_g_providers",
+        "/api/providers/default": "_g_providers_default",
         "/api/providers/models": "_g_providers_models",
-        "/api/org/employees": "_g_org_employees",
+        "/api/ai/defaults": "_g_ai_defaults",
+        "/api/session/ai": "_g_session_ai",
         "/api/org/projects": "_g_org_projects",
         "/api/org/board": "_g_org_board",
+        "/api/org/card": "_g_org_card",
+        "/api/org/card_comments": "_g_org_card_comments",
+        "/api/org/note_comments": "_g_org_note_comments",
+        "/api/org/card_deps": "_g_org_card_deps",
         "/api/org/cards": "_g_org_cards",
+        "/api/org/notes": "_g_org_notes",
+        "/api/org/note": "_g_org_note",
+        "/api/org/notes/graph": "_g_org_notes_graph",
+        "/api/org/notes/export": "_g_org_notes_export",
+        "/api/org/note/export": "_g_org_note_export",
+        "/api/org/map": "_g_org_map",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
+        "/api/org/maintenance": "_g_org_maintenance",
         "/api/org/harman": "_g_org_harman",
+        "/api/org/loop-control": "_g_org_loop_control",
+        "/api/org/system-preamble": "_g_org_system_preamble",
         "/api/org/skills": "_g_org_skills",
+        "/api/org/skills/read": "_g_org_skill_read",
+        "/api/org/docs": "_g_org_docs",
+        "/api/org/docs/read": "_g_org_docs_read",
+        "/api/inbox": "_g_inbox",
+        "/api/canvas": "_g_canvas",
+        "/api/usage/report": "_g_usage_report",
+        "/api/org/intake": "_g_org_intake",
     }
     GET_PREFIX = [
         ("/api/session/", "_g_session_file"),
     ]
     POST_ROUTES = {
         "/api/chat": "_p_chat",
+        "/api/usage": "_p_usage",
         "/api/push/register": "_p_push_register",
         "/api/push/unregister": "_p_push_unregister",
         "/api/agents/install": "_p_agents_install",
@@ -312,11 +485,31 @@ class SessionViewerHandler(
         "/api/fs/mkdir": "_p_fs_mkdir",
         "/api/fs/delete": "_p_fs_delete",
         "/api/fs/upload": "_p_fs_upload",
+        "/api/fs/write": "_p_fs_write",
         "/api/fs/rename": "_p_fs_rename",
         "/api/fs/compress": "_p_fs_compress",
+        "/api/drives": "_p_drives_create",
+        "/api/drives/delete": "_p_drives_delete",
+        "/api/drive/oauth/start": "_p_drive_oauth_start",
+        "/api/integrations/connect": "_p_integrations_connect",
+        "/api/integrations/token": "_p_integrations_token",
+        "/api/integrations/api": "_p_integrations_api",
+        "/api/integrations/client": "_p_integrations_client",
+        "/api/integrations/client/delete": "_p_integrations_client_delete",
+        "/api/integrations/service": "_p_integrations_service",
+        "/api/integrations/op": "_p_integrations_op",
+        "/api/integrations/root": "_p_integrations_root",
+        "/api/integrations/local": "_p_integrations_local",
+        "/api/gmail/draft": "_p_gmail_draft",
+        "/api/calendar/create": "_p_calendar_create",
+        "/api/calendar/update": "_p_calendar_update",
+        "/api/calendar/delete": "_p_calendar_delete",
         "/api/auth/signup": "_p_auth_signup",
         "/api/auth/signin": "_p_auth_signin",
         "/api/auth/signout": "_p_auth_signout",
+        "/api/auth/pair/start": "_p_auth_pair_start",
+        "/api/relay": "_p_relay",
+        "/api/auth/pair/redeem": "_p_auth_pair_redeem",
         "/api/prefs": "_p_prefs",
         "/api/auth/login/start": "_p_auth_login_start",
         "/api/auth/login/code": "_p_auth_login_code",
@@ -328,35 +521,83 @@ class SessionViewerHandler(
         "/api/chat/permission/decide": "_p_chat_permission_decide",
         "/api/chat/question/answer": "_p_chat_question_answer",
         "/api/chat/plan/decide": "_p_chat_plan_decide",
+        "/api/call/turn": "_p_call_turn",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
+        "/api/chat/plugin": "_p_chat_plugin",
+        "/api/chat/save-to-agent": "_p_chat_save_to_agent",
+        "/api/market/mcp/install": "_p_market_mcp_install",
+        "/api/market/skill/install": "_p_market_skill_install",
+        "/api/market/mcp/signin/start": "_p_market_mcp_signin_start",
+        "/api/market/mcp/signin/submit": "_p_market_mcp_signin_submit",
+        "/api/market/mcp/signin/cancel": "_p_market_mcp_signin_cancel",
         "/api/mcp/delete": "_p_mcp_delete",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",
+        "/api/session/backup-restore": "_p_session_backup_restore",
         "/api/session/delete": "_p_session_delete",
         "/api/session/rename": "_p_session_rename",
+        "/api/session/seen": "_p_session_seen",
+        "/api/session/mode": "_p_session_mode",
+        "/api/session/level": "_p_session_level",
         "/api/loops": "_p_loops",
         "/api/loops/edit": "_p_loops_edit",
         "/api/loops/delete": "_p_loops_delete",
+        "/api/agent-templates": "_p_agent_templates",
+        "/api/agent-templates/delete": "_p_agent_templates_delete",
+        "/api/agent-templates/update": "_p_agent_templates_update",
+        "/api/agent-templates/duplicate": "_p_agent_templates_duplicate",
+        "/api/agent-templates/extra": "_p_agent_template_extra",
         "/api/session-meta": "_p_session_meta",
         "/api/providers": "_p_providers",
+        "/api/providers/models": "_p_providers_models",
+        "/api/ai/defaults": "_p_ai_defaults",
+        "/api/session/ai": "_p_session_ai",
         "/api/providers/delete": "_p_providers_delete",
-        "/api/org/employees": "_p_org_employees",
-        "/api/org/employees/update": "_p_org_employees_update",
         "/api/org/projects": "_p_org_projects",
+        "/api/org/project-for-cwd": "_p_org_project_for_cwd",
+        "/api/project-plugins/open": "_p_project_plugin_open",
+        "/api/org/columns": "_p_org_columns",
+        "/api/org/columns/update": "_p_org_columns_update",
+        "/api/org/columns/delete": "_p_org_columns_delete",
         "/api/org/cards": "_p_org_cards",
         "/api/org/cards/move": "_p_org_cards_move",
-        "/api/org/cards/assign": "_p_org_cards_assign",
         "/api/org/cards/update": "_p_org_cards_update",
         "/api/org/cards/done": "_p_org_cards_done",
         "/api/org/cards/delete": "_p_org_cards_delete",
+        "/api/org/projects/delete": "_p_org_projects_delete",
+        "/api/org/card_comment": "_p_org_card_comment",
+        "/api/org/note_comment": "_p_org_note_comment",
+        "/api/org/note_vote": "_p_org_note_vote",
+        "/api/org/notes": "_p_org_notes",
+        "/api/org/notes/update": "_p_org_notes_update",
+        "/api/org/notes/delete": "_p_org_notes_delete",
+        "/api/org/card_dep_add": "_p_org_card_dep_add",
+        "/api/org/card_dep_remove": "_p_org_card_dep_remove",
         "/api/org/approvals/resolve": "_p_org_approvals_resolve",
         "/api/org/harman": "_p_org_harman",
+        "/api/org/loop-control": "_p_org_loop_control",
+        "/api/org/system-preamble": "_p_org_system_preamble",
+        "/api/org/loops": "_p_org_loops",
+        "/api/org/loops/update": "_p_org_loops_update",
+        "/api/org/loops/delete": "_p_org_loops_delete",
         "/api/org/skills/propose": "_p_org_skills_propose",
+        "/api/inbox/send": "_p_inbox_send",
+        "/api/canvas/show": "_p_canvas_show",
+        "/api/canvas/delete": "_p_canvas_delete",
+        "/api/inbox/read": "_p_inbox_read",
+        "/api/inbox/snooze": "_p_inbox_snooze",
+        "/api/org/intake": "_p_org_intake",
+        "/api/org/maintenance/request": "_p_org_maintenance_request",
+        "/api/org/maintenance/now": "_p_org_maintenance_now",
+        "/api/org/intake/update": "_p_org_intake_update",
+        "/api/org/intake/rotate": "_p_org_intake_rotate",
+        "/api/org/intake/delete": "_p_org_intake_delete",
     }
     POST_PREFIX = [
         ("/api/browser/", "_p_browser"),
+        ("/api/intake/", "_p_intake"),
     ]
 
 
@@ -373,6 +614,8 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws",
+                b"/api/voice/nemotron/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
@@ -447,19 +690,37 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
         finally:
             self.shutdown_request(request)
 
+    # A client hanging up mid-response (the app cancelling a transcript poll,
+    # a tab closing) surfaces as one of these while the handler writes. It is
+    # the client's choice, not a server fault; the stdlib default prints a full
+    # 20-line traceback for each, and those bury the real errors in the log.
+    CLIENT_GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, self.CLIENT_GONE):
+            print(f"client {client_address[0]} disconnected mid-response ({type(exc).__name__})",
+                  file=sys.stderr)
+            return
+        super().handle_error(request, client_address)
+
     def server_close(self):
         super().server_close()
         self._pool.shutdown(wait=False)
 
 
 def main():
-    tailscale_ip = "N/A"
-    try:
-        result = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
-        tailscale_ip = result.stdout.strip()
-    except Exception:
-        pass
-
+    # Under launchd stdout is a file, so Python block-buffers it: the boot
+    # banner and every print() diagnostic sit in an 8 KiB buffer until it fills
+    # or the process exits cleanly. `launchctl kickstart -k` SIGKILLs, so the
+    # buffer is simply lost — the log showed three banners for weeks of
+    # restarts. stderr (logging, tracebacks) is already line-buffered.
+    sys.stdout.reconfigure(line_buffering=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     try:
         db.init_db()
     except Exception as e:
@@ -468,17 +729,65 @@ def main():
     if not (UI_DIR / "index.html").exists():
         print(f"  ⚠ web UI not built ({UI_DIR}) — run: cd web && npm install && npm run build")
 
-    threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
+    # Nothing is running yet at boot: loop runs from the previous process died with
+    # it, so their still-'running' history rows are closed as errors and the
+    # --settings files those runs held (provider credentials) are removed before
+    # the scheduler can open new ones. A preflight boot shares this Postgres and
+    # $TMPDIR with a live server whose runs ARE running — it must not touch either,
+    # nor start a second scheduler.
+    if VIEWER_PREFLIGHT:
+        print("  ⚠ PREFLIGHT (VIEWER_PREFLIGHT) — boot reconciliation and scheduler skipped")
+    else:
+        try:
+            abandoned = db.job_runs_abandon_running()
+            if abandoned:
+                print(f"  ⚠ closed {abandoned} loop run(s) left 'running' by the previous server process")
+        except Exception as e:
+            print(f"  ⚠ job_runs reconciliation failed: {e}")
+        try:
+            swept = run_settings_sweep_orphans(run_settings_paths_in_use())
+            if swept:
+                print(f"  ⚠ removed {len(swept)} orphaned run settings file(s) left by the previous server process")
+        except Exception as e:
+            print(f"  ⚠ run settings sweep failed: {e}")
+        threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
+        # Turns the previous process was running when it stopped resume here, so
+        # an update or crash pauses agent work instead of dropping it.
+        from viewer import resume
+        def _resume_cut_turns():
+            ids = resume.resume_inflight()
+            if ids:
+                print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
+        threading.Thread(target=_resume_cut_turns, daemon=True).start()
+        # Close the maintenance-window restart that ended the previous process
+        # (its audit entry + the requesters' wake), if there was one.
+        from viewer import maintenance
+        threading.Thread(target=maintenance.finish_after_boot, daemon=True).start()
+        # Outbound to the Harman relay when it is on (the owner's switch, or
+        # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
+        # control socket per server, so a spare would steal the live server's phones.
+        from viewer import relay
+        if relay.start():
+            print(f"  Relay:     {relay.url()} (server {relay.identity()['serverId']})")
     server = PooledHTTPServer((os.environ.get("VIEWER_HOST","0.0.0.0"), PORT), SessionViewerHandler)
 
     print("Agents")
     print(f"  Local:     http://localhost:{PORT}/")
-    print(f"  Tailscale: http://{tailscale_ip}:{PORT}/")
+    tailscale_ip = tailnet_ipv4()
+    print("  Tailscale: " + (f"http://{tailscale_ip}:{PORT}/" if tailscale_ip else "N/A (no tailnet address found)"))
     print(f"  Network:   http://0.0.0.0:{PORT}/")
     if VIEWER_NO_AUTH:
         print("  ⚠ AUTH DISABLED (VIEWER_NO_AUTH) — the API exposes a shell + FS; front it with your own auth")
     else:
-        print("  Sign in at the URL above (first visit creates your account).")
+        try:
+            if db.user_count() == 0:
+                print(f"  First run: create the owner account with setup code {setupcode.ensure()}")
+                print(f"  (also in {setupcode.path()}; `harman setup-code` prints it)")
+            else:
+                setupcode.clear()   # an owner exists: a stale code must not linger
+                print("  Sign in at the URL above.")
+        except Exception as e:
+            print(f"  ⚠ could not check first-run state: {e}")
     print("")
     print(f"  Default session: {DEFAULT_SESSION}")
     print(f"  Sessions dir:    {CLAUDE_DIR}")

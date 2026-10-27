@@ -11,10 +11,38 @@ import pytest
 from viewer import providers, customrun
 
 
+class _FakeProviderDB:
+    """In-memory stand-in for the providers table: the three accessors
+    viewer.providers calls, with the "at most one default" invariant provider_upsert
+    enforces in one SQL transaction reproduced here."""
+
+    def __init__(self):
+        self.rows = {}   # pid -> full record (incl. apiKey), the reveal-path store
+
+    def setting_get(self, key, default=None):
+        return default
+
+    def providers_load(self):
+        return {pid: dict(rec) for pid, rec in self.rows.items()}
+
+    def provider_limits_set(self, pid, limits):
+        self.rows[pid]["modelLimits"] = limits
+
+    def provider_upsert(self, pid, rec, default_change=None):
+        if rec.get("isDefault"):
+            for other, r in self.rows.items():
+                if other != pid:
+                    r["isDefault"] = False
+        self.rows[pid] = dict(rec)
+
+    def provider_delete(self, pid):
+        return self.rows.pop(pid, None) is not None
+
+
 @pytest.fixture()
-def store(tmp_path, monkeypatch):
-    """Point the preset store at a throwaway file."""
-    monkeypatch.setattr(providers, "PROVIDERS_FILE", tmp_path / "providers.json")
+def store(monkeypatch):
+    """Back the preset store with an in-memory fake db (no Postgres)."""
+    monkeypatch.setattr(providers, "db", _FakeProviderDB())
     return providers
 
 
@@ -121,3 +149,45 @@ class TestAlternating:
         src = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
         customrun._enforce_alternating(src)
         assert src[0]["content"] == "a"  # original untouched
+
+
+class TestPerModelLimits:
+    def test_override_wins_and_discovery_fills_the_rest(self, store):
+        p = store.upsert_preset("", "LiteLLM", "http://gw:4000", "a", model_overrides={"a": 100000})
+        store.remember_discovered(p["id"], {"a": {"discovered": 200000, "maxOutput": 0},
+                                            "b": {"discovered": 128000, "maxOutput": 64000}})
+        rows = {r["id"]: r for r in store.list_presets()[0]["models"]}
+        assert [r["id"] for r in store.list_presets()[0]["models"]] == ["a", "b"]  # default first
+        assert rows["a"]["contextWindow"] == 100000 and rows["a"]["source"] == "override"
+        assert rows["b"]["contextWindow"] == 128000 and rows["b"]["source"] == "discovered"
+        assert rows["b"]["maxOutput"] == 64000
+
+    def test_overrides_replace_but_keep_discovered(self, store):
+        p = store.upsert_preset("", "n", "http://gw:4000", "a", model_overrides={"a": 1, "b": 2})
+        store.remember_discovered(p["id"], {"b": {"discovered": 9, "maxOutput": 0}})
+        saved = store.upsert_preset(p["id"], "n", "http://gw:4000", "a", model_overrides={"b": 0})
+        rows = {r["id"]: r for r in saved["models"]}
+        assert rows["a"]["contextWindow"] == 0
+        assert rows["b"]["contextWindow"] == 9 and rows["b"]["source"] == "discovered"
+
+    def test_endpoint_change_drops_discovered_keeps_overrides(self, store):
+        p = store.upsert_preset("", "n", "http://gw:4000", "a", model_overrides={"a": 5})
+        store.remember_discovered(p["id"], {"b": {"discovered": 9, "maxOutput": 0}})
+        saved = store.upsert_preset(p["id"], "n", "http://other:4000", "a")
+        assert [(r["id"], r["contextWindow"]) for r in saved["models"]] == [("a", 5)]
+
+    def test_legacy_context_limit_sets_default_model_override(self, store):
+        p = store.upsert_preset("", "n", "http://gw:4000", "a", context_limit=242000)
+        assert p["contextLimit"] == 242000 and p["models"][0]["source"] == "override"
+
+    def test_invalid_override_rejected(self, store):
+        with pytest.raises(ValueError):
+            store.upsert_preset("", "n", "http://gw:4000", "a", model_overrides={"a": -1})
+
+
+def test_model_facts_reads_each_server_dialect():
+    from viewer.routes.providers import _model_facts
+    assert _model_facts({"id": "x", "max_input_tokens": 242000, "max_output_tokens": 64000}) == {"discovered": 242000, "maxOutput": 64000}
+    assert _model_facts({"id": "x", "max_model_len": 131072}) == {"discovered": 131072, "maxOutput": 0}
+    assert _model_facts({"id": "x", "meta": {"n_ctx": 242000, "n_ctx_train": 262144}}) == {"discovered": 242000, "maxOutput": 0}
+    assert _model_facts({"id": "x", "max_input_tokens": None, "max_model_len": True}) == {"discovered": 0, "maxOutput": 0}

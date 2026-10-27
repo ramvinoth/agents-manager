@@ -1,0 +1,73 @@
+import { orderColumn, groupByColumn, nextPosition, formatActor, matchesQuery, type Card, type BoardColumn } from "./board.ts"
+
+let pass = 0, fail = 0
+function eq(label: string, got: unknown, want: unknown) {
+  if (JSON.stringify(got) === JSON.stringify(want)) pass++
+  else { fail++; console.log(`FAIL ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`) }
+}
+
+const C = (o: Partial<Card> & { id: number }): Card => ({
+  title: `c${o.id}`, body: "", column_id: null,
+  project_id: null, session_id: null, position: 0,
+  created_by: "", created_at: 0, updated_at: 0, ...o,
+})
+
+const cards: Card[] = [
+  C({ id: 1, session_id: "s1", project_id: 10, column_id: 1, position: 2 }),
+  C({ id: 2, session_id: "s1", project_id: 10, column_id: 1, position: 1 }),
+  C({ id: 3, session_id: "s2", project_id: 20, column_id: 2, position: 3 }),
+  C({ id: 4, session_id: "s2", project_id: 10, column_id: 2, position: 1.5 }),
+]
+const ids = (cs: Card[]) => cs.map((c) => c.id)
+
+
+// orderColumn
+eq("order by position", ids(orderColumn([C({ id: 1, position: 3 }), C({ id: 2, position: 1 }), C({ id: 3, position: 2 })])), [2, 3, 1])
+
+// groupByColumn
+const columns: BoardColumn[] = [
+  { id: 2, name: "Doing", position: 1 },
+  { id: 1, name: "Todo", position: 0 },
+]
+const grouped = groupByColumn(cards, columns)
+eq("columns in position order", grouped.map((g) => g.column.name), ["Todo", "Doing"])
+eq("todo cards ordered", ids(grouped[0].cards), [2, 1])
+eq("doing cards ordered", ids(grouped[1].cards), [4, 3])
+
+// orphan cards (column_id matches no column) get an Unsorted leading bucket
+const withOrphan = groupByColumn([C({ id: 9, column_id: 99, position: 1 })], columns)
+eq("orphan bucketed", withOrphan[0].column.name, "Unsorted")
+eq("orphan card present", ids(withOrphan[0].cards), [9])
+eq("no orphan bucket when none", groupByColumn(cards, columns).length, 2)
+
+// nextPosition (fractional indexing — must match server orglogic.next_position)
+eq("empty column", nextPosition([], 0), 1)
+eq("top", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 0), 4)
+eq("bottom", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 2), 7)
+eq("middle midpoint", nextPosition([C({ id: 1, position: 4 }), C({ id: 2, position: 6 })], 1), 5)
+eq("orders input first", nextPosition([C({ id: 1, position: 6 }), C({ id: 2, position: 4 })], 1), 5)
+
+// formatActor — principal strings → a person-readable name + kind
+// (must stay in step with web/src/lib/board.ts)
+eq("you", formatActor("user:ram", "ram"), { name: "ram", kind: "you" })
+eq("other human", formatActor("user:alice", "ram"), { name: "alice", kind: "human" })
+eq("session agent", formatActor("session:Harman"), { name: "Harman", kind: "agent" })
+eq("historical employee agent", formatActor("employee:RSI"), { name: "RSI", kind: "agent" })
+eq("unlinked agent marker", formatActor("employee:?"), { name: "Unlinked agent", kind: "agent" })
+eq("no colon", formatActor("legacy-label"), { name: "legacy-label", kind: "unknown" })
+eq("empty", formatActor(""), { name: "Unknown", kind: "unknown" })
+eq("null", formatActor(null), { name: "Unknown", kind: "unknown" })
+eq("user with empty name", formatActor("user:", "ram"), { name: "Unknown user", kind: "unknown" })
+
+// matchesQuery — the find box
+const q = C({ id: 107, title: "Server privacy identity", body: "Full Disk Access shim" })
+eq("empty matches", matchesQuery(q, "  "), true)
+eq("#id exact", matchesQuery(q, "#107"), true)
+eq("bare id exact", matchesQuery(q, "107"), true)
+eq("id is not a prefix match", matchesQuery(q, "10"), false)
+eq("title substring, any case", matchesQuery(q, "PRIVACY"), true)
+eq("body substring", matchesQuery(q, "disk access"), true)
+eq("no match", matchesQuery(q, "tunnel"), false)
+
+console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
+if (fail) process.exit(1)

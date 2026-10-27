@@ -1,0 +1,8 @@
+harman-relay contains code derived from Paseo
+(https://github.com/getpaseo/paseo, packages/relay),
+Copyright (c) 2025-present Mohamed Boudra,
+licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Modifications Copyright (c) 2026 Harman. Summary of changes: see the header
+comment of src/index.ts.

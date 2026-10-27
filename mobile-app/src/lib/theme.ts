@@ -15,8 +15,15 @@ export type Theme = {
   textMuted: string
   border: string
   accent: string
+  onAccent: string      // text/icons on an accent fill (buttons, picked chips)
   danger: string
   dangerBg: string      // subtle danger-tinted surface (error tool chips/results)
+  success: string       // done / answered / live
+  warning: string       // dirty tree, folders, needs attention
+  attentionBg: string   // "the agent is waiting on you" cards (questions, permissions)
+  attentionBorder: string
+  attentionText: string
+  attentionMuted: string
   chipBg: string
   inputBg: string
   codeBg: string        // code blocks + tool result panels
@@ -33,8 +40,15 @@ export const LIGHT: Theme = {
   textMuted: "#8f847a",
   border: "#ece0d3",
   accent: "#c86a2c",
+  onAccent: "#ffffff",
   danger: "#b5544b",
   dangerBg: "#f2ddd9",
+  success: "#2e7d4f",
+  warning: "#a3620c",
+  attentionBg: "#efe9dd",
+  attentionBorder: "#d6c39a",
+  attentionText: "#3e3626",
+  attentionMuted: "#7a6a45",
   chipBg: "#f0e6db",
   inputBg: "#ffffff",
   codeBg: "#f3ebe1",
@@ -51,8 +65,15 @@ export const DARK: Theme = {
   textMuted: "#a3968a",
   border: "#352c24",
   accent: "#e0965a",
+  onAccent: "#1a1613",
   danger: "#d98a80",
   dangerBg: "#3a251f",
+  success: "#6fcf97",
+  warning: "#f0b25a",
+  attentionBg: "#2f2818",
+  attentionBorder: "#5a4a2a",
+  attentionText: "#efe4c8",
+  attentionMuted: "#c2b08a",
   chipBg: "#2c241d",
   inputBg: "#261f19",
   codeBg: "#161210",

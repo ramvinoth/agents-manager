@@ -1,8 +1,21 @@
-import React, { useMemo } from "react"
+import React, { useContext, useMemo } from "react"
 import { Linking, ScrollView, Text, View } from "react-native"
-import { parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
+import { blockGap, parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
+import { texToUnicode } from "../lib/texUnicode"
 import { useTheme, type Theme } from "../lib/useTheme"
-import { useStyles } from "../screens/styles"
+import { useStyles } from "../lib/styles"
+import MermaidView from "./MermaidView"
+import MathView from "./MathView"
+
+/** Whether a #rrggbb background is dark (perceived luminance < 0.5). Used to pick
+ *  the mermaid diagram theme since Theme carries no explicit dark flag. */
+export function isDarkBg(hex: string): boolean {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex || "")
+  if (!m) return false
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+}
 
 /**
  * Renders the markdown that agent replies are written in. Parsing lives in
@@ -11,28 +24,52 @@ import { useStyles } from "../screens/styles"
  * `color` sets the body-text colour (the bubble supplies it so text stays
  * legible on its background); code blocks and tables theme themselves off the
  * OS light/dark setting so they never render as a bright panel in dark mode.
+ *
+ * `notes` turns on Obsidian syntax for a note body: [[links]] become tappable
+ * (dashed when the note is not written yet) and #tags become chips.
  */
+export type NoteLinkHandlers = {
+  resolves: (target: string) => boolean
+  onLink: (target: string) => void
+  onTag?: (tag: string) => void
+}
+
 export default function Markdown({
   text,
   color,
   selectable,
   onLongPress,
+  notes,
 }: {
   text: string
   color?: string
   selectable?: boolean
   onLongPress?: () => void
+  notes?: NoteLinkHandlers
 }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text])
+  const blocks = useMemo(() => parseMarkdown(text, !!notes), [text, !!notes])
   const t = useTheme()
   return (
     <View>
       {blocks.map((b, i) => (
-        <Block key={i} b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+        <View key={i} style={{ marginTop: blockGap(blocks[i - 1], b) }}>
+          <NotesContext.Provider value={notes}>
+            <Block b={b} color={color} t={t} selectable={selectable} onLongPress={onLongPress} />
+          </NotesContext.Provider>
+        </View>
       ))}
     </View>
   )
 }
+
+// Handlers reach the spans of every block kind (heading, list, quote…) without
+// threading a prop through each.
+const NotesContext = React.createContext<NoteLinkHandlers | undefined>(undefined)
+
+/** Opens a link that names a file rather than a web page ("[report](docs/r.md)"),
+ *  returning false when `href` is not a file link so it opens as a URL instead.
+ *  A chat screen provides it with the session's folder; elsewhere links are URLs. */
+export const FileLinkContext = React.createContext<((href: string) => boolean) | undefined>(undefined)
 
 function Inline({
   spans,
@@ -46,15 +83,41 @@ function Inline({
   onLongPress?: () => void
 }) {
   const styles = useStyles()
+  const notes = useContext(NotesContext)
+  const openFile = useContext(FileLinkContext)
+  const t = useTheme()
   return (
     <Text style={style} selectable={selectable} onLongPress={onLongPress}>
       {spans.map((s, i) => {
         if (s.t === "bold") return <Text key={i} style={styles.mdBold}>{s.s}</Text>
         if (s.t === "italic") return <Text key={i} style={styles.mdItalic}>{s.s}</Text>
         if (s.t === "code") return <Text key={i} style={styles.mdCodeInline}>{s.s}</Text>
+        if (s.t === "math") {
+          // Inline math: show Unicode when the TeX is simple enough (keeps native
+          // text selection); otherwise fall back to the monospace source so a
+          // complex formula is at least legible (display math uses the WebView).
+          const u = texToUnicode(s.s)
+          return <Text key={i} style={u ? styles.mdItalic : styles.mdCodeInline}>{u ?? s.s}</Text>
+        }
+        if (s.t === "wikilink") {
+          const ghost = !notes?.resolves(s.target)
+          return (
+            <Text key={i} onPress={() => notes?.onLink(s.target)} accessibilityHint={ghost ? "Not written yet — tap to create" : undefined}
+              style={ghost ? { color: t.textMuted, textDecorationLine: "underline", textDecorationStyle: "dashed" } : { color: t.accent, fontWeight: "600" }}>
+              {s.s}
+            </Text>
+          )
+        }
+        if (s.t === "tag")
+          return (
+            <Text key={i} onPress={notes?.onTag ? () => notes.onTag!(s.tag) : undefined}
+              style={{ color: t.accent, backgroundColor: t.chipBg }}>
+              {s.s}
+            </Text>
+          )
         if (s.t === "link")
           return (
-            <Text key={i} style={styles.mdLink} onPress={() => Linking.openURL(s.href).catch(() => {})}>
+            <Text key={i} style={styles.mdLink} onPress={() => { if (s.href && !openFile?.(s.href)) Linking.openURL(s.href).catch(() => {}) }}>
               {s.s}
             </Text>
           )
@@ -79,6 +142,15 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
         />
       )
     case "code":
+      // Mermaid fences render as a diagram (WebView); everything else stays a
+      // horizontally-scrollable code block. A failed diagram shows "Diagram error"
+      // inside the WebView, so a broken graph never blanks the message.
+      if ((b.lang || "").toLowerCase() === "mermaid") {
+        // Derive dark from the palette's background luminance (no scheme flag on
+        // Theme). Dark bg → dark mermaid theme.
+        const dark = isDarkBg(t.bg)
+        return <MermaidView source={b.text} dark={dark} textColor={t.text} />
+      }
       // Horizontal scroll rather than wrapping — wrapped code is unreadable.
       return (
         <View style={[styles.mdCodeBlock, { backgroundColor: t.codeBg }]}>
@@ -97,7 +169,7 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
     case "table":
       // Scrolls sideways so wide tables stay aligned instead of collapsing.
       return (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.mdTableWrap, styles.mdScroll]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mdScroll}>
           <View>
             <View style={[styles.mdRow, styles.mdHeadRow, { borderBottomColor: t.border }]}>
               {b.header.map((h, i) => (
@@ -126,7 +198,10 @@ function Block({ b, color, t, selectable, onLongPress }: { b: MdBlock; color?: s
       )
     case "hr":
       return <View style={styles.mdHr} />
+    case "mathblock":
+      // Display equation → full-fidelity KaTeX in a WebView (bundled offline).
+      return <MathView tex={b.text} textColor={color || t.text} />
     default:
-      return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={[base, styles.mdPara]} />
+      return <Inline spans={b.spans} selectable={selectable} onLongPress={onLongPress} style={base} />
   }
 }

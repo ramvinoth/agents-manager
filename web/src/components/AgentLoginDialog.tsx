@@ -27,7 +27,7 @@ export function AgentLoginDialog() {
 
   return (
     <Dialog open onOpenChange={(o) => !o && cancel()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LogIn className="size-4" /> Sign in to {label}

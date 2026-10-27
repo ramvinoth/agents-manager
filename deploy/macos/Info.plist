@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.harman.viewer</string>
+    <key>CFBundleName</key>
+    <string>Harman</string>
+    <key>CFBundleDisplayName</key>
+    <string>Harman</string>
+    <key>CFBundleExecutable</key>
+    <string>Harman</string>
+    <key>CFBundleIconFile</key>
+    <string>Harman</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Harman's agents capture the screen when you ask them to look at or test an app.</string>
+</dict>
+</plist>

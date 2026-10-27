@@ -55,7 +55,7 @@ export function MessageActions({ uuid }: { uuid: string }) {
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Restore to before this message</DialogTitle>
             <DialogDescription>

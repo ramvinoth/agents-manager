@@ -1,0 +1,21 @@
+:root { color-scheme: light dark; --fg:#1D1B19; --bg:#F3EEE6; --mute:#6b6660; --line:rgba(29,27,25,.12); }
+@media (prefers-color-scheme: dark) { :root { --fg:#F3EEE6; --bg:#1D1B19; --mute:#a59f97; --line:rgba(243,238,230,.14); } }
+* { box-sizing: border-box; }
+body { margin:0; font:17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color:var(--fg); background:var(--bg); }
+a { color: inherit; }
+.top, main, footer { max-width: 60rem; margin: 0 auto; padding: 0 1.25rem; }
+.top { display:flex; align-items:center; justify-content:space-between; padding-top:1.25rem; padding-bottom:1.25rem; }
+.brand { display:flex; gap:.6rem; align-items:center; font-weight:650; text-decoration:none; font-size:1.1rem; }
+.hero { padding: 4rem 0 3rem; }
+h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height:1.12; letter-spacing:-.03em; margin:0 0 1.25rem; }
+.lede { font-size:1.2rem; max-width:42rem; color:var(--fg); opacity:.9; }
+.cta { display:inline-block; margin-top:1rem; padding:.8rem 1.4rem; border-radius:999px; background:var(--fg); color:var(--bg); text-decoration:none; font-weight:600; }
+.cta.small { margin:0; padding:.45rem 1rem; font-size:.9rem; }
+.note { color:var(--mute); font-size:.95rem; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(16rem,1fr)); gap:1.5rem; padding:2rem 0; border-top:1px solid var(--line); }
+.grid h2, .uses h2, .how h2 { font-size:1.15rem; letter-spacing:-.01em; margin:.25rem 0 .4rem; }
+.uses h2, .how h2 { font-size:1.5rem; margin-bottom:1rem; }
+.grid p { margin:0; color:var(--mute); }
+.uses, .how { padding:2.5rem 0; border-top:1px solid var(--line); }
+li { margin:.5rem 0; }
+footer { padding:2rem 1.25rem 3rem; color:var(--mute); font-size:.9rem; border-top:1px solid var(--line); margin-top:2rem; }

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { MoreVertical, Pencil, Trash2 } from "lucide-react"
+import { MoreVertical, Pencil, ShieldCheck, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,44 +16,62 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useStore } from "@/store"
+import type { SessionListItem } from "@/lib/types"
+import { TrustDialog } from "@/components/TrustDialog"
 
-export function SessionActions() {
-  const currentSessionPath = useStore((s) => s.currentSessionPath)
-  const sessions = useStore((s) => s.sessions)
-  const renameCurrent = useStore((s) => s.renameCurrent)
+/** One chat's ⋮ menu in the session rail: Rename, Trust… (Claude chats) and Delete. */
+export function SessionActions({ session }: { session: SessionListItem }) {
+  const renameByPath = useStore((s) => s.renameByPath)
   const deleteByPath = useStore((s) => s.deleteByPath)
   const [renameOpen, setRenameOpen] = useState(false)
   const [delOpen, setDelOpen] = useState(false)
-  const current = sessions.find((x) => x.path === currentSessionPath)
+  const [trustOpen, setTrustOpen] = useState(false)
+  // Trust is the server policy of a Claude Code chat (mobile shows it for claude only too).
+  const isClaude = !session.harness || session.harness === "claude"
   const [title, setTitle] = useState("")
-
-  if (!currentSessionPath) return null
+  const rename = () => {
+    renameByPath(session.path, title)
+    setRenameOpen(false)
+  }
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="size-7" aria-label="Session actions">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            data-track="session menu"
+            aria-label={`Actions for ${session.title || "this chat"}`}
+          >
             <MoreVertical className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             onClick={() => {
-              setTitle(current?.title || "")
+              setTitle(session.title || "")
               setRenameOpen(true)
             }}
           >
             <Pencil className="size-3.5" /> Rename
           </DropdownMenuItem>
+          {isClaude ? (
+            <DropdownMenuItem onClick={() => setTrustOpen(true)}>
+              <ShieldCheck className="size-3.5" /> Trust…
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem variant="destructive" onClick={() => setDelOpen(true)}>
             <Trash2 className="size-3.5" /> Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {isClaude ? <TrustDialog path={session.path} open={trustOpen} onOpenChange={setTrustOpen} /> : null}
+
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Rename session</DialogTitle>
           </DialogHeader>
@@ -62,10 +80,7 @@ export function SessionActions() {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Session title"
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                renameCurrent(title)
-                setRenameOpen(false)
-              }
+              if (e.key === "Enter") rename()
             }}
             autoFocus
           />
@@ -73,25 +88,19 @@ export function SessionActions() {
             <Button variant="outline" onClick={() => setRenameOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={() => {
-                renameCurrent(title)
-                setRenameOpen(false)
-              }}
-            >
-              Rename
+            <Button onClick={rename}>Rename
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={delOpen} onOpenChange={setDelOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Delete session?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            "{current?.title || "this session"}" will be moved to the viewer trash.
+            "{session.title || "this session"}" will be moved to the viewer trash.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDelOpen(false)}>
@@ -100,7 +109,7 @@ export function SessionActions() {
             <Button
               variant="destructive"
               onClick={() => {
-                deleteByPath(currentSessionPath)
+                deleteByPath(session.path)
                 setDelOpen(false)
               }}
             >

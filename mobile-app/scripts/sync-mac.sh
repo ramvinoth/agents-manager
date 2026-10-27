@@ -13,11 +13,11 @@
 # ~/asc-tools/ (TestFlight helpers) deliberately lives OUTSIDE the sync target
 # for the same reason — an earlier --delete killed the running watcher.
 #
-# Usage: ./scripts/sync-mac.sh [user@host]
+# Usage: ./scripts/sync-mac.sh user@host
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$(cd "$HERE/.." && pwd)"
-TARGET="${1:-rponnarasu@100.76.141.120}"
+TARGET="${1:?usage: sync-mac.sh user@host}"
 SSHOPT="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=25"
 
 exec rsync -az --delete \

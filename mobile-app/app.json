@@ -11,14 +11,18 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ff6a1a"
+      "backgroundColor": "#1D1B19"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.suhai.agents",
-      "buildNumber": "1",
+      "buildNumber": "1791522038",
       "infoPlist": {
-        "CFBundleDisplayName": "Harman"
+        "CFBundleDisplayName": "Harman",
+        "NSMicrophoneUsageDescription": "Harman uses the microphone so you can talk to the agent in voice mode.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
       },
       "config": {
         "usesNonExemptEncryption": false
@@ -31,7 +35,7 @@
       "package": "com.suhai.agents",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ff6a1a"
+        "backgroundColor": "#1D1B19"
       }
     },
     "web": {
@@ -39,6 +43,26 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Harman uses the camera to scan the pairing QR code from your computer.",
+          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "@config-plugins/react-native-callkeep",
+        {
+          "appName": "Harman"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode."
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -51,7 +75,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#ff6a1a"
+          "color": "#1D1B19"
         }
       ]
     ]

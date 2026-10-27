@@ -31,6 +31,7 @@ function TokenChart({ timeline }: { timeline: { input: number; output: number }[
 
 export function StatsPanel() {
   const s = useStore((st) => st.fullSummary)
+  const turns = useStore((st) => st.turns.length)
   if (!s) return <div className="p-4 text-xs text-muted-foreground">Loading stats…</div>
 
   const tools = Object.entries(s.tools || {}).sort((a, b) => b[1] - a[1])
@@ -50,6 +51,11 @@ export function StatsPanel() {
         <div>
           <div className="mb-1 text-xs font-medium text-muted-foreground">Output tokens over time</div>
           <TokenChart timeline={s.tokenTimeline || []} />
+        </div>
+
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Turns</span>
+          <span className="tabular-nums">{turns}</span>
         </div>
 
         {dur > 0 && (

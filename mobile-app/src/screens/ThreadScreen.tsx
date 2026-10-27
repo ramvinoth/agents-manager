@@ -5,8 +5,8 @@ import {
   Animated,
   Dimensions,
   FlatList,
-  Image,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   ScrollView,
   Text,
@@ -20,32 +20,37 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
-import { extractImages, fmtClock, fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, resultToText, type Block, type ThreadItem } from "../lib/thread"
+import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
+import { applyMention, hashTerm } from "../lib/fileMention"
 import { ensurePermission } from "../lib/notify"
-import { composerPrefs, draftFor, serverUrl, setDraft, token } from "../state/config"
+import { activeServerId, composerPrefs, draftFor, setDraft } from "../state/config"
+import { offlineCache } from "../api/offlineCache"
+import OfflineBanner from "../components/OfflineBanner"
+import { useReachability } from "../lib/useReachability"
+import { isTransportError, userError } from "../lib/errors"
+import { fileLinkPath } from "../lib/fileLink"
+import { downloadAndShare } from "../lib/fileDownloadNative"
+import { fsScope, HOST_LOCATION } from "../lib/location"
+import { FileLinkContext } from "../components/Markdown"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
+import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/gestures"
 import { attachMessage, pickImage, uploadImage } from "../lib/attach"
 import MessageActions, { type MsgTarget } from "../components/MessageActions"
-import SwipeToReply from "../components/SwipeToReply"
+import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
-import type { VisibleTypes } from "../components/SessionSettings"
 import QuestionCard from "../components/QuestionCard"
-import Markdown from "../components/Markdown"
+import PlanCard from "../components/PlanCard"
+import { ItemView, PinnedBanner, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
-import { useStyles } from "./styles"
+import HeaderButton from "../components/HeaderButton"
+import { useStyles } from "../lib/styles"
+import { resolveSessionPath } from "../lib/session"
+import { showActions } from "../lib/actionSheet"
+import { takeReply, withReply } from "../lib/canvas"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
-
-// The models this API key can use — the persisted composer pref is validated
-// against this list so a stale/unavailable model can't be sent. (Mode + model
-// are now chosen on the SessionProfile screen; the thread just reads them.)
-const MODELS = [
-  { v: "default", label: "Default model" },
-  { v: "sonnet", label: "Sonnet" },
-  { v: "haiku", label: "Haiku" },
-]
 
 // Sentinel appended to the list while a run is in flight (see WorkingBubble).
 const WORKING = { kind: "working" as const, id: "__working__" }
@@ -56,43 +61,59 @@ type ListItem = ThreadItem | typeof WORKING
 // then tap a step to see its result). Composer: send / steer / queue, a
 // permission-mode + model dropdown, and in-thread Allow/Deny cards.
 export default function ThreadScreen({ route, navigation }: Props) {
-  const { host, path, label } = route.params
+  const { host, path, label, agent = "claude", starting } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
+  // How many trailing transcript lines to fetch. Grows when the user scrolls to
+  // the top of the (inverted) list to lazy-load older history. hasMoreRef tracks
+  // whether the server still has older lines beyond the current window.
+  const [windowLines, setWindowLines] = useState(400)
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
   // Seed the composer from a persisted per-session draft so unsent text survives
   // navigating back and app restarts. Keyed by path (existing chats).
   const [input, setInput] = useState(() => draftFor(path || ""))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  // Permission mode + model are chosen on the SessionProfile screen and persist
-  // in the global composerPrefs. Read them fresh at send time (below) so a
-  // change made while this thread is open takes effect on the next message —
-  // no stale local copy to keep in sync. `model` falls back to Default if the
-  // persisted pref is one this API key can't use.
+  // The transcript on screen is the device's saved copy, not a live read.
+  const [fromCache, setFromCache] = useState(false)
+  const { online } = useReachability()
+  // Back online while showing the saved copy → swap in the live transcript.
+  // (An idle thread has no poll of its own; any request anywhere — the Chats
+  // list, the inbox badge — flips `online`.) Declared before reload, so read
+  // through a ref.
+  const reloadRef = useRef<() => unknown>(() => {})
+  useEffect(() => {
+    if (online && fromCache) reloadRef.current()
+  }, [online, fromCache])
+  // The server's explicit AI configuration wins at launch; these are only the
+  // composer's own picks. Never coerce a full model ID against a catalog.
   const sendPrefs = () => {
     const p = composerPrefs()
-    const model = MODELS.some((m) => m.v === p.model) ? p.model : "default"
-    return { mode: p.mode, model }
+    return { mode: p.mode, model: p.model }
   }
   const [pending, setPending] = useState<PermApproval[]>([])
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null)
   const [queued, setQueued] = useState(0)
-  const [sessionId, setSessionId] = useState("")
-  // Transcript-visibility filter. All on by default; the filter UI now lives on
-  // the SessionProfile screen (kept here as the render still honours it).
-  const [visibleTypes] = useState<VisibleTypes>({
-    user: true,
-    assistant: true,
-    tools: true,
-    system: true,
-  })
-  // Where a message lands while a turn is running. Defaults to "queue" — the
-  // non-destructive choice; interrupting is opt-in.
-  // Default action when the plain send button is tapped mid-run: queue (safe —
-  // never interrupts). The working pill's Interrupt button is the explicit
-  // opt-in to steer.
-  const sendMode: "queue" | "steer" = "queue"
+  // A reused Thread route may still hold the last chat's state. Existing chats
+  // derive identity from the route; new-chat responses belong to one lifetime,
+  // not merely a matching path/key (A → B → A must not revive old responses).
+  const routeLifetime = useMemo(() => ({}), [route.key, host, path, agent])
+  const activeLifetime = useRef<object | null>(routeLifetime)
+  activeLifetime.current = routeLifetime
+  useLayoutEffect(() => {
+    activeLifetime.current = routeLifetime
+    return () => { if (activeLifetime.current === routeLifetime) activeLifetime.current = null }
+  }, [routeLifetime])
+  const isCurrentThread = useCallback(() => activeLifetime.current === routeLifetime, [routeLifetime])
+  const [createdSession, setCreatedSession] = useState<{ lifetime: object; id: string } | null>(null)
+  const sessionId = path
+    ? (path.split("/").pop() || "").replace(/\.jsonl$/, "").trim()
+    : createdSession?.lifetime === routeLifetime ? createdSession.id : ""
+  const setSessionId = useCallback((id: string) => {
+    if (isCurrentThread()) setCreatedSession({ lifetime: routeLifetime, id: id.trim() })
+  }, [routeLifetime, isCurrentThread])
   // What the agent is doing right now (last streamed tool) — drives the header
   // subtitle and the live "working on it" bubble.
   const [activity, setActivity] = useState("")
@@ -102,6 +123,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [msgAction, setMsgAction] = useState<MsgTarget | null>(null)
   // Pinned message uuids (persisted in session meta) + which one the banner shows.
   const [pinned, setPinned] = useState<string[]>([])
+  // The session's folder, from the same meta read: scopes the drawer's project skills/tools.
+  const [cwd, setCwd] = useState<string | undefined>()
   const [bannerIdx, setBannerIdx] = useState(0)
   // The message currently being replied to; quoted into the outgoing text.
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -110,6 +133,72 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQ, setSearchQ] = useState("")
   const [searchAt, setSearchAt] = useState(-1)
+  // RHS capabilities drawer (skills + MCP tools)
+  const [capDrawerOpen, setCapDrawerOpen] = useState(false)
+  const boardOpening = useRef(false)
+  const transcriptRef = useRef<View>(null)
+  const transcriptBounds = useRef({ left: 0, width: 0 })
+  const boundsGeneration = useRef(0)
+  const boardSwipeCancelled = useRef(false)
+  const measureTranscript = useCallback(() => {
+    const generation = ++boundsGeneration.current
+    transcriptRef.current?.measureInWindow((left, _top, width) => {
+      if (generation === boundsGeneration.current && width > 0) transcriptBounds.current = { left, width }
+    })
+  }, [])
+  const openBoard = useCallback(() => {
+    if (!isCurrentThread() || boardOpening.current || !navigation.isFocused()) return
+    boardOpening.current = true
+    // Unsent chats have no board context yet; preserve the project-picker fallback.
+    if (sessionId) navigation.navigate("Kanban", { session: sessionId, title: label })
+    else navigation.navigate("Org")
+  }, [navigation, sessionId, label, isCurrentThread])
+  const openNotes = useCallback(() => {
+    if (sessionId) navigation.navigate("Notes", { session: sessionId, title: label })
+    else navigation.navigate("Notes")
+  }, [navigation, sessionId, label])
+  const openMap = useCallback(() => {
+    if (sessionId) navigation.navigate("Map", { session: sessionId, title: label })
+  }, [navigation, sessionId, label])
+  const openCanvas = useCallback((initial?: string) => {
+    if (sessionId) navigation.navigate("Canvas", { session: sessionId, title: label, initial })
+  }, [navigation, sessionId, label])
+  // A Reply tapped on the Canvas screen lands in this chat's composer, after
+  // whatever the owner had already typed.
+  useFocusEffect(useCallback(() => {
+    const reply = sessionId ? takeReply(sessionId) : ""
+    if (reply) setInput((d) => withReply(d, reply))
+  }, [sessionId]))
+  const openInbox = useCallback(() => {
+    if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
+    else navigation.navigate("Inbox")
+  }, [navigation, sessionId, host, path, label])
+  const boardSwipeState = useRef({ openBoard, enabled: true })
+  boardSwipeState.current = { openBoard, enabled: !capDrawerOpen && !msgAction }
+  useFocusEffect(useCallback(() => {
+    boardOpening.current = false
+    return () => { boardSwipeCancelled.current = true }
+  }, [routeLifetime]))
+  const boardPan = useRef(PanResponder.create({
+    // Bubble phase only: nested code/table scrolling keeps its own responder.
+    onMoveShouldSetPanResponder: (_event, g) =>
+      boardSwipeState.current.enabled && navigation.isFocused()
+      && !boardOpening.current && !boardSwipeCancelled.current
+      // g.x0 is only assigned on grant, so during should-set it is still 0;
+      // the touch's start point has to be derived from the current position.
+      && shouldClaimBoardSwipe({
+        ...transcriptBounds.current, x0: g.moveX - g.dx, dx: g.dx, dy: g.dy,
+        touches: g.numberActiveTouches,
+      }),
+    onPanResponderMove: (_event, g) => {
+      if (g.numberActiveTouches !== 1) boardSwipeCancelled.current = true
+    },
+    onPanResponderRelease: (_event, g) => {
+      if (!boardSwipeCancelled.current && boardSwipeState.current.enabled
+        && completesBoardSwipe(g)) boardSwipeState.current.openBoard()
+    },
+    onPanResponderTerminate: () => { boardSwipeCancelled.current = true },
+  })).current
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
   // WhatsApp-style floating day header: the date of the topmost visible message,
@@ -118,46 +207,75 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const dateOpacity = useRef(new Animated.Value(0)).current
   const dateHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const slashMatches = useMemo(() => matchCommands(slashTerm(input), commands), [input, commands])
-  // Apply the transcript filter: drop hidden item types, and (for exchanges)
-  // strip tool steps when Tools is off. Mirrors the web LHS "Filter transcript".
-  const shownItems = useMemo(() => {
-    return items
-      .filter((it) => {
-        if (it.kind === "user") return visibleTypes.user
-        if (it.kind === "system") return visibleTypes.system
-        return visibleTypes.assistant // exchange
-      })
-      .map((it) =>
-        it.kind === "exchange" && !visibleTypes.tools ? { ...it, steps: [] } : it
-      )
-  }, [items, visibleTypes])
+  // "#word" at the caret searches the session's project (lib/fileMention.ts);
+  // picking a hit swaps it for @path, which Claude Code inlines.
+  const [caret, setCaret] = useState<number | null>(null)
+  // Set only right after a pick to place the caret past the mention; left
+  // uncontrolled otherwise so iOS typing never fights a stale selection.
+  const [placeCaret, setPlaceCaret] = useState<number | null>(null)
+  const [fileHits, setFileHits] = useState<{ path: string; dir: boolean }[]>([])
+  const hash = useMemo(() => (caret === null ? null : hashTerm(input, caret)), [input, caret])
+  const hashQuery = hash?.query ?? null
+  useEffect(() => {
+    if (hashQuery === null || !cwd) {
+      setFileHits([])
+      return
+    }
+    let live = true
+    const timer = setTimeout(() => {
+      api.fsSearch(host, cwd, hashQuery)
+        .then((r) => { if (live) setFileHits(r.results || []) })
+        .catch(() => { if (live) setFileHits([]) })
+    }, 150)
+    return () => { live = false; clearTimeout(timer) }
+  }, [hashQuery, cwd, host])
+  const fileMatches = slashMatches.length || !hash ? [] : fileHits
+  // iOS can answer the pick with a change event still carrying the pre-pick
+  // text (the keyboard committing as the row is tapped); that echo would undo
+  // the mention. Until the user's next real edit, the old text maps back to
+  // the picked one.
+  const pickEcho = useRef<{ from: string; to: string } | null>(null)
+  const onComposerText = (text: string) => {
+    const echo = pickEcho.current
+    pickEcho.current = null
+    setInput(echo && text === echo.from ? echo.to : text)
+  }
+  const pickFile = (p: string) => {
+    if (!hash || caret === null) return
+    const r = applyMention(input, hash, caret, p)
+    pickEcho.current = { from: input, to: r.text }
+    setInput(r.text)
+    setCaret(r.caret)
+    setPlaceCaret(r.caret)
+    setFileHits([])
+  }
   // Id of the most recent agent exchange — its steps default to expanded so the
   // current turn is visible without a tap; older exchanges stay collapsed. Keyed
   // by id (not list index) because the inverted render reorders indices.
   const lastExchangeId = useMemo(() => {
-    for (let i = shownItems.length - 1; i >= 0; i--) {
-      if (shownItems[i].kind === "exchange") return shownItems[i].id
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind === "exchange") return items[i].id
     }
     return ""
-  }, [shownItems])
+  }, [items])
   // The list renders `inverted` (newest at offset 0), so it consumes the data
   // reversed. The live WORKING placeholder is the newest thing of all, so it
   // goes to the FRONT of the reversed array (= visual bottom). Built once here so
   // the render stays declarative and index math has a single definition.
   const listData = useMemo<ListItem[]>(() => {
-    const reversed = [...shownItems].reverse()
+    const reversed = [...items].reverse()
     return busy ? [WORKING, ...reversed] : reversed
-  }, [shownItems, busy])
+  }, [items, busy])
   // Pinned messages that still exist in the transcript, in thread order (oldest→
   // newest), each with its preview text — drives the banner and its cycle.
   const pinnedItems = useMemo(() => {
     const byUuid = new Map<string, ThreadItem>()
-    for (const it of shownItems) {
+    for (const it of items) {
       const u = itemUuid(it)
       if (u) byUuid.set(u, it)
     }
     return pinned.map((u) => byUuid.get(u)).filter(Boolean).map((it) => ({ uuid: itemUuid(it as ThreadItem)!, text: itemPreview(it as ThreadItem) }))
-  }, [shownItems, pinned])
+  }, [items, pinned])
   // Search indexes the SAME array the list renders (listData), so a match's
   // index is a valid scrollToIndex target. itemText() returns "" for the WORKING
   // sentinel, so it never matches.
@@ -174,61 +292,143 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<ListItem>>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const localId = useRef(0)
+  // Optimistic user bubbles (fresh send + steer) that the server transcript may
+  // not have caught up to yet. reload() keeps re-appending these until the server
+  // shows them, so a steered message can't flash-and-vanish mid-run.
+  const pendingSteers = useRef<{ kind: "user"; id: string; text: string }[]>([])
   // --- Autoscroll model: an INVERTED list --------------------------------------
-  // The thread renders newest-first with `inverted`, so item 0 sits at the bottom
-  // of the screen and the list grows upward. This makes "stay on the latest" the
-  // list's natural resting state — new messages and streaming steps prepend at
-  // offset 0 (the anchored edge), so the viewport holds on the newest message for
-  // free. There is NOTHING to imperatively scroll: no follow flag, no
-  // stickToBottom, no onContentSizeChange snapping. Scrolling up to read history
-  // moves you away from offset 0 and is never yanked back, because nothing drives
-  // the viewport. This is how WhatsApp/iMessage/Gifted-Chat solve it.
-  // The one remaining scroll command is the jump-to-latest button, which scrolls
-  // back to offset 0. `distanceFromBottom` here is the inverted list's scroll
-  // offset (0 = pinned to the newest); it only drives the jump button's
-  // visibility, never the auto-scroll.
+  // Newest-first with `inverted`: item 0 sits at the bottom and new items prepend
+  // at offset 0, so "stay on the latest" is the list's resting state and reading
+  // history is never yanked back — nothing scrolls imperatively (the WhatsApp /
+  // iMessage approach). The only scroll command is jump-to-latest;
+  // `distanceFromBottom` (0 = pinned to newest) just drives that button.
   const distanceFromBottom = useRef(0)
-  // Signature of the pending input event (question/approval) we last notified
-  // about, so the poll pings ONCE per new prompt instead of every tick.
-  const notifiedInput = useRef("")
+
+  // The transcript lines currently rendered and the byte offset they end at. A
+  // full reload() replaces both; poll() appends only what the file gained since
+  // `end`, so a running turn costs bytes proportional to its new output instead
+  // of re-downloading the whole tail window every tick.
+  const loadedRef = useRef<{ path?: string; lines: string[]; end: number }>({ lines: [], end: 0 })
 
   const reload = useCallback(async () => {
     if (!path) {
       setLoading(false)
       return [] as ReturnType<typeof groupThread>
     }
-    // Derive the session id from the transcript path (…/<id>.jsonl) so an
-    // already-running chat opened from the list can reattach to its live run.
-    const sid = (path.split("/").pop() || "").replace(/\.jsonl$/, "")
-    if (sid) setSessionId(sid)
     try {
-      const lines = await api.sessionRead(host, path)
-      const next = groupThread(parseTranscript(lines))
-      setItems(next)
-      // Track the newest tool call so the header/working bubble can name it.
-      const last = next[next.length - 1]
-      if (last && last.kind === "exchange") {
-        const tools = last.steps.filter((b) => b.kind === "tool")
-        const newest = tools[tools.length - 1]
-        if (newest && newest.kind === "tool") setActivity(newest.name)
-      }
-      return next
+      const page = await api.sessionReadPage(host, path, windowLines)
+      // start === 0 means the window reaches the top of the file → no older
+      // history to lazy-load. Otherwise scrolling up can grow the window.
+      hasMoreRef.current = page.start > 0
+      loadedRef.current = { path, lines: page.lines, end: page.end }
+      setFromCache(false)
+      setError("")
+      offlineCache.saveThread(activeServerId(), host, path, page.lines)
+      return render(page.lines)
     } catch (e) {
-      setError((e as Error).message)
+      // Unreachable: show the saved copy (if any) under the offline banner,
+      // instead of an error in place of the conversation.
+      if (isTransportError(e)) {
+        if (loadedRef.current.path !== path) {
+          const saved = await offlineCache.loadThread(activeServerId(), host, path)
+          if (saved) {
+            setFromCache(true)
+            return render(saved)
+          }
+        }
+      } else {
+        setError(userError(e, "this chat"))
+      }
       return [] as ReturnType<typeof groupThread>
     } finally {
       setLoading(false)
     }
-  }, [host, path])
+  }, [host, path, windowLines])
+  reloadRef.current = reload
+
+  // Incremental refresh for the live-run poll. Falls back to a full reload when
+  // there's no baseline for this path or the file shrank (rewritten/trimmed).
+  const poll = useCallback(async () => {
+    const loaded = loadedRef.current
+    if (!path || loaded.path !== path) return reload()
+    try {
+      const page = await api.sessionReadFrom(host, path, loaded.end)
+      if (loadedRef.current !== loaded) return // a full reload landed meanwhile
+      if (page.size < loaded.end) return reload()
+      if (!page.lines.length) return // nothing new — skip the re-parse/re-render
+      const lines = [...loaded.lines, ...page.lines]
+      loadedRef.current = { path, lines, end: page.end }
+      offlineCache.saveThread(activeServerId(), host, path, lines)
+      return render(lines)
+    } catch {
+      /* transient; the next tick retries */
+    }
+  }, [host, path, reload])
+
+  function render(lines: string[]) {
+    const next = groupThread(parseTranscript(lines))
+    // A steered message gets an optimistic bubble immediately, but the server
+    // may not have written it into the transcript yet — so a naive setItems(next)
+    // here would wipe it (it flashes then vanishes). Keep any pending optimistic
+    // bubbles the server hasn't caught up to yet; drop each one once a matching
+    // user turn appears. Match by COUNT, not set-membership: send the same text
+    // twice and each server turn consumes exactly ONE pending bubble (a Set would
+    // drop both on the first match, losing a real duplicate). The transcript user
+    // turns don't echo our client id, so text-with-count is the best identity we
+    // have here.
+    const serverTextCounts = new Map<string, number>()
+    for (const it of next) {
+      if (it.kind === "user") {
+        const txt = (it as { text: string }).text
+        serverTextCounts.set(txt, (serverTextCounts.get(txt) || 0) + 1)
+      }
+    }
+    pendingSteers.current = pendingSteers.current.filter((b) => {
+      const n = serverTextCounts.get(b.text) || 0
+      if (n > 0) {
+        serverTextCounts.set(b.text, n - 1) // this server turn consumes this bubble
+        return false
+      }
+      return true // not caught up yet — keep the optimistic bubble
+    })
+    const merged =
+      pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
+    setItems(merged)
+    // Track the newest tool call so the header/working bubble can name it.
+    const last = next[next.length - 1]
+    if (last && last.kind === "exchange") {
+      const tools = last.steps.filter((b) => b.kind === "tool")
+      const newest = tools[tools.length - 1]
+      if (newest && newest.kind === "tool") setActivity(newest.name)
+    }
+    return next
+  }
+
+  // Lazy-load older history when the user scrolls to the TOP of the (inverted)
+  // list. Grow the tail window and re-read; maintainVisibleContentPosition keeps
+  // the current rows anchored so the viewport doesn't jump. Guarded so a burst of
+  // onEndReached events triggers only one fetch, and only while more remains.
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current || !path) return
+    loadingMoreRef.current = true
+    setWindowLines((n) => n + 400)
+    // reload() re-runs via its windowLines dep; release the guard shortly after so
+    // the next scroll-to-top can page again.
+    setTimeout(() => {
+      loadingMoreRef.current = false
+    }, 600)
+  }, [path])
 
   useFocusEffect(
     useCallback(() => {
+      // Switching sessions: don't carry optimistic bubbles from a prior thread.
+      pendingSteers.current = []
       reload()
       // Hydrate pinned message uuids from server session meta (survives reinstall).
       if (path) {
         api
           .sessionMeta(host, path)
-          .then((m) => setPinned(Array.isArray(m.pinned) ? m.pinned : []))
+          .then((m) => { setPinned(Array.isArray(m.pinned) ? m.pinned : []); setCwd(m.cwd || undefined) })
           .catch(() => {})
       }
       // On focus, fetch status once: reattach the poll if a run is active, and —
@@ -244,6 +444,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
             if (s.running && !pollRef.current) {
               setBusy(true)
               startPoll(sid)
+            } else if (!s.running && !pollRef.current) {
+              setBusy(false) // a just-started chat that finished before it was adopted
             }
           })
           .catch(() => {})
@@ -256,6 +458,31 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [])
+
+  // A chat opened the moment it was started (`starting`): its transcript isn't
+  // written until the CLI is up, so show the sent message and the working
+  // bubble now, wait for the file, then adopt its path — the focus effect above
+  // then loads it and attaches the live poll like any running chat.
+  useEffect(() => {
+    if (path || !starting) return
+    setSessionId(starting.session)
+    setLoading(false)
+    setBusy(true)
+    pendingSteers.current = [{ kind: "user", id: "local-start", text: starting.message }]
+    setItems([...pendingSteers.current])
+    // The name was stored by the server at creation — nothing to save here.
+    resolveSessionPath(() => api.resolve(starting.session, host))
+      .then((found) => {
+        if (!isCurrentThread()) return
+        if (!found) {
+          setBusy(false)
+          setError("This chat stopped before it wrote anything. Try sending the message again.")
+          setInput(starting.message)
+          return
+        }
+        navigation.setParams({ path: found, starting: undefined })
+      })
+  }, [path, starting?.session]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist the composer draft per session so it survives going back / app
   // close. Debounced so we don't hit SecureStore on every keystroke. Keyed by
@@ -284,20 +511,22 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   // WhatsApp-style header: the session name (tap it to open the session's
   // profile/settings page) with a live "typing…" subtitle while the agent
-  // works. The only header action is search — mode/model/system-prompt/goal/
-  // loops/stats all moved to the SessionProfile screen behind the name.
+  // works. Header actions: search and this session's board (three-dot menu) —
+  // mode/model/system-prompt/goal/loops/stats all moved to the SessionProfile
+  // screen behind the name.
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: () => (
         <TouchableOpacity
           testID="header-title"
-          accessibilityLabel="open-session-profile"
+          accessibilityLabel="Session details"
           onPress={() =>
-            navigation.navigate("SessionProfile", {
+            isCurrentThread() && navigation.isFocused() && navigation.navigate("SessionProfile", {
               host,
               label,
               path,
-              sessionId: sessionId || (path?.split("/").pop() || "").replace(/\.jsonl$/, ""),
+              sessionId,
+              agent,
             })
           }
           style={styles.headerTitleWrap}
@@ -313,27 +542,42 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       ),
       headerRight: () => (
-        <TouchableOpacity
-          testID="thread-search"
-          accessibilityLabel="thread-search"
-          onPress={() => setSearchOpen((o) => !o)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", marginRight: 6 }}
-        >
-          <Icon name="search" size={20} color={t.accent} />
-        </TouchableOpacity>
+        <View style={styles.headerIcons}>
+          <HeaderButton testID="thread-call" label="Voice call" icon="phone" color={t.accent}
+            onPress={() => navigation.navigate("Call", { label, path })} />
+          <HeaderButton testID="thread-tools" label="Skills and tools" icon="tool" color={capDrawerOpen ? t.text : t.accent}
+            onPress={() => setCapDrawerOpen((o) => !o)} />
+          <HeaderButton testID="thread-more" label="More options" icon="more" color={t.accent} style={{ marginRight: 4 }}
+            onPress={() => {
+              showActions(label || "This chat", [
+                { text: "Search", onPress: () => setSearchOpen(true) },
+                { text: "Board", onPress: openBoard },
+                { text: "Notes", onPress: openNotes },
+                { text: "Inbox", onPress: openInbox },
+                // A map needs the session's project; an unsent chat has none yet.
+                ...(sessionId ? [{ text: "Map", onPress: openMap }, { text: "Canvas", onPress: () => openCanvas() }] : []),
+              ])
+            }} />
+        </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, t])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openMap, openCanvas, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
   // the finger is moving. Cleared on unmount.
+  // Called on every scroll frame: start the fade-in once, then only push the
+  // hide timer back, so a scroll doesn't restart an animation 60 times a second.
+  const dateShown = useRef(false)
   const revealDate = useCallback(() => {
-    dateOpacity.stopAnimation()
-    Animated.timing(dateOpacity, { toValue: 1, duration: 120, useNativeDriver: true }).start()
+    if (!dateShown.current) {
+      dateShown.current = true
+      dateOpacity.stopAnimation()
+      Animated.timing(dateOpacity, { toValue: 1, duration: 120, useNativeDriver: true }).start()
+    }
     if (dateHideTimer.current) clearTimeout(dateHideTimer.current)
     dateHideTimer.current = setTimeout(() => {
+      dateShown.current = false
       Animated.timing(dateOpacity, { toValue: 0, duration: 350, useNativeDriver: true }).start()
     }, 1000)
   }, [dateOpacity])
@@ -380,16 +624,32 @@ export default function ThreadScreen({ route, navigation }: Props) {
     listRef.current?.scrollToOffset({ offset: 0, animated: true })
   }, [])
 
-  function addUserBubble(text: string) {
+  function addUserBubble(text: string): string {
     // Append in natural order; the list is `inverted`, so this lands at offset 0
     // (the bottom) and the viewport follows it automatically. No scroll call.
-    setItems((it) => [...it, { kind: "user", id: `local-${++localId.current}`, text }])
+    const id = `local-${++localId.current}`
+    // Remember it so a poll reload (which rebuilds from the server transcript)
+    // re-appends it until the server has persisted this user turn.
+    pendingSteers.current = [...pendingSteers.current, { kind: "user", id, text }]
+    setItems((it) => [...it, { kind: "user", id, text }])
+    return id
+  }
+
+  /** Drop an optimistic bubble that failed to send (from both the list and the
+   *  pending-steers set) so it doesn't get re-appended by the next reload. */
+  function dropUserBubble(id: string) {
+    pendingSteers.current = pendingSteers.current.filter((b) => b.id !== id)
+    setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === id)))
   }
 
   function startPoll(sid: string) {
+    if (!isCurrentThread()) return
     if (pollRef.current) clearInterval(pollRef.current)
     let ticks = 0
+    let inFlight = false // guard: a slow status+reload must not overlap the next tick
     pollRef.current = setInterval(async () => {
+      if (inFlight) return // previous tick still awaiting — skip so setItems can't race
+      inFlight = true
       ticks++
       try {
         const s = await api.chatStatus(sid)
@@ -401,7 +661,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         if (!s.running || ticks > 400) {
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = null
-          await reload() // final response replaces the "working" bubble
+          await poll() // final response replaces the "working" bubble
           // The run ended. It may have ended WAITING on you — a per-tool approval
           // or a parked AskUserQuestion (pending_question). Either way the server
           // already pushed a notification; we just stop the busy spinner and let
@@ -410,24 +670,25 @@ export default function ThreadScreen({ route, navigation }: Props) {
           setBusy(false)
           return
         }
-        // Still running → stream the steps in as they happen (every other tick,
-        // ~3s, so the transcript fetch doesn't pile up behind the status poll).
-        if (ticks % 2 === 0) {
-          await reload()
-        }
+        // Still running → stream the new steps in. poll() fetches only bytes
+        // appended since the last read, so it's cheap enough to run every tick.
+        await poll()
       } catch {
         /* keep polling through transient errors */
+      } finally {
+        inFlight = false
       }
     }, 1500)
   }
 
   /**
    * The composer's action. Idle → start a new turn. Busy → the caller passes an
-   * explicit `mode`: "interrupt" steers the running turn now, "queue" runs it
-   * after. Two distinct buttons in the working pill call this, so there's never
-   * a mode to guess — each button does exactly what it says.
+   * explicit `mode`: "steer" injects the text into the running turn now (the CLI
+   * reads it from stdin mid-turn), "queue" runs it after this turn ends. Two
+   * distinct buttons in the working pill call this, so there's never a mode to
+   * guess — each button does exactly what it says.
    */
-  async function primary(mode: "queue" | "steer" = sendMode) {
+  async function primary(mode: "queue" | "steer" = "queue") {
     const raw = input.trim()
     if (!raw) return
     // A reply quotes the message it answers, so the agent sees the referent.
@@ -447,34 +708,37 @@ export default function ThreadScreen({ route, navigation }: Props) {
         try {
           await api.chat({ message: text, path: path || undefined, host, agent: "claude", ...sendPrefs(), queue: true })
         } catch (e) {
-          setError((e as Error).message)
+          setError(userError(e, "your message", "send"))
           setQueueList((q) => q.filter((m) => m !== text))
           setQueued((n) => Math.max(0, n - 1))
           setInput(text)
         }
         return
       }
-      addUserBubble(text)
+      const bubbleId = addUserBubble(text)
       try {
         await api.chatSteer({ path: path || sessionId, message: text, host })
       } catch (e) {
         // Don't silently swallow the message: drop the optimistic bubble and put
         // the text back in the composer so the user can retry.
-        setError((e as Error).message)
-        setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === `local-${localId.current}`)))
+        setError(userError(e, "your message", "send"))
+        dropUserBubble(bubbleId)
         setInput(text)
       }
       return
     }
 
-    addUserBubble(text)
+    const bubbleId = addUserBubble(text)
     setBusy(true)
     try {
       const res = await api.chat({ message: text, path: path || undefined, host, agent: "claude", ...sendPrefs() })
       setSessionId(res.session)
       startPoll(res.session)
     } catch (e) {
-      setError((e as Error).message)
+      // Not sent: take back the bubble and give the text back to retry.
+      setError(userError(e, "your message", "send"))
+      dropUserBubble(bubbleId)
+      setInput(text)
       setBusy(false)
     }
   }
@@ -488,7 +752,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatInterrupt(path || sessionId)
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the run", "stop"))
     } finally {
       // Recover the UI immediately rather than waiting on the next poll tick —
       // if the server run is wedged, the poll might never report !running, which
@@ -518,7 +782,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         } catch (e) {
           // If re-running fails, surface the error and restore the drafts so
           // nothing the user queued is silently lost.
-          setError((e as Error).message)
+          setError(userError(e, "your queued messages", "send"))
           setBusy(false)
           setInput(carry.join("\n\n"))
         }
@@ -535,10 +799,25 @@ export default function ThreadScreen({ route, navigation }: Props) {
     setMsgAction({ uuid, text, isUser })
   }
 
+  // A reply's link to a file the agent wrote ("[report](docs/r.md)") opens that
+  // file from the session's machine, resolved against the chat's folder. Pure
+  // string work until tapped, so long transcripts pay nothing for it.
+  const openFileLink = useCallback((href: string): boolean => {
+    if (fileLinkPath(href, "/") === null) return false // a web/mail link: open as a URL
+    const file = fileLinkPath(href, cwd)
+    if (!file) {
+      setError("Can't open this file yet: the chat's folder is still loading. Try again in a moment.")
+      return true
+    }
+    setError("")
+    downloadAndShare(fsScope(host, HOST_LOCATION), file).catch((e) => setError(userError(e, "this file", "open")))
+    return true
+  }, [cwd, host])
+
   // Persist the pin list (optimistic) to server session meta.
   function savePins(next: string[]) {
     setPinned(next)
-    if (path) api.sessionMetaSave({ session: path, pinned: next, host }).catch((e) => setError((e as Error).message))
+    if (path) api.sessionMetaSave({ session: path, pinned: next, host }).catch((e) => setError(userError(e, "the pin", "save")))
   }
 
   function togglePin(uuid: string) {
@@ -573,7 +852,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     api
       .forkSession({ session: path || "", uuid, host, agent: "claude" })
       .then(() => navigation.goBack())
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "the fork", "create")))
   }
 
   function doRevert() {
@@ -589,7 +868,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           api
             .restoreSession({ session: path || "", uuid, mode: "conversation", host, agent: "claude" })
             .then(reload)
-            .catch((e) => setError((e as Error).message)),
+            .catch((e) => setError(userError(e, "this chat", "revert"))),
       },
     ])
   }
@@ -611,10 +890,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
       const picked = await pickImage()
       if (!picked) return
       setAttaching(true)
-      const remote = await uploadImage({ base: serverUrl(), token: token(), host }, picked)
+      const remote = await uploadImage(api, host, picked)
       setInput((cur) => attachMessage(remote, cur))
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the image", "upload"))
     } finally {
       setAttaching(false)
     }
@@ -626,7 +905,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatQueueRemove({ path: path || "", index })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "the queued message", "remove"))
     }
   }
 
@@ -645,24 +924,24 @@ export default function ThreadScreen({ route, navigation }: Props) {
     try {
       await api.chatPermissionDecide({ session: sessionId, id, decision })
     } catch (e) {
-      setError((e as Error).message)
+      setError(userError(e, "your decision", "send"))
     }
   }
 
   /** Answer a parked AskUserQuestion (async): the server resolves the pending row
    *  and RESUMES the session with the picks. The run had already ended, so this
    *  starts a fresh (resumed) turn — nothing was held while we waited. */
-  function answerPendingQuestion(picks: string[]) {
+  function answerPendingQuestion(picks: string[], note: string) {
     setPendingQuestion(null) // optimistic clear
     setBusy(true)
     api
-      .chatQuestionAnswer({ session: path || sessionId, picks, ...sendPrefs() })
+      .chatQuestionAnswer({ session: path || sessionId, picks, note, ...sendPrefs() })
       .then((res) => {
         const sid = res.session || sessionId
         if (res.session) setSessionId(res.session)
         startPoll(sid)
       })
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "your answer", "send")))
   }
 
   /** Approve or deny a proposed plan (ExitPlanMode). The run is blocked waiting;
@@ -673,7 +952,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     api
       .chatPlanDecide({ session: path || sessionId, decision, feedback })
       .then(() => startPoll((path?.split("/").pop() || "").replace(/\.jsonl$/, "") || sessionId))
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(userError(e, "your decision", "send")))
   }
 
   if (loading) {
@@ -685,11 +964,23 @@ export default function ThreadScreen({ route, navigation }: Props) {
   }
 
   return (
+    <>
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      // The run pill floats in the strip between the message list and the composer
+      // slab; the KAV's only uncovered region IS that strip. Painting it with the
+      // thread wallpaper (not the lighter screen bg) makes the pill float on the
+      // chat background like the day-pill and jump button do — no white seam behind
+      // its rounded corners. The composer below stays its own bordered surface slab.
+      style={{ flex: 1, backgroundColor: t.thread }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={headerHeight}
+      // While the capabilities drawer (and its editor modal) is open, THIS
+      // screen has nothing focused — but the keyboard notification is global,
+      // so without this the chat + composer behind the transparent modal would
+      // slide up too. Only the editor's own KAV should react then.
+      enabled={!capDrawerOpen}
     >
+      <OfflineBanner saved={fromCache} onRetry={() => { reload() }} />
       {/* WhatsApp-style in-thread search: chevrons step through matches. */}
       {searchOpen ? (
         <View style={[styles.threadSearchBar, { backgroundColor: t.surface }]}>
@@ -733,39 +1024,39 @@ export default function ThreadScreen({ route, navigation }: Props) {
           jump-to-latest button and day pill anchor to the LIST's edges, not the
           screen's — keeping the button clear of the composer + run bar, whose
           combined height varies (Working…/Stop, errors, permission cards). */}
-      <View style={{ flex: 1 }}>
-      {/* Pinned banner: shows the current pin; tap jumps to it, tap again cycles
-          (WhatsApp style). The count shows position; the pin icon unpins it. */}
+      <View
+        ref={transcriptRef}
+        testID="thread-viewport"
+        style={{ flex: 1 }}
+        onLayout={() => {
+          transcriptBounds.current = { left: 0, width: 0 }
+          boardSwipeCancelled.current = true
+          measureTranscript()
+        }}
+        onTouchStart={(event) => {
+          if (event.nativeEvent.touches.length === 1) boardSwipeCancelled.current = false
+          else boardSwipeCancelled.current = true
+          // A layout pass while another screen covers this one (the keyboard
+          // opening there resizes our KeyboardAvoidingView) measures a view with
+          // no window as zero width, which disables the edge swipe until the next
+          // layout. A touch proves the view is on screen, so measure again now.
+          measureTranscript()
+        }}
+        {...boardPan.panHandlers}
+      >
+      {/* Pinned banner: tap jumps to the current pin, tap again cycles (WhatsApp style). */}
       {pinnedItems.length ? (
-        (() => {
-          const i = Math.min(bannerIdx, pinnedItems.length - 1)
-          const cur = pinnedItems[i]
-          return (
-            <TouchableOpacity
-              testID="pinned-banner"
-              style={[styles.pinnedBanner, { backgroundColor: t.chipBg, borderBottomColor: t.border }]}
-              activeOpacity={0.8}
-              onPress={() => {
-                jumpToUuid(cur.uuid)
-                if (pinnedItems.length > 1) setBannerIdx((n) => (n + 1) % pinnedItems.length)
-              }}
-            >
-              <Icon name="pin" size={15} color={t.accent} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.pinnedBannerLabel, { color: t.accent }]}>
-                  Pinned{pinnedItems.length > 1 ? ` · ${i + 1}/${pinnedItems.length}` : ""}
-                </Text>
-                <Text style={[styles.pinnedBannerText, { color: t.text }]} numberOfLines={1}>
-                  {cur.text || "(no text)"}
-                </Text>
-              </View>
-              <TouchableOpacity testID="pinned-banner-unpin" onPress={() => togglePin(cur.uuid)} hitSlop={8}>
-                <Icon name="close" size={16} color={t.textMuted} />
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )
-        })()
+        <PinnedBanner
+          items={pinnedItems}
+          index={Math.min(bannerIdx, pinnedItems.length - 1)}
+          onPress={(cur) => {
+            jumpToUuid(cur.uuid)
+            if (pinnedItems.length > 1) setBannerIdx((n) => (n + 1) % pinnedItems.length)
+          }}
+          onUnpin={(cur) => togglePin(cur.uuid)}
+        />
       ) : null}
+      <FileLinkContext.Provider value={openFileLink}>
       <FlatList
         ref={listRef}
         testID="thread-list"
@@ -776,6 +1067,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
         inverted
         data={listData}
         keyExtractor={(it) => it.id}
+        // Lazy-load older history: in an inverted list the "end" is the TOP, so
+        // onEndReached fires as the user scrolls up into older messages.
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        // Keep the visible rows anchored when older messages prepend above, so the
+        // viewport doesn't jump on a page-in.
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         // onScroll is display-only: in the inverted list, contentOffset.y is the
         // distance from the bottom (0 = pinned to newest). It drives just the
         // jump-to-latest button and the day-pill flash — never the scroll itself.
@@ -805,7 +1103,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.threadContent}
         ListEmptyComponent={
           <Text style={[styles.hint, { padding: 16, textAlign: "center" }]}>
-            {error || "No messages yet — say something below."}
+            {error || (fromCache || online ? "No messages yet — say something below." : "This chat isn't saved on this phone yet. It loads when you're back online.")}
           </Text>
         }
         renderItem={({ item }) =>
@@ -818,10 +1116,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
               pinnedSet={pinned}
               onMessageAction={askMessageAction}
               onReply={setReplyTo}
+              onOpenCanvas={sessionId ? openCanvas : undefined}
             />
           )
         }
       />
+      </FileLinkContext.Provider>
 
       {/* WhatsApp-style floating day header: fades in while scrolling, shows the
           date of the topmost visible message, auto-hides ~1s after scrolling. */}
@@ -840,7 +1140,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           style={styles.jumpBtn}
           onPress={jumpToLatest}
         >
-          <Icon name="chevronDown" size={16} color="#fff" />
+          <Icon name="chevronDown" size={16} color={t.onAccent} />
         </TouchableOpacity>
       ) : null}
       </View>
@@ -855,14 +1155,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
             {queued ? `${queued} queued` : "Working…"}
           </Text>
           {/* Two explicit actions inside the working pill (not a toggle): while
-              text is drafted, Queue runs it after this turn and Interrupt steers
-              it in now. Each button does exactly what it says — no mode to guess.
-              Stop stays pinned at the right end. */}
+              text is drafted, Queue runs it after this turn and Steer injects
+              it into the running turn now (mid-turn, no need to Stop first).
+              Each button does exactly what it says — no mode to guess. Stop
+              stays pinned at the right end. */}
           {input.trim() ? (
             <>
               <TouchableOpacity
                 testID="run-queue"
-                accessibilityLabel="run-queue"
+                accessibilityLabel="Queue after this run"
                 style={styles.runModeToggle}
                 onPress={() => primary("queue")}
               >
@@ -871,12 +1172,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
               </TouchableOpacity>
               <TouchableOpacity
                 testID="run-interrupt"
-                accessibilityLabel="run-interrupt"
+                accessibilityLabel="Steer the running turn now"
                 style={styles.runModeToggle}
                 onPress={() => primary("steer")}
               >
                 <Icon name="flash" size={13} color={t.textMuted} />
-                <Text style={styles.runModeText}>Interrupt</Text>
+                <Text style={styles.runModeText}>Steer</Text>
               </TouchableOpacity>
             </>
           ) : null}
@@ -921,8 +1222,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             </View>
           ) : null}
 
-          {/* Per-call tool approvals (Allow/Deny). AskUserQuestion no longer appears
-              here — it's an async pending_question, not a permission gate. */}
+          {/* Per-call tool approvals (Allow/Deny). Questions are the card above. */}
           {pending.map((p) => (
             <View key={p.id} testID={`perm-${p.id}`} style={styles.permCard}>
               <Text style={styles.permTitle}>Allow tool: {p.tool_name}?</Text>
@@ -981,6 +1281,36 @@ export default function ThreadScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
+        {fileMatches.length ? (
+          <View testID="file-mention-list" style={styles.slashList}>
+            <ScrollView keyboardShouldPersistTaps="always" style={{ maxHeight: 190 }}>
+              {fileMatches.map((f) => {
+                const cut = f.path.lastIndexOf("/") + 1
+                return (
+                  <TouchableOpacity
+                    key={f.path}
+                    testID={`file-mention-${f.path}`}
+                    style={[styles.slashRow, { flexDirection: "row", alignItems: "center", gap: 8 }]}
+                    onPress={() => pickFile(f.path)}
+                  >
+                    <Icon name={f.dir ? "folder" : "file"} size={15} color={t.textMuted} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.slashName} numberOfLines={1}>
+                        {f.path.slice(cut) + (f.dir ? "/" : "")}
+                      </Text>
+                      {cut ? (
+                        <Text style={styles.slashDesc} numberOfLines={1}>
+                          {f.path.slice(0, cut)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+
         {/* Queued messages. Tap the chip to pull it back into the composer —
             it un-queues and the text is restored (never discarded). The revert
             icon signals "return to composer" rather than "delete". */}
@@ -1006,7 +1336,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         <View style={styles.composerBar}>
           <TouchableOpacity
             testID="composer-attach"
-            accessibilityLabel="composer-attach"
+            accessibilityLabel="Attach a file"
             style={[styles.circleBtn, styles.gearBtn]}
             onPress={attach}
             disabled={attaching}
@@ -1020,7 +1350,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
             placeholder={busy ? "Steer or queue a follow-up…" : "Message the agent…"}
             placeholderTextColor={t.textMuted}
             value={input}
-            onChangeText={setInput}
+            onChangeText={onComposerText}
+            onSelectionChange={(e) => {
+              const { start, end } = e.nativeEvent.selection
+              setCaret(start === end ? start : null)
+              setPlaceCaret(null)
+            }}
+            selection={placeCaret === null ? undefined : { start: placeCaret, end: placeCaret }}
             multiline
           />
 
@@ -1034,10 +1370,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
               styles.circleBtn,
               !input.trim() ? styles.sendBtnDisabled : styles.sendBtn,
             ]}
-            onPress={() => primary(busy ? "queue" : sendMode)}
+            onPress={() => primary()}
             disabled={!input.trim()}
           >
-            <Icon name="send" size={19} color="#fff" />
+            <Icon name="send" size={19} color={t.onAccent} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1062,338 +1398,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
         }}
       />
     </KeyboardAvoidingView>
-  )
-}
-
-// The live placeholder shown while a run is in flight. It names the step the
-// agent is on ("Running Bash…") and is replaced by the real response when the
-// run finishes — the messaging-app equivalent of a pending reply.
-function WorkingBubble({ activity }: { activity: string }) {
-  const t = useTheme()
-  const styles = useStyles()
-  return (
-    <View testID="working-bubble" style={[styles.workingBubble, { backgroundColor: t.bubbleAgent }]}>
-      <ActivityIndicator size="small" color={t.textMuted} />
-      <Text style={[styles.workingText, { color: t.textMuted }]} numberOfLines={1} ellipsizeMode="middle">{activity ? `Running ${activity}…` : "Working on it…"}</Text>
-    </View>
-  )
-}
-
-function ItemView({
-  item,
-  isLatest,
-  pinnedSet,
-  onMessageAction,
-  onReply,
-}: {
-  item: ThreadItem
-  isLatest?: boolean
-  pinnedSet?: string[]
-  onMessageAction?: (uuid: string | undefined, text: string, isUser: boolean) => void
-  onReply?: (text: string) => void
-}) {
-  const t = useTheme()
-  const styles = useStyles()
-  const isPinned = !!(item.kind !== "system" && item.uuid && pinnedSet?.includes(item.uuid))
-  if (item.kind === "system") {
-    return (
-      <View style={styles.systemPill}>
-        <Text style={[styles.systemText, { color: t.textMuted }]}>{item.text}</Text>
-      </View>
-    )
-  }
-  if (item.kind === "user") {
-    // Long-press offers fork / revert, which cut the session at this message —
-    // hence the uuid the parser now preserves.
-    return (
-      <SwipeToReply onReply={() => onReply?.(item.text)}>
-        <View style={[styles.bubbleUser, { backgroundColor: t.bubbleUser }]}>
-          {/* onLongPress lives on the selectable Text (not a Touchable wrapper) so
-              iOS's native double-tap-to-select still works — a Touchable would
-              claim the touch and swallow the selection gesture. */}
-          {item.text ? (
-            <Text
-              selectable
-              onLongPress={() => onMessageAction?.(item.uuid, item.text, true)}
-              style={[styles.bubbleText, { color: t.text }]}
-            >
-              {item.text}
-            </Text>
-          ) : null}
-          {item.images?.map((img, i) => (
-            <Image key={i} style={styles.bubbleImage} resizeMode="cover" source={{ uri: `data:${img.mime};base64,${img.data}` }} />
-          ))}
-          <View style={styles.bubbleMetaRow}>
-            {isPinned ? <Icon name="pin" size={11} color={t.accent} /> : null}
-            {item.ts ? <Text style={[styles.msgTime, { color: t.textMuted }]}>{fmtClock(item.ts)}</Text> : null}
-          </View>
-        </View>
-      </SwipeToReply>
-    )
-  }
-  return (
-    <SwipeToReply onReply={() => onReply?.(item.finalText)}>
-      <View>
-        {isPinned ? (
-          <View style={styles.bubbleMetaRow}>
-            <Icon name="pin" size={11} color={t.accent} />
-          </View>
-        ) : null}
-        <ExchangeView
-          finalText={item.finalText}
-          steps={item.steps}
-          plan={item.plan?.input}
-          defaultOpen={isLatest}
-          ts={item.ts}
-          onLongPress={() => onMessageAction?.(item.uuid, item.finalText, false)}
-        />
-      </View>
-    </SwipeToReply>
-  )
-}
-
-// An agent exchange: the final response, with the tool-call steps collapsed
-// underneath (tap "N steps" to reveal them; each step expands to its result).
-function ExchangeView({
-  finalText,
-  steps,
-  plan,
-  defaultOpen,
-  ts,
-  onLongPress,
-}: {
-  finalText: string
-  steps: Block[]
-  plan?: unknown
-  defaultOpen?: boolean
-  ts?: string
-  onLongPress?: () => void
-}) {
-  const t = useTheme()
-  const styles = useStyles()
-  // Latest exchange defaults open (and stays open while streaming); older ones
-  // start collapsed. We track whether the user has manually toggled so their
-  // choice isn't overridden by the auto-open below.
-  const [open, setOpen] = useState(!!defaultOpen)
-  const touched = useRef(false)
-  useEffect(() => {
-    // When this row (re)becomes the latest — e.g. a fresh turn started — auto
-    // open it, unless the user has explicitly toggled it themselves.
-    if (defaultOpen && !touched.current) setOpen(true)
-    if (!defaultOpen && !touched.current) setOpen(false)
-  }, [defaultOpen])
-  const toggle = () => {
-    touched.current = true
-    setOpen((o) => !o)
-  }
-  const toolCount = useMemo(() => steps.filter((b) => b.kind === "tool").length, [steps])
-  return (
-    <View style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
-      {/* Steps (tool calls + narration) render ABOVE the final answer: the steps
-          are the work, the final text is the conclusion, so reading top-to-bottom
-          mirrors how the turn actually unfolded. */}
-      {steps.length ? (
-        <>
-          <TouchableOpacity
-            testID="steps-toggle"
-            accessibilityLabel="steps-toggle"
-            style={styles.stepsToggle}
-            onPress={toggle}
-          >
-            <Icon name={open ? "chevronDown" : "chevronRight"} size={13} color={t.accent} />
-            <Text style={[styles.stepsToggleText, { color: t.accent }]}>
-              {toolCount || steps.length} {toolCount === 1 ? "step" : "steps"}
-            </Text>
-          </TouchableOpacity>
-          {open ? (
-            <View style={[styles.stepsBox, { borderTopColor: t.border }]}>
-              {steps.map((b, i) => (
-                <StepView key={i} block={b} />
-              ))}
-            </View>
-          ) : null}
-        </>
-      ) : null}
-      {plan ? <PlanCard input={plan} /> : null}
-      {finalText ? (
-        <View style={steps.length ? { marginTop: 8 } : undefined}>
-          <Markdown text={finalText} color={t.text} selectable onLongPress={onLongPress} />
-        </View>
-      ) : null}
-      {!finalText && !steps.length && !plan ? (
-        <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
-      ) : null}
-      {ts ? <Text style={[styles.msgTime, { color: t.textMuted }]}>{fmtClock(ts)}</Text> : null}
-    </View>
-  )
-}
-
-/** Extract the plan markdown from an ExitPlanMode tool input (object or JSON string). */
-function planText(input: unknown): string {
-  let obj: any = input
-  if (typeof obj === "string") {
-    try {
-      obj = JSON.parse(obj)
-    } catch {
-      return obj // a bare string is the plan itself
-    }
-  }
-  return typeof obj?.plan === "string" ? obj.plan : ""
-}
-
-/** A proposed plan (ExitPlanMode). Rendered as a distinct card with the plan as
- *  formatted markdown, collapsible so a long plan doesn't dominate the thread.
- *  When `onDecide` is given (a live pending plan), shows Approve / Deny — deny
- *  reveals a feedback box so the agent can revise. */
-function PlanCard({ input, onDecide }: { input: unknown; onDecide?: (d: "approve" | "deny", feedback?: string) => void }) {
-  const t = useTheme()
-  const styles = useStyles()
-  const [open, setOpen] = useState(true)
-  const [denying, setDenying] = useState(false)
-  const [feedback, setFeedback] = useState("")
-  const [sent, setSent] = useState(false)
-  const text = useMemo(() => planText(input), [input])
-  if (!text) return null
-  return (
-    <View testID="plan-card" style={[styles.planCard, { borderColor: t.accent, backgroundColor: t.bg }]}>
-      <TouchableOpacity style={styles.planHeader} onPress={() => setOpen((o) => !o)} activeOpacity={0.7}>
-        <Icon name="sparkle" size={15} color={t.accent} />
-        <Text style={[styles.planTitle, { color: t.accent }]}>Proposed plan</Text>
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={14} color={t.accent} />
-      </TouchableOpacity>
-      {open ? (
-        <View style={styles.planBody}>
-          <Markdown text={text} color={t.text} selectable />
-        </View>
-      ) : null}
-      {onDecide ? (
-        denying ? (
-          <View style={styles.planBody}>
-            <TextInput
-              testID="plan-feedback"
-              style={[styles.ssInput, styles.ssMultiline]}
-              value={feedback}
-              onChangeText={setFeedback}
-              placeholder="What should change? (sent to the agent to revise)"
-              placeholderTextColor={t.textMuted}
-              multiline
-            />
-            <View style={styles.permBtnRow}>
-              <TouchableOpacity style={styles.permDeny} onPress={() => setDenying(false)} disabled={sent}>
-                <Text style={styles.permDenyText}>Back</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                testID="plan-send-feedback"
-                style={styles.permAllow}
-                onPress={() => { if (!sent) { setSent(true); onDecide("deny", feedback.trim()) } }}
-                disabled={sent}
-              >
-                <Text style={styles.permAllowText}>Send feedback</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          <View style={[styles.permBtnRow, { marginHorizontal: 10, marginBottom: 10 }]}>
-            <TouchableOpacity testID="plan-deny" style={styles.permDeny} onPress={() => setDenying(true)} disabled={sent}>
-              <Text style={styles.permDenyText}>Request changes</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="plan-approve"
-              style={styles.permAllow}
-              onPress={() => { if (!sent) { setSent(true); onDecide("approve") } }}
-              disabled={sent}
-            >
-              <Text style={styles.permAllowText}>{sent ? "…" : "Approve"}</Text>
-            </TouchableOpacity>
-          </View>
-        )
-      ) : null}
-    </View>
-  )
-}
-
-function StepView({ block }: { block: Block }) {
-  const t = useTheme()
-  const styles = useStyles()
-  if (block.kind === "text") {
-    return (
-      <View style={{ marginVertical: 4 }}>
-        <Markdown text={block.text} color={t.textMuted} selectable />
-      </View>
-    )
-  }
-  if (block.kind === "compact") return <CompactStep text={block.text} />
-  return <ToolStep block={block} />
-}
-
-// A context compaction inside the reply: one folded line, the summary on tap.
-function CompactStep({ text }: { text: string }) {
-  const t = useTheme()
-  const [open, setOpen] = useState(false)
-  return (
-    <View style={{ marginVertical: 4 }}>
-      <TouchableOpacity testID="compact-step" accessibilityRole="button" accessibilityLabel="Conversation compacted"
-        onPress={() => setOpen((o) => !o)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Icon name="archive" size={13} color={t.textMuted} />
-        <Text style={{ color: t.textMuted, fontSize: 12 }}>Conversation compacted</Text>
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={13} color={t.textMuted} />
-      </TouchableOpacity>
-      {open ? (
-        <View style={{ marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: t.border }}>
-          <Markdown text={text} color={t.textMuted} selectable />
-        </View>
-      ) : null}
-    </View>
-  )
-}
-
-// A single tool call: a chip that expands to show the input and result, plus any
-// images the tool returned (e.g. screenshots).
-function ToolStep({ block }: { block: Extract<Block, { kind: "tool" }> }) {
-  const t = useTheme()
-  const styles = useStyles()
-  const [open, setOpen] = useState(false)
-  const result = resultToText(block.result)
-  const images = extractImages(block.result)
-  const input = block.input == null ? "" : typeof block.input === "string" ? block.input : JSON.stringify(block.input, null, 2)
-  return (
-    <View style={{ marginVertical: 3 }}>
-      <TouchableOpacity
-        testID={`tool-${block.name}`}
-        accessibilityLabel={`tool-${block.name}`}
-        style={[styles.toolChip, { backgroundColor: t.chipBg }, block.isError ? styles.toolChipErr : null]}
-        onPress={() => setOpen((o) => !o)}
-      >
-        <Icon
-          name={block.answered ? "check" : block.isError ? "warning" : "tool"}
-          size={13}
-          color={block.answered ? "#2e9e5b" : block.isError ? t.danger : t.textMuted}
-        />
-        <Text style={[styles.toolChipText, { color: t.text }]} numberOfLines={1} ellipsizeMode="middle">
-          {block.answered ? "You answered" : block.name}
-        </Text>
-        {block.ts ? <Text style={[styles.toolChipTime, { color: t.textMuted }]}>{fmtClock(block.ts)}</Text> : null}
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={12} color={t.textMuted} />
-      </TouchableOpacity>
-      {open ? (
-        <View>
-          {input && input !== "{}" ? (
-            <View style={[styles.toolResult, { backgroundColor: t.codeBg }]}>
-              <Text selectable style={[styles.toolResultText, { color: t.codeText }]}>{input}</Text>
-            </View>
-          ) : null}
-          {result ? (
-            <View style={[styles.toolResult, { backgroundColor: t.codeBg }, block.isError ? styles.toolResultErr : null]}>
-              <Text selectable style={[styles.toolResultText, { color: t.codeText }]}>
-                {result.length > 4000 ? result.slice(0, 4000) + "\n… (truncated)" : result}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-      {images.map((img, i) => (
-        <Image key={i} style={styles.bubbleImage} resizeMode="cover" source={{ uri: `data:${img.mime};base64,${img.data}` }} />
-      ))}
-    </View>
+      <CapabilitiesDrawer
+        visible={capDrawerOpen}
+        host={host}
+        cwd={cwd}
+        session={path}
+        onClose={() => setCapDrawerOpen(false)}
+      />
+    </>
   )
 }

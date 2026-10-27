@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Loader2, Plus, Repeat, Trash2, Pencil, ChevronLeft } from "lucide-react"
+import { Loader2, Plus, Repeat, Trash2, Pencil, Pause, Play, ChevronLeft, CalendarClock } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,11 +12,41 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { fmtInterval, parseInterval } from "@/lib/format"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { fmtInterval, fmtWhen, parseInterval, toDatetimeLocal, toIsoWithOffset } from "@/lib/format"
 import { useStore } from "@/store"
-import type { Loop } from "@/lib/types"
+import type { Loop, LoopSchedule } from "@/lib/types"
 
-type Draft = { id: string; prompt: string; interval: string }
+/** The form: `mode` picks which schedule axis is sent. `once` is the
+ *  datetime-local string of the one-shot fire time on this browser's clock. */
+type Draft = { id: string; prompt: string; mode: "repeat" | "once"; interval: string; once: string; provider: string }
+
+/** A round hour from now — the default one-shot time. */
+function nextRoundHour(): string {
+  const d = new Date(Date.now() + 3600e3)
+  d.setMinutes(0, 0, 0)
+  return toDatetimeLocal(d)
+}
+
+/** The schedule a draft would submit, or null when its chosen axis is invalid. */
+function scheduleOf(d: Draft): LoopSchedule | null {
+  if (d.mode === "once") {
+    const t = new Date(d.once)
+    return isNaN(t.getTime()) ? null : { at: toIsoWithOffset(t) }
+  }
+  const interval = parseInterval(d.interval)
+  return interval ? { interval } : null
+}
+
+// Radix Select forbids an empty-string item value; a loop's provider "" means
+// "inherit the session's own provider", shown under this sentinel in the dropdown.
+const INHERIT_PROVIDER = "__inherit__"
 
 /**
  * The Loops manager modal: list every scheduled loop for this session with
@@ -25,31 +55,48 @@ type Draft = { id: string; prompt: string; interval: string }
  */
 export function LoopsDialog({ onClose }: { onClose: () => void }) {
   const loops = useStore((s) => s.loops)
+  const providers = useStore((s) => s.providers)
+  const sessionProvider = useStore((s) => s.sessionAI?.selection.provider) || ""
   const createLoop = useStore((s) => s.createLoop)
   const editLoop = useStore((s) => s.editLoop)
+  const toggleLoop = useStore((s) => s.toggleLoop)
   const deleteLoop = useStore((s) => s.deleteLoop)
 
   const [editing, setEditing] = useState<Draft | null>(null) // null = list; Draft = form
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // Pause/resume flips what fires on this machine unattended, so it gets the
+  // same inline two-step as delete (only one confirm shows per row at a time).
+  const [confirmPause, setConfirmPause] = useState<string | null>(null)
+
+  // The label a loop's provider setting shows in the list row. "" inherits the
+  // session's own provider (resolved at fire time server-side).
+  function providerLabel(id: string): string {
+    const effective = id || sessionProvider
+    if (!effective) return "Built-in (Claude)"
+    return providers.find((p) => p.id === effective)?.name || "Custom provider"
+  }
 
   function openForm(l?: Loop) {
+    setConfirmDelete(null)
+    setConfirmPause(null)
+    const once = l?.kind === "once" && l.nextRun ? toDatetimeLocal(new Date(l.nextRun * 1000)) : nextRoundHour()
     setEditing(
       l
-        ? { id: l.id, prompt: l.prompt, interval: fmtInterval(l.interval) }
-        : { id: "", prompt: "", interval: "1h" }
+        ? { id: l.id, prompt: l.prompt, mode: l.kind === "once" ? "once" : "repeat", interval: fmtInterval(l.interval || 3600), once, provider: l.provider || "" }
+        : { id: "", prompt: "", mode: "repeat", interval: "1h", once, provider: "" }
     )
   }
 
   async function save() {
     if (!editing) return
     const prompt = editing.prompt.trim()
-    const interval = parseInterval(editing.interval)
-    if (!prompt || !interval) return
+    const schedule = scheduleOf(editing)
+    if (!prompt || !schedule) return
     setSaving(true)
     try {
-      if (editing.id) await editLoop(editing.id, prompt, interval, "")
-      else await createLoop(prompt, interval, "")
+      if (editing.id) await editLoop(editing.id, prompt, schedule, editing.provider)
+      else await createLoop(prompt, schedule, editing.provider)
       setEditing(null)
     } finally {
       setSaving(false)
@@ -58,7 +105,7 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Loops</DialogTitle>
           <DialogDescription>Automatically re-run a prompt on a schedule for this session.</DialogDescription>
@@ -69,16 +116,28 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
             {loops.length === 0 && (
               <p className="px-1 text-xs italic text-muted-foreground">No loops yet.</p>
             )}
-            {loops.map((l) => (
+            {loops.map((l) => {
+              const paused = l.enabled === false
+              const once = l.kind === "once"
+              return (
               <div key={l.id} className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
-                <Repeat className="size-4 shrink-0 text-muted-foreground" />
-                <button className="min-w-0 flex-1 text-left" onClick={() => openForm(l)} title="Edit">
+                {once ? <CalendarClock className="size-4 shrink-0 text-muted-foreground" /> : <Repeat className="size-4 shrink-0 text-muted-foreground" />}
+                <button className={`min-w-0 flex-1 text-left ${paused ? "opacity-50" : ""}`} onClick={() => openForm(l)} title="Edit">
                   <div className="truncate text-sm" title={l.prompt}>{l.prompt}</div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Badge variant="outline" className="px-1.5 text-[10px] font-normal tabular-nums">
-                      {fmtInterval(l.interval)}
+                      {once && l.nextRun ? `Once · ${fmtWhen(l.nextRun)}` : `Every ${fmtInterval(l.interval)}`}
                     </Badge>
-                    <span className="tabular-nums">{l.runs || 0} run{(l.runs || 0) === 1 ? "" : "s"}</span>
+                    {l.provider && (
+                      <Badge variant="outline" className="px-1.5 text-[10px] font-normal">
+                        {providerLabel(l.provider)}
+                      </Badge>
+                    )}
+                    {paused ? (
+                      <span className="font-medium">Paused</span>
+                    ) : (
+                      <span className="tabular-nums">{l.runs || 0} run{(l.runs || 0) === 1 ? "" : "s"}</span>
+                    )}
                   </div>
                 </button>
                 {confirmDelete === l.id ? (
@@ -90,8 +149,37 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                       Cancel
                     </Button>
                   </>
+                ) : confirmPause === l.id ? (
+                  <>
+                    <Button
+                      variant={paused ? "default" : "outline"}
+                      size="sm"
+                      className="h-7"
+                      onClick={() => {
+                        toggleLoop(l.id, paused)
+                        setConfirmPause(null)
+                      }}
+                    >
+                      {paused ? "Resume" : "Pause"}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7" onClick={() => setConfirmPause(null)}>
+                      Cancel
+                    </Button>
+                  </>
                 ) : (
                   <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7"
+                      onClick={() => {
+                        setConfirmPause(l.id)
+                        setConfirmDelete(null)
+                      }}
+                      title={paused ? "Resume" : "Pause"}
+                    >
+                      {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                    </Button>
                     <Button variant="ghost" size="icon" className="size-7" onClick={() => openForm(l)} title="Edit">
                       <Pencil className="size-3.5" />
                     </Button>
@@ -99,7 +187,10 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                       variant="ghost"
                       size="icon"
                       className="size-7 text-destructive hover:text-destructive"
-                      onClick={() => setConfirmDelete(l.id)}
+                      onClick={() => {
+                        setConfirmDelete(l.id)
+                        setConfirmPause(null)
+                      }}
                       title="Delete"
                     >
                       <Trash2 className="size-3.5" />
@@ -107,7 +198,8 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
                   </>
                 )}
               </div>
-            ))}
+              )
+            })}
             <Button variant="outline" size="sm" className="mt-1 self-start gap-1" onClick={() => openForm()}>
               <Plus className="size-3.5" /> Add loop
             </Button>
@@ -127,24 +219,72 @@ export function LoopsDialog({ onClose }: { onClose: () => void }) {
               placeholder="Prompt to run on a schedule…"
               className="min-h-24 resize-none text-sm leading-relaxed"
             />
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] text-muted-foreground">Runs every</span>
-              <Input
-                value={editing.interval}
-                onChange={(e) => setEditing((d) => (d ? { ...d, interval: e.target.value } : d))}
-                placeholder="1h"
-                className="h-8 w-16 px-2 text-center text-xs tabular-nums"
-                title="Interval — e.g. 30s, 5m, 1h"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={editing.mode}
+                onValueChange={(v) => setEditing((d) => (d ? { ...d, mode: v as Draft["mode"] } : d))}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="repeat">Runs every</SelectItem>
+                  <SelectItem value="once">Run once at</SelectItem>
+                </SelectContent>
+              </Select>
+              {editing.mode === "once" ? (
+                <Input
+                  type="datetime-local"
+                  value={editing.once}
+                  min={toDatetimeLocal(new Date())}
+                  onChange={(e) => setEditing((d) => (d ? { ...d, once: e.target.value } : d))}
+                  className="h-8 w-48 px-2 text-xs tabular-nums"
+                  title="Fires once at this local time, then the loop retires"
+                />
+              ) : (
+                <Input
+                  value={editing.interval}
+                  onChange={(e) => setEditing((d) => (d ? { ...d, interval: e.target.value } : d))}
+                  placeholder="1h"
+                  className="h-8 w-16 px-2 text-center text-xs tabular-nums"
+                  title="Interval — e.g. 30s, 5m, 1h"
+                />
+              )}
               <Button
                 size="sm"
                 className="ml-auto h-8"
-                disabled={!editing.prompt.trim() || !parseInterval(editing.interval) || saving}
+                disabled={!editing.prompt.trim() || !scheduleOf(editing) || saving}
                 onClick={save}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : null} Save
               </Button>
               <Button variant="ghost" size="sm" className="h-8" onClick={() => setEditing(null)}>Cancel</Button>
+            </div>
+            {/* Provider these runs use. "Inherit" resolves the session's own
+                provider at fire time; pinning one overrides it (the preset carries
+                the model). */}
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[11px] text-muted-foreground">Model provider</span>
+              <Select
+                value={editing.provider || INHERIT_PROVIDER}
+                onValueChange={(v) =>
+                  setEditing((d) => (d ? { ...d, provider: v === INHERIT_PROVIDER ? "" : v } : d))
+                }
+              >
+                <SelectTrigger className="h-8 flex-1 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_PROVIDER}>
+                    Inherit session ({providerLabel("")})
+                  </SelectItem>
+                  {providers.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         )}

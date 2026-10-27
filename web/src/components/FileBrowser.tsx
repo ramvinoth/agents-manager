@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
-  Folder,
-  File as FileIcon,
-  FileText,
-  FileCode,
-  FileImage,
-  FileVideo,
-  FileAudio,
-  FileArchive,
   ChevronRight,
   ArrowUp,
   Home,
@@ -30,32 +22,16 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { fmtBytes, fmtAgo } from "@/lib/format"
 import { describeHost } from "@/lib/host"
+import { HOST_LOCATION, START_PATH, isLiveLocation, type Location } from "@/lib/location"
+import { LocationPicker } from "@/components/LocationPicker"
 import { api } from "@/lib/api"
+import { fetchAndSave } from "@/lib/download"
 import { useStore } from "@/store"
-import type { FileEntry, FileListResponse } from "@/lib/types"
+import type { Drive, FileEntry, FileListResponse } from "@/lib/types"
+import { userError } from "@/lib/errors"
+import { joinPath, sortEntries } from "@/lib/fileTree"
+import { iconFor } from "@/components/fileIcons"
 
-// ---- file-type → icon + accent color ---------------------------------------
-const EXT: Record<string, { Icon: typeof FileIcon; color: string }> = {}
-const reg = (icon: typeof FileIcon, color: string, exts: string[]) =>
-  exts.forEach((e) => (EXT[e] = { Icon: icon, color }))
-reg(FileImage, "text-violet-500", ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif", "heic"])
-reg(FileVideo, "text-rose-500", ["mp4", "mov", "webm", "mkv", "avi", "m4v"])
-reg(FileAudio, "text-pink-500", ["mp3", "wav", "flac", "ogg", "m4a", "aac"])
-reg(FileArchive, "text-amber-500", ["zip", "tar", "gz", "tgz", "bz2", "rar", "7z", "xz"])
-reg(FileCode, "text-emerald-500", [
-  "js", "jsx", "ts", "tsx", "py", "go", "rs", "c", "cpp", "h", "hpp", "java", "rb", "php",
-  "sh", "bash", "zsh", "json", "yaml", "yml", "toml", "html", "css", "scss", "sql", "lua",
-])
-reg(FileText, "text-sky-500", ["txt", "log", "csv", "tsv", "pdf", "doc", "docx", "rtf"])
-reg(FileText, "text-sky-400", ["md", "markdown", "mdx"])
-
-function iconFor(entry: FileEntry) {
-  if (entry.dir) return { Icon: Folder, color: "text-sky-500" }
-  const ext = entry.name.split(".").pop()?.toLowerCase() || ""
-  return EXT[ext] || { Icon: FileIcon, color: "text-muted-foreground" }
-}
-
-const joinPath = (dir: string, name: string) => (dir.endsWith("/") ? dir + name : dir + "/" + name)
 
 type Menu = { x: number; y: number; entry: FileEntry | null }
 
@@ -66,13 +42,26 @@ export function FileBrowser() {
   const hosts = useStore((s) => s.hosts)
   const hostLabel = describeHost(currentHost, hosts)
 
-  const [path, setPath] = useState("~")
+  // Where the files come from: the current host ("" — the header's app-wide
+  // choice) or one cloud drive. Passed per call, never stored on the api
+  // client, so no non-file request can ever carry a drive. Pick mode
+  // ("Use this folder" for a session cwd) is host-only — a drive path is not
+  // a directory any session can run in.
+  const [location, setLocation] = useState<Location>(HOST_LOCATION)
+  const [drives, setDrives] = useState<Drive[]>([])
+  const [vendors, setVendors] = useState<string[]>([])
+  const drive = location || undefined
+  const [path, setPath] = useState(START_PATH)
   const [data, setData] = useState<FileListResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showHidden, setShowHidden] = useState(false)
   const [menu, setMenu] = useState<Menu | null>(null)
+  // Delete is a trash MOVE (recoverable on local/remote/drive — the server
+  // never rm -rf's), but a bulk selection still warrants an explicit confirm
+  // before N items (or a whole folder) leave the view.
+  const [confirmTrash, setConfirmTrash] = useState<string[] | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState("")
@@ -95,22 +84,43 @@ export function FileBrowser() {
       setMenu(null)
       lastIdx.current = null
       try {
-        const d = (await api.fs(p, showHidden)) as FileListResponse & { error?: string }
+        const d = (await api.fs(p, showHidden, drive)) as FileListResponse & { error?: string }
         if (d.error) throw new Error(d.error)
         setData(d)
         setPath(d.path)
       } catch (e: any) {
-        setError(e?.message || String(e))
+        setError(userError(e, "this folder"))
       }
       setLoading(false)
     },
-    [showHidden]
+    [showHidden, drive]
   )
 
   useEffect(() => {
     load(path)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showHidden])
+  }, [showHidden, location])
+
+  useEffect(() => {
+    if (fsPick) return
+    api.drives().then((d) => {
+      setDrives(d.drives || [])
+      setVendors(d.vendors || [])
+    }).catch(() => {})
+  }, [fsPick])
+
+  // A selected drive that disappears (removed here or elsewhere) must not keep
+  // rendering as a place — fall back to the host.
+  useEffect(() => {
+    if (!isLiveLocation(location, drives)) changeLocation(HOST_LOCATION)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drives])
+
+  function changeLocation(loc: Location) {
+    if (loc === location) return
+    setLocation(loc)
+    setPath(START_PATH)
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -139,28 +149,16 @@ export function FileBrowser() {
    *  good, so it stays on screen; the message lives in the status bar until
    *  dismissed or the next action. `error` is only for a listing failure. */
   function fail(e: any) {
-    setActionError(e?.message || String(e))
+    setActionError(userError(e, "that action", "finish"))
   }
 
-  /** Fetch first, then save: a bare anchor download would write the server's
-   *  JSON error (404, 413 "over 256 MB") to disk under the archive's name. */
+  /** Fetch first, then save (lib/download): never writes a server error (404,
+   *  413 "over 256 MB") to disk under the archive's name. */
   async function triggerDownload(href: string, filename: string) {
     setActionError(null)
     setBusy("Preparing download…")
     try {
-      const res = await fetch(href)
-      if (!res.ok) {
-        const d = await res.json().catch(() => null)
-        throw new Error(d?.error || `Download failed (HTTP ${res.status})`)
-      }
-      const url = URL.createObjectURL(await res.blob())
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
+      await fetchAndSave(href, filename, (h) => api.getRes(h))
     } catch (e: any) {
       fail(e)
     }
@@ -168,13 +166,13 @@ export function FileBrowser() {
   }
 
   function download(entry: FileEntry) {
-    triggerDownload(api.fsDownload(joinPath(path, entry.name)), entry.name)
+    triggerDownload(api.fsDownload(joinPath(path, entry.name), drive), entry.name)
   }
 
   function downloadZip(names: string[]) {
     if (!names.length) return
     const arc = names.length === 1 ? names[0] + ".zip" : "Archive.zip"
-    triggerDownload(api.fsDownloadZip(path, names), arc)
+    triggerDownload(api.fsDownloadZip(path, names, undefined, drive), arc)
   }
 
   function openEntry(entry: FileEntry) {
@@ -187,7 +185,7 @@ export function FileBrowser() {
     setActionError(null)
     setBusy("Uploading…")
     try {
-      const res = await api.fsUpload(path, files)
+      const res = await api.fsUpload(path, files, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       const failed = (d.uploaded || []).filter((u: any) => u.error)
@@ -205,7 +203,7 @@ export function FileBrowser() {
     setNewName("")
     if (!name) return
     try {
-      const res = await api.fsMkdir({ path, name })
+      const res = await api.fsMkdir({ path, name }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       await load(path)
@@ -219,7 +217,7 @@ export function FileBrowser() {
     const name = value.trim()
     if (!name || name === entry.name) return
     try {
-      const res = await api.fsRename({ path: joinPath(path, entry.name), name })
+      const res = await api.fsRename({ path: joinPath(path, entry.name), name }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       await load(path)
@@ -231,7 +229,7 @@ export function FileBrowser() {
   async function trashMany(names: string[]) {
     try {
       for (const n of names) {
-        const res = await api.fsDelete({ path: joinPath(path, n) })
+        const res = await api.fsDelete({ path: joinPath(path, n) }, drive)
         const d = await res.json()
         if (d.error) throw new Error(d.error)
       }
@@ -247,7 +245,7 @@ export function FileBrowser() {
     setActionError(null)
     setBusy("Compressing…")
     try {
-      const res = await api.fsCompress({ path, names })
+      const res = await api.fsCompress({ path, names }, drive)
       const d = await res.json()
       if (d.error) throw new Error(d.error)
       flash(`Compressed ${names.length} item${names.length === 1 ? "" : "s"} → ${d.created.split("/").pop()}`)
@@ -259,7 +257,7 @@ export function FileBrowser() {
   }
 
   const entries = data?.entries
-    ? [...data.entries].sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+    ? sortEntries(data.entries)
     : []
   const segs = (data?.path || "").split("/").filter(Boolean)
 
@@ -268,7 +266,8 @@ export function FileBrowser() {
     if (e.metaKey || e.ctrlKey) {
       setSelected((prev) => {
         const n = new Set(prev)
-        n.has(entry.name) ? n.delete(entry.name) : n.add(entry.name)
+        if (n.has(entry.name)) n.delete(entry.name)
+        else n.add(entry.name)
         return n
       })
       lastIdx.current = idx
@@ -353,7 +352,18 @@ export function FileBrowser() {
         <div className="flex items-center gap-2 border-b border-border px-3 py-2" data-nomarquee>
           <FolderOpen className="size-4 text-muted-foreground" />
           <span className="text-sm font-medium">{fsPick ? "Pick a folder" : "Files"}</span>
-          <span className="truncate text-xs text-muted-foreground">· {hostLabel}</span>
+          {fsPick ? (
+            <span className="truncate text-xs text-muted-foreground">· {hostLabel}</span>
+          ) : (
+            <LocationPicker
+              value={location}
+              hostLabel={hostLabel}
+              drives={drives}
+              vendors={vendors}
+              onChange={changeLocation}
+              onDrivesChange={setDrives}
+            />
+          )}
           {fsPick && (
             <Button
               size="sm"
@@ -377,6 +387,30 @@ export function FileBrowser() {
             <X className="size-4" />
           </Button>
         </div>
+
+        {confirmTrash && (
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2" data-nomarquee>
+            <span className="min-w-0 flex-1 truncate text-xs">
+              Move {confirmTrash.length === 1 ? `“${confirmTrash[0]}”` : `${confirmTrash.length} items`} to the
+              trash? They stay recoverable there — nothing is permanently deleted.
+            </span>
+            <Button variant="ghost" size="sm" className="h-7 shrink-0" onClick={() => setConfirmTrash(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 shrink-0"
+              onClick={() => {
+                const names = confirmTrash
+                setConfirmTrash(null)
+                trashMany(names)
+              }}
+            >
+              Move to Trash
+            </Button>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 border-b border-border px-2 py-1.5" data-nomarquee>
@@ -598,7 +632,7 @@ export function FileBrowser() {
                     Download as Zip
                   </MenuItem>
                   <div className="my-1 h-px bg-border" />
-                  <MenuItem icon={Trash2} danger onClick={() => { trashMany(selNames); setMenu(null) }}>
+                  <MenuItem icon={Trash2} danger onClick={() => { setMenu(null); setConfirmTrash(selNames) }}>
                     Move {selNames.length} items to Trash
                   </MenuItem>
                 </>
@@ -623,7 +657,7 @@ export function FileBrowser() {
                     Rename
                   </MenuItem>
                   <div className="my-1 h-px bg-border" />
-                  <MenuItem icon={Trash2} danger onClick={() => { trashMany([menu.entry!.name]); setMenu(null) }}>
+                  <MenuItem icon={Trash2} danger onClick={() => { setMenu(null); setConfirmTrash([menu.entry!.name]) }}>
                     Move to Trash
                   </MenuItem>
                 </>
@@ -706,7 +740,7 @@ function MenuItem({
   onClick,
   danger,
 }: {
-  icon: typeof FileIcon
+  icon: typeof Download
   children: React.ReactNode
   onClick: () => void
   danger?: boolean

@@ -18,10 +18,8 @@ exports.shared = {
   // ts-node's ESM loader (it's broken on Node 20 and crashes the run).
   autoCompileOpts: { autoCompile: false },
 
-  // Connect to an Appium 2 server started externally (see run_e2e2.sh). Starting
-  // Appium out-of-band is more reliable than @wdio/appium-service when Appium is
-  // a local (non-global) dependency. Appium 2 serves on base path "/".
+  // The local runner owns Appium's lifecycle; no global Appium service.
   hostname: "127.0.0.1",
-  port: 4723,
+  port: Number(process.env.APPIUM_PORT || 4723),
   path: "/",
 }

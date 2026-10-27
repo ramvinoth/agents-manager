@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
+import { offerUndo } from "../lib/undo"
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   Switch,
   Text,
@@ -10,43 +12,38 @@ import {
 } from "react-native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type Loop, type SessionSummary } from "../api/client"
+import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
+import { HARMAN_LEVELS, LEVEL_NAME, isHarmanLevel } from "../lib/harmanLevel"
+import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
-import { fmtInterval, parseInterval } from "../lib/interval"
+import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
 import { groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
-import { composerPrefs, notifyEveryReply, setComposerPrefs, setNotifyEveryReply } from "../state/config"
+import { notifyEveryReply, setNotifyEveryReply } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
-import { useStyles } from "./styles"
+import JobScheduler, { type JobSchedule } from "../components/JobScheduler"
+import ProviderPicker from "../components/ProviderPicker"
+import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "SessionProfile">
 
-const MODES = [
+const MODES: { v: PermissionMode; label: string }[] = [
   { v: "acceptEdits", label: "Accept edits" },
   { v: "default", label: "Ask" },
   { v: "plan", label: "Plan" },
-  { v: "bypassPermissions", label: "Bypass" },
+  { v: "bypass", label: "Bypass" },
 ]
-const MODELS = [
-  { v: "default", label: "Default model" },
-  { v: "sonnet", label: "Sonnet" },
-  { v: "haiku", label: "Haiku" },
+// "" = no per-chat override: the level of the agent the chat was started from.
+const LEVELS: { v: HarmanLevel | ""; label: string }[] = [
+  { v: "", label: "Agent default" },
+  ...HARMAN_LEVELS.map((v) => ({ v, label: LEVEL_NAME[v] })),
 ]
-
-/**
- * The session's home page — reached by tapping its name in the thread header.
- * Consolidates everything about one session in one place (WhatsApp contact
- * style): its avatar + name at the top, then the controls that used to live in
- * the composer's gear sheet (permission mode, model, system prompt, goal,
- * scheduled loops, notify) plus its read-only stats. Mode/model persist via the
- * global composerPrefs; the rest via /api/session-meta and /api/loops.
- */
 export default function SessionProfileScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
-  const { host, path, sessionId } = route.params
+  const { host, path, sessionId, agent = "claude" } = route.params
   // A stable, always-defined key for the avatar's default glyph + colour.
   const seed = sessionId || path || "session"
 
@@ -55,13 +52,58 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [systemPrompt, setSystemPrompt] = useState("")
   const [goal, setGoal] = useState("")
   const [saved, setSaved] = useState<"systemPrompt" | "goal" | "title" | null>(null)
-  const [mode, setModeState] = useState(composerPrefs().mode)
-  const [model, setModelState] = useState(
-    MODELS.some((m) => m.v === composerPrefs().model) ? composerPrefs().model : "default"
-  )
-  const [loops, setLoops] = useState<Loop[]>([])
-  const [loopPrompt, setLoopPrompt] = useState("")
-  const [loopInterval, setLoopInterval] = useState("1h")
+  const [mode, setModeState] = useState("")
+  const [modeTarget, setModeTarget] = useState("")
+  const [modeLoading, setModeLoading] = useState(true)
+  const [modeSaving, setModeSaving] = useState(false)
+  const [modeError, setModeError] = useState("")
+  const [modeReload, setModeReload] = useState(0)
+  // Harman level: the override stored on the session ("" = none) and the level
+  // that actually applies (override → the agent it was started from → Own work), both from sessionMeta.
+  const [level, setLevel] = useState<HarmanLevel | "">("")
+  const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
+  const [levelSaving, setLevelSaving] = useState(false)
+  const [levelNote, setLevelNote] = useState("")
+  const modeRequest = useRef({ active: false, saving: false })
+  useEffect(() => {
+    const request = { active: true, saving: false }
+    modeRequest.current = request
+    setModeState(""); setModeTarget(""); setModeError(""); setModeSaving(false)
+    setLevel(""); setEffectiveLevel(""); setLevelNote("")
+    const claude = agent === "claude"
+    setModeLoading(claude && !!path)
+    if (path) {
+      // ONE cheap read feeds the profile fields and Trust. session-meta, not
+      // session-detail: the detail also summarises the whole transcript
+      // (seconds on a big chat). A Trust retry re-reads it, which is harmless.
+      api.sessionMeta(host, path).then(meta => {
+        if (!request.active) return
+        setSystemPrompt(meta.systemPrompt || "")
+        setGoal(meta.goal || "")
+        if (meta.avatar) setAvatar(meta.avatar)
+        setPinned(Array.isArray(meta.pinned) ? meta.pinned : [])
+        if (meta.cwd) { setCwd(meta.cwd); loadGit(meta.cwd) }
+        // Skills + MCP tools resolve from the working dir (host-aware).
+        api.capabilities(host, meta.cwd || undefined, path).then(setCaps).catch(() => setCaps({ skills: [], mcp: [] }))
+        if (!claude) return
+        if (!meta.session || typeof meta.permission_mode !== "string") {
+          throw new Error("Server did not return the session permission policy.")
+        }
+        const stored = meta.permission_mode
+        if (stored && !MODES.some(m => m.v === stored)) {
+          throw new Error("Unrecognized server permission policy. Update the app before changing it.")
+        }
+        setModeTarget(meta.session)
+        setModeState(stored)
+        setLevel(isHarmanLevel(meta.level) ? meta.level : "")
+        setEffectiveLevel(isHarmanLevel(meta.effective_level) ? meta.effective_level : "")
+      }).catch(e => {
+        if (request.active && claude) setModeError(e?.message || "Could not load permission policy. Please retry.")
+      }).finally(() => { if (request.active) setModeLoading(false) })
+    }
+    return () => { request.active = false }
+  }, [host, path, sessionId, agent, modeReload])
+  const [jobs, setJobs] = useState<Job[]>([])
   const [notify, setNotify] = useState(notifyEveryReply())
   const [summary, setSummary] = useState<SessionSummary | null>(null)
   // Pinned messages: uuids from session meta, resolved to preview text by parsing
@@ -69,22 +111,46 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [pinned, setPinned] = useState<string[]>([])
   const [pinnedItems, setPinnedItems] = useState<{ uuid: string; text: string }[]>([])
 
-  // Load meta + loops + stats once. A missing session (fresh chat with no path
-  // yet) simply shows empty fields — everything still saves once it exists.
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [aiConfig, setAIConfig] = useState<AIConfig | null>(null)
+  const [aiErrorText, setAIErrorText] = useState("")
+  const [providerPickerOpen, setProviderPickerOpen] = useState(false)
+  const aiScope = { id: sessionId || path, host, agent }
+  useEffect(() => {
+    let alive = true
+    setAIConfig(null)
+    if (!aiScope.id) { setAIErrorText("Session must exist before editing AI settings."); return }
+    api.aiConfig(aiScope).then(config => {
+      if (!config.capabilities || !config.selection) throw new Error("Server update required for AI settings.")
+      if (alive) { setAIConfig(config); setAIErrorText("") }
+    }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
+    return () => { alive = false }
+  }, [sessionId, path, host, agent])
+  // Which collapsible cards are open. Behaviour + Model open by default (the
+  // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
+  // occasional). Stable order + icons = muscle memory.
+  const [open, setOpen] = useState<Record<string, boolean>>({ behaviour: true, model: true })
+  // Git status for the session's working dir (repo·branch·remote·ahead/behind).
+  // null until loaded; {repo:false} when the cwd isn't a git repo (card hidden).
+  const [cwd, setCwd] = useState("")
+  const [git, setGit] = useState<GitStatus | null>(null)
+  // Read-only capabilities (skills + MCP tools) for THIS session's working dir.
+  // Editing lives in the thread's CapabilitiesDrawer — the profile only mirrors,
+  // so there is one CRUD surface, not two. null until the cwd is known + loaded.
+  const [caps, setCaps] = useState<Capabilities | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
+
+  // Load jobs + stats once (meta loads with Trust above). A missing session
+  // (fresh chat with no path yet) simply shows empty fields — everything still
+  // saves once it exists.
   useEffect(() => {
     if (path) {
-      api
-        .sessionMeta(host, path)
-        .then((m) => {
-          setSystemPrompt(m.systemPrompt || "")
-          setGoal(m.goal || "")
-          if (m.avatar) setAvatar(m.avatar)
-          setPinned(Array.isArray(m.pinned) ? m.pinned : [])
-        })
-        .catch(() => {})
       api.sessionSummary(host, path).then(setSummary).catch(() => {})
     }
-    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setLoops(l)).catch(() => {})
+    if (sessionId) api.loops(sessionId).then((l) => Array.isArray(l) && setJobs(l)).catch(() => {})
+    // Saved provider presets are host-independent (they live on the viewer box).
+    api.providers().then((r) => setProviders(r.providers || [])).catch(() => {})
   }, [host, path, sessionId])
 
   // Resolve pinned uuids → preview text by parsing the transcript. Only runs when
@@ -139,30 +205,106 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     flashSaved("title")
   }
 
-  const setMode = (v: string) => {
-    setModeState(v)
-    setComposerPrefs({ mode: v })
+  const setMode = async (v: PermissionMode) => {
+    const request = modeRequest.current
+    if (!request.active || request.saving || !modeTarget || modeLoading || v === mode) return
+    request.saving = true
+    setModeSaving(true); setModeError("")
+    try {
+      const result = await api.sessionModeSet(modeTarget, v)
+      if (!request.active) return
+      if (result.error || result.denied || result.queued) {
+        throw new Error(result.error || result.reason || (result.queued
+          ? "Change queued for owner approval; the saved policy has not changed."
+          : "Permission policy change was denied."))
+      }
+      if (result.session !== modeTarget || result.permission_mode !== v) {
+        throw new Error("Server did not confirm the permission policy. Reload before retrying.")
+      }
+      setModeState(v)
+    } catch (e) {
+      if (request.active) setModeError(e instanceof Error ? e.message : "Could not save permission policy. Please retry.")
+    } finally {
+      request.saving = false
+      if (request.active) setModeSaving(false)
+    }
   }
-  const setModel = (v: string) => {
-    setModelState(v)
-    setComposerPrefs({ model: v })
+  const pickLevel = async (v: HarmanLevel | "") => {
+    const request = modeRequest.current
+    if (!request.active || levelSaving || !modeTarget || modeLoading || v === level) return
+    setLevelSaving(true); setLevelNote("")
+    try {
+      const result = await api.sessionLevelSet(modeTarget, v)
+      if (!request.active) return
+      if (result.queued) { setLevelNote("Sent to the owner for approval; the level has not changed yet."); return }
+      if (result.error || result.denied || result.session !== modeTarget) {
+        throw new Error(result.error || result.reason || "Server did not confirm the level. Reload before retrying.")
+      }
+      setModeReload(n => n + 1) // re-read the effective level the server now resolves
+    } catch (e) {
+      if (request.active) setLevelNote(e instanceof Error ? e.message : "Could not save the level. Please retry.")
+    } finally {
+      if (request.active) setLevelSaving(false)
+    }
   }
-
-  function addLoop() {
-    const prompt = loopPrompt.trim()
-    if (!prompt || !sessionId) return
+  function addJob(prompt: string, schedule: JobSchedule) {
+    if (!sessionId) return
     api
-      .loopsCreate({ session: sessionId, prompt, interval: parseInterval(loopInterval) })
+      .loopsCreate({ session: path || sessionId, prompt, ...schedule })
       .then(() => api.loops(sessionId))
-      .then((l) => Array.isArray(l) && setLoops(l))
+      .then((l) => Array.isArray(l) && setJobs(l))
       .catch(() => {})
-    setLoopPrompt("")
+    setJobSheet(null)
   }
 
-  function removeLoop(id: string) {
-    setLoops((all) => all.filter((l) => l.id !== id)) // optimistic
-    api.loopsDelete(id).catch(() => {})
+  function removeJob(id: string) {
+    Alert.alert(
+      "Delete this scheduled job?",
+      "It stops at its next scheduled run and won't come back. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            setJobs((all) => all.filter((j) => j.id !== id)) // optimistic
+            api.loopsDelete(id).catch(() => {})
+          },
+        },
+      ],
+    )
   }
+
+  // The job sheet: null = closed, "new" = add, else the id of the job being edited.
+  const [jobSheet, setJobSheet] = useState<string | null>(null)
+  const editingJob = jobs.find((j) => j.id === jobSheet)
+  // Edit: update the job via API, then refresh the list.
+  function editJob(id: string, prompt: string, schedule: JobSchedule) {
+    api
+      .loopsEdit({ id, prompt, ...schedule })
+      .then(() => sessionId ? api.loops(sessionId) : [])
+      .then((l) => { if (Array.isArray(l)) setJobs(l) })
+      .catch(() => {})
+    setJobSheet(null)
+  }
+
+  // Pause/resume: flip the loop's enabled flag at once (optimistic + refresh),
+  // with an Undo toast instead of a confirm — it's a flip either way. A
+  // paused loop stops firing (server filters enabled=TRUE); resuming leaves its
+  // nextRun untouched, so an overdue loop fires at most once, not a backlog.
+  function toggleJob(j: Job) {
+    const set = (enabled: boolean) => {
+      setJobs((all) => all.map((x) => (x.id === j.id ? { ...x, enabled } : x)))
+      api.loopsEdit({ id: j.id, enabled })
+        .then(() => sessionId ? api.loops(sessionId) : [])
+        .then((l) => { if (Array.isArray(l)) setJobs(l) })
+        .catch(() => {})
+    }
+    const next = j.enabled === false
+    set(next)
+    offerUndo({ label: next ? "Job resumed" : "Job paused", undo: () => set(!next) })
+  }
+
 
   function toggleNotify(v: boolean) {
     setNotify(v)
@@ -180,18 +322,54 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path, jumpTo: uuid })
   }
 
-  const PillRow = ({ opts, value, onPick, testPrefix }: { opts: { v: string; label: string }[]; value: string; onPick: (v: string) => void; testPrefix: string }) => (
+  // Git: fetch repo/branch/ahead-behind for the session's cwd. Silent on error
+  // (a non-repo cwd returns {repo:false} → card hidden).
+  function loadGit(dir: string) {
+    if (!dir) return
+    api.gitStatus(host, dir).then(setGit).catch(() => setGit({ repo: false }))
+  }
+
+  // Sync: hand the commit→push→rebase instruction to the model in this session.
+  // Mirrors web GitSection's SYNC_PROMPT; the work runs as a normal turn, so we
+  // send + open the thread to watch it.
+  async function doSync() {
+    if (!path || syncing) return
+    setSyncing(true)
+    const prompt = `Sync the current git branch with the remote. In this repo, step by step:
+1. Run \`git status\`. Commit any uncommitted changes with a clear message (leave obviously unrelated junk files alone).
+2. \`git fetch origin\` and determine the default branch (master or main).
+3. Push the current branch to origin (use \`-u\` to set the upstream if it has none).
+4. If the current branch is NOT the default branch, rebase it onto the latest \`origin/<default>\`, resolving any conflicts carefully — read both sides of each conflict and preserve the intent of both changes; never blindly take one side. If the project has a fast build/test command, run it after resolving to sanity-check.
+5. If the rebase rewrote history, push again with \`--force-with-lease\`.
+6. Finish with a short summary: commits made, push result, rebase outcome, and any conflicts you resolved.`
+    try {
+      await api.chat({ message: prompt, path, host, agent: "claude" })
+      navigation.navigate("Thread", { host, label: route.params.label || title || "Chat", path })
+    } catch { /* surfaced in the thread */ }
+    finally { setSyncing(false) }
+  }
+
+  // NOTE: these are render FUNCTIONS, not components — called as {renderPill(...)}
+  // / {renderCard(...)}, not <PillRow/>. Defining a component inside render and
+  // using it as JSX gives it a new identity every keystroke, so React unmounts +
+  // remounts its whole subtree — which drops focus from any TextInput inside
+  // (the "keyboard dismisses on every letter" bug). Plain calls inline instead.
+  const renderPill = <V extends string>(opts: { v: V; label: string }[], value: string, onPick: (v: V) => void, testPrefix: string, what: string, busy: boolean) => (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetPills}>
       {opts.map((m) => {
         const active = value === m.v
         return (
           <TouchableOpacity
-            key={m.v}
-            testID={`${testPrefix}-${m.v}`}
-            style={[styles.sheetPill, active ? styles.sheetPillActive : null]}
+            key={m.v || "default"}
+            testID={`${testPrefix}-${m.v || "default"}`}
+            disabled={modeLoading || busy || !modeTarget}
+            accessibilityRole="button"
+            accessibilityLabel={`${m.label} ${what} for future runs`}
+            accessibilityState={{ selected: active, disabled: modeLoading || busy || !modeTarget }}
+            style={[styles.sheetPill, { minHeight: 44 }, active ? styles.sheetPillActive : null]}
             onPress={() => onPick(m.v)}
           >
-            {active ? <Icon name="check" size={14} color="#fff" /> : null}
+            {active ? <Icon name="check" size={14} color={t.onAccent} /> : null}
             <Text style={[styles.sheetPillText, active ? styles.sheetPillTextActive : null]}>{m.label}</Text>
           </TouchableOpacity>
         )
@@ -203,18 +381,49 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const maxTool = tools.length ? tools[0].count : 1
   const dur = summary ? durationBetween(summary.startTime, summary.endTime) : ""
 
+  // A collapsible settings card: a stable icon + title + one-line summary of the
+  // current value (so you can read state WITHOUT opening it — the muscle-memory
+  // shortcut), tapping reveals the controls. `k` keys its open/closed state.
+  const renderCard = (k: string, icon: string, title: string, sub: string | undefined, children: React.ReactNode) => {
+    const isOpen = !!open[k]
+    return (
+      <View style={styles.spCard}>
+        <TouchableOpacity testID={`sp-card-${k}`} activeOpacity={0.7} style={styles.spCardHead} onPress={() => toggle(k)}>
+          <View style={styles.spCardIcon}>
+            <Icon name={icon as never} size={17} color={t.accent} />
+          </View>
+          <View style={styles.flex1}>
+            <Text style={styles.spCardTitle}>{title}</Text>
+            {sub ? <Text style={styles.spCardSummary} numberOfLines={1}>{sub}</Text> : null}
+          </View>
+          <Icon name={isOpen ? "chevronDown" : "chevronRight"} size={18} color={t.textMuted} />
+        </TouchableOpacity>
+        {isOpen ? <View style={styles.spCardBody}>{children}</View> : null}
+      </View>
+    )
+  }
+
+  // One-line value summaries shown on each card header (read state without opening).
+  const modeLabel = modeLoading ? "Loading…" : MODES.find((m) => m.v === mode)?.label || (modeTarget ? "No saved policy" : "Unavailable")
+  const trustLabel = effectiveLevel && !modeLoading ? `${modeLabel} · ${LEVEL_NAME[effectiveLevel]}` : modeLabel
+
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: t.bg }}
-      contentContainerStyle={{ paddingBottom: 48 }}
+      style={styles.page}
+      contentContainerStyle={styles.spContent}
       keyboardShouldPersistTaps="handled"
+      // Pad the scroll content by the keyboard height and scroll the focused
+      // TextInput into view, so an open keyboard never overlaps the System
+      // Prompt / Goal / Job / provider inputs near the bottom of the page.
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="interactive"
     >
       {/* Identity: big avatar + editable name. */}
       <View style={styles.spHeader}>
         <Avatar avatar={avatar} seed={seed} size={92} />
         <TextInput
           testID="sp-title"
-          style={[styles.spTitleInput, { color: t.text, borderColor: t.border }]}
+          style={styles.spTitleInput}
           value={title}
           onChangeText={setTitle}
           onBlur={saveTitle}
@@ -226,174 +435,298 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {saved === "title" ? <Text style={styles.ssSaved}>Saved</Text> : null}
       </View>
 
-      {/* Avatar picker: 20 emoji in a wrapping grid. */}
-      <Text style={styles.sheetSection}>AVATAR</Text>
-      <View style={styles.spAvatarGrid}>
-        {AVATARS.map((a) => {
-          const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
-          return (
-            <TouchableOpacity
-              key={a}
-              testID={`sp-avatar-${a}`}
-              onPress={() => pickAvatar(a)}
-              style={[styles.spAvatarCell, on ? { borderColor: t.accent, backgroundColor: t.accent + "1A" } : { borderColor: t.border }]}
-            >
-              <Text style={{ fontSize: 24 }}>{a}</Text>
+      <TouchableOpacity testID="sp-ai-row" style={styles.spCard} onPress={() => setProviderPickerOpen(true)} disabled={!aiConfig?.capabilities.editable}>
+        <View style={styles.spAiBody}>
+          <Text style={styles.spCardTitle}>AI for this chat</Text>
+          <Text style={[styles.sheetHint, styles.spHintGap]}>{aiConfig ? aiSummary(aiConfig.selection, providers) : aiErrorText || "Loading AI settings…"}</Text>
+          <Text style={styles.sheetHint}>Changes apply to future runs, not a response already in progress.</Text>
+          {aiConfig?.issue ? <Text style={styles.sheetHint}>{aiConfig.issue}</Text> : null}
+        </View>
+      </TouchableOpacity>
+      {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={aiScope} providers={providers} title="AI for this chat" onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
+      {agent === "claude" ? renderCard("behaviour", "settings", "Trust", trustLabel, <>
+        <Text style={styles.sheetSection}>PERMISSION POLICY · CLAUDE CODE TOOLS</Text>
+        <Text style={styles.sheetHint}>Saved on the server for future chat and scheduled runs, across devices. Does not change a run already in progress.</Text>
+        <Text style={styles.sheetHint}>Ask follows configured tool rules. Accept edits allows file edits. Plan restricts changes. Bypass skips ordinary tool prompts; explicit restrictions and human decisions still apply. This governs the harness's own tools (shell, file edits) only; the Harman level below is separate.</Text>
+        {!mode && modeTarget ? <Text style={styles.sheetHint}>No saved policy. Each launch uses its requested mode; scheduled runs request Accept edits.</Text> : null}
+        {!sessionId && !path ? <Text style={styles.sheetHint}>Start the chat before setting its permission policy.</Text> : null}
+        {renderPill(MODES, mode, setMode, "sp-mode", "permission policy", modeSaving)}
+        {modeLoading || modeSaving ? <Text style={styles.sheetHint}>{modeSaving ? "Saving…" : "Loading policy…"}</Text> : null}
+        {modeError ? <>
+          <Text testID="sp-mode-error" accessibilityRole="alert" style={styles.sheetHint}>{modeError}</Text>
+          <TouchableOpacity testID="sp-mode-retry" accessibilityRole="button" disabled={modeLoading || modeSaving} onPress={() => setModeReload(n => n + 1)} style={styles.spRetry}>
+            <Text style={styles.spLink}>Reload policy</Text>
+          </TouchableOpacity>
+        </> : null}
+        <Text style={[styles.sheetSection, styles.spSectionGap]}>BOARD AUTHORITY · HOW FAR IT ACTS ALONE</Text>
+        <Text style={styles.sheetHint}>How far this chat may reach with no approval from you, enforced by the Harman server for any harness. Own work — its own cards, notes and messages. Workspace — also projects, columns and scheduled loops. Organization — also org-wide settings. Asks above its level wait for your approval instead of failing, and anything destructive or paid always asks you, whatever the level.</Text>
+        {renderPill(LEVELS, level, pickLevel, "sp-level", "Board authority", levelSaving)}
+        {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting at {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</Text> : null}
+        {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}
+        {levelNote ? <Text testID="sp-level-note" accessibilityRole="alert" style={styles.sheetHint}>{levelNote}</Text> : null}
+      </>) : null}
+
+      {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}
+      {git?.repo ? renderCard("git", "fork", "Git",
+        `${git.name || "repo"} · ${git.branch || "?"}`,
+        <>
+          <View style={styles.ssRow}>
+            <View style={styles.flex1}>
+              <Text style={styles.ssRowLabel}>{git.name || "repo"}</Text>
+              <Text style={styles.ssRowHint} numberOfLines={1}>{git.branch || "?"}{git.remote ? ` · ${git.remote}` : ""}</Text>
+            </View>
+            <TouchableOpacity testID="sp-git-refresh" onPress={() => loadGit(cwd)} hitSlop={8}>
+              <Icon name="repeat" size={16} color={t.textMuted} />
             </TouchableOpacity>
+          </View>
+          <View style={styles.spGitStats}>
+            {(git.dirty ?? 0) > 0 ? (
+              <Text style={styles.spGitDirty}>{git.dirty} change{git.dirty === 1 ? "" : "s"}</Text>
+            ) : null}
+            {git.ahead != null && git.ahead > 0 ? <Text style={styles.spGitStat}>↑{git.ahead}</Text> : null}
+            {git.behind != null && git.behind > 0 ? <Text style={styles.spGitStat}>↓{git.behind}</Text> : null}
+            {(git.dirty ?? 0) === 0 && !git.ahead && !git.behind ? <Text style={styles.spGitStat}>Up to date</Text> : null}
+          </View>
+          <TouchableOpacity
+            testID="sp-git-sync"
+            disabled={syncing}
+            onPress={doSync}
+            style={[styles.spSyncBtn, syncing ? styles.dimmed : null]}
+          >
+            <Icon name="repeat" size={15} color={t.onAccent} />
+            <Text style={styles.spSyncText}>{syncing ? "Syncing…" : "Sync branch"}</Text>
+          </TouchableOpacity>
+          <Text style={[styles.sheetHint, styles.spHintGap]}>Asks the agent to commit, push, and safely rebase this branch onto the default branch.</Text>
+        </>) : null}
+
+      {/* ── CAPABILITIES: skills + MCP tools for this session's cwd (read-only
+          mirror; tap opens the full editor). Answers "what can THIS session
+          actually do" without leaving its home page. ── */}
+      {renderCard("capabilities", "tool", "Skills & tools",
+        caps ? `${caps.skills.length} skill${caps.skills.length === 1 ? "" : "s"} · ${caps.mcp.length} MCP` : "Loading…",
+        <>
+          {cwd ? (
+            <View style={styles.ssRow}>
+              <View style={styles.flex1}>
+                <Text style={styles.ssRowLabel}>Working dir</Text>
+                <Text style={styles.ssRowHint} numberOfLines={1}>{cwd}</Text>
+              </View>
+            </View>
+          ) : null}
+          {caps && caps.skills.length ? (
+            <>
+              <Text style={styles.sheetSection}>SKILLS</Text>
+              {caps.skills.slice(0, 8).map((s) => (
+                <View key={s.path} style={styles.ssListRow}>
+                  <Icon name="sparkle" size={14} color={t.accent} />
+                  <Text style={styles.ssListText} numberOfLines={1}>/{s.name}</Text>
+                  <Text style={styles.capBadge}>{s.source}</Text>
+                </View>
+              ))}
+              {caps.skills.length > 8 ? (
+                <Text style={styles.sheetHint}>+{caps.skills.length - 8} more</Text>
+              ) : null}
+            </>
+          ) : null}
+          {caps && caps.mcp.length ? (
+            <>
+              <Text style={styles.sheetSection}>MCP TOOLS</Text>
+              {caps.mcp.slice(0, 8).map((m) => (
+                <View key={`${m.scope}:${m.name}`} style={styles.ssListRow}>
+                  <Icon name="tool" size={14} color={t.textMuted} />
+                  <Text style={styles.ssListText} numberOfLines={1}>{m.name}</Text>
+                  <Text style={styles.capBadge}>{m.scope}</Text>
+                </View>
+              ))}
+              {caps.mcp.length > 8 ? (
+                <Text style={styles.sheetHint}>+{caps.mcp.length - 8} more</Text>
+              ) : null}
+            </>
+          ) : null}
+          {caps && !caps.skills.length && !caps.mcp.length ? (
+            <Text style={styles.sheetHint}>No skills or MCP tools resolved for this working dir.</Text>
+          ) : null}
+          <TouchableOpacity
+            testID="sp-capabilities-manage"
+            onPress={() => navigation.navigate("Capabilities", { host, cwd, session: path, title })}
+            style={styles.spManage}
+          >
+            <Icon name="settings" size={15} color={t.accent} />
+            <Text style={styles.spManageText}>Manage skills & tools</Text>
+          </TouchableOpacity>
+        </>)}
+
+      {renderCard("notifications", "info", "Notifications", "This device", <>
+        <View style={styles.ssRow}>
+          <View style={styles.flex1}>
+            <Text style={styles.ssRowLabel}>Notify every reply</Text>
+            <Text style={styles.ssRowHint}>Get a notification each time the agent finishes a turn.</Text>
+          </View>
+          <Switch
+            testID="sp-notify"
+            value={notify}
+            onValueChange={toggleNotify}
+            trackColor={{ true: t.accent, false: t.border }}
+          />
+        </View>
+      </>)}
+
+      {/* ── PERSONA: system prompt + goal (collapsed — set once, revisited rarely). ── */}
+      {renderCard("persona", "user", "Persona & goal", systemPrompt || goal ? "Custom instructions set" : "Default behaviour", <>
+        <Text style={styles.sheetSection}>
+          SYSTEM PROMPT {saved === "systemPrompt" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
+        </Text>
+        <TextInput
+          testID="sp-system-prompt"
+          style={[styles.ssInput, styles.ssMultiline]}
+          value={systemPrompt}
+          onChangeText={setSystemPrompt}
+          onBlur={() => saveMeta("systemPrompt", systemPrompt)}
+          placeholder="Add instructions for this session…"
+          placeholderTextColor={t.textMuted}
+          multiline
+        />
+        <Text style={styles.sheetSection}>
+          GOAL {saved === "goal" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
+        </Text>
+        <TextInput
+          testID="sp-goal"
+          style={styles.ssInput}
+          value={goal}
+          onChangeText={setGoal}
+          onBlur={() => saveMeta("goal", goal)}
+          placeholder="What is this session for?"
+          placeholderTextColor={t.textMuted}
+        />
+      </>)}
+
+      {/* ── AUTOMATION: scheduled jobs (collapsed). ── */}
+      {renderCard("automation", "repeat", "Scheduled jobs", jobs.length ? `${jobs.length} active` : "None", <>
+        {jobs.map((j) => {
+          const paused = j.enabled === false
+          return (
+          <View key={j.id}>
+            <TouchableOpacity
+              testID={`sp-job-${j.id}`}
+              style={styles.ssJobRow}
+              activeOpacity={0.65}
+              onPress={() => setJobSheet(j.id)}
+            >
+              <View style={[styles.flex1, paused ? styles.faded : null]}>
+                <Text style={styles.ssJobPrompt} numberOfLines={2}>{j.prompt}</Text>
+                <View style={styles.spJobMeta}>
+                  <Text style={styles.ssJobSchedule}>{describeSchedule(j)}</Text>
+                  {j.provider ? (
+                    <Text style={styles.ssJobSchedule}>· {providers.find((p) => p.id === j.provider)?.name || "Custom"}</Text>
+                  ) : null}
+                  {paused ? (
+                    <Text style={styles.ssJobNext}>Paused</Text>
+                  ) : j.nextRun && j.kind !== "once" ? (
+                    <Text style={styles.ssJobNext}>Next: {fmtNextRun(j.nextRun)}</Text>
+                  ) : null}
+                </View>
+              </View>
+              <TouchableOpacity
+                testID={`sp-job-toggle-${j.id}`}
+                onPress={() => toggleJob(j)}
+                hitSlop={8}
+              >
+                <Icon name={paused ? "play" : "pause"} size={15} color={paused ? t.accent : t.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity testID={`sp-job-del-${j.id}`} onPress={() => removeJob(j.id)}>
+                <Icon name="trash" size={15} color={t.danger} />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
           )
         })}
-      </View>
+        <TouchableOpacity testID="sp-job-new" style={[styles.ssAddBtn, styles.spAddJob]} onPress={() => setJobSheet("new")}>
+          <Text style={styles.ssAddBtnText}>Add job</Text>
+        </TouchableOpacity>
+        <JobScheduler
+          visible={jobSheet !== null}
+          styles={styles}
+          providers={providers}
+          initialValues={editingJob ? { prompt: editingJob.prompt, cron: editingJob.cron, interval: editingJob.interval, kind: editingJob.kind, nextRun: editingJob.nextRun, provider: editingJob.provider } : undefined}
+          onClose={() => setJobSheet(null)}
+          // A job deleted while its sheet was open is dropped, never re-created.
+          onSubmit={(prompt, schedule) => jobSheet === "new" ? addJob(prompt, schedule) : editingJob ? editJob(editingJob.id, prompt, schedule) : setJobSheet(null)}
+        />
+      </>)}
 
-      {/* Pinned messages: tap to jump back into the thread at that message. */}
+      {/* ── PINNED messages (collapsed; only shown when present). ── */}
       {pinnedItems.length ? (
-        <>
-          <Text style={styles.sheetSection}>PINNED MESSAGES</Text>
+        renderCard("pinned", "pin", "Pinned messages", `${pinnedItems.length} pinned`, <>
           {pinnedItems.map((p) => (
-            <View key={p.uuid} style={styles.ssLoopRow}>
+            <View key={p.uuid} style={styles.ssListRow}>
               <Icon name="pin" size={14} color={t.accent} />
-              <TouchableOpacity style={{ flex: 1 }} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
-                <Text style={[styles.ssLoopPrompt, { color: t.text }]} numberOfLines={2}>
-                  {p.text || "(no text)"}
-                </Text>
+              <TouchableOpacity style={styles.flex1} testID={`sp-pinned-${p.uuid}`} onPress={() => openPinned(p.uuid)}>
+                <Text style={styles.ssListText} numberOfLines={2}>{p.text || "(no text)"}</Text>
               </TouchableOpacity>
               <TouchableOpacity testID={`sp-pinned-del-${p.uuid}`} onPress={() => unpin(p.uuid)}>
                 <Icon name="close" size={15} color={t.textMuted} />
               </TouchableOpacity>
             </View>
           ))}
-        </>
+        </>)
       ) : null}
 
-      {/* Per-message controls (moved out of the composer gear). */}
-      <Text style={styles.sheetSection}>PERMISSION MODE</Text>
-      <Text style={styles.sheetHint}>Ask prompts you per tool. Accept edits runs file changes without asking.</Text>
-      <PillRow opts={MODES} value={mode} onPick={setMode} testPrefix="sp-mode" />
-
-      <Text style={styles.sheetSection}>MODEL</Text>
-      <PillRow opts={MODELS} value={model} onPick={setModel} testPrefix="sp-model" />
-
-      <View style={styles.ssRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.ssRowLabel}>Notify every reply</Text>
-          <Text style={styles.ssRowHint}>Get a notification each time the agent finishes a turn.</Text>
+      {/* ── APPEARANCE: avatar picker (collapsed — cosmetic). ── */}
+      {renderCard("appearance", "star", "Appearance", avatar ? "Custom avatar" : "Auto avatar", <>
+        <View style={styles.spAvatarGrid}>
+          {AVATARS.map((a) => {
+            const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
+            return (
+              <TouchableOpacity
+                key={a}
+                testID={`sp-avatar-${a}`}
+                onPress={() => pickAvatar(a)}
+                style={[styles.spAvatarCell, on ? styles.spAvatarCellOn : null]}
+              >
+                <Text style={styles.spAvatarGlyph}>{a}</Text>
+              </TouchableOpacity>
+            )
+          })}
         </View>
-        <Switch
-          testID="sp-notify"
-          value={notify}
-          onValueChange={toggleNotify}
-          trackColor={{ true: t.accent, false: t.border }}
-        />
-      </View>
+      </>)}
 
-      <Text style={styles.sheetSection}>
-        SYSTEM PROMPT {saved === "systemPrompt" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
-      </Text>
-      <TextInput
-        testID="sp-system-prompt"
-        style={[styles.ssInput, styles.ssMultiline]}
-        value={systemPrompt}
-        onChangeText={setSystemPrompt}
-        onBlur={() => saveMeta("systemPrompt", systemPrompt)}
-        placeholder="Add instructions for this session…"
-        placeholderTextColor={t.textMuted}
-        multiline
-      />
-
-      <Text style={styles.sheetSection}>
-        GOAL {saved === "goal" ? <Text style={styles.ssSaved}>· Saved</Text> : null}
-      </Text>
-      <TextInput
-        testID="sp-goal"
-        style={styles.ssInput}
-        value={goal}
-        onChangeText={setGoal}
-        onBlur={() => saveMeta("goal", goal)}
-        placeholder="What is this session for?"
-        placeholderTextColor={t.textMuted}
-      />
-
-      <Text style={styles.sheetSection}>LOOPS</Text>
-      {loops.map((l) => (
-        <View key={l.id} style={styles.ssLoopRow}>
-          <Icon name="repeat" size={14} color={t.textMuted} />
-          <Text style={styles.ssLoopPrompt} numberOfLines={1}>
-            {l.prompt}
-          </Text>
-          <Text style={styles.ssLoopInterval}>{fmtInterval(l.interval)}</Text>
-          <TouchableOpacity testID={`sp-loop-del-${l.id}`} onPress={() => removeLoop(l.id)}>
-            <Icon name="trash" size={15} color={t.danger} />
-          </TouchableOpacity>
-        </View>
-      ))}
-      <TextInput
-        testID="sp-loop-prompt"
-        style={[styles.ssInput, styles.ssMultiline]}
-        value={loopPrompt}
-        onChangeText={setLoopPrompt}
-        placeholder="Prompt to run on a schedule…"
-        placeholderTextColor={t.textMuted}
-        multiline
-      />
-      <View style={styles.ssLoopAddRow}>
-        <Text style={{ color: t.textMuted, fontSize: 12 }}>Every</Text>
-        <TextInput
-          testID="sp-loop-interval"
-          style={styles.ssLoopIntervalInput}
-          value={loopInterval}
-          onChangeText={setLoopInterval}
-          placeholder="1h"
-          placeholderTextColor={t.textMuted}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity
-          testID="sp-loop-add"
-          style={[styles.ssAddBtn, { opacity: loopPrompt.trim() ? 1 : 0.5 }]}
-          disabled={!loopPrompt.trim()}
-          onPress={addLoop}
-        >
-          <Text style={styles.ssAddBtnText}>Add loop</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Read-only stats (formerly the separate Session info screen). */}
+      {/* ── STATS: read-only (collapsed). ── */}
       {summary ? (
-        <>
-          <Text style={styles.sheetSection}>STATS</Text>
+        renderCard("stats", "info", "Stats", `${compactNumber(summary.userMessages + summary.assistantMessages)} messages`, <>
           <View style={styles.statGrid}>
-            <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} t={t} />
-            <Stat label="You" value={compactNumber(summary.userMessages)} t={t} />
-            <Stat label="Agent" value={compactNumber(summary.assistantMessages)} t={t} />
-            <Stat label="Tokens in" value={compactNumber(summary.totalInput)} t={t} />
-            <Stat label="Tokens out" value={compactNumber(summary.totalOutput)} t={t} />
-            {dur ? <Stat label="Duration" value={dur} t={t} /> : null}
+            <Stat label="Messages" value={compactNumber(summary.userMessages + summary.assistantMessages)} />
+            <Stat label="You" value={compactNumber(summary.userMessages)} />
+            <Stat label="Agent" value={compactNumber(summary.assistantMessages)} />
+            <Stat label="Tokens in" value={compactNumber(summary.totalInput)} />
+            <Stat label="Tokens out" value={compactNumber(summary.totalOutput)} />
+            {dur ? <Stat label="Duration" value={dur} /> : null}
           </View>
           {summary.models?.length ? (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: 16, marginTop: 4 }}>
+            <View style={styles.spModels}>
+              <Text style={styles.sheetHint}>Models observed in transcript (historical)</Text>
               {summary.models.map((m) => (
-                <View key={m} style={[styles.pill, { backgroundColor: t.chipBg, marginLeft: 0 }]}>
-                  <Text style={[styles.pillText, { color: t.text }]}>{shortModel(m)}</Text>
+                <View key={m} style={[styles.pill, styles.spModelPill]}>
+                  <Text style={styles.pillText}>{shortModel(m)}</Text>
                 </View>
               ))}
             </View>
           ) : null}
           {tools.length ? (
-            <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+            <View style={styles.spTools}>
               {tools.map((tool) => (
                 <View key={tool.name} style={styles.toolBarRow}>
-                  <Text style={[styles.toolBarName, { color: t.text }]} numberOfLines={1}>
-                    {tool.name}
-                  </Text>
-                  <View style={[styles.toolBarTrack, { backgroundColor: t.chipBg }]}>
+                  <Text style={styles.toolBarName} numberOfLines={1}>{tool.name}</Text>
+                  <View style={styles.toolBarTrack}>
                     <View style={[styles.toolBarFill, { width: `${Math.max(4, (tool.count / maxTool) * 100)}%` }]} />
                   </View>
-                  <Text style={[styles.toolBarCount, { color: t.textMuted }]}>{tool.count}</Text>
+                  <Text style={styles.toolBarCount}>{tool.count}</Text>
                 </View>
               ))}
             </View>
           ) : null}
-        </>
+        </>)
       ) : path ? (
-        <View style={{ padding: 16 }}>
+        <View style={styles.spAiBody}>
           <ActivityIndicator size="small" color={t.textMuted} />
         </View>
       ) : null}
@@ -401,12 +734,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   )
 }
 
-function Stat({ label, value, t }: { label: string; value: string; t: { text: string; textMuted: string; chipBg: string } }) {
+function Stat({ label, value }: { label: string; value: string }) {
   const styles = useStyles()
   return (
-    <View style={[styles.statCard, { backgroundColor: t.chipBg }]}>
-      <Text style={[styles.statValue, { color: t.text }]}>{value}</Text>
-      <Text style={[styles.statLabel, { color: t.textMuted }]}>{label}</Text>
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   )
 }

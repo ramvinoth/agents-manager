@@ -16,8 +16,18 @@ export function fmtTokens(n: number): string {
   return n + ""
 }
 
+/** 512 → "512 B", 9067 → "8.9 KB", 3e6 → "2.9 MB" — same rule as mobile's humanSize. */
 export function fmtBytes(b: number): string {
-  return (b / 1048576).toFixed(1) + " MB"
+  if (!Number.isFinite(b) || b < 0) return ""
+  if (b < 1024) return `${b} B`
+  const units = ["KB", "MB", "GB", "TB"]
+  let v = b / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
 }
 
 export function fmtDuration(ms: number): string {
@@ -47,6 +57,31 @@ export function parseInterval(text: string): number {
     secs = m[2] === "h" ? n * 3600 : m[2] === "m" ? n * 60 : m[2] === "s" ? n : n
   }
   return Math.min(86400, Math.max(30, secs))
+}
+
+/** ISO 8601 with this browser's UTC offset (never "Z"), e.g.
+ *  "2026-09-27T09:00:00-07:00" — the user picked a wall-clock time here, and the
+ *  offset makes it the same instant on a server in any timezone. */
+export function toIsoWithOffset(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? "+" : "-"
+  const abs = Math.abs(off)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+}
+
+/** The value an <input type="datetime-local"> wants for a Date: local wall-clock, minute resolution. */
+export function toDatetimeLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** Short local rendering of an epoch-seconds fire time, e.g. "Sep 27, 9:00 AM". */
+export function fmtWhen(epoch: number): string {
+  return new Date(epoch * 1000).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
 }
 
 /** Final path segment (the project/dir name) from a full directory path. */
