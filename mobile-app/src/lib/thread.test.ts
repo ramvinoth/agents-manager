@@ -172,4 +172,15 @@ test("fmtDate labels today, yesterday, and older dates", () => {
   assert.ok(old && old !== "Today" && old !== "Yesterday")
 })
 
+test("the server's auto-resume folds into the reply it continues", () => {
+  const items = groupThread(parseTranscript([
+    line({ type: "user", uuid: "1", message: { content: "build it" } }),
+    line({ type: "assistant", uuid: "2", message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: {} }] } }),
+    line({ type: "user", uuid: "3", message: { content: [{ type: "text", text: "Your last turn was cut off mid-way (restart). Finish it." }] } }),
+    line({ type: "assistant", uuid: "4", message: { content: [{ type: "text", text: "done" }] } }),
+  ]))
+  assert.deepEqual(items.map((i) => i.kind), ["user", "exchange"])
+  assert.deepEqual((items[1] as any).steps.map((b: any) => b.kind), ["tool", "resume"])
+})
+
 console.log(`${passed} passing`)

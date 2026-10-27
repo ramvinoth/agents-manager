@@ -61,5 +61,20 @@ eq("the summary is not counted as a user message", sp.stats.userMessages, 1)
 const arr = new SessionParser().ingest(JSON.stringify({ type: "user", uuid: "9", isCompactSummary: true, message: { content: [{ type: "text", text: "s" }] } }))?.turn
 eq("array-content summary", arr?.type === "assistant" && arr.blocks[0], { type: "compact", summary: "s" })
 
+// --- the server's auto-resume folds into the reply it continues ---
+const rp = new SessionParser()
+const rr = (o: object) => rp.ingest(JSON.stringify(o))?.turn
+const resumed = groupExchanges([
+  rr({ type: "user", uuid: "1", message: { role: "user", content: "build it" } }),
+  rr({ type: "assistant", uuid: "2", message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: {} }] } }),
+  rr({ type: "user", uuid: "3", message: { role: "user", content: [{ type: "text", text: "Your last turn was cut off mid-way (restart). Finish it." }] } }),
+  rr({ type: "assistant", uuid: "4", message: { content: [{ type: "text", text: "done" }] } }),
+].filter((t): t is Turn => !!t))
+eq("resume leaves one user message and one reply", resumed.map((x) => x.type), ["user", "exchange"])
+eq("the resume is a step", (resumed[1] as Exchange).steps.map((b) => b.type), ["tool_use", "resume"])
+eq("the resume is not counted as a user message", rp.stats.userMessages, 1)
+const quoted = new SessionParser().ingest(JSON.stringify({ type: "user", uuid: "9", message: { content: "why did it say Your last turn was cut off mid-way?" } }))?.turn
+eq("a user quoting the prompt mid-message stays a user message", quoted?.type, "user")
+
 console.log(`exchange: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)
