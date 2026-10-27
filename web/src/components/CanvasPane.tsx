@@ -15,6 +15,10 @@ import { sessionIdOf } from "@/store/helpers"
 import { useStore } from "@/store"
 import { cn } from "@/lib/utils"
 import type { OpenDecision } from "@/lib/types"
+import { callSaid, type FoundCall } from "@/lib/decisionAnchors"
+
+/** Scroll the chat to the turn that raised d: "shown", "missing", or the far-back call it found. */
+type ShowInChat = (d: OpenDecision) => Promise<"shown" | "missing" | FoundCall>
 
 const KIND_ICON: Record<CanvasKind, LucideIcon> = {
   markdown: FileText,
@@ -32,11 +36,12 @@ function typingIn(el: EventTarget | null): boolean {
 /** "Needs you": this chat's open decisions, each linked to the turn that raised it.
  *  Show in chat scrolls the transcript there (like an excerpt card jumping to its
  *  passage); Decide opens the cockpit — the one place a decision is made. */
-function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInChat: (d: OpenDecision) => Promise<boolean> }) {
+function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInChat: ShowInChat }) {
   const loadNeeds = useStore((s) => s.loadNeeds)
   // The cockpit walks a frozen copy, so the 30s poll never moves the item being read.
   const [cockpit, setCockpit] = useState<{ snapshot: OpenDecision[]; at: number } | null>(null)
-  const [miss, setMiss] = useState<string | null>(null)
+  // Why Show in chat could not scroll: not in this chat at all, or too far up to page in.
+  const [miss, setMiss] = useState<{ key: string; far?: FoundCall } | null>(null)
   // A long chat pages its history in to find the turn — seconds, so say so.
   const [finding, setFinding] = useState<string | null>(null)
 
@@ -44,7 +49,8 @@ function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInCha
     setMiss(null)
     setFinding(key)
     try {
-      if (!(await onShowInChat(d))) setMiss(key)
+      const r = await onShowInChat(d)
+      if (r !== "shown") setMiss({ key, far: r === "missing" ? undefined : r })
     } finally {
       setFinding(null)
     }
@@ -78,12 +84,14 @@ function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInCha
                   onClick={() => setCockpit({ snapshot: needs, at: i })}>
                   Decide
                 </Button>
-                {miss === key && (
-                  <span className="min-w-0 truncate px-1 text-xs text-muted-foreground" role="status">
-                    Not in this chat's history — it was raised outside the chat (e.g. on the board).
-                  </span>
-                )}
               </div>
+              {miss?.key === key && (
+                <p className="line-clamp-4 border-t border-border px-2 py-1.5 text-xs text-muted-foreground" role="status">
+                  {miss.far
+                    ? <>Raised {miss.far.timestamp ? fmtAgo(Date.parse(miss.far.timestamp) / 1000) : "earlier"} in this chat — too far back to scroll to. It said: <span className="text-foreground">“{callSaid(miss.far)}”</span></>
+                    : "Not in this chat's history — it was raised outside the chat (e.g. on the board)."}
+                </p>
+              )}
             </li>
           )
         })}
@@ -103,7 +111,7 @@ function NeedsList({ needs, onShowInChat }: { needs: OpenDecision[]; onShowInCha
 /** The canvas pane: what the agent chose to SHOW, beside the chat. Tabs per
  *  canvas; the owner reads, replies about it, saves it as a note, or deletes it.
  *  This chat's open decisions pin first as "Needs you". */
-export function CanvasPane({ onShowInChat }: { onShowInChat: (d: OpenDecision) => Promise<boolean> }) {
+export function CanvasPane({ onShowInChat }: { onShowInChat: ShowInChat }) {
   const canvases = useStore((s) => s.canvases)
   const active = useStore((s) => s.canvasActive)
   const path = useStore((s) => s.currentSessionPath)

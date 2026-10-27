@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import type { OpenDecision } from "@/lib/types"
+import type { Card, OpenDecision } from "@/lib/types"
 import { DecisionCockpit } from "./DecisionCockpit"
 import { DecisionRowContent } from "./DecisionRow"
 import { userError } from "@/lib/errors"
@@ -22,10 +22,10 @@ import { userError } from "@/lib/errors"
  */
 export function DecisionsBand({
   onOpenSession,
-  onOpenCard,
+  onCardChange,
 }: {
   onOpenSession?: (d: OpenDecision) => boolean
-  onOpenCard?: (id: number) => Promise<boolean>
+  onCardChange?: (card: Card) => void
 }) {
   const [items, setItems] = useState<OpenDecision[] | null>(null)
   const [err, setErr] = useState("")
@@ -109,7 +109,7 @@ export function DecisionsBand({
           onClose={() => setCockpit(null)}
           onResolved={load}
           onOpenSession={onOpenSession && ((d) => { const ok = onOpenSession(d); if (ok) setCockpit(null); return ok })}
-          onOpenCard={onOpenCard}
+          onCardChange={onCardChange}
         />
       )}
     </div>
