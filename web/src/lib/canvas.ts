@@ -107,3 +107,23 @@ export function themedHtml(content: string, theme: { bg: string; fg: string; dar
   if (i < 0) i = 0
   return content.slice(0, i) + base + content.slice(i)
 }
+
+/** The pane's width bounds beside the chat (wide screens only; narrow screens use a full sheet). */
+export const CANVAS_MIN_W = 280
+/** The chat keeps at least this much room. */
+export const CANVAS_CHAT_MIN_W = 360
+/** Dragged narrower than this, the divider closes the pane instead of resizing it. */
+export const CANVAS_CLOSE_W = 180
+
+/** What a divider drag means: the width the pane takes (clamped), or "close" when the owner
+ *  dragged it nearly shut. `width` is the viewport's right edge minus the pointer's x. */
+export function canvasDragWidth(width: number, viewport: number): number | "close" {
+  if (width < CANVAS_CLOSE_W) return "close"
+  return Math.round(Math.max(CANVAS_MIN_W, Math.min(viewport - CANVAS_CHAT_MIN_W, width)))
+}
+
+/** A stored width, if it is a usable number; anything else falls back to the default layout. */
+export function storedCanvasWidth(raw: string | null): number | null {
+  const n = Number(raw)
+  return raw && Number.isFinite(n) && n >= CANVAS_MIN_W ? Math.round(n) : null
+}
