@@ -7,22 +7,51 @@ import type { SessionListItem } from "./types.ts"
 
 export interface TreeNode {
   group: Group
-  /** Its chats are listed beneath it. */
+  /** Its sub-projects and chats are listed beneath it. */
   open: boolean
   /** The chats to list (empty when shut). */
   sessions: SessionListItem[]
   /** Chats held back behind "Show N more" (only when unfiltered). */
   more: number
+  /** Projects in folders under this one (unfiltered only; a filter lists matches flat). */
+  children: TreeNode[]
+  /** Running chats and unread replies in the sub-projects, so a shut parent still shows activity. */
+  subRunning: number
+  subUnread: boolean
 }
 
 /** An open project lists this many chats before "Show N more". */
 export const CHAT_LIMIT = 8
 
+// A home folder holds every project under it; nesting them all there would
+// only add a level, so it never acts as a parent.
+const HOME = /^(\/Users\/[^/]+|\/home\/[^/]+|\/root|~)$/
+
 /**
- * With no filter: every project, its chats listed when it is open, capped at
- * CHAT_LIMIT unless `showAll` holds it. With a filter: a project shows when its
- * name or any chat title matches; chat matches open it to just those chats,
- * a name-only match keeps its open state and lists all its chats.
+ * Each project's parent: the nearest other project whose folder contains it
+ * (a home folder excepted). Missing = a root.
+ */
+export function projectParents(groups: readonly Group[]): Map<string, string> {
+  const dirs = new Set(groups.map((g) => g.dir))
+  const out = new Map<string, string>()
+  for (const g of groups) {
+    for (let d = g.dir.slice(0, g.dir.lastIndexOf("/")); d; d = d.slice(0, d.lastIndexOf("/"))) {
+      if (dirs.has(d)) {
+        if (!HOME.test(d)) out.set(g.dir, d)
+        break
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * With no filter: projects nest under the project whose folder holds them,
+ * in `groups` order; an open project lists its sub-projects, then its chats,
+ * capped at CHAT_LIMIT unless `showAll` holds it. With a filter: a flat list —
+ * a project shows when its name or any chat title matches; chat matches open
+ * it to just those chats, a name-only match keeps its open state and lists all
+ * its chats.
  */
 export function projectTree(
   groups: Group[],
@@ -32,23 +61,39 @@ export function projectTree(
   name: (g: Group) => string = (g) => g.project,
 ): TreeNode[] {
   const f = filter.trim().toLowerCase()
-  const out: TreeNode[] = []
-  for (const g of groups) {
-    if (!f) {
-      const isOpen = open.has(g.dir)
-      const cap = isOpen && !showAll.has(g.dir) ? CHAT_LIMIT : Infinity
-      const sessions = isOpen ? g.sessions.slice(0, cap) : []
-      out.push({ group: g, open: isOpen, sessions, more: isOpen ? g.sessions.length - sessions.length : 0 })
-      continue
+  const leaf = (g: Group, isOpen: boolean, sessions: SessionListItem[], more = 0): TreeNode =>
+    ({ group: g, open: isOpen, sessions, more, children: [], subRunning: 0, subUnread: false })
+  if (f) {
+    const out: TreeNode[] = []
+    for (const g of groups) {
+      const hits = g.sessions.filter((s) => (s.title || "").toLowerCase().includes(f))
+      if (hits.length) out.push(leaf(g, true, hits))
+      else if (name(g).toLowerCase().includes(f)) {
+        const isOpen = open.has(g.dir)
+        out.push(leaf(g, isOpen, isOpen ? g.sessions : []))
+      }
     }
-    const hits = g.sessions.filter((s) => (s.title || "").toLowerCase().includes(f))
-    if (hits.length) out.push({ group: g, open: true, sessions: hits, more: 0 })
-    else if (name(g).toLowerCase().includes(f)) {
-      const isOpen = open.has(g.dir)
-      out.push({ group: g, open: isOpen, sessions: isOpen ? g.sessions : [], more: 0 })
-    }
+    return out
   }
-  return out
+  const parents = projectParents(groups)
+  const kids = new Map<string, Group[]>()
+  for (const g of groups) {
+    const p = parents.get(g.dir) ?? ""
+    kids.set(p, [...(kids.get(p) ?? []), g])
+  }
+  const build = (g: Group): TreeNode => {
+    const isOpen = open.has(g.dir)
+    const cap = isOpen && !showAll.has(g.dir) ? CHAT_LIMIT : Infinity
+    const sessions = isOpen ? g.sessions.slice(0, cap) : []
+    const node = leaf(g, isOpen, sessions, isOpen ? g.sessions.length - sessions.length : 0)
+    for (const c of (kids.get(g.dir) ?? []).map(build)) {
+      node.subRunning += c.group.running + c.subRunning
+      node.subUnread ||= c.group.unread || c.subUnread
+      if (isOpen) node.children.push(c)
+    }
+    return node
+  }
+  return (kids.get("") ?? []).map(build)
 }
 
 /**

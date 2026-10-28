@@ -1,4 +1,4 @@
-import { projectLabels, projectTree, CHAT_LIMIT } from "./projectTree.ts"
+import { projectLabels, projectParents, projectTree, CHAT_LIMIT } from "./projectTree.ts"
 import type { Group } from "./projectGroups.ts"
 import type { SessionListItem } from "./types.ts"
 
@@ -47,6 +47,23 @@ eq("a name-only match keeps its open state and all chats", paths(t, "/w/alpha"),
 eq("no match is an empty tree", projectTree(groups, "zzz", new Set()), [])
 eq("a blank filter is no filter", dirs(projectTree(groups, "   ", new Set())).length, 4)
 eq("the display name is what the filter matches", dirs(projectTree([G("/x/1", [])], "nice", new Set(), new Set(), () => "Nice name")), ["/x/1"])
+
+// Nesting: a project in another project's folder sits under it.
+const R = (dir: string, extra: Partial<Group> = {}): Group => ({ ...G(dir, []), ...extra })
+const nest = [R("/w"), R("/w/app", { running: 2 }), R("/w/app/web", { unread: true }), R("/w/lib"), R("/x")]
+eq("parents: the nearest containing project", Object.fromEntries(projectParents(nest)),
+  { "/w/app": "/w", "/w/app/web": "/w/app", "/w/lib": "/w" })
+eq("parents: a home folder never parents", projectParents([R("/Users/me"), R("/Users/me/a"), R("/home/me"), R("/home/me/b")]).size, 0)
+eq("parents: a folder-name prefix is not a parent", projectParents([R("/w/app"), R("/w/apple")]).size, 0)
+t = projectTree(nest, "", new Set())
+eq("shut parents hide their sub-projects", [dirs(t), t[0].children.length], [["/w", "/x"], 0])
+eq("a shut parent shows its sub-projects' activity", [t[0].subRunning, t[0].subUnread], [2, true])
+t = projectTree(nest, "", new Set(["/w"]))
+eq("an open parent lists its sub-projects in order", t[0].children.map((n) => n.group.dir), ["/w/app", "/w/lib"])
+eq("deeper levels stay shut until opened", t[0].children[0].children.length, 0)
+t = projectTree(nest, "", new Set(["/w", "/w/app"]))
+eq("an open sub-project lists its own", t[0].children[0].children.map((n) => n.group.dir), ["/w/app/web"])
+eq("a filter lists matches flat", dirs(projectTree(nest, "web", new Set())), ["/w/app/web"])
 
 const labels = projectLabels(["/a/agents/web", "/b/site/web", "/a/agents", "web"])
 eq("labels: unique name has no hint", labels.get("/a/agents"), { name: "agents", hint: "" })

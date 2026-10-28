@@ -17,7 +17,7 @@ import { useStore } from "@/store"
 import { api } from "@/lib/api"
 import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "@/lib/types"
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
-import { projectLabels, projectTree } from "@/lib/projectTree"
+import { projectLabels, projectParents, projectTree, type TreeNode } from "@/lib/projectTree"
 import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
@@ -71,9 +71,11 @@ export function SessionList() {
   )
   useEffect(() => {
     if (!currentDir) return
-    setProjectOpen(currentDir, true)
+    // Its parent projects open too, or a nested chat would stay hidden.
+    const parents = projectParents(groups)
+    for (let d: string | undefined = currentDir; d; d = parents.get(d)) setProjectOpen(d, true)
     setDir(currentDir)
-  }, [currentDir, setProjectOpen, setDir])
+  }, [currentDir, groups, setProjectOpen, setDir])
 
   // Folder names, with the parent folder as a hint where two projects share one.
   const labels = useMemo(() => projectLabels(groups.map((g) => g.project || g.dir)), [groups])
@@ -109,6 +111,101 @@ export function SessionList() {
   }
   const showHarman = automationOn && (!q.trim() || "harman".includes(q.trim().toLowerCase()))
 
+  // One project row; open, its sub-projects then its chats beneath it.
+  const renderNode = ({ group: g, open, sessions: chats, more, children, subRunning, subUnread }: TreeNode) => {
+    // A shut project carries its sub-projects' activity, so nothing running hides.
+    const running = g.running + (open ? 0 : subRunning)
+    return (
+    <div key={g.dir} role="treeitem" aria-expanded={open}>
+      <div
+        className={cn(
+          "group/row flex h-7 items-center rounded-md pr-0.5 hover:bg-accent/70 has-[[data-state=open]]:bg-accent/70",
+          g.dir === dir && "bg-accent/50",
+        )}
+      >
+        <button
+          onClick={() => toggleProject(g)}
+          title={`${g.project}${g.sessions.length ? ` · ${g.sessions.length} chat${g.sessions.length === 1 ? "" : "s"} · ${fmtAgo(g.modified)}` : ""}`}
+          data-track="project row"
+          className="flex h-full min-w-0 flex-1 items-center gap-1 pl-1 text-left text-[13px]"
+        >
+          {open ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          {open ? (
+            <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <Folder className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="ml-0.5 min-w-0 flex-1 truncate">
+            <span className="font-medium">{label(g).name}</span>
+            {label(g).hint && <span className="ml-1 text-xs text-muted-foreground">{label(g).hint}</span>}
+          </span>
+          {(g.unread || (!open && subUnread)) && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="unread" title="Unread replies" />}
+          {running > 0 ? (
+            <span className="inline-flex shrink-0 items-center gap-1 pr-1 text-[11px] tabular-nums text-emerald-600" title={`${running} running`}>
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              {running}
+            </span>
+          ) : (
+            !open && g.sessions.length > 0 && (
+              <span className="shrink-0 pr-1 text-[11px] tabular-nums text-muted-foreground">{g.sessions.length}</span>
+            )
+          )}
+        </button>
+        <ProjectMenu
+          name={label(g).name}
+          visible={g.dir === dir}
+          plugins={currentHost === "local" ? projectPlugins : []}
+          onNew={() => setStartIn(g.dir)}
+          onTasks={() => setTasksFor(g)}
+          onNotes={() => setNotesFor(g)}
+          onInbox={() => setInboxFor(g)}
+          onMap={() => setMapFor(g)}
+          onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
+        />
+      </div>
+      {open && (
+        <div role="group" className="ml-[11px] space-y-px border-l border-border py-px pl-1">
+          {children.map(renderNode)}
+          {g.sessions.length === 0 ? (
+            // A chat-less leaf project's one action: start its first chat there.
+            children.length === 0 && (
+            <button
+              onClick={() => setStartIn(g.dir)}
+              className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] text-primary hover:bg-accent/70"
+            >
+              <Plus className="size-3.5" /> Start session
+            </button>
+            )
+          ) : (
+            chats.map((s) => (
+              <SessionRow
+                key={s.path}
+                s={s}
+                current={s.path === currentSessionPath}
+                providerName={providerName}
+                onOpen={() => loadSession(s.path)}
+                onOpenInbox={(id, title) => setInboxSession({ id, title, cwd: g.project || g.dir })}
+              />
+            ))
+          )}
+          {more > 0 && (
+            <button
+              onClick={() => setShowAll((m) => new Set(m).add(g.dir))}
+              className="flex h-6 w-full items-center rounded-md pl-[22px] text-left text-xs text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+            >
+              Show {more} more
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="p-2">
@@ -139,92 +236,7 @@ export function SessionList() {
           {showHarman && (
             <PinnedRow icon={Sparkles} label="Harman" title="Harman — Harness Manager orchestrator" onClick={openHarman} />
           )}
-          {tree.map(({ group: g, open, sessions: chats, more }) => (
-            <div key={g.dir} role="treeitem" aria-expanded={open}>
-              <div
-                className={cn(
-                  "group/row flex h-7 items-center rounded-md pr-0.5 hover:bg-accent/70 has-[[data-state=open]]:bg-accent/70",
-                  g.dir === dir && "bg-accent/50",
-                )}
-              >
-                <button
-                  onClick={() => toggleProject(g)}
-                  title={`${g.project}${g.sessions.length ? ` · ${g.sessions.length} chat${g.sessions.length === 1 ? "" : "s"} · ${fmtAgo(g.modified)}` : ""}`}
-                  data-track="project row"
-                  className="flex h-full min-w-0 flex-1 items-center gap-1 pl-1 text-left text-[13px]"
-                >
-                  {open ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  {open ? (
-                    <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="ml-0.5 min-w-0 flex-1 truncate">
-                    <span className="font-medium">{label(g).name}</span>
-                    {label(g).hint && <span className="ml-1 text-xs text-muted-foreground">{label(g).hint}</span>}
-                  </span>
-                  {g.unread && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="unread" title="Unread replies" />}
-                  {g.running > 0 ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 pr-1 text-[11px] tabular-nums text-emerald-600" title={`${g.running} running`}>
-                      <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                      {g.running}
-                    </span>
-                  ) : (
-                    !open && g.sessions.length > 0 && (
-                      <span className="shrink-0 pr-1 text-[11px] tabular-nums text-muted-foreground">{g.sessions.length}</span>
-                    )
-                  )}
-                </button>
-                <ProjectMenu
-                  name={label(g).name}
-                  visible={g.dir === dir}
-                  plugins={currentHost === "local" ? projectPlugins : []}
-                  onNew={() => setStartIn(g.dir)}
-                  onTasks={() => setTasksFor(g)}
-                  onNotes={() => setNotesFor(g)}
-                  onInbox={() => setInboxFor(g)}
-                  onMap={() => setMapFor(g)}
-                  onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
-                />
-              </div>
-              {open && (
-                <div role="group" className="ml-[11px] space-y-px border-l border-border py-px pl-1">
-                  {g.sessions.length === 0 ? (
-                    // A chat-less project's one action: start its first chat there.
-                    <button
-                      onClick={() => setStartIn(g.dir)}
-                      className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] text-primary hover:bg-accent/70"
-                    >
-                      <Plus className="size-3.5" /> Start session
-                    </button>
-                  ) : (
-                    chats.map((s) => (
-                      <SessionRow
-                        key={s.path}
-                        s={s}
-                        current={s.path === currentSessionPath}
-                        providerName={providerName}
-                        onOpen={() => loadSession(s.path)}
-                        onOpenInbox={(id, title) => setInboxSession({ id, title, cwd: g.project || g.dir })}
-                      />
-                    ))
-                  )}
-                  {more > 0 && (
-                    <button
-                      onClick={() => setShowAll((m) => new Set(m).add(g.dir))}
-                      className="flex h-6 w-full items-center rounded-md pl-[22px] text-left text-xs text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                    >
-                      Show {more} more
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+          {tree.map(renderNode)}
           {tree.length === 0 && q.trim() && !showHarman && (
             <div className="px-2 py-6 text-center text-xs text-muted-foreground">No project or chat matches “{q.trim()}”.</div>
           )}
@@ -432,15 +444,15 @@ function SessionRow({
     }
   }
 
-  const openRhs = useStore((st) => st.openRhs)
+  const openTools = useStore((st) => st.openTools)
   const cwd = detail?.summary?.cwd
   // The model it runs on now, not every model it ever used. Older cached
   // summaries carry no `model`; their last sorted entry is the best guess.
   const model = detail?.summary?.model ?? detail?.summary?.models?.at(-1)
-  // The right panel shows the CURRENT chat's capabilities, so open this chat first.
+  // The Tools dialog shows the CURRENT chat's capabilities, so open this chat first.
   const showCaps = (tab: "skills" | "mcp") => {
     if (!current) onOpen()
-    openRhs(tab)
+    openTools(tab)
   }
 
   const status = s.running ? "running" : s.unread ? "unread" : ""

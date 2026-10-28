@@ -1,17 +1,19 @@
 /** Panels, tabs and docking — pure UI state persisted to localStorage. */
 import type { Slice } from "./types"
 
+/** The tabs of the Skills/MCP/Plugins dialog. */
+export type ToolsTab = "skills" | "mcp" | "plugins"
+
 export interface LayoutSlice {
   lhsTab: string
   /** The focused project on the Projects tab, per host; the Files tab roots there. */
   projectDirs: Record<string, string>
   /** The projects expanded in the Projects tree, per host. */
   openProjects: Record<string, string[]>
-  rhsTab: string
+  /** The open tab of the Skills/MCP/Plugins dialog; null = closed. */
+  toolsTab: ToolsTab | null
   /** The wide-screen left rail (Projects, Files, Settings, Stats); open by default. */
   lhsOpen: boolean
-  /** The wide-screen Skills/MCP/Plugins panel; closed until the user opens it. */
-  rhsOpen: boolean
   panel: "terminal" | "browser" | null
   // When set, the terminal panel launches this command in a dedicated persistent
   // session (key) instead of the general host shell — used by "Continue interactively".
@@ -26,10 +28,9 @@ export interface LayoutSlice {
   setProjectDir: (dir: string | null) => void
   /** Expand or collapse a project in the tree; `open` omitted toggles it. */
   setProjectOpen: (dir: string, open?: boolean) => void
-  setRhsTab: (t: string) => void
-  /** Show the right panel on tab `t` (opens it if shut; never toggles it shut). */
-  openRhs: (t: string) => void
-  toggleRhs: () => void
+  /** Open the Skills/MCP/Plugins dialog on tab `t` (or switch its tab). */
+  openTools: (t: ToolsTab) => void
+  closeTools: () => void
   toggleLhs: () => void
   openPanel: (k: "terminal" | "browser") => void
   closePanel: () => void
@@ -70,8 +71,7 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
     lhsTab: localStorage.getItem("lhsTab") || "projects",
     projectDirs: loadProjectDirs(),
     openProjects: loadOpenProjects(),
-    rhsTab: localStorage.getItem("rhsTab") || "skills",
-    rhsOpen: localStorage.getItem("rhsOpen") === "1",
+    toolsTab: null,
     lhsOpen: localStorage.getItem("lhsOpen") !== "0",
     panel: (localStorage.getItem("panel") as "terminal" | "browser" | null) || null,
     termInit: JSON.parse(localStorage.getItem("termInit") || "null"),
@@ -110,21 +110,8 @@ export const createLayoutSlice: Slice<LayoutSlice> = (set, get) => {
       localStorage.setItem(OPEN_PROJECTS, JSON.stringify(next))
       set({ openProjects: next })
     },
-    setRhsTab: (t) => { localStorage.setItem("rhsTab", t); set({ rhsTab: t }) },
-    openRhs: (t) => {
-      localStorage.setItem("rhsTab", t)
-      localStorage.setItem("rhsOpen", "1")
-      set({ rhsTab: t, rhsOpen: true })
-      // The canvas and the right panel share the right edge: asking for the panel closes the canvas.
-      if (get().canvasOpen) get().closeCanvas()
-    },
-    toggleRhs: () => {
-      // Shown = open and not covered by the canvas; a click on a covered panel brings it back.
-      const v = !(get().rhsOpen && !get().canvasOpen)
-      localStorage.setItem("rhsOpen", v ? "1" : "0")
-      set({ rhsOpen: v })
-      if (v && get().canvasOpen) get().closeCanvas()
-    },
+    openTools: (t) => set({ toolsTab: t }),
+    closeTools: () => set({ toolsTab: null }),
     toggleLhs: () => {
       const v = !get().lhsOpen
       localStorage.setItem("lhsOpen", v ? "1" : "0")
