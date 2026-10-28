@@ -7,7 +7,7 @@ import { Transcript } from "@/components/Transcript"
 import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
-import { RhsPanel } from "@/components/RhsPanel"
+import { ToolsDialog } from "@/components/ToolsDialog"
 import { CanvasPane } from "@/components/CanvasPane"
 import { canvasDragWidth, latestShow, storedCanvasWidth } from "@/lib/canvas"
 import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
@@ -59,7 +59,6 @@ function App() {
   const loadOlder = useStore((s) => s.loadOlder)
   const auth = useStore((s) => s.auth)
   const needsAuth = useStore((s) => s.needsAuth)
-  const rhsOpen = useStore((s) => s.rhsOpen)
   const lhsOpen = useStore((s) => s.lhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
   const canvasOpen = useStore((s) => s.canvasOpen)
@@ -460,14 +459,12 @@ function App() {
             </ErrorBoundary>
           </aside>
         )}
-        {!needsAuth && rhsOpen && !canvasOpen && (
-          <aside className="hidden w-72 shrink-0 border-l border-border lg:block">
-            <ErrorBoundary label="Skills panel error">
-              <RhsPanel />
-            </ErrorBoundary>
-          </aside>
-        )}
       </div>
+      {!needsAuth && (
+        <ErrorBoundary label="Tools dialog error">
+          <ToolsDialog />
+        </ErrorBoundary>
+      )}
       {fsOpen && (
         <Suspense fallback={null}>
           <ErrorBoundary label="File browser error">

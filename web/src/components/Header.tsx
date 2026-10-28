@@ -18,13 +18,15 @@ import {
   MessageSquarePlus,
   Wrench,
   UserRound,
-  PanelRight,
+  Sparkles,
+  Server,
+  Puzzle,
   PanelLeft,
   Presentation,
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
-import { MobileLeftNav, MobileRightNav } from "./MobileNav"
+import { MobileLeftNav } from "./MobileNav"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -78,9 +80,8 @@ export function Header() {
   const serverVersion = useStore((s) => s.serverVersion)
   const signout = useStore((s) => s.signout)
   const needsAuth = useStore((s) => s.needsAuth)
-  // The open canvas covers the right panel (App renders one or the other).
-  const rhsShown = useStore((s) => s.rhsOpen && !s.canvasOpen)
-  const toggleRhs = useStore((s) => s.toggleRhs)
+  const openTools = useStore((s) => s.openTools)
+  const currentAgent = useStore((s) => s.currentAgent)
   const canvases = useStore((s) => s.canvases)
   const canvasOpen = useStore((s) => s.canvasOpen)
   const canvasUnseen = useStore((s) => s.canvasUnseen)
@@ -203,6 +204,18 @@ export function Header() {
             {panel === "terminal" && <Check className="ml-auto size-3.5" />}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => openTools("skills")} data-track="tools skills">
+            <Sparkles className="size-3.5" /> Skills
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openTools("mcp")} data-track="tools mcp">
+            <Server className="size-3.5" /> MCP servers
+          </DropdownMenuItem>
+          {currentAgent === "claude" && (
+            <DropdownMenuItem onClick={() => openTools("plugins")} data-track="tools plugins">
+              <Puzzle className="size-3.5" /> Plugins
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setIntOpen(true)}>
             <Plug className="size-3.5" /> Integrations
           </DropdownMenuItem>
@@ -269,8 +282,7 @@ export function Header() {
 
       {!authUser && themeToggle}
 
-      {/* Skills · MCP · Plugins: a closed side panel on wide screens, a drawer
-          (MobileRightNav) on narrow ones - both at the right edge. */}
+      {/* The right edge belongs to the canvas alone (Skills/MCP/Plugins are in Tools). */}
       {(canvases.length > 0 || needs.length > 0) && (
         <Button
           variant="ghost"
@@ -292,19 +304,6 @@ export function Header() {
           ) : canvasUnseen > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-primary" />}
         </Button>
       )}
-      <MobileRightNav />
-      <Button
-        variant="ghost"
-        size="icon"
-        className={"hidden size-7 shrink-0 lg:inline-flex" + (rhsShown ? " bg-accent" : "")}
-        onClick={toggleRhs}
-        data-track="rhs toggle"
-        aria-label={rhsShown ? "Hide skills panel" : "Show skills panel"}
-        aria-pressed={rhsShown}
-        title={rhsShown ? "Hide skills panel" : "Skills, MCP and plugins"}
-      >
-        <PanelRight className="size-4" />
-      </Button>
 
       {envOpen && <EnvDialog onClose={() => setEnvOpen(false)} />}
       {intOpen && <IntegrationsDialog onClose={() => setIntOpen(false)} />}
