@@ -11,7 +11,7 @@ import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { ToolsDialog } from "@/components/ToolsDialog"
 import { CanvasPane } from "@/components/CanvasPane"
-import { canvasDragWidth, latestShow, storedCanvasWidth } from "@/lib/canvas"
+import { canvasDragWidth, storedCanvasWidth } from "@/lib/canvas"
 import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
 import { api } from "@/lib/api"
 import type { OpenDecision } from "@/lib/types"
@@ -64,9 +64,7 @@ function App() {
   const lhsOpen = useStore((s) => s.lhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
   const canvasOpen = useStore((s) => s.canvasOpen)
-  const loadCanvases = useStore((s) => s.loadCanvases)
   const resetCanvases = useStore((s) => s.resetCanvases)
-  const canvasShown = useStore((s) => s.canvasShown)
   const closeCanvas = useStore((s) => s.closeCanvas)
   // The owner's chosen canvas width (wide screens), kept across reloads; null = default layout.
   const [canvasW, setCanvasW] = useState(() => storedCanvasWidth(localStorage.getItem(CANVAS_W_KEY)))
@@ -106,15 +104,8 @@ function App() {
     setShowJump(false)
   }, [currentSessionPath])
 
-  // Canvas: each session has its own. The show already in the transcript when a
-  // session loads is history (the pane stays shut); only a NEW show opens it.
-  // Tracking just the latest show means older history paging in never fires one.
-  const lastShow = useRef<string | null | undefined>(undefined)
-  useEffect(() => {
-    lastShow.current = undefined
-    resetCanvases()
-    if (currentSessionPath) loadCanvases()
-  }, [currentSessionPath, resetCanvases, loadCanvases])
+  // The "Needs you" pane belongs to one session: a switch starts it fresh.
+  useEffect(() => { resetCanvases() }, [currentSessionPath, resetCanvases])
   // What this chat is waiting on the owner for: checked on open, again the
   // moment a decision source changes (live events), and every 60s as the
   // fallback when the live socket is down.
@@ -125,15 +116,6 @@ function App() {
     return () => window.clearInterval(t)
   }, [currentSessionPath, loadNeeds])
   useLive(DECISION_TABLES, null, () => { if (currentSessionPath) loadNeeds() })
-  useEffect(() => {
-    if (loading) return
-    const show = latestShow(turns)
-    if (lastShow.current === undefined) lastShow.current = show?.id ?? null
-    else if (show && show.id !== lastShow.current) {
-      lastShow.current = show.id
-      canvasShown(show.title)
-    }
-  }, [turns, loading, canvasShown])
 
   useEffect(() => {
     const el = scrollRef.current

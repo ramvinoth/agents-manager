@@ -65,7 +65,7 @@ export type RootStackParamList = {
   CardDetail: { id: number }
   Notes: { session?: string; project?: number; title?: string; tag?: string } | undefined
   Map: { project?: number; session?: string; title: string }
-  Canvas: { session: string; title: string; initial?: string }
+  Canvas: { session: string; title: string }
   Files: undefined
   Agents: undefined
   /** Create (no template) or edit one of the caller's own agents. */

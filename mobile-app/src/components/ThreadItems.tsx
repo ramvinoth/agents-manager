@@ -79,7 +79,7 @@ export function ItemView({
   pinnedSet?: string[]
   onMessageAction?: (uuid: string | undefined, text: string, isUser: boolean) => void
   onReply?: (text: string) => void
-  onOpenCanvas?: (title: string) => void
+  onOpenCanvas?: () => void
 }) {
   const t = useTheme()
   const styles = useStyles()
@@ -197,7 +197,7 @@ export function ExchangeView({
   defaultOpen?: boolean
   ts?: string
   onLongPress?: () => void
-  onOpenCanvas?: (title: string) => void
+  onOpenCanvas?: () => void
 }) {
   const t = useTheme()
   const styles = useStyles()
@@ -222,7 +222,8 @@ export function ExchangeView({
   // only use the actual reply. When there's no <think>, body === finalText.
   const { thinking: think, body } = useMemo(() => splitThinking(finalText), [finalText])
   const [thinkOpen, setThinkOpen] = useState(false)
-  // What the agent put on the canvas this turn stays visible even with the steps folded.
+  // What the agent put on the project canvas this turn stays visible even with the steps folded;
+  // a tap opens the canvas, where it sits as a doc tile.
   const shown = useMemo(() => (onOpenCanvas ? shownTitles(steps) : []), [steps, onOpenCanvas])
   return (
     <View testID="agent-bubble" style={[styles.bubbleAssistant, { backgroundColor: t.bubbleAgent }]}>
@@ -256,7 +257,7 @@ export function ExchangeView({
       ))}
       {shown.map((title, i) => (
         <Pressable key={title} testID={`canvas-chip-${i}`} accessibilityRole="button"
-          accessibilityLabel={`Open canvas ${title}`} onPress={() => onOpenCanvas?.(title)} style={styles.canvasChip}>
+          accessibilityLabel={`Open canvas ${title}`} onPress={onOpenCanvas} style={styles.canvasChip}>
           <Icon name="eye" size={14} color={t.accent} />
           <Text numberOfLines={1} style={styles.canvasChipText}>Shown: {title}</Text>
         </Pressable>

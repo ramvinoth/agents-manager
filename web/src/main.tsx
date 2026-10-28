@@ -1,4 +1,4 @@
-import { StrictMode } from "react"
+import { StrictMode, Suspense, lazy } from "react"
 import { createRoot } from "react-dom/client"
 import "./index.css"
 import App from "./App.tsx"
@@ -15,10 +15,23 @@ window.addEventListener("vite:preloadError", (event) => {
   window.location.reload()
 })
 
+// The phone's WebView loads the project canvas alone (/?canvasSession=<sid>&embed=1&theme=dark|light):
+// no chrome, the phone's theme, and Excalidraw fetched only for this view.
+const CanvasEmbed = lazy(() => import("./components/canvas/CanvasEmbed"))
+const q = new URLSearchParams(window.location.search)
+const embedSession = q.get("embed") === "1" ? q.get("canvasSession") : null
+if (embedSession) {
+  const theme = q.get("theme")
+  document.documentElement.classList.toggle("dark",
+    theme ? theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches)
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary label="The app hit an unexpected error">
-      <App />
+      {embedSession
+        ? <Suspense fallback={null}><CanvasEmbed session={embedSession} /></Suspense>
+        : <App />}
     </ErrorBoundary>
   </StrictMode>
 )

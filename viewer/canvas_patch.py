@@ -17,7 +17,9 @@ import secrets
 import time
 
 MAX_OPS = 2000
-KINDS = ("rectangle", "diamond", "ellipse", "text", "arrow", "line", "frame")
+KINDS = ("rectangle", "diamond", "ellipse", "text", "arrow", "line", "frame", "embeddable")
+# A doc tile (embeddable) needs room to read; a shape's 160x80 would show a line.
+DEFAULT_SIZE = {"embeddable": (480.0, 320.0)}
 # Fields an update may set. Anything structural (id, type, version, bindings)
 # stays the server's business.
 SETTABLE = frozenset({"x", "y", "width", "height", "angle", "strokeColor", "backgroundColor",
@@ -171,16 +173,21 @@ def _add(spec, view, actor, changes):
             el["boundElements"] = [{"id": t["id"], "type": "text"}]
             out.append(t)
     else:
-        w, h = _num(spec.get("width"), 160), _num(spec.get("height"), 80)
+        dw, dh = DEFAULT_SIZE.get(kind, (160.0, 80.0))
+        w, h = _num(spec.get("width"), dw), _num(spec.get("height"), dh)
         el = _base(kind, x, y, w, h, actor)
         if kind == "frame":
             el["name"] = spec.get("name") or spec.get("label") or None
+            el["roundness"] = None
+        elif kind == "embeddable":
+            if not isinstance(spec.get("link"), str):
+                raise ValueError("an embeddable needs a link")
             el["roundness"] = None
         for k in ("strokeColor", "backgroundColor", "fillStyle"):
             if isinstance(spec.get(k), str):
                 el[k] = spec[k]
         out.append(el)
-        if spec.get("label") and kind != "frame":
+        if spec.get("label") and kind not in ("frame", "embeddable"):
             t = _text(str(spec["label"]), 0, 0, actor, container=el)
             el["boundElements"] = [{"id": t["id"], "type": "text"}]
             out.append(t)

@@ -134,3 +134,13 @@ def test_new_elements_get_ordered_indices_above_the_canvas():
     assert idx == sorted(idx) and all(i > "a7" for i in idx)
     for e in out:
         assert e["boundElements"] is not None and e["updated"] > 0
+
+
+def test_embeddable_needs_a_link_takes_no_label_and_reads_at_tile_size():
+    _, res = cp.build({}, [add(type="embeddable", x=0, y=0)], ME, True)
+    assert not res[0]["ok"] and "link" in res[0]["error"]
+    out, res = cp.build({}, [add(type="embeddable", x=0, y=0, link="harman://doc/" + "a" * 64, label="x")], ME, True)
+    assert res[0]["ok"] and len(out) == 1                 # no bound text for a tile
+    (tile,) = out
+    assert (tile["width"], tile["height"]) == (480.0, 320.0) and tile["roundness"] is None
+    assert rec.validate(tile)[0]

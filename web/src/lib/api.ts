@@ -11,8 +11,7 @@ import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelecti
 import type { KeyAction } from "./providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
-import type { Canvas, CanvasMeta } from "./canvas"
-import type { El } from "./canvasSync"
+import type { CanvasSnapshot } from "./canvasSync"
 
 type Body = Record<string, unknown>
 
@@ -232,12 +231,12 @@ class ApiClient {
     const p = new URLSearchParams({ project: String(projectId), level, path })
     return this.getStrict<MapView>(`/api/org/map?${p}`)
   }
-  /** The project's shared canvas (viewer/routes/canvas_board.py): the server's
-   *  scene snapshot. Live edits then flow over /api/canvas/ws?canvas=<id>. */
-  canvasBoard(projectId: number) {
-    return this.getStrict<{ canvas: number; protocol: number; elements: El[]; checksum: number; editable: boolean }>(
-      `/api/canvas/board?project=${projectId}`,
-    )
+  /** A shared canvas (viewer/routes/canvas_board.py): the server's scene snapshot,
+   *  by project, by canvas id, or by chat (that chat's board project). Live edits
+   *  then flow over /api/canvas/ws?canvas=<id>. */
+  canvasBoard(by: { project: number } | { id: number } | { session: string }) {
+    const p = new URLSearchParams(Object.entries(by).map(([k, v]) => [k, String(v)]))
+    return this.getStrict<CanvasSnapshot>(`/api/canvas/board?${p}`)
   }
   /** Upload one image's bytes (raw body). Throws 400 bad type/size, 403 read-only. */
   async canvasFileUpload(canvas: number, file: string, mime: string, blob: Blob) {
@@ -324,16 +323,6 @@ class ApiClient {
   // `note_delete` is Red like card_delete: an agent's delete queues for the owner.
   orgDeleteNote(noteId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/notes/delete", { note_id: noteId })
-  }
-  // ---- Canvas (the visual pane an agent opens; the owner reads and closes) ----
-  canvasList(session: string) {
-    return this.getStrict<{ canvases: CanvasMeta[] }>(`/api/canvas?session=${encodeURIComponent(session)}`)
-  }
-  canvasRead(session: string, title: string) {
-    return this.getStrict<Canvas>(`/api/canvas?session=${encodeURIComponent(session)}&title=${encodeURIComponent(title)}`)
-  }
-  canvasDelete(session: string, title: string) {
-    return this.postStrict<{ deleted: boolean }>("/api/canvas/delete", { session, title })
   }
   // ---- Inbox (the message ledger; decision rows ride in it — the deciding
   // tap stays on the per-session routes, this is the delivery surface) ----

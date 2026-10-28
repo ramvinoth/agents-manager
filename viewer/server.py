@@ -77,7 +77,6 @@ from viewer.routes.project_plugins import ProjectPluginsMixin
 from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
-from viewer.routes.canvas import CanvasMixin
 from viewer.routes.live import LiveMixin
 from viewer.routes.canvas_board import CanvasBoardMixin
 
@@ -86,7 +85,7 @@ class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin, ProjectPluginsMixin, CanvasMixin, LiveMixin, CanvasBoardMixin,
+    IntakeMixin, ProjectPluginsMixin, LiveMixin, CanvasBoardMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -464,7 +463,6 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
-        "/api/canvas": "_g_canvas",
         "/api/usage/report": "_g_usage_report",
         "/api/org/intake": "_g_org_intake",
     }
@@ -592,7 +590,6 @@ class SessionViewerHandler(
         "/api/org/skills/propose": "_p_org_skills_propose",
         "/api/inbox/send": "_p_inbox_send",
         "/api/canvas/show": "_p_canvas_show",
-        "/api/canvas/delete": "_p_canvas_delete",
         "/api/canvas/file": "_p_canvas_file",
         "/api/canvas/agent/patch": "_p_canvas_agent_patch",
         "/api/canvas/revert": "_p_canvas_revert",
@@ -754,6 +751,13 @@ def main():
                 print(f"  ⚠ closed {abandoned} loop run(s) left 'running' by the previous server process")
         except Exception as e:
             print(f"  ⚠ job_runs reconciliation failed: {e}")
+        try:
+            from viewer.routes.canvas_board import migrate_legacy_canvases
+            moved = migrate_legacy_canvases()
+            if moved:
+                print(f"  Moved {moved} shown doc(s) from the retired canvas pane onto project canvases")
+        except Exception as e:
+            print(f"  ⚠ canvas pane migration failed (retried next boot): {e}")
         try:
             swept = run_settings_sweep_orphans(run_settings_paths_in_use())
             if swept:

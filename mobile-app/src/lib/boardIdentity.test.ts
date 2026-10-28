@@ -90,7 +90,6 @@ function screen(initial: Route) {
     "../lib/session": { resolveSessionPath: async () => undefined },
     "../lib/actionSheet": { showActions: (title: string, actions: any[]) => sheets.push([title, actions]) },
     "../lib/notify": { ensurePermission: async () => {} },
-    "../lib/canvas": { takeReply: () => "", withReply: (draft: string) => draft },
     "../lib/fileLink": { fileLinkPath: () => null },
     "../lib/fileDownloadNative": { downloadAndShare: async () => {} },
     "../lib/location": { fsScope: () => ({}), HOST_LOCATION: "host" },

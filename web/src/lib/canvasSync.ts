@@ -1,5 +1,5 @@
 /** The shared project canvas: client half of the room protocol (viewer/canvas_room.py).
- *  Pure logic only — components/canvas/CanvasDialog wires it to Excalidraw and the socket.
+ *  Pure logic only — components/canvas/ProjectCanvas wires it to Excalidraw and the socket.
  *
  *  The server holds the truth. `known` is what we believe it holds (id → version):
  *  anything in the scene with a higher version is unsent, so a reconnect needs no
@@ -40,6 +40,9 @@ export function wins(incoming: El, stored: El | undefined): boolean {
 }
 
 export type RejectItem = [string | null, string, El | null]
+
+/** GET /api/canvas/board: the server's scene, and whether this person may draw. */
+export interface CanvasSnapshot { canvas: number; protocol: number; elements: El[]; checksum: number; editable: boolean }
 
 export class Sync {
   private known = new Map<string, number>()

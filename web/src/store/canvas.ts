@@ -1,50 +1,34 @@
-/** Canvas: the visual pane an agent opens beside the chat (lib/canvas has the logic).
- *  On demand: closed until the agent shows something; if the owner closed it, a
- *  new show raises a badge on the header button instead of popping it open again.
- *  The pane also pins this session's open decisions ("Needs you") first. */
+/** The side pane beside the chat: this session's open decisions ("Needs you").
+ *  What an agent shows lives on the project canvas as doc tiles, not here.
+ *  On demand: closed until something needs the owner; if the owner closed it, a
+ *  new decision raises a badge on the header button instead of popping it open. */
 import { api } from "../lib/api"
-import type { CanvasMeta } from "../lib/canvas"
 import type { OpenDecision } from "../lib/types"
 import type { Slice } from "./types"
 import { sessionIdOf } from "./helpers"
 
 export interface CanvasSlice {
-  /** The current session's canvases, newest first. */
-  canvases: CanvasMeta[]
-  canvasActive: string | null
   canvasOpen: boolean
-  /** Shows that landed while the owner had the pane closed. */
+  /** Decisions that landed while the owner had the pane closed. */
   canvasUnseen: number
   /** The owner closed the pane for this session: stop auto-opening it. */
   canvasClosedByOwner: boolean
-  /** This session's open decisions (questions, plans, approvals, cards waiting
-   *  on the owner): pinned first in the pane as "Needs you". */
+  /** This session's open decisions (questions, plans, approvals, cards waiting on the owner). */
   canvasNeeds: OpenDecision[]
-  /** Which pane tab shows: the needs list or the active canvas. */
-  canvasTab: "needs" | "canvas"
-  /** Refresh this session's needs; open the pane on them when new ones land
-   *  (or badge the header button if the owner closed it). */
+  /** Refresh this session's needs; open the pane when new ones land (or badge
+   *  the header button if the owner closed it). */
   loadNeeds: () => Promise<void>
   showNeeds: () => void
-  /** Reload the list for the current session (null-safe across session switches). */
-  loadCanvases: () => Promise<void>
-  /** A new show landed in the transcript: refresh, focus it, open or badge. */
-  canvasShown: (title: string) => Promise<void>
-  openCanvas: (title?: string) => void
   closeCanvas: () => void
-  deleteCanvas: (title: string) => Promise<void>
-  /** A session switch: forget the old session's canvases and the owner's close. */
+  /** A session switch: forget the old session's needs and the owner's close. */
   resetCanvases: () => void
 }
 
 export const createCanvasSlice: Slice<CanvasSlice> = (set, get) => ({
-  canvases: [],
-  canvasActive: null,
   canvasOpen: false,
   canvasUnseen: 0,
   canvasClosedByOwner: false,
   canvasNeeds: [],
-  canvasTab: "canvas",
   loadNeeds: async () => {
     const path = get().currentSessionPath
     const sid = sessionIdOf(path)
@@ -57,52 +41,14 @@ export const createCanvasSlice: Slice<CanvasSlice> = (set, get) => ({
     const known = new Set(get().canvasNeeds.map(key))
     const fresh = needs.filter((d) => !known.has(key(d))).length
     const patch: Partial<CanvasSlice> = { canvasNeeds: needs }
-    if (!needs.length && get().canvasTab === "needs") {
-      patch.canvasTab = "canvas"
-      if (!get().canvases.length) patch.canvasOpen = false
-    }
-    if (fresh) {
+    if (!needs.length) Object.assign(patch, { canvasOpen: false, canvasUnseen: 0 })
+    else if (fresh) {
       if (get().canvasClosedByOwner) patch.canvasUnseen = get().canvasUnseen + fresh
-      else Object.assign(patch, { canvasOpen: true, canvasTab: "needs" })
+      else patch.canvasOpen = true
     }
     set(patch)
   },
-  showNeeds: () => set({ canvasOpen: true, canvasTab: "needs", canvasUnseen: 0, canvasClosedByOwner: false }),
-  loadCanvases: async () => {
-    const path = get().currentSessionPath
-    const sid = sessionIdOf(path)
-    if (!sid) return
-    const { canvases } = await api.canvasList(sid).catch(() => ({ canvases: [] as CanvasMeta[] }))
-    if (get().currentSessionPath !== path) return
-    const active = get().canvasActive
-    set({
-      canvases,
-      canvasActive: active && canvases.some((c) => c.title === active) ? active : canvases[0]?.title ?? null,
-      canvasOpen: get().canvasOpen && (canvases.length > 0 || get().canvasNeeds.length > 0),
-    })
-  },
-  canvasShown: async (title) => {
-    await get().loadCanvases()
-    if (!get().canvases.some((c) => c.title === title)) return
-    if (get().canvasClosedByOwner) set({ canvasActive: title, canvasUnseen: get().canvasUnseen + 1 })
-    else set({ canvasActive: title, canvasOpen: true, canvasTab: "canvas" })
-  },
-  openCanvas: (title) =>
-    set({
-      canvasOpen: true, canvasUnseen: 0, canvasClosedByOwner: false,
-      ...(title ? { canvasActive: title, canvasTab: "canvas" as const } : {}),
-    }),
+  showNeeds: () => set({ canvasOpen: true, canvasUnseen: 0, canvasClosedByOwner: false }),
   closeCanvas: () => set({ canvasOpen: false, canvasClosedByOwner: true }),
-  deleteCanvas: async (title) => {
-    const sid = sessionIdOf(get().currentSessionPath)
-    if (!sid) return
-    await api.canvasDelete(sid, title)
-    if (get().canvasActive === title) set({ canvasActive: null })
-    await get().loadCanvases()
-  },
-  resetCanvases: () =>
-    set({
-      canvases: [], canvasActive: null, canvasOpen: false, canvasUnseen: 0, canvasClosedByOwner: false,
-      canvasNeeds: [], canvasTab: "canvas",
-    }),
+  resetCanvases: () => set({ canvasOpen: false, canvasUnseen: 0, canvasClosedByOwner: false, canvasNeeds: [] }),
 })
