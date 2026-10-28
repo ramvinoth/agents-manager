@@ -32,6 +32,7 @@ import { Markdown } from "@/components/Markdown"
 import { stripFrontmatter } from "@/lib/markdown"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
+import type { ToolsTab } from "@/store/layout"
 import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Plugin, Skill } from "@/lib/types"
 import { MarketplaceDialog } from "@/components/lazyDialogs"
@@ -435,11 +436,15 @@ function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: numbe
   )
 }
 
-export function RhsPanel() {
+/** Skills, MCP servers and plugins of the current chat, opened from the Header's
+ *  Tools menu (and a chat row's skill/MCP chips). A dialog, not a side panel, so the
+ *  right edge belongs to the canvas alone. */
+export function ToolsDialog() {
+  const tab = useStore((s) => s.toolsTab)
+  const openTools = useStore((s) => s.openTools)
+  const closeTools = useStore((s) => s.closeTools)
   const caps = useStore((s) => s.caps)
   const capsLoading = useStore((s) => s.capsLoading)
-  const rhsTab = useStore((s) => s.rhsTab)
-  const setRhsTab = useStore((s) => s.setRhsTab)
   const currentAgent = useStore((s) => s.currentAgent)
   const [skillOpen, setSkillOpen] = useState<Open<Skill> | null>(null)
   const [mcpOpen, setMcpOpen] = useState<Open<McpServer> | null>(null)
@@ -449,110 +454,118 @@ export function RhsPanel() {
   // The marketplace installs onto the viewer's own machine.
   const local = useStore((s) => s.currentHost) === "local"
   const chatScope = useChatScope()
+  if (!tab) return null
+  // Plugins exist only for Claude chats; another agent's chat falls back to Skills.
+  const shown = tab === "plugins" && currentAgent !== "claude" ? "skills" : tab
 
   return (
-    <div className="flex h-full flex-col">
-      <Tabs value={rhsTab} onValueChange={setRhsTab} className="flex min-h-0 flex-1 flex-col gap-0">
-        <TabsList className="m-2">
-          <TabsTrigger value="skills">Skills</TabsTrigger>
-          <TabsTrigger value="mcp">MCP</TabsTrigger>
-          {currentAgent === "claude" && <TabsTrigger value="plugins">Plugins</TabsTrigger>}
-        </TabsList>
+    <Dialog open onOpenChange={(o) => !o && closeTools()}>
+      <DialogContent className="flex h-[min(80vh,44rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <DialogHeader className="sr-only">
+          <DialogTitle>Skills, MCP servers and plugins</DialogTitle>
+        </DialogHeader>
+          <Tabs value={shown} onValueChange={(t) => openTools(t as ToolsTab)} className="flex min-h-0 flex-1 flex-col gap-0 pt-2">
+            <TabsList className="m-2 mr-12">
+              <TabsTrigger value="skills">Skills</TabsTrigger>
+              <TabsTrigger value="mcp">MCP</TabsTrigger>
+              {currentAgent === "claude" && <TabsTrigger value="plugins">Plugins</TabsTrigger>}
+            </TabsList>
 
-        <TabsContent value="skills" className="min-h-0 flex-1">
-          <div className="flex items-center justify-between px-2 pb-1">
-            <span className="text-xs text-muted-foreground">{caps.skills.length} skills</span>
-            <div className="flex">
-              {local && (
-                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("skills")}>
-                  <Store className="size-3.5" /> Browse
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setSkillOpen({ item: null, mode: "edit" })}>
-                <Plus className="size-3.5" /> New
-              </Button>
-            </div>
-          </div>
-          <div className="h-full overflow-y-auto">
-            <div className="space-y-1 px-2 pb-4">
-              {caps.skills.map((s, i) => (
-                <div key={i} className="flex items-start rounded-md border border-border hover:bg-accent">
-                  <button onClick={() => setSkillOpen({ item: s, mode: "view" })} className="min-w-0 flex-1 p-2 pr-0 text-left">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="min-w-0 flex-1 truncate font-medium">/{s.name}</span>
-                      <Badge
-                        variant={s.editable ? "secondary" : "outline"}
-                        className="shrink-0 px-1.5 text-[10px] font-normal"
-                      >
-                        {s.source}
-                      </Badge>
-                    </div>
-                    {s.description && (
-                      <div className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
-                        {s.description}
-                      </div>
-                    )}
-                  </button>
-                  <ItemMenu label={`/${s.name}`} editable={s.editable} onPick={(mode) => setSkillOpen({ item: s, mode })} />
+            <TabsContent value="skills" className="min-h-0 flex-1">
+              <div className="flex items-center justify-between px-2 pb-1">
+                <span className="text-xs text-muted-foreground">{caps.skills.length} skills</span>
+                <div className="flex">
+                  {local && (
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("skills")}>
+                      <Store className="size-3.5" /> Browse
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setSkillOpen({ item: null, mode: "edit" })}>
+                    <Plus className="size-3.5" /> New
+                  </Button>
                 </div>
-              ))}
-            </div>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="mcp" className="min-h-0 flex-1">
-          <div className="flex items-center justify-between px-2 pb-1">
-            <span className="text-xs text-muted-foreground">{caps.mcp.length} servers</span>
-            <div className="flex">
-              {local && (
-                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("mcp")}>
-                  <Store className="size-3.5" /> Browse
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMcpOpen({ item: null, mode: "edit" })}>
-                <Plus className="size-3.5" /> Add
-              </Button>
-            </div>
-          </div>
-          <div className="h-full overflow-y-auto">
-            <div className="space-y-1 px-2 pb-4">
-              {caps.mcp.map((m, i) => (
-                <div key={i} className="flex items-start rounded-md border border-border hover:bg-accent">
-                  <button onClick={() => setMcpOpen({ item: m, mode: "view" })} className="min-w-0 flex-1 p-2 pr-0 text-left">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="min-w-0 flex-1 truncate font-medium">{m.name}</span>
-                      <Badge
-                        variant={m.editable ? "secondary" : "outline"}
-                        className="shrink-0 px-1.5 text-[10px] font-normal"
-                      >
-                        {m.scope}
-                      </Badge>
+              </div>
+              <div className="h-full overflow-y-auto">
+                <div className="space-y-1 px-2 pb-4">
+                  {caps.skills.map((s, i) => (
+                    <div key={i} className="flex items-start rounded-md border border-border hover:bg-accent">
+                      <button onClick={() => setSkillOpen({ item: s, mode: "view" })} className="min-w-0 flex-1 p-2 pr-0 text-left">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="min-w-0 flex-1 truncate font-medium">/{s.name}</span>
+                          <Badge
+                            variant={s.editable ? "secondary" : "outline"}
+                            className="shrink-0 px-1.5 text-[10px] font-normal"
+                          >
+                            {s.source}
+                          </Badge>
+                        </div>
+                        {s.description && (
+                          <div className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+                            {s.description}
+                          </div>
+                        )}
+                      </button>
+                      <ItemMenu label={`/${s.name}`} editable={s.editable} onPick={(mode) => setSkillOpen({ item: s, mode })} />
                     </div>
-                    {m.target && <div className="mt-1 truncate text-xs text-muted-foreground">{m.target}</div>}
-                  </button>
-                  <ItemMenu label={m.name} editable={m.editable} onPick={(mode) => setMcpOpen({ item: m, mode })} />
+                  ))}
                 </div>
-              ))}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="mcp" className="min-h-0 flex-1">
+              <div className="flex items-center justify-between px-2 pb-1">
+                <span className="text-xs text-muted-foreground">{caps.mcp.length} servers</span>
+                <div className="flex">
+                  {local && (
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMarket("mcp")}>
+                      <Store className="size-3.5" /> Browse
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => setMcpOpen({ item: null, mode: "edit" })}>
+                    <Plus className="size-3.5" /> Add
+                  </Button>
+                </div>
+              </div>
+              <div className="h-full overflow-y-auto">
+                <div className="space-y-1 px-2 pb-4">
+                  {caps.mcp.map((m, i) => (
+                    <div key={i} className="flex items-start rounded-md border border-border hover:bg-accent">
+                      <button onClick={() => setMcpOpen({ item: m, mode: "view" })} className="min-w-0 flex-1 p-2 pr-0 text-left">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="min-w-0 flex-1 truncate font-medium">{m.name}</span>
+                          <Badge
+                            variant={m.editable ? "secondary" : "outline"}
+                            className="shrink-0 px-1.5 text-[10px] font-normal"
+                          >
+                            {m.scope}
+                          </Badge>
+                        </div>
+                        {m.target && <div className="mt-1 truncate text-xs text-muted-foreground">{m.target}</div>}
+                      </button>
+                      <ItemMenu label={m.name} editable={m.editable} onPick={(mode) => setMcpOpen({ item: m, mode })} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="plugins" className="min-h-0 flex-1">
+              <PluginList plugins={caps.plugins ?? []} agent={caps.agent} />
+            </TabsContent>
+          </Tabs>
+
+          {skillOpen && <SkillEditor skill={skillOpen.item} mode={skillOpen.mode} onClose={() => setSkillOpen(null)} />}
+          {mcpOpen && <McpEditor server={mcpOpen.item} mode={mcpOpen.mode} onClose={() => setMcpOpen(null)} />}
+          {market && (
+            <MarketplaceDialog kind={market} session={session || undefined} chatScope={chatScope} onClose={() => setMarket(null)} onInstalled={loadCapabilities} />
+          )}
+
+          {capsLoading && !caps.skills.length && !caps.mcp.length && (
+            <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" /> loading…
             </div>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="plugins" className="min-h-0 flex-1">
-          <PluginList plugins={caps.plugins ?? []} agent={caps.agent} />
-        </TabsContent>
-      </Tabs>
-
-      {skillOpen && <SkillEditor skill={skillOpen.item} mode={skillOpen.mode} onClose={() => setSkillOpen(null)} />}
-      {mcpOpen && <McpEditor server={mcpOpen.item} mode={mcpOpen.mode} onClose={() => setMcpOpen(null)} />}
-      {market && (
-        <MarketplaceDialog kind={market} session={session || undefined} chatScope={chatScope} onClose={() => setMarket(null)} onInstalled={loadCapabilities} />
-      )}
-
-      {capsLoading && !caps.skills.length && !caps.mcp.length && (
-        <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> loading…
-        </div>
-      )}
-    </div>
+          )}
+      </DialogContent>
+    </Dialog>
   )
 }
