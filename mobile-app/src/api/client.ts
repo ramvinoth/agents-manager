@@ -31,6 +31,8 @@ export type ChatResult = { session: string }
 /** The call brain's conversation memory (OpenAI-style messages). Opaque to the
  *  app: stored between turns and sent back verbatim. */
 export type CallHistory = Array<Record<string, unknown>>
+import type { CallAnswer } from "../lib/callSegments"
+export type { CallAnswer }
 /** GET /api/call/engine (viewer.callbrain.engine). `model` is the server's own
  *  name for the call brain; `error` means no brain is configured and a call
  *  cannot start. */
@@ -516,8 +518,12 @@ export const api = {
   // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
+  // The brain answers with {reply} (text, for TTS) or, on LFM3-Audio, {audio, next}:
+  // stream callAudio(audio), then post callNext(next) — stop:true on a barge-in.
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
-    req<{ reply: string; history: CallHistory; tools: string[] }>("POST", "/api/call/turn", body),
+    req<CallAnswer>("POST", "/api/call/turn", body),
+  callNext: (body: { path: string; next: string; stop?: boolean }) =>
+    req<CallAnswer>("POST", "/api/call/next", body),
   // The server derives the session id from `path` (via sid_from_path, which also
   // accepts a bare id). Send `path` to match — sending `session` is ignored and
   // yields "Session and message required".
@@ -812,6 +818,9 @@ export const api = {
   // long reply); through the relay it is fetched into `dest` first.
   voiceTts: (text: string, dest: string) =>
     serverMedia(`/api/voice/tts/stream?text=${encodeURIComponent(text)}`, dest),
+  // One segment the call brain is speaking (LFM3-Audio), same delivery as voiceTts.
+  callAudio: (path: string, id: string, dest: string) =>
+    serverMedia(`/api/call/audio?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, dest),
   // Call listening socket. The app streams endpointed utterances (binary
   // frames); the server transcribes each on the GPU box and pushes back
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"

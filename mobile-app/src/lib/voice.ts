@@ -225,8 +225,17 @@ export async function stopListening(): Promise<void> {
  */
 export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
+  await playMedia((dest) => api.voiceTts(text, dest))
+}
+
+/** Play one segment the call brain is speaking itself (LFM3-Audio). */
+export async function playCallAudio(path: string, id: string): Promise<void> {
+  await playMedia((dest) => api.callAudio(path, id, dest))
+}
+
+async function playMedia(fetchSrc: (dest: string) => ReturnType<typeof api.voiceTts>): Promise<void> {
   const dest = `${FileSystem.cacheDirectory}tts-${Date.now()}-${Math.random().toString(36).slice(2)}.aac`
-  const src = await api.voiceTts(text, dest)
+  const src = await fetchSrc(dest)
   try {
     await audioSession.play(src.url, src.headers)
   } finally {

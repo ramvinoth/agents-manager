@@ -4,7 +4,9 @@
  * It owns the phase state machine, the last-heard / last-reply / error strings,
  * and the hands-free loop (`startHandsFree`/`stopHandsFree`). Utterances stream
  * to /api/voice/ws for STT, the text goes to the call brain (`POST
- * /api/call/turn`), and the reply is spoken through the TTS stream. The brain's
+ * /api/call/turn`), and the answer is spoken: on LFM3-Audio the brain speaks
+ * itself, segment by segment (callSegments.callStep), otherwise its text reply
+ * goes through the TTS stream. The brain's
  * memory (`history`) lives here for the length of the call and is echoed back on
  * every turn. The first start asks GET /api/call/engine for the brain's model
  * name (or why no brain is configured — an error the caller sees).
@@ -12,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, type CallHistory } from "../api/client"
 import {
+  playCallAudio,
   prepareAudio,
   speak,
   startListening,
@@ -21,6 +24,7 @@ import {
 } from "./voice"
 import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
+import { callStep, joinSaid } from "./callSegments"
 import { audioSession } from "./audioSessionNative"
 
 // While the user speaks over Harman (before a command is confirmed), duck the TTS
@@ -93,11 +97,12 @@ export function useAssistantTurn(
    *   - end       → halt playback and end the CallKit call (via onEndCall).
    *   - ask(tail) → halt playback and stash the new question for runTurn to pick up.
    * Falls back to plain playback without the native module.
+   * Resolves true when a barge-in cut the playback short.
    */
-  const playWithBargeIn = useCallback(async (play: () => Promise<void>): Promise<void> => {
+  const playWithBargeIn = useCallback(async (play: () => Promise<void>): Promise<boolean> => {
     if (!duplexAvailable()) {
       await play()
-      return
+      return false
     }
     let mic: DuplexMic | null = null
     let handled = false
@@ -145,6 +150,7 @@ export function useAssistantTurn(
     } finally {
       await teardown()
     }
+    return handled
   }, [])
 
   const runTurn = useCallback(
@@ -154,15 +160,32 @@ export function useAssistantTurn(
       setError("")
       setPhase("thinking")
       try {
-        const res = await api.callTurn({ path, text, history: historyRef.current })
-        historyRef.current = res.history
-        setReply(res.reply)
-        if (!res.reply.trim()) {
-          setPhase("waiting")
-          return
+        let res = await api.callTurn({ path, text, history: historyRef.current })
+        let shown = ""
+        setReply("")
+        for (;;) {
+          historyRef.current = res.history
+          shown = joinSaid(shown, res.said)
+          setReply(shown)
+          const step = callStep(res)
+          if (step.kind === "done") break
+          setPhase("speaking")
+          if (step.kind === "speak") {
+            setReply(joinSaid(shown, step.text))
+            await playWithBargeIn(() => speak(step.text))
+            break
+          }
+          // The brain is speaking itself: play this segment, then hand it back.
+          // A barge-in tells the server to stop there and keep only what was said.
+          const cut = await playWithBargeIn(() => playCallAudio(path, step.audio))
+          if (!cut) setPhase("thinking")
+          res = await api.callNext({ path, next: step.next, stop: cut })
+          if (cut) {
+            historyRef.current = res.history
+            setReply(joinSaid(shown, res.said))
+            break
+          }
         }
-        setPhase("speaking")
-        await playWithBargeIn(() => speak(res.reply))
         // Barge-in during playback may have asked a NEW question — run it now,
         // after this speak fully unwound (so we never re-enter from inside speak).
         const next = bargeAskRef.current
