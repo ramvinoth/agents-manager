@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus, MoreHorizontal, Info } from "lucide-react"
+import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Shapes, Plus, MoreHorizontal, Info } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,7 +18,7 @@ import { api } from "@/lib/api"
 import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "@/lib/types"
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
 import { projectLabels, projectParents, projectTree, type TreeNode } from "@/lib/projectTree"
-import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
+import { KanbanDialog, NotesDialog, MapDialog, CanvasDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
 export function SessionList() {
@@ -37,6 +37,7 @@ export function SessionList() {
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
   const [mapFor, setMapFor] = useState<Group | null>(null)
+  const [canvasFor, setCanvasFor] = useState<Group | null>(null)
   const projectPlugins = useProjectPlugins()
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string; cwd: string } | null>(null)
@@ -164,6 +165,7 @@ export function SessionList() {
           onNotes={() => setNotesFor(g)}
           onInbox={() => setInboxFor(g)}
           onMap={() => setMapFor(g)}
+          onCanvas={() => setCanvasFor(g)}
           onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
         />
       </div>
@@ -274,6 +276,14 @@ export function SessionList() {
           onClose={() => setMapFor(null)}
         />
       )}
+      {canvasFor && (
+        <CanvasDialog
+          host={currentHost}
+          cwd={canvasFor.project || canvasFor.dir}
+          name={projectName(canvasFor.project || canvasFor.dir)}
+          onClose={() => setCanvasFor(null)}
+        />
+      )}
       {pluginFor && (
         <ProjectPluginDialog
           plugin={pluginFor.plugin}
@@ -312,6 +322,7 @@ function ProjectMenu({
   onNotes,
   onInbox,
   onMap,
+  onCanvas,
   onPlugin,
 }: {
   name: string
@@ -323,6 +334,7 @@ function ProjectMenu({
   onNotes: () => void
   onInbox: () => void
   onMap: () => void
+  onCanvas: () => void
   onPlugin: (p: ProjectPlugin) => void
 }) {
   return (
@@ -355,6 +367,9 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onMap}>
           <Network className="size-3.5" /> Map
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onCanvas}>
+          <Shapes className="size-3.5" /> Canvas
         </DropdownMenuItem>
         {/* Project plugins only open this computer's folders (the caller passes none otherwise). */}
         {plugins.length > 0 && <DropdownMenuSeparator />}

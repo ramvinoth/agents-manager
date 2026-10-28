@@ -122,3 +122,16 @@ def test_get_returns_one_room_per_canvas():
     reg, _ = make()
     assert reg.get(1) is reg.get("1")
     assert reg.get(1) is not reg.get(2)
+
+
+def test_leave_tells_the_remaining_peers():
+    reg, _ = make()
+    room = reg.get(1)
+    b = Sink()
+    room.join("A", Sink())
+    room.join("B", b)
+    room.leave("A")
+    assert b.of("leave")[0]["peer"] == "A"
+    room.leave("A")                                        # twice is harmless
+    time.sleep(0.05)
+    assert len([m for m in b.msgs if m["t"] == "leave"]) == 1

@@ -10,7 +10,7 @@ Socket protocol (viewer/canvas_room.py holds the room):
   client → {"t":"elements","elements":[...]}     → {"t":"ack","ids":[...]} and,
                                                     for losers, {"t":"reject","items":[...]}
   client → {"t":"presence", ...}                 relayed to peers, lossy
-  server → {"t":"elements"|"presence"|"checksum"|"resync"|"ping"}
+  server → {"t":"elements"|"presence"|"leave"|"checksum"|"resync"|"ping"}
 The snapshot always comes over HTTP: on (re)connect a client fetches it, then
 resends whatever it has not had acked.
 """

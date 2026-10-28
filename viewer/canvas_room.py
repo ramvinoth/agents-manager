@@ -64,6 +64,7 @@ class Room:
             self.touched = time.time()
         if sub:
             sub.stop()
+            self._relay({"t": "leave", "peer": peer_id})   # peers drop its cursor
 
     def _relay(self, msg, exclude=None, lossy=False):
         with self.lock:

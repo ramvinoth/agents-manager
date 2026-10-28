@@ -12,6 +12,7 @@ import type { KeyAction } from "./providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "./audit"
 import type { RelayOffer, RelayStatus } from "./pairLink"
 import type { Canvas, CanvasMeta } from "./canvas"
+import type { El } from "./canvasSync"
 
 type Body = Record<string, unknown>
 
@@ -230,6 +231,22 @@ class ApiClient {
   orgMap(projectId: number, level: MapLevel, path = "") {
     const p = new URLSearchParams({ project: String(projectId), level, path })
     return this.getStrict<MapView>(`/api/org/map?${p}`)
+  }
+  /** The project's shared canvas (viewer/routes/canvas_board.py): the server's
+   *  scene snapshot. Live edits then flow over /api/canvas/ws?canvas=<id>. */
+  canvasBoard(projectId: number) {
+    return this.getStrict<{ canvas: number; protocol: number; elements: El[]; checksum: number; editable: boolean }>(
+      `/api/canvas/board?project=${projectId}`,
+    )
+  }
+  /** Upload one image's bytes (raw body). Throws 400 bad type/size, 403 read-only. */
+  async canvasFileUpload(canvas: number, file: string, mime: string, blob: Blob) {
+    const p = new URLSearchParams({ canvas: String(canvas), file, mime })
+    const res = this.tap(await fetch(`/api/canvas/file?${p}`, { method: "POST", body: blob }))
+    return this.strict<{ ok: boolean; file: string }>(res)
+  }
+  canvasFileUrl(canvas: number, file: string) {
+    return `/api/canvas/file?${new URLSearchParams({ canvas: String(canvas), file })}`
   }
   orgBoard(projectId: number) {
     return this.getJSON<{ columns: BoardColumn[] }>(`/api/org/board?project=${projectId}`)
