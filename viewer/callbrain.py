@@ -27,16 +27,28 @@ already enforces; the brain adds no policy of its own.
 
 The conversation memory of a call lives in the `history` the phone sends back
 each turn (spoken turns plus the tool calls and results — see trim_history), so
-the server holds no per-call state and a restart loses nothing. Pure helpers
+a restart loses at most the turn being spoken.
+
+Two engines speak the call. With HARMAN_LFM3_URL set, LFM3-Audio (one model on
+the GPU box, deploy/lfm3_service.py) decides the tools AND speaks the answer
+itself: a turn that produces audio returns {audio, next} — the phone streams
+/api/call/audio?id=<audio> and then posts /api/call/next with `next`, which
+collects what was said, runs any tool calls the speech carried, and continues
+(at most MAX_TOOL_ROUNDS). That one in-flight segment is the only server-side
+call state (_PENDING, minutes-lived). Without LFM3, or when it is down before
+any tool ran, the Qwen brain (call_turn) answers in text and the phone speaks it
+with Pocket TTS. Pure helpers
 (snapshot rendering, transcript activity, tool-call parsing) take plain data so
 they are unit-tested without a model or a database.
 """
 import json
+import threading
 import time
+import urllib.request
 from datetime import datetime
 
 from viewer import actions, db, orglogic, providers
-from viewer.config import CHAT_JOBS, CHAT_LOCK, read_back, split_lines, transcript_path
+from viewer.config import CHAT_JOBS, CHAT_LOCK, LFM3_SERVICE_URL, read_back, split_lines, transcript_path
 from viewer.customrun import chat_completion_message
 
 SETTING_KEY = "call_brain"        # {"provider": <preset id>}
@@ -45,11 +57,16 @@ MAX_TOOL_ROUNDS = 3
 HISTORY_LIMIT = 24                # prior call messages replayed to the brain
 ANSWER_CHARS = 700                # how much of a finished answer is read aloud
 SNAPSHOT_PER_COLUMN = 3           # cards named per waiting column in the snapshot
+LFM3_TIMEOUT = 130                # the service holds /generate and /result up to 90-120 s
+PENDING_TTL = 300                 # an unclaimed spoken segment is forgotten after this
+LOST = "I lost the thread there; could you say that again?"
 
 PERSONA = (
-    "You are Harman, on a phone call with the owner of this system. Speak in one or "
-    "two short natural sentences; no markdown, no lists, say card numbers as plain "
-    "numbers. Harman is an organisation of AI agents that do the owner's work; the "
+    "You are Harman, on a phone call with the owner of this system. Talk like a "
+    "person on the phone: short natural sentences, no markdown, no lists, card "
+    "numbers as plain numbers. Keep answers brief unless the owner asks for more. "
+    "Besides the board you are a warm, knowledgeable companion: you tell stories, "
+    "explain history and science, and chat about anything. Harman is an organisation of AI agents that do the owner's work; the "
     "Kanban board is the ledger where work is delegated, tracked and decided. The "
     "SYSTEM SNAPSHOT below is live and authoritative: answer the date, the time, what "
     "is pending, what is waiting on the owner, and what Harman is doing straight from "
@@ -253,8 +270,9 @@ def parse_tool_calls(message):
     out = []
     for call in message.get("tool_calls") or []:
         fn = call.get("function") or {}
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
+        raw = fn.get("arguments")
+        try:   # OpenAI sends a JSON string; LFM3 a dict
+            args = raw if isinstance(raw, dict) else json.loads(raw or "{}")
         except Exception:
             args = {}
         out.append((fn.get("name", ""), args if isinstance(args, dict) else {}, call.get("id", "")))
@@ -273,6 +291,12 @@ def describe_engine(preset):
 
 
 def engine():
+    if LFM3_SERVICE_URL:
+        try:
+            if _lfm3_http("GET", "/health", timeout=2).get("ok"):
+                return {"engine": "brain", "model": "LFM3-Audio"}
+        except Exception:
+            pass
     return describe_engine(brain_preset())
 
 
@@ -451,6 +475,129 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
         reply = reply or "I lost the thread there; could you say that again?"
     messages.append({"role": "assistant", "content": reply})
     return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
+
+
+# ------------------------------------------------------- LFM3-Audio engine
+
+_PENDING = {}                     # segment id -> {messages, used, ctx, rounds, ts}
+_PENDING_LOCK = threading.Lock()
+
+
+def _lfm3_http(method, path, body=None, timeout=LFM3_TIMEOUT):
+    req = urllib.request.Request(LFM3_SERVICE_URL.rstrip("/") + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
+def to_lfm3(messages):
+    """History is stored in OpenAI form (string arguments); LFM3's chat template
+    wants the arguments as a dict."""
+    out = []
+    for m in messages:
+        if m.get("tool_calls"):
+            m = dict(m, content=m.get("content") or "", tool_calls=[
+                dict(c, function=dict(c.get("function") or {}, arguments=args))
+                for c, (_, args, _) in zip(m["tool_calls"], parse_tool_calls(m))])
+        out.append(m)
+    return out
+
+
+def _run_calls(messages, said, calls, used, ctx, tool_runner):
+    """Append the assistant's tool calls (canonical OpenAI form, fresh ids) and
+    each tool's result to `messages`."""
+    base = sum(len(m.get("tool_calls") or []) for m in messages)
+    canon = [{"id": f"call_{base + i + 1}", "type": "function",
+              "function": {"name": name, "arguments": json.dumps(args)}}
+             for i, (name, args, _) in enumerate(parse_tool_calls({"tool_calls": calls}))]
+    messages.append({"role": "assistant", "content": said or None, "tool_calls": canon})
+    for call in canon:
+        name, args = call["function"]["name"], json.loads(call["function"]["arguments"])
+        used.append(name)
+        messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
+                         "content": tool_runner(name, args, ctx)})
+
+
+def _lfm3_rounds(messages, used, ctx, rounds, tool_runner, http):
+    """Generate until LFM3 speaks (-> {audio, next}) or answers in text (-> reply)."""
+    while True:
+        r = http("POST", "/generate", {"messages": to_lfm3(messages), "tools": TOOLS})
+        if r.get("audio"):
+            now = time.time()
+            with _PENDING_LOCK:
+                for k in [k for k, v in _PENDING.items() if now - v["ts"] > PENDING_TTL]:
+                    _PENDING.pop(k, None)
+                _PENDING[r["id"]] = {"messages": messages, "used": used, "ctx": ctx,
+                                     "rounds": rounds, "ts": now}
+            return {"audio": r["id"], "next": r["id"], "history": trim_history(messages[1:]),
+                    "tools": used}
+        if r.get("error"):
+            raise RuntimeError(f"LFM3: {r['error']}")
+        said, calls = (r.get("text") or "").strip(), r.get("tool_calls") or []
+        if not calls or rounds <= 0:
+            reply = said or LOST
+            messages.append({"role": "assistant", "content": reply})
+            return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
+        _run_calls(messages, said, calls, used, ctx, tool_runner)
+        rounds -= 1
+
+
+def lfm3_turn(sid, principal, text, history, tool_runner=run_tool, snapshot_text=None,
+              http=_lfm3_http):
+    """call_turn on LFM3-Audio. The first reply is either {audio, next} (stream it,
+    then lfm3_next) or {reply} (text to speak). If LFM3 fails before any tool ran,
+    the Qwen brain answers instead, when one is configured."""
+    ctx = {"sid": sid, "principal": principal}
+    snap = snapshot_text if snapshot_text is not None else snapshot(sid, principal)
+    messages = [{"role": "system", "content": system_prompt(snap)}]
+    messages += [m for m in (history or []) if isinstance(m, dict) and m.get("role") in _ROLES]
+    messages.append({"role": "user", "content": text})
+    used = []
+    try:
+        return _lfm3_rounds(messages, used, ctx, MAX_TOOL_ROUNDS, tool_runner, http)
+    except Exception:
+        if used or not brain_preset():
+            raise
+        return call_turn(sid, principal, text, history, tool_runner=tool_runner, snapshot_text=snap)
+
+
+def owns_segment(sid, segment):
+    with _PENDING_LOCK:
+        st = _PENDING.get(segment)
+        return bool(st) and st["ctx"]["sid"] == sid
+
+
+def lfm3_next(sid, segment, stop=False, tool_runner=run_tool, http=_lfm3_http):
+    """The phone finished (or, with stop, barged into) a spoken segment. Returns
+    {said, history, tools} plus {audio, next} or {reply} when the answer goes on.
+    A barge-in cancels generation and keeps only the words already spoken: the
+    tool calls the speech carried are NOT run — the owner cut that answer off.
+    Raises LookupError for an unknown, expired or foreign segment."""
+    with _PENDING_LOCK:
+        st = _PENDING.get(segment)
+        if not st or st["ctx"]["sid"] != sid:
+            raise LookupError("unknown call segment")
+        _PENDING.pop(segment)
+    messages, used = st["messages"], st["used"]
+    try:
+        if stop:
+            http("POST", f"/cancel/{segment}")
+        r = http("GET", f"/result/{segment}")
+    except Exception:
+        return {"said": "", "reply": LOST, "history": trim_history(messages[1:]), "tools": used}
+    said = (r.get("text") or "").strip()
+    calls = [] if stop else (r.get("tool_calls") or [])
+    if not calls or st["rounds"] <= 0:
+        if said:
+            messages.append({"role": "assistant", "content": said})
+        return {"said": said, "history": trim_history(messages[1:]), "tools": used}
+    _run_calls(messages, said, calls, used, st["ctx"], tool_runner)
+    try:
+        out = _lfm3_rounds(messages, used, st["ctx"], st["rounds"] - 1, tool_runner, http)
+    except Exception:
+        out = {"reply": LOST, "history": trim_history(messages[1:]), "tools": used}
+    return dict(out, said=said)
 
 
 _ROLES = ("user", "assistant", "tool")

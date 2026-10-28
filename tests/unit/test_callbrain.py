@@ -339,3 +339,131 @@ class TestDescribeEngine:
     def test_missing_brain_is_an_error_not_a_silent_fallback(self):
         out = callbrain.describe_engine(None)
         assert out["engine"] == "brain" and "call_brain" in out["error"]
+
+
+# ------------------------------------------------------- LFM3-Audio engine
+
+class FakeLFM3:
+    """Scripted LFM3 service: each /generate pops the next reply; /result
+    returns what the matching segment 'said'."""
+    def __init__(self, generations, results=None):
+        self.generations, self.results, self.calls = list(generations), results or {}, []
+
+    def __call__(self, method, path, body=None, timeout=None):
+        self.calls.append((method, path, body))
+        if path == "/generate":
+            r = self.generations.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        if path.startswith("/result/"):
+            return self.results[path.split("/")[-1]]
+        if path.startswith("/cancel/"):
+            return {"cancelled": True}
+        raise AssertionError(path)
+
+
+def _runner(log):
+    def run(name, args, ctx):
+        log.append((name, args, ctx["sid"]))
+        return f"{name} ok"
+    return run
+
+
+@pytest.fixture(autouse=False)
+def pending():
+    callbrain._PENDING.clear()
+    yield callbrain._PENDING
+    callbrain._PENDING.clear()
+
+
+def test_parse_tool_calls_accepts_dict_arguments():
+    msg = {"tool_calls": [{"function": {"name": "check_board", "arguments": {"x": 1}}}]}
+    assert callbrain.parse_tool_calls(msg)[0][:2] == ("check_board", {"x": 1})
+
+
+def test_to_lfm3_turns_string_arguments_into_dicts():
+    hist = [{"role": "assistant", "content": None, "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "a", "arguments": '{"k": 2}'}}]}]
+    out = callbrain.to_lfm3(hist)
+    assert out[0]["tool_calls"][0]["function"]["arguments"] == {"k": 2}
+    assert out[0]["content"] == ""
+    assert hist[0]["tool_calls"][0]["function"]["arguments"] == '{"k": 2}'   # not mutated
+
+
+def test_lfm3_tool_round_then_audio(pending):
+    log = []
+    fake = FakeLFM3([
+        {"text": "", "tool_calls": [{"type": "function", "function": {"name": "check_board", "arguments": {}}}]},
+        {"id": "seg1", "audio": True}])
+    r = callbrain.lfm3_turn("s1", PRINCIPAL, "status?", [], tool_runner=_runner(log),
+                            snapshot_text="snap", http=fake)
+    assert r["audio"] == r["next"] == "seg1" and r["tools"] == ["check_board"]
+    assert log == [("check_board", {}, "s1")]
+    sent = fake.calls[1][2]["messages"]            # the 2nd generate saw the tool result
+    assert sent[-1]["role"] == "tool" and sent[-1]["tool_call_id"] == "call_1"
+    assert sent[-2]["tool_calls"][0]["function"]["arguments"] == {}
+    stored = r["history"][-1]
+    assert stored["role"] == "tool"
+    assert r["history"][-2]["tool_calls"][0]["function"]["arguments"] == "{}"   # canonical
+    assert "seg1" in pending
+
+
+def test_lfm3_text_only_reply(pending):
+    fake = FakeLFM3([{"text": "Hi there.", "tool_calls": [], "audio": False}])
+    r = callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=fake)
+    assert r["reply"] == "Hi there." and r["history"][-1] == {"role": "assistant", "content": "Hi there."}
+    assert not pending
+
+
+def test_lfm3_next_runs_spoken_tool_calls_and_continues(pending):
+    log = []
+    fake = FakeLFM3([{"id": "seg1", "audio": True}, {"id": "seg2", "audio": True}], results={
+        "seg1": {"text": "Let me delegate that.", "tool_calls": [
+            {"type": "function", "function": {"name": "delegate", "arguments": {"title": "X"}}}]}})
+    callbrain.lfm3_turn("s1", PRINCIPAL, "do X", [], tool_runner=_runner(log), snapshot_text="", http=fake)
+    r = callbrain.lfm3_next("s1", "seg1", tool_runner=_runner(log), http=fake)
+    assert r["said"] == "Let me delegate that." and r["next"] == "seg2"
+    assert log == [("delegate", {"title": "X"}, "s1")]
+    asst = [m for m in r["history"] if m.get("tool_calls")][0]
+    assert asst["content"] == "Let me delegate that."
+    assert "seg1" not in pending and "seg2" in pending
+
+
+def test_lfm3_next_final_segment_appends_what_was_said(pending):
+    fake = FakeLFM3([{"id": "seg1", "audio": True}], results={"seg1": {"text": "All good.", "tool_calls": []}})
+    callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=fake)
+    r = callbrain.lfm3_next("s1", "seg1", http=fake)
+    assert r["said"] == "All good." and "next" not in r and "reply" not in r
+    assert r["history"][-1] == {"role": "assistant", "content": "All good."}
+
+
+def test_lfm3_next_barge_in_cancels_and_runs_no_tools(pending):
+    log = []
+    fake = FakeLFM3([{"id": "seg1", "audio": True}], results={"seg1": {"text": "I will", "tool_calls": [
+        {"type": "function", "function": {"name": "delegate", "arguments": {}}}]}})
+    callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=fake)
+    r = callbrain.lfm3_next("s1", "seg1", stop=True, tool_runner=_runner(log), http=fake)
+    assert ("POST", "/cancel/seg1", None) in fake.calls
+    assert log == [] and r["said"] == "I will" and "next" not in r
+
+
+def test_lfm3_next_rejects_unknown_and_foreign_segments(pending):
+    fake = FakeLFM3([{"id": "seg1", "audio": True}])
+    callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=fake)
+    with pytest.raises(LookupError):
+        callbrain.lfm3_next("other", "seg1", http=fake)
+    assert callbrain.owns_segment("s1", "seg1") and not callbrain.owns_segment("other", "seg1")
+    with pytest.raises(LookupError):
+        callbrain.lfm3_next("s1", "nope", http=fake)
+
+
+def test_lfm3_falls_back_to_brain_only_before_any_tool(pending, monkeypatch):
+    monkeypatch.setattr(callbrain, "brain_preset", lambda: {"id": "qwen"})
+    monkeypatch.setattr(callbrain, "call_turn", lambda *a, **k: {"reply": "from qwen"})
+    down = FakeLFM3([OSError("down")])
+    assert callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=down)["reply"] == "from qwen"
+    mid = FakeLFM3([{"text": "", "tool_calls": [{"type": "function", "function": {"name": "a", "arguments": {}}}]},
+                    OSError("down")])
+    with pytest.raises(OSError):   # a tool already ran: re-running the turn on Qwen would repeat it
+        callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], tool_runner=_runner([]), snapshot_text="", http=mid)

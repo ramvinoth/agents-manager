@@ -13,15 +13,22 @@ All are normal /api routes, so the standard session gate authenticates them.
   GET  /api/call/engine -> {engine: "brain", model?, error?}. The call brain's
                         model name, or why no brain is configured
                         (viewer.callbrain.engine).
-  POST /api/call/turn   body = {path, text, history?}  -> {reply, history, tools}.
+  POST /api/call/turn   body = {path, text, history?}  -> {reply, history, tools}
+                        or, on LFM3-Audio, {audio, next, history, tools}.
                         One exchange with the fast call brain (viewer.callbrain).
+  GET  /api/call/audio?path=..&id=..  -> live audio/aac of one spoken segment
+                        (proxied from the LFM3 service's /audio/<id>).
+  POST /api/call/next   body = {path, next, stop?}  -> {said, history, tools}
+                        (+ {audio, next} or {reply} when the answer goes on). The
+                        phone posts it when a segment finished playing or, with
+                        stop, when the owner barged in (callbrain.lfm3_next).
 
 """
 import json
 import urllib.request
 
 from viewer import voice
-from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
+from viewer.config import LFM3_SERVICE_URL, SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
 from viewer.speakable import speakable
 
 
@@ -44,9 +51,9 @@ class VoiceMixin:
         if not text or full_path is None:
             self.send_json({"error": "Session and text required"}, status=400)
             return
+        turn = callbrain.lfm3_turn if LFM3_SERVICE_URL else callbrain.call_turn
         try:
-            result = callbrain.call_turn(full_path.stem, req.principal, text,
-                                         body.get("history") or [])
+            result = turn(full_path.stem, req.principal, text, body.get("history") or [])
         except RuntimeError as e:
             self.send_json({"error": str(e)}, status=409)
             return
@@ -55,27 +62,34 @@ class VoiceMixin:
             return
         self.send_json(result)
 
-    def _g_voice_tts_stream(self, req):
-        """Proxy a LIVE AAC stream from the speech service to the client, chunk
-        by chunk, so a streaming player starts almost immediately. text comes in
-        the query string (a GET, so react-native-track-player can play the URL
-        with an Authorization header)."""
-        text = (req.query.get("text") or [""])[0].strip()
-        if not text:
-            self.send_json({"error": "empty text"}, status=400)
+    def _p_call_next(self, req):
+        from viewer import callbrain
+        body = self.read_body() or {}
+        full_path = self.resolve_session_quiet(body.get("path", ""))
+        if full_path is None or not body.get("next"):
+            self.send_json({"error": "Session and next required"}, status=400)
             return
-        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
-        text = speakable(text) or text
-        base = TTS_STREAM_URL or SPEECH_SERVICE_URL
-        if not base:
-            self.send_json({"error": "voice disabled"}, status=502)
-            return
-        url = base.rstrip("/") + "/synthesize_stream_aac"
-        body = json.dumps({"text": text}).encode("utf-8")
-        upstream = urllib.request.Request(url, data=body, method="POST",
-                                          headers={"Content-Type": "application/json"})
         try:
-            resp = urllib.request.urlopen(upstream, timeout=SPEECH_TIMEOUT)
+            self.send_json(callbrain.lfm3_next(full_path.stem, str(body["next"]),
+                                               stop=bool(body.get("stop"))))
+        except LookupError as e:
+            self.send_json({"error": str(e)}, status=404)
+
+    def _g_call_audio(self, req):
+        """Stream one spoken segment. Only a segment pending for THIS session is
+        served, so an id alone never reaches another chat's audio."""
+        from viewer import callbrain
+        full_path = self.resolve_session_quiet((req.query.get("path") or [""])[0])
+        seg = (req.query.get("id") or [""])[0]
+        if full_path is None or not callbrain.owns_segment(full_path.stem, seg):
+            self.send_json({"error": "unknown call segment"}, status=404)
+            return
+        self._proxy_aac(urllib.request.Request(
+            LFM3_SERVICE_URL.rstrip("/") + f"/audio/{seg}"), timeout=callbrain.LFM3_TIMEOUT)
+
+    def _proxy_aac(self, upstream, timeout):
+        try:
+            resp = urllib.request.urlopen(upstream, timeout=timeout)
         except Exception as e:
             self.send_json({"error": f"speech service unreachable: {e}"}, status=502)
             return
@@ -98,6 +112,27 @@ class VoiceMixin:
                 resp.close()
             except Exception:
                 pass
+
+    def _g_voice_tts_stream(self, req):
+        """Proxy a LIVE AAC stream from the speech service to the client, chunk
+        by chunk, so a streaming player starts almost immediately. text comes in
+        the query string (a GET, so react-native-track-player can play the URL
+        with an Authorization header)."""
+        text = (req.query.get("text") or [""])[0].strip()
+        if not text:
+            self.send_json({"error": "empty text"}, status=400)
+            return
+        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
+        text = speakable(text) or text
+        base = TTS_STREAM_URL or SPEECH_SERVICE_URL
+        if not base:
+            self.send_json({"error": "voice disabled"}, status=502)
+            return
+        url = base.rstrip("/") + "/synthesize_stream_aac"
+        body = json.dumps({"text": text}).encode("utf-8")
+        self._proxy_aac(urllib.request.Request(url, data=body, method="POST",
+                                               headers={"Content-Type": "application/json"}),
+                        timeout=SPEECH_TIMEOUT)
 
     def _g_voice_ws(self, req):
         """The call's listening WebSocket. The app streams short audio windows as

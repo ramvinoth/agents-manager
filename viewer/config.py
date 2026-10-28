@@ -201,6 +201,9 @@ SPEECH_TIMEOUT = int(os.environ.get("HARMAN_SPEECH_TIMEOUT", "180"))  # per STT/
 # The main speech service (:8095) handles STT + non-streaming TTS but NOT
 # streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
 TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "")
+# LFM3-Audio speaks the call natively (one model: board tools + spoken audio, see
+# callbrain.lfm3_turn). Empty = the call uses the Qwen brain + Pocket TTS instead.
+LFM3_SERVICE_URL = os.environ.get("HARMAN_LFM3_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
