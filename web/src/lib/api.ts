@@ -245,6 +245,10 @@ class ApiClient {
     const res = this.tap(await fetch(`/api/canvas/file?${p}`, { method: "POST", body: blob }))
     return this.strict<{ ok: boolean; file: string }>(res)
   }
+  /** Take back an agent's latest patch on this canvas (people only). */
+  canvasRevert(canvas: number, actor: string) {
+    return this.postStrict<{ ok: boolean; reverted: number }>("/api/canvas/revert", { canvas, actor })
+  }
   canvasFileUrl(canvas: number, file: string) {
     return `/api/canvas/file?${new URLSearchParams({ canvas: String(canvas), file })}`
   }

@@ -4,6 +4,10 @@ GET  /api/canvas/board?project=<id> | ?id=<canvas>   snapshot (gzipped JSON)
 GET  /api/canvas/file?canvas=&file=                   one content-addressed file
 POST /api/canvas/file?canvas=&file=&mime=             raw body, first write wins
 GET  /api/canvas/ws?canvas=<id>                       the room socket
+GET  /api/canvas/agent/read?project=|canvas=          agent summary (ink, frames, refs)
+POST /api/canvas/agent/patch {project|canvas, ops}    agent add/update/delete ops
+GET  /api/canvas/agent/snapshot?project=|canvas=&group=|frame=|bbox=x0,y0,x1,y1   PNG
+POST /api/canvas/revert {canvas, actor}               a person undoes an agent's last patch
 
 Socket protocol (viewer/canvas_room.py holds the room):
   client → {"t":"hello","protocol":N}            mismatch → {"t":"reload"} + close
@@ -16,9 +20,12 @@ resends whatever it has not had acked.
 """
 import json
 import re
+import threading
+import time
 import uuid
 
 from viewer import canvas_reconcile as rec
+from viewer import canvas_render, canvas_summary
 from viewer import db
 from viewer.canvas_room import ROOMS
 
@@ -27,6 +34,27 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024      # a 2000-element paste is ~1-2 MiB
 MAX_BATCH = 2000                       # elements per message; the rest are refused
 FILE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 PRESENCE_KEYS = ("pointer", "button", "selected", "name", "color")
+AGENT_OPS_PER_SEC = 50                 # an agent loop must not flood the people drawing
+_rate, _rate_lock = {}, threading.Lock()
+
+
+def _rate_ok(actor, n):
+    """A one-second window per actor; a refused patch spends nothing."""
+    now = time.time()
+    with _rate_lock:
+        start, used = _rate.get(actor, (now, 0))
+        if now - start >= 1.0:
+            start, used = now, 0
+        if used + n > AGENT_OPS_PER_SEC:
+            return False
+        _rate[actor] = (start, used + n)
+        return True
+
+
+def _resolve(kind, rid):
+    """A harman:// tile's current title, or None when its object is gone."""
+    row = db.card_get(rid) if kind == "card" else db.note_get(rid) if kind == "note" else None
+    return (row or {}).get("title") if row else None
 
 
 def can_edit(principal):
@@ -52,23 +80,27 @@ def _int(v):
 
 class CanvasBoardMixin:
     def _canvas_from_query(self, req, key="canvas"):
-        cid = _int(_q(req, key))
+        return self._canvas_target(None, _q(req, key))
+
+    def _canvas_target(self, project, canvas):
+        """The canvas id for a project (made on first use) or an explicit
+        canvas id; sends the 404 itself and returns None."""
+        pid = _int(project)
+        if pid is not None:
+            if not db.project_get(pid):
+                self.send_json({"error": "no such project"}, status=404)
+                return None
+            return db.canvas_board_for("project", pid)["id"]
+        cid = _int(canvas)
         if cid is None or not db.canvas_board_get(cid):
-            self.send_json({"error": "no such canvas"}, status=404)
+            self.send_json({"error": "no such canvas (pass project or canvas)"}, status=404)
             return None
         return cid
 
     def _g_canvas_board(self, req):
-        pid = _int(_q(req, "project"))
-        if pid is not None:
-            if not db.project_get(pid):
-                self.send_json({"error": "no such project"}, status=404)
-                return
-            cid = db.canvas_board_for("project", pid)["id"]
-        else:
-            cid = self._canvas_from_query(req, "id")
-            if cid is None:
-                return
+        cid = self._canvas_target(_q(req, "project"), _q(req, "id"))
+        if cid is None:
+            return
         snap = ROOMS.get(cid).snapshot()
         snap["editable"] = can_edit(req.principal)
         self.send_json(snap)
@@ -153,6 +185,86 @@ class CanvasBoardMixin:
             if joined:
                 room.leave(peer)
             ws.close()
+
+    # -- agents (MCP project_canvas_*) ------------------------------------------
+    def _g_canvas_agent_read(self, req):
+        cid = self._canvas_target(_q(req, "project"), _q(req, "canvas"))
+        if cid is None:
+            return
+        out = canvas_summary.summarize(ROOMS.get(cid).snapshot()["elements"], _resolve)
+        out["canvas"] = cid
+        self.send_json(out)
+
+    def _p_canvas_agent_patch(self, req):
+        p = req.principal
+        if p["kind"] == "app":   # people draw through the socket
+            self.send_json({"error": "agents only"}, status=403)
+            return
+        if not can_edit(p):
+            self.send_json({"error": "read-only"}, status=403)
+            return
+        body = self.read_body() or {}
+        ops = body.get("ops")
+        if not isinstance(ops, list):
+            self.send_json({"error": "ops must be a list"}, status=400)
+            return
+        cid = self._canvas_target(body.get("project"), body.get("canvas"))
+        if cid is None:
+            return
+        if not _rate_ok(p["actor"], len(ops)):
+            self.send_json({"error": f"slow down: at most {AGENT_OPS_PER_SEC} ops a second"}, status=429)
+            return
+        try:
+            accepted, results = ROOMS.get(cid).patch(ops, p["actor"], own_only=p.get("level") == "ic")
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=400)
+            return
+        ok = sum(1 for r in results if r.get("ok"))
+        db.audit_append(p["actor"], "canvas_patch", f"canvas:{cid}",
+                        f"{ok}/{len(results)} ops, {len(accepted)} elements")
+        self.send_json({"canvas": cid, "accepted": [e["id"] for e in accepted], "results": results})
+
+    def _g_canvas_agent_snapshot(self, req):
+        cid = self._canvas_target(_q(req, "project"), _q(req, "canvas"))
+        if cid is None:
+            return
+        els = ROOMS.get(cid).snapshot()["elements"]
+        raw = _q(req, "bbox")
+        try:
+            box = [float(v) for v in raw.split(",")] if raw else None
+            picked, area = canvas_render.select(els, canvas_summary.ink_groups(els),
+                                                group=_q(req, "group") or None,
+                                                frame=_q(req, "frame") or None, box=box)
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=400)
+            return
+        if not picked:
+            self.send_json({"error": "nothing drawn there"}, status=400)
+            return
+        png = canvas_render.render(picked, area)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(png)))
+        self.end_headers()
+        self.wfile.write(png)
+
+    def _p_canvas_revert(self, req):
+        p = req.principal
+        if p["kind"] != "app" or not can_edit(p):   # the human's net, never an agent's
+            self.send_json({"error": "not allowed"}, status=403)
+            return
+        body = self.read_body() or {}
+        actor = body.get("actor")
+        cid = self._canvas_target(None, body.get("canvas"))
+        if cid is None:
+            return
+        if not isinstance(actor, str) or not actor.startswith("session:"):
+            self.send_json({"error": "actor must be an agent (session:…)"}, status=400)
+            return
+        undone = ROOMS.get(cid).revert(actor, by=p["actor"])
+        if undone:
+            db.audit_append(p["actor"], "canvas_revert", f"canvas:{cid}", f"{actor}: {len(undone)} elements")
+        self.send_json({"ok": True, "reverted": len(undone)})
 
     @staticmethod
     def _canvas_apply(room, sub, peer, actor, editable, elements):

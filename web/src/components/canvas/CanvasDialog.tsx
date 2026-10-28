@@ -37,7 +37,8 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
   const [board, setBoard] = useState<Board | null>(null)
   const [err, setErr] = useState("")
   const [status, setStatus] = useState<Status>("connecting")
-  const [notice, setNotice] = useState("")
+  // A line above the canvas; `undo` names the agent whose latest patch it takes back.
+  const [notice, setNotice] = useState<{ text: string; undo?: string } | null>(null)
   const [api_, setApi] = useState<ExcalidrawImperativeAPI | null>(null)
   const dark = document.documentElement.classList.contains("dark")
 
@@ -52,6 +53,13 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
       .catch((e) => setErr(userError(e, "this project's canvas")))
   }, [host, cwd, name])
   useEffect(load, [load])
+
+  // The person's net under an agent's edit: the server takes back that agent's
+  // latest patch, skipping anything someone changed since.
+  const undoAgent = (canvas: number, actor: string) =>
+    api.canvasRevert(canvas, actor)
+      .then((r) => setNotice({ text: r.reverted ? `Undid the agent's last change (${r.reverted} element${r.reverted === 1 ? "" : "s"}).` : "Nothing left to undo — it was already undone or changed since." }))
+      .catch((e) => setNotice({ text: `Could not undo: ${userError(e, "the agent's change")}.` }))
 
   // The live half: one socket per open dialog, reconnecting with backoff.
   const sync = useRef<Sync | null>(null)
@@ -99,7 +107,7 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
             uploaded.add(f.id)
             flush()
           })
-          .catch((e) => setNotice(`An image could not be shared: ${userError(e, "the image")}. Only PNG, JPEG, GIF, WebP or SVG up to 4 MB.`))
+          .catch((e) => setNotice({ text: `An image could not be shared: ${userError(e, "the image")}. Only PNG, JPEG, GIF, WebP or SVG up to 4 MB.` }))
           .finally(() => uploading.delete(f.id))
       }
     }
@@ -156,13 +164,15 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
             s.received(els)
             merge(els)
             fetchMissing()
+            if (typeof m.from === "string" && m.from.startsWith("session:") && board.editable)
+              setNotice({ text: "An agent changed the canvas.", undo: m.from })
             break
           }
           case "reject": {
             const local = new Map(scene().map((e) => [e.id, e]))
             const adopt = s.rejected((m.items as RejectItem[]) || [], local)
             if (adopt.length) apply(replaceById(scene(), adopt))
-            if ((m.items as RejectItem[]).some(([, why]) => why === "read-only")) setNotice("This canvas is read-only for you.")
+            if ((m.items as RejectItem[]).some(([, why]) => why === "read-only")) setNotice({ text: "This canvas is read-only for you." })
             flush()
             break
           }
@@ -256,8 +266,13 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
         )}
         {notice && (
           <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>{notice}</span>
-            <button className="text-muted-foreground hover:text-foreground" onClick={() => setNotice("")}>Dismiss</button>
+            <span>{notice.text}</span>
+            <span className="flex gap-3">
+              {notice.undo && board && (
+                <button className="underline" onClick={() => undoAgent(board.canvas, notice.undo!)}>Undo</button>
+              )}
+              <button className="text-muted-foreground hover:text-foreground" onClick={() => setNotice(null)}>Dismiss</button>
+            </span>
           </div>
         )}
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border">

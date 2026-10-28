@@ -12,15 +12,18 @@ Peers reuse viewer.live.Subscriber: a bounded queue per socket, overflow
 collapses to one resync (the client refetches the snapshot — always correct),
 and cursor presence is lossy so it is the first thing dropped under load.
 """
+import collections
 import threading
 import time
 
+from viewer import canvas_patch
 from viewer import canvas_reconcile as rec
 from viewer.live import Subscriber
 
 FLUSH_S = 1.0
 CHECKSUM_S = 20.0
 IDLE_UNLOAD_S = 300.0
+UNDO_DEPTH = 20                  # agent patches a person can take back, per room
 
 
 class Room:
@@ -32,6 +35,7 @@ class Room:
         self.peers = {}               # peer id -> Subscriber
         self.saver = saver
         self.touched = time.time()
+        self.undo = collections.deque(maxlen=UNDO_DEPTH)   # (actor, [(id, element before | None, version written)])
 
     # -- reads --------------------------------------------------------------
     def snapshot(self):
@@ -86,6 +90,39 @@ class Room:
             self._relay({"t": "elements", "elements": accepted, "from": peer_id or actor},
                         exclude=peer_id)
         return accepted, rejected
+
+    def patch(self, ops, actor, own_only):
+        """An agent's ops (canvas_patch) applied like any peer's write, plus an
+        undo record so the person watching can take the whole patch back."""
+        with self.lock:
+            out, results = canvas_patch.build(self.elements, ops, actor, own_only)
+            before = {el["id"]: self.elements.get(el["id"]) for el in out}
+            accepted, _ = rec.merge(self.elements, out)
+            for el in accepted:
+                self.dirty[el["id"]] = actor
+            if accepted:
+                self.undo.append((actor, [(el["id"], before[el["id"]], el["version"]) for el in accepted]))
+            self.touched = time.time()
+        if accepted:
+            self._relay({"t": "elements", "elements": accepted, "from": actor})
+        return accepted, results
+
+    def revert(self, actor, by):
+        """Undo `actor`'s latest patch; the undo itself is written as `by`.
+        Returns the elements written ([] when there is nothing to undo)."""
+        with self.lock:
+            idx = next((i for i in range(len(self.undo) - 1, -1, -1) if self.undo[i][0] == actor), None)
+            if idx is None:
+                return []
+            _, prior = self.undo[idx]
+            del self.undo[idx]
+            accepted, _ = rec.merge(self.elements, canvas_patch.revert(self.elements, prior))
+            for el in accepted:
+                self.dirty[el["id"]] = by
+            self.touched = time.time()
+        if accepted:
+            self._relay({"t": "elements", "elements": accepted, "from": by})
+        return accepted
 
     def presence(self, peer_id, data):
         self._relay({"t": "presence", "peer": peer_id, **(data or {})},

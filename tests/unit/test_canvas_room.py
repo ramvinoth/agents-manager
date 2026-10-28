@@ -135,3 +135,53 @@ def test_leave_tells_the_remaining_peers():
     room.leave("A")                                        # twice is harmless
     time.sleep(0.05)
     assert len([m for m in b.msgs if m["t"] == "leave"]) == 1
+
+
+ADD = [{"op": "add", "element": {"type": "rectangle", "label": "Build"}}]
+
+
+def test_patch_relays_to_every_peer_from_the_agent_and_marks_it_dirty():
+    reg, saved = make()
+    room = reg.get(1)
+    a, b = Sink(), Sink()
+    room.join("A", a)
+    room.join("B", b)
+    acc, res = room.patch(ADD, "session:me", True)
+    assert res[0]["ok"] and len(acc) == 2                   # shape + its label
+    for s in (a, b):
+        m = s.of("elements")[0]
+        assert m["from"] == "session:me" and len(m["elements"]) == 2
+    room.flush()
+    assert saved and all(actor == "session:me" for actor, _ in saved)
+
+
+def test_own_only_refuses_a_human_shape_but_lead_may_change_it():
+    reg, _ = make(stored=[el("h", customData={"createdBy": "ram"})])
+    room = reg.get(1)
+    acc, res = room.patch([{"op": "update", "id": "h", "set": {"x": 5}}], "session:me", True)
+    assert acc == [] and "not yours" in res[0]["error"]
+    assert room.revert("session:me", "ram") == []           # a refused patch leaves no undo
+    acc, res = room.patch([{"op": "update", "id": "h", "set": {"x": 5}}], "session:me", False)
+    assert res[0]["ok"] and acc[0]["x"] == 5 and acc[0]["version"] == 2
+
+
+def test_revert_takes_the_patch_back_but_never_a_later_human_edit():
+    reg, _ = make(stored=[el("h", v=3, x=0, customData={"createdBy": "ram"})])
+    room = reg.get(1)
+    acc, _ = room.patch([{"op": "update", "id": "h", "set": {"x": 9}},
+                         {"op": "add", "element": {"type": "ellipse"}}], "session:me", False)
+    new_id = next(e["id"] for e in acc if e["id"] != "h")
+    room.apply([dict(room.elements["h"], x=50, version=5, versionNonce=1)], peer_id="A", actor="ram")
+    out = room.revert("session:me", "ram")
+    assert [e["id"] for e in out] == [new_id] and out[0]["isDeleted"]
+    assert room.elements["h"]["x"] == 50                    # the person's later edit stands
+    assert room.dirty[new_id] == "ram"
+    assert room.revert("session:me", "ram") == []           # nothing left to undo
+
+
+def test_revert_restores_the_prior_state_of_an_updated_element():
+    reg, _ = make(stored=[el("h", v=3, x=0, customData={"createdBy": "ram"})])
+    room = reg.get(1)
+    room.patch([{"op": "update", "id": "h", "set": {"x": 9}}], "session:me", False)
+    out = room.revert("session:me", "ram")
+    assert out[0]["x"] == 0 and out[0]["version"] == 5 and room.elements["h"]["x"] == 0
