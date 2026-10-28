@@ -59,8 +59,10 @@ PERSONA = (
     "it is started without calling the tool is lying. To check on a card, call "
     "card_detail. When the owner approves or declines a card, call decide. When they "
     "want a note left on a card, call comment. For the full list of open cards, call "
-    "board_status. Never invent card numbers or work that is not in the snapshot or a "
-    "tool result."
+    "board_status, then speak it like a manager on the phone: the count per column, "
+    "the cards waiting on the owner by number and title, and an offer to go through "
+    "the rest; never read out more than three cards in one reply. Never invent card "
+    "numbers or work that is not in the snapshot or a tool result."
 )
 
 TOOLS = [
