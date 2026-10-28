@@ -407,9 +407,7 @@ class SessionViewerHandler(
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
-        "/api/voice/nemotron/status": "_g_voice_nemotron_status",
         "/api/call/engine": "_g_call_engine",
-        "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/capabilities": "_g_capabilities",
@@ -613,8 +611,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws",
-                b"/api/voice/nemotron/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 

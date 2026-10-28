@@ -2,36 +2,23 @@
  * useAssistantTurn — the voice-turn engine behind the CallKit Call screen.
  *
  * It owns the phase state machine, the last-heard / last-reply / error strings,
- * and the hands-free loop (`startHandsFree`/`stopHandsFree`). Which engine runs
- * a call is the SERVER's decision, read once per call from
- * GET /api/voice/nemotron/status:
- *
- *   - "nemotron": the service is configured. Each recorded utterance is sent as
- *     one binary turn over /api/voice/nemotron/ws; the reply comes back as a WAV
- *     plus the assistant's transcript. No STT (the fork never returns what the
- *     caller said), no tools, no duplex — exactly what the service reports.
- *   - "brain": not configured. Utterances stream to /api/voice/ws for STT, the
- *     text goes to the call brain (`POST /api/call/turn`), and the reply is
- *     spoken through the TTS stream. The brain's memory (`history`) lives here
- *     for the length of the call and is echoed back on every turn.
- *
- * A configured-but-unreachable Nemotron service is an error the caller sees —
- * never a silent drop to the brain path.
+ * and the hands-free loop (`startHandsFree`/`stopHandsFree`). Utterances stream
+ * to /api/voice/ws for STT, the text goes to the call brain (`POST
+ * /api/call/turn`), and the reply is spoken through the TTS stream. The brain's
+ * memory (`history`) lives here for the length of the call and is echoed back on
+ * every turn. The first start asks GET /api/call/engine for the brain's model
+ * name (or why no brain is configured — an error the caller sees).
  */
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, type CallHistory } from "../api/client"
 import {
-  playFile,
   prepareAudio,
-  recordUtterance,
   speak,
   startListening,
   stopListening,
   stopSpeaking,
   type ListenEvent,
 } from "./voice"
-import { NemotronCall } from "./nemotron"
-import { deleteNemotronReply, nemotronNativeBindings } from "./nemotronNative"
 import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
 import { audioSession } from "./audioSessionNative"
@@ -43,30 +30,24 @@ const DUCK_VOLUME = 0.25
 
 // The voice loop's phases — each maps to a status line. "waiting" is the resting
 // state of a connected call (listening for the next utterance); "connecting" is
-// the Nemotron model loading for this call (tens of seconds, server-bounded).
+// the first start asking the server for the call brain.
 export type Phase = "idle" | "connecting" | "waiting" | "thinking" | "speaking" | "denied"
-
-/** Which server path a call is running on. Decided by the server, never here. */
-export type Engine = "brain" | "nemotron"
 
 export interface UseAssistantTurn {
   phase: Phase
-  /** The engine of the current call, once the server has told us. */
-  engine: Engine | null
-  /** The server's own name for the model behind the call. */
-  model: string
-  /** What the caller last said (transcribed). Always "" on Nemotron — the
-   *  service never returns the caller's words. */
+  /** The server's name for the call brain's model; null until the first start
+   *  has asked. */
+  model: string | null
+  /** What the caller last said (transcribed). */
   heard: string
   /** What Harman last said back. */
   reply: string
   error: string
   /** Run one brain turn from already-transcribed text: ask the call brain, speak its reply. */
   runTurn: (text: string) => Promise<void>
-  /** Begin listening. On a connected Nemotron call this only resumes the record
-   *  loop (mute → unmute); the socket and the loaded model stay up. */
+  /** Begin listening (call start, or unmute). */
   startHandsFree: () => Promise<void>
-  /** Pause listening. The Nemotron socket stays connected; it closes on unmount. */
+  /** Pause listening (mute). */
   stopHandsFree: () => Promise<void>
 }
 
@@ -75,8 +56,7 @@ export function useAssistantTurn(
   opts: { onEndCall?: () => void } = {}
 ): UseAssistantTurn {
   const [phase, setPhase] = useState<Phase>("idle")
-  const [engine, setEngine] = useState<Engine | null>(null)
-  const [model, setModel] = useState("")
+  const [model, setModel] = useState<string | null>(null)
   const [heard, setHeard] = useState("")
   const [reply, setReply] = useState("")
   const [error, setError] = useState("")
@@ -97,23 +77,16 @@ export function useAssistantTurn(
   // Set when a barge-in requests a NEW turn mid-speech; picked up after playback
   // stops so we don't re-enter runTurn from inside itself.
   const bargeAskRef = useRef<string | null>(null)
-  // The one Nemotron call for this screen (null on the brain engine or before
-  // connect). Closed on unmount — never on mute, since the model loads per call.
-  const nemotronRef = useRef<NemotronCall | null>(null)
-  const unmountedRef = useRef(false)
 
   useEffect(() => {
     prepareAudio().then((ok) => !ok && setPhase("denied"))
     return () => {
-      unmountedRef.current = true
       stopListening()
-      nemotronRef.current?.close()
-      nemotronRef.current = null
     }
   }, [])
 
   /**
-   * Run `play` (a TTS stream or a reply file), and — on a build with the native
+   * Run `play` (the TTS stream), and — on a build with the native
    * AEC module — run a concurrent echo-cancelled "wakeguard" mic so the user can
    * barge in with "Harman …":
    *   - stop      → halt playback, settle to waiting (no new turn).
@@ -227,104 +200,18 @@ export function useAssistantTurn(
     [runTurn]
   )
 
-  /** One Nemotron turn: play the reply WAV, then delete the temp file. A barge-in
-   *  "ask" has nowhere to go on this engine (no text turns), so it is dropped. */
-  const playNemotronReply = useCallback(
-    async (audioUri: string) => {
-      try {
-        await playWithBargeIn(() => playFile(audioUri))
-      } finally {
-        bargeAskRef.current = null
-        deleteNemotronReply(audioUri)
-      }
-    },
-    [playWithBargeIn]
-  )
-
-  /** The Nemotron record→turn→play loop. Runs while hands-free is on and the
-   *  call is up; a silent window is dropped on-device without a round trip. */
-  const runNemotronLoop = useCallback(
-    async (call: NemotronCall) => {
-      while (handsFreeRef.current && call.isReady && !unmountedRef.current) {
-        setPhase("waiting")
-        let utt: Awaited<ReturnType<typeof recordUtterance>> = { buf: null, silent: false }
-        try {
-          utt = await recordUtterance()
-        } catch {
-          utt = { buf: null, silent: false }
-        }
-        if (!handsFreeRef.current || !call.isReady) break
-        if (utt.silent || !utt.buf || utt.buf.byteLength === 0) continue
-        busyRef.current = true
-        setPhase("thinking")
-        try {
-          const res = await call.sendTurn(utt.buf)
-          setReply(res.text)
-          setPhase("speaking")
-          await playNemotronReply(res.audioUri)
-        } catch (e) {
-          setError((e as Error).message)
-          if (!call.isReady) break // timeout/disconnect closed the call — onDown owns the phase
-        } finally {
-          busyRef.current = false
-        }
-      }
-      if (handsFreeRef.current && !call.isReady) return // onDown reported it
-      setPhase(handsFreeRef.current ? "waiting" : "idle")
-    },
-    [playNemotronReply]
-  )
-
-  /** Open the Nemotron call for this screen: connect, wait for the model's
-   *  `ready`, then hand off to the loop. A disconnect at any point surfaces as
-   *  an error and leaves "listening" — never hangs. */
-  const startNemotron = useCallback(async () => {
-    const existing = nemotronRef.current
-    if (existing?.isReady) {
-      runNemotronLoop(existing)
-      return
-    }
-    existing?.close()
-    const call = new NemotronCall(nemotronNativeBindings())
-    nemotronRef.current = call
-    call.onDown = (err) => {
-      if (nemotronRef.current === call) nemotronRef.current = null
-      if (unmountedRef.current) return
-      if (handsFreeRef.current) setError(err.message)
-      handsFreeRef.current = false
-      setPhase("idle")
-    }
-    setPhase("connecting")
-    try {
-      await call.connect(path!)
-    } catch {
-      return // onDown already reported the reason
-    }
-    if (!handsFreeRef.current || unmountedRef.current) return
-    runNemotronLoop(call)
-  }, [path, runNemotronLoop])
-
-  /** Begin listening. The first start asks the server which engine this call
-   *  runs on; later starts (unmute) reuse that decision. */
+  /** Begin listening. The first start asks the server for the call brain; later
+   *  starts (unmute) skip that. */
   const startHandsFree = useCallback(async () => {
     if (!path) return
     setError("")
     handsFreeRef.current = true
-    let current = engine
-    if (!current) {
+    if (model === null) {
       setPhase("connecting")
       try {
-        const chosen = await api.callEngine()
-        if (chosen.error) throw new Error(chosen.error)
-        current = chosen.engine
-        let name = chosen.model || ""
-        if (current === "nemotron") {
-          const st = await api.nemotronStatus()
-          if (st.error) throw new Error(st.error)
-          if (!st.installed) throw new Error("Nemotron voicechat is not installed on the GPU box")
-          name = st.model || ""
-        }
-        setModel(name)
+        const brain = await api.callEngine()
+        if (brain.error) throw new Error(brain.error)
+        setModel(brain.model || "")
       } catch (e) {
         setError((e as Error).message)
         handsFreeRef.current = false
@@ -332,23 +219,18 @@ export function useAssistantTurn(
         return
       }
       if (!handsFreeRef.current) return
-      setEngine(current)
-    }
-    if (current === "nemotron") {
-      await startNemotron()
-      return
     }
     setPhase("waiting")
     listenStopRef.current = await startListening(onListenEvent)
-  }, [path, engine, onListenEvent, startNemotron])
+  }, [path, model, onListenEvent])
 
-  /** Pause listening and settle back to idle. The Nemotron socket is kept. */
+  /** Pause listening and settle back to idle. */
   const stopHandsFree = useCallback(async () => {
     handsFreeRef.current = false
     listenStopRef.current = null
-    await stopListening() // also releases the recorder mid-utterance on Nemotron
+    await stopListening()
     if (!busyRef.current) setPhase("idle")
   }, [])
 
-  return { phase, engine, model, heard, reply, error, runTurn, startHandsFree, stopHandsFree }
+  return { phase, model, heard, reply, error, runTurn, startHandsFree, stopHandsFree }
 }

@@ -40,7 +40,6 @@ from viewer.config import CHAT_JOBS, CHAT_LOCK, read_back, split_lines, transcri
 from viewer.customrun import chat_completion_message
 
 SETTING_KEY = "call_brain"        # {"provider": <preset id>}
-ENGINE_KEY = "call_engine"        # "brain" (default) | "nemotron" — the owner's opt-in
 BRAIN_TIMEOUT = 25                # seconds per model call; a call cannot wait longer
 MAX_TOOL_ROUNDS = 3
 HISTORY_LIMIT = 24                # prior call messages replayed to the brain
@@ -262,14 +261,9 @@ def parse_tool_calls(message):
 
 # ------------------------------------------------------------ live data
 
-def choose_engine(setting, nemotron_on, preset):
-    """Which engine a phone call runs on — decided HERE, never by the phone.
-    The board-grounded brain is the default because it is the only path that
-    can answer from the snapshot; Nemotron VoiceChat (raw audio in and out, no
-    prompt, no tools in the committed service) is an opt-in experiment behind
-    the `call_engine` setting, and only when its service is configured."""
-    if setting == "nemotron" and nemotron_on:
-        return {"engine": "nemotron"}
+def describe_engine(preset):
+    """What the phone shows for its call: the brain's model, or why none is set.
+    `engine` stays in the reply for older app builds that still read it."""
     if not preset:
         return {"engine": "brain",
                 "error": "No call brain configured: set the call_brain setting to a provider preset"}
@@ -277,8 +271,7 @@ def choose_engine(setting, nemotron_on, preset):
 
 
 def engine():
-    from viewer import nemotron
-    return choose_engine(db.setting_get(ENGINE_KEY) or "brain", nemotron.enabled(), brain_preset())
+    return describe_engine(brain_preset())
 
 
 def brain_preset():

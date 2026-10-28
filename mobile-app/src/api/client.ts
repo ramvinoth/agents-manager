@@ -31,29 +31,10 @@ export type ChatResult = { session: string }
 /** The call brain's conversation memory (OpenAI-style messages). Opaque to the
  *  app: stored between turns and sent back verbatim. */
 export type CallHistory = Array<Record<string, unknown>>
-/** The Nemotron GPU service's /health, passed through by the viewer as-is (see
- *  viewer.nemotron.status / deploy/voicechat_service.py `health`). Every field
- *  but `enabled` is the SERVER's own claim about itself — the phone must never
- *  hardcode a backend name/model or infer capabilities from anywhere else.
- *  `tools`/`duplex` are always false for this backend today; the UI must never
- *  promise delegation or true two-way audio regardless of `model`/`backend`. */
-export type NemotronStatus = {
-  enabled: boolean
-  installed: boolean
-  ready: boolean
-  busy: boolean
-  backend?: string
-  model?: string
-  input?: { format: string; rate: number; channels: number; max_seconds: number }
-  output?: { format: string; rate: number; channels: number }
-  tools?: boolean
-  duplex?: boolean
-  error?: string
-}
-/** GET /api/call/engine — the server's decision about which path a call runs on
- *  (viewer.callbrain.choose_engine). `model` is the server's own name for the
- *  brain; `error` means the brain is not configured and a call cannot start. */
-export type CallEngine = { engine: "brain" | "nemotron"; model?: string; error?: string }
+/** GET /api/call/engine (viewer.callbrain.engine). `model` is the server's own
+ *  name for the call brain; `error` means no brain is configured and a call
+ *  cannot start. */
+export type CallEngine = { engine: "brain"; model?: string; error?: string }
 export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
@@ -836,18 +817,6 @@ export const api = {
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
   // signal, so there is no per-turn wake word.
   voiceSocket: () => serverSocket("/api/voice/ws?mode=call"),
-
-  // ---- Nemotron voicechat (call audio, turn-based) ----
-  // GET /api/voice/nemotron/status -> the GPU service's /health passed through
-  // (see viewer.nemotron.status). Always 200 in the normal/disabled case; only a
-  // configured-but-broken backend returns 502 with `error` set. `ready:false`
-  // while idle is EXPECTED (the model loads per call). Consulted only AFTER
-  // callEngine chose "nemotron" — it never decides the engine.
-  nemotronStatus: () => req<NemotronStatus>("GET", "/api/voice/nemotron/status"),
-  // The one Nemotron call socket for a session. `kind:"ready"` arrives once
-  // the model loaded for this call — never send audio before it. Binary
-  // replies precede their turn_end frame.
-  nemotronSocket: (path: string) => serverSocket(`/api/voice/nemotron/ws?path=${encodeURIComponent(path)}`),
 
   // Barge-in wake-guard socket: a lightweight keyword-spotting stream that runs
   // WHILE the assistant is speaking. The server uses a cheap KWS pass (not full

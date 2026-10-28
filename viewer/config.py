@@ -208,19 +208,6 @@ VERIFY_SERVICE_URL = os.environ.get(
     "HARMAN_VERIFY_URL", "")
 VERIFY_TIMEOUT = int(os.environ.get("HARMAN_VERIFY_TIMEOUT", "20"))  # per segment
 
-# ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====
-# A SEPARATE, single-slot GPU backend (see deploy/voicechat.md) — not the
-# sherpa-onnx STT/TTS service above. Empty URL/token-file disables it: no
-# production default, so a fresh install never proxies to a box it hasn't
-# been pointed at. The service token lives in a private file (same 0600
-# read-a-secret-file convention as VIEWER_TOKEN_FILE / viewer/login.py),
-# never in an env var a process listing could show, and is read fresh on
-# each request rather than cached in memory at import time.
-NEMOTRON_URL = os.environ.get("HARMAN_NEMOTRON_URL", "")
-NEMOTRON_TOKEN_FILE = (Path(os.environ["HARMAN_NEMOTRON_TOKEN_FILE"])
-                      if os.environ.get("HARMAN_NEMOTRON_TOKEN_FILE") else None)
-NEMOTRON_TIMEOUT = int(os.environ.get("HARMAN_NEMOTRON_TIMEOUT", "15"))  # /health only
-
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
 

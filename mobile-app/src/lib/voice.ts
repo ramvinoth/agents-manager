@@ -83,10 +83,9 @@ export type Utterance = { buf: ArrayBuffer | null; silent: boolean }
  * The endpoint decision is the pure `endpoint.ts` helper fed by expo-av metering
  * frames; timing uses the frame's own `s.durationMillis` (monotonic, no Date).
  *
- * Shared by both call engines: the STT listen loop below streams each window to
- * /api/voice/ws, and the Nemotron loop (useAssistantTurn) sends it as one turn.
+ * The STT listen loop below streams each window to /api/voice/ws.
  */
-export async function recordUtterance(): Promise<Utterance> {
+async function recordUtterance(): Promise<Utterance> {
   let state: EndpointState = { heardSpeech: false, lastLoudMs: -1 }
   let stopReason: "endpoint" | "max" | "no-speech" | null = null
   const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
@@ -233,12 +232,6 @@ export async function speak(text: string): Promise<void> {
   } finally {
     if (src.file) FileSystem.deleteAsync(src.url, { idempotent: true }).catch(() => {})
   }
-}
-
-/** Play an already-persisted reply file (a Nemotron turn's WAV) to completion
- *  through the session owner — same exclusivity with recording as `speak`. */
-export async function playFile(uri: string): Promise<void> {
-  await audioSession.play(uri, {})
 }
 
 /** Stop any in-progress TTS playback (barge-in / new turn). */

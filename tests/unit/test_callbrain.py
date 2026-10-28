@@ -330,17 +330,12 @@ def test_snapshot_composes_live_data(board, monkeypatch):
     assert "approvals waiting on the owner in the app: 1." in s
 
 
-class TestChooseEngine:
+class TestDescribeEngine:
     preset = {"name": "Qwen 3.8-27B", "model": "qwen3.8-27b", "baseUrl": "http://x"}
 
-    def test_brain_is_the_default(self):
-        assert callbrain.choose_engine("brain", True, self.preset) == {"engine": "brain", "model": "Qwen 3.8-27B"}
-        assert callbrain.choose_engine(None, True, self.preset)["engine"] == "brain"
-
-    def test_nemotron_is_opt_in_and_needs_its_service(self):
-        assert callbrain.choose_engine("nemotron", True, self.preset) == {"engine": "nemotron"}
-        assert callbrain.choose_engine("nemotron", False, self.preset)["engine"] == "brain"
+    def test_names_the_brain_model(self):
+        assert callbrain.describe_engine(self.preset) == {"engine": "brain", "model": "Qwen 3.8-27B"}
 
     def test_missing_brain_is_an_error_not_a_silent_fallback(self):
-        out = callbrain.choose_engine("brain", True, None)
+        out = callbrain.describe_engine(None)
         assert out["engine"] == "brain" and "call_brain" in out["error"]
