@@ -78,13 +78,14 @@ from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
 from viewer.routes.canvas import CanvasMixin
+from viewer.routes.live import LiveMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin, ProjectPluginsMixin, CanvasMixin,
+    IntakeMixin, ProjectPluginsMixin, CanvasMixin, LiveMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -407,6 +408,7 @@ class SessionViewerHandler(
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
+        "/api/live/ws": "_g_live_ws",
         "/api/call/engine": "_g_call_engine",
         "/api/call/audio": "_g_call_audio",
         "/api/browser/status": "_g_browser_status",
@@ -613,7 +615,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws", b"/api/live/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 

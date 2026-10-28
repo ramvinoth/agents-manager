@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Check, ExternalLink, Loader2, Trash2, X } from "lucide-react"
+import { useLive } from "../useLive"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -14,7 +15,8 @@ import { decisionActions, formatActor, nextPosition, type DecisionAction } from 
 import { ActorName } from "@/components/ActorName"
 import type { BoardColumn, Card, CardComment, CardDep, OrgProject } from "@/lib/types"
 
-const POLL_MS = 5000
+const CARD_TABLES = ["cards", "card_comments", "card_deps"]
+const POLL_MS = 60_000  // fallback only: live events refetch on change
 
 /**
  * CardDetail — one card in the open. This is where the owner and the card's
@@ -98,6 +100,7 @@ export function CardDetail({
       clearInterval(t)
     }
   }, [refresh])
+  useLive(CARD_TABLES, card.project_id ?? null, () => { refresh().catch(() => {}) })
 
   async function write<T>(label: string, fn: () => Promise<T>, onOk: (r: T) => void, failMsg: string) {
     setBusy(label)

@@ -800,6 +800,7 @@ canvas_show opens a visual pane beside the chat on the owner's screen: mermaid f
             );
             """
         )
+    _install_live_triggers()
     _seed_agent_templates()
     migrate_legacy_files()
     # The decision pipeline is a board SHAPE, like the four defaults above:
@@ -2343,6 +2344,53 @@ _BUILTIN_TEMPLATES = [
      "system_prompt": "You are the owner's security analyst. You watch their accounts, this machine and their code for threats, and you explain each finding so someone with no security background can decide in one tap.\n\nOn your first run: create a 'Security log' note with a baseline (accounts visible to you, listening ports and what owns them, firewall and disk-encryption state, pending updates, secrets committed to repositories you can read) and one board card 'Security: decisions for the owner' for anything that needs their call.\n\nRules:\n- Read-only by default. Never change firewall rules, kill processes, rotate keys, edit configs or touch shared infrastructure without the owner's explicit yes for that exact change.\n- Attribute before alerting: a new sign-in or open port may be the owner's own doing; check before raising it.\n- Rank findings HIGH / MEDIUM / LOW by real-world exploitability, not by scanner noise. Say what an attacker could actually do.\n- Never paste secrets, tokens, passwords or personal data into cards, comments or notes. Name where they live instead.\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- macOS system tools live in /usr/sbin and /usr/libexec; call them by full path.\n- Never spend money without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the risk, the fix and its side effects stated.",
      "goal": "Catch account, device and code threats early and get each one fixed with a single owner decision."},
 ]
+
+
+# Tables whose writes the live hub (viewer/live.py) relays. Each row change
+# NOTIFYs `harman_events` with its keys only — {table, id, op, project_id};
+# clients refetch through the ordinary GET routes, so no row content (and no
+# authorization decision) ever rides the channel. project_id NULL = org-wide.
+LIVE_TABLES = ("cards", "card_comments", "card_deps", "notes", "note_comments",
+               "inbox_messages", "pending_questions", "pending_plans", "approvals")
+
+
+def _install_live_triggers():
+    """Idempotent: CREATE OR REPLACE the notify function and one AFTER trigger
+    per LIVE_TABLES entry. The function swallows its own errors — a broken
+    notification must never fail the write that caused it."""
+    with _db() as cur:
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION harman_notify() RETURNS trigger AS $$
+            DECLARE r record; pid integer; rid text;
+            BEGIN
+              BEGIN
+                IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF;
+                pid := NULL;
+                IF TG_TABLE_NAME IN ('pending_questions', 'pending_plans') THEN
+                  rid := r.session_id;
+                ELSE
+                  rid := r.id::text;
+                END IF;
+                IF TG_TABLE_NAME IN ('cards', 'notes', 'inbox_messages') THEN
+                  pid := r.project_id;
+                ELSIF TG_TABLE_NAME IN ('card_comments', 'card_deps') THEN
+                  SELECT project_id INTO pid FROM cards WHERE id = r.card_id;
+                ELSIF TG_TABLE_NAME = 'note_comments' THEN
+                  SELECT project_id INTO pid FROM notes WHERE id = r.note_id;
+                END IF;
+                PERFORM pg_notify('harman_events', json_build_object(
+                  'table', TG_TABLE_NAME, 'id', rid, 'op', TG_OP,
+                  'project_id', pid)::text);
+              EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'harman_notify %: %', TG_TABLE_NAME, SQLERRM;
+              END;
+              RETURN NULL;
+            END $$ LANGUAGE plpgsql;
+        """)
+        for t in LIVE_TABLES:
+            cur.execute(f"CREATE OR REPLACE TRIGGER harman_notify_{t} "
+                        f"AFTER INSERT OR UPDATE OR DELETE ON {t} "
+                        f"FOR EACH ROW EXECUTE FUNCTION harman_notify()")
 
 
 def _seed_agent_templates():

@@ -12,6 +12,7 @@ import {
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
 import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, MessageSquare, History, Search } from "lucide-react"
+import { useLive } from "../useLive"
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,8 @@ import { AuditDialog } from "@/components/lazyDialogs"
  * columns. Every write goes to
  * /api/org/* — the same board an agent chat session sees through its kanban MCP.
  */
+const BOARD_TABLES = ["cards", "card_comments", "card_deps"]
+
 export function KanbanDialog({
   host,
   cwd,
@@ -121,6 +124,9 @@ export function KanbanDialog({
     const c = await api.orgCards({ project: project.id })
     setCards(c.cards || [])
   }
+  // Another session's (or tab's) card writes show at once; a comment changes
+  // the card's thread count. Skipped mid-drag so a refetch never yanks a card.
+  useLive(BOARD_TABLES, project?.id ?? null, () => { if (activeId == null) reload().catch(() => {}) })
 
   /** Open a decision-queue item in the thread of the session that owns it (its
    *  thread renders the actual decision card). Resolves the session from the

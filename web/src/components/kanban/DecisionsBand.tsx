@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { RefreshCw } from "lucide-react"
+import { useLive } from "../useLive"
+import { DECISION_TABLES } from "../../lib/live"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
@@ -59,9 +61,10 @@ export function DecisionsBand({
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 30_000)
+    const t = setInterval(load, 60_000)  // fallback; live events refetch on change
     return () => clearInterval(t)
   }, [load])
+  useLive(DECISION_TABLES, null, load)
 
   if (hidden) return null
 

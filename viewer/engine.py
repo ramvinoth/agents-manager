@@ -37,6 +37,7 @@ _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
 from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
+from viewer import live as live_events  # `live` is a local name in several functions
 from viewer.sessions import compute_session_summary, last_cwd_in_file
 
 
@@ -1296,6 +1297,7 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
         cwd = job.get("cwd", "")
         host = job.get("host", "local")
     # Background push: the run is now blocked waiting on the user (best-effort).
+    live_events.publish("tool_approvals", pid, "INSERT")
     try:
         from viewer.push import notify_all
         notify_all(_push_label(session_id, cwd),
@@ -1322,6 +1324,8 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
         entry = next((e for e in pend if e["id"] == pid), None)
         if entry:
             pend.remove(entry)
+    # The registry is memory, not a table: tell live clients it changed.
+    live_events.publish("tool_approvals", pid, "DELETE")
     decision = entry["decision"] if entry else None
     if not decided or decision != "allow":
         return {"behavior": "deny",

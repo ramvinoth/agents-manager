@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Bot, Loader2, ArrowDown, Upload } from "lucide-react"
+import { useLive } from "./components/useLive"
+import { DECISION_TABLES } from "./lib/live"
 import { GitSection } from "@/components/GitSection"
 import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
@@ -113,14 +115,16 @@ function App() {
     resetCanvases()
     if (currentSessionPath) loadCanvases()
   }, [currentSessionPath, resetCanvases, loadCanvases])
-  // What this chat is waiting on the owner for: checked on open and every 30s,
-  // so a question raised (or answered elsewhere) shows without a reload.
+  // What this chat is waiting on the owner for: checked on open, again the
+  // moment a decision source changes (live events), and every 60s as the
+  // fallback when the live socket is down.
   useEffect(() => {
     if (!currentSessionPath) return
     loadNeeds()
-    const t = window.setInterval(() => document.visibilityState === "visible" && loadNeeds(), 30_000)
+    const t = window.setInterval(() => document.visibilityState === "visible" && loadNeeds(), 60_000)
     return () => window.clearInterval(t)
   }, [currentSessionPath, loadNeeds])
+  useLive(DECISION_TABLES, null, () => { if (currentSessionPath) loadNeeds() })
   useEffect(() => {
     if (loading) return
     const show = latestShow(turns)
