@@ -49,11 +49,15 @@ class Subscriber:
         self.alive = True
         self._offer_lock = threading.Lock()   # producers: listener + engine threads
 
-    def offer(self, msg):
+    def offer(self, msg, lossy=False):
         """Queue without blocking; on overflow collapse to one resync.
+        `lossy` messages (cursor presence) are simply dropped once the queue is
+        half full, so they never push real changes into a resync.
         False only when the subscriber is already dead."""
         if not self.alive:
             return False
+        if lossy and self.q.qsize() >= QUEUE_MAX // 2:
+            return True
         with self._offer_lock:
             try:
                 self.q.put_nowait(msg)

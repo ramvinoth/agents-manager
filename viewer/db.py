@@ -321,6 +321,45 @@ def init_db():
               updated_at DOUBLE PRECISION NOT NULL,
               UNIQUE (session_id, title)
             );
+            -- The shared project canvas (Excalidraw): one board per project
+            -- (or per session for a session scratchpad). Elements are stored
+            -- one row each, keyed by the element's own id, so concurrent edits
+            -- to different shapes never conflict and a write is an upsert of
+            -- the changed rows only (viewer/canvas_room flushes them in
+            -- batches). `version`/`version_nonce` mirror the element's own
+            -- conflict clock (viewer/canvas_reconcile). No live trigger: the
+            -- canvas has its own socket, and a stroke must not wake every board.
+            CREATE TABLE IF NOT EXISTS canvas_boards (
+              id         SERIAL PRIMARY KEY,
+              owner_kind TEXT NOT NULL,
+              owner_id   TEXT NOT NULL,
+              title      TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              updated_at DOUBLE PRECISION NOT NULL,
+              UNIQUE (owner_kind, owner_id)
+            );
+            CREATE TABLE IF NOT EXISTS canvas_elements (
+              canvas_id     INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+              element_id    TEXT NOT NULL,
+              version       INTEGER NOT NULL,
+              version_nonce BIGINT NOT NULL,
+              is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
+              data          JSONB NOT NULL,
+              updated_by    TEXT NOT NULL DEFAULT '',
+              updated_at    DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (canvas_id, element_id)
+            );
+            -- Images pasted onto a canvas: content-addressed by Excalidraw's
+            -- own file id (a hash of the bytes), so a re-upload is a no-op.
+            CREATE TABLE IF NOT EXISTS canvas_files (
+              canvas_id  INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+              file_id    TEXT NOT NULL,
+              mime       TEXT NOT NULL,
+              bytes      BYTEA NOT NULL,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (canvas_id, file_id)
+            );
             -- A note's discussion (the message board): Reddit-style threaded
             -- replies under any note — how agents and the owner talk ABOUT a
             -- piece of knowledge. `parent_id` NULL = top-level comment. `author`
@@ -1804,6 +1843,78 @@ def canvas_delete(session_id, title):
 def canvas_delete_for_session(session_id):
     with _db() as cur:
         cur.execute("DELETE FROM canvases WHERE session_id = %s", (session_id,))
+
+
+# The shared canvas (Excalidraw boards) --------------------------------------
+
+def canvas_board_for(owner_kind, owner_id, title=""):
+    """The board a project (or session) owns, created on first use."""
+    now = _now()
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO canvas_boards (owner_kind, owner_id, title, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (owner_kind, owner_id) "
+            "DO UPDATE SET owner_kind = EXCLUDED.owner_kind RETURNING *",
+            (owner_kind, str(owner_id), title, now, now))
+        return dict(cur.fetchone())
+
+
+def canvas_board_get(canvas_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM canvas_boards WHERE id = %s", (int(canvas_id),))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def canvas_elements_load(canvas_id):
+    """Every stored element (tombstones included — peers need them to converge)."""
+    with _db() as cur:
+        cur.execute("SELECT data FROM canvas_elements WHERE canvas_id = %s", (int(canvas_id),))
+        return [r["data"] for r in cur.fetchall()]
+
+
+def canvas_elements_upsert(canvas_id, elements, actor=""):
+    """Batch-write elements. The WHERE guard keeps a stale flush from
+    overwriting a newer row (same rule as canvas_reconcile.wins)."""
+    if not elements:
+        return
+    from psycopg2.extras import Json, execute_batch
+    now = _now()
+    rows = [(int(canvas_id), e["id"], int(e.get("version") or 0), int(e.get("versionNonce") or 0),
+             bool(e.get("isDeleted")), Json(e), actor, now) for e in elements]
+    with _db() as cur:
+        execute_batch(cur,
+            "INSERT INTO canvas_elements AS c (canvas_id, element_id, version, version_nonce, "
+            "is_deleted, data, updated_by, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (canvas_id, element_id) DO UPDATE SET version = EXCLUDED.version, "
+            "version_nonce = EXCLUDED.version_nonce, is_deleted = EXCLUDED.is_deleted, "
+            "data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at "
+            "WHERE EXCLUDED.version > c.version OR (EXCLUDED.version = c.version "
+            "AND EXCLUDED.version_nonce < c.version_nonce)", rows, page_size=500)
+        cur.execute("UPDATE canvas_boards SET updated_at = %s WHERE id = %s", (now, int(canvas_id)))
+
+
+def canvas_tombstones_gc(older_than_s):
+    """Drop deleted elements nobody has touched for `older_than_s` seconds."""
+    with _db() as cur:
+        cur.execute("DELETE FROM canvas_elements WHERE is_deleted AND updated_at < %s",
+                    (_now() - older_than_s,))
+        return cur.rowcount
+
+
+def canvas_file_put(canvas_id, file_id, mime, data, actor=""):
+    with _db() as cur:
+        cur.execute("INSERT INTO canvas_files (canvas_id, file_id, mime, bytes, created_by, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                    (int(canvas_id), file_id, mime, data, actor, _now()))
+
+
+def canvas_file_get(canvas_id, file_id):
+    with _db() as cur:
+        cur.execute("SELECT mime, bytes FROM canvas_files WHERE canvas_id = %s AND file_id = %s",
+                    (int(canvas_id), file_id))
+        row = cur.fetchone()
+    return (row["mime"], bytes(row["bytes"])) if row else None
 
 
 # Note discussions (the message board under every note) ----------------------

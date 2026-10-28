@@ -164,6 +164,7 @@ CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final
 # not stay valid indefinitely.
 SESSION_TOKEN_MAX_AGE = 86400
 _PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_tick's self-throttle idiom)
+CANVAS_TOMBSTONE_TTL = 7 * 86400  # a deleted canvas element is kept a week so a peer offline that long still converges
 _last_purge = 0.0
 
 
@@ -321,6 +322,7 @@ def loop_scheduler(launch):
                 rc = db.retention_config()
                 db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
                 db.ui_events_purge(rc["ui_events_days"])
+                db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
             except Exception:
                 pass
             # Credentials of runs this process never saw (they predate a restart)

@@ -79,13 +79,14 @@ from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
 from viewer.routes.canvas import CanvasMixin
 from viewer.routes.live import LiveMixin
+from viewer.routes.canvas_board import CanvasBoardMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin, ProjectPluginsMixin, CanvasMixin, LiveMixin,
+    IntakeMixin, ProjectPluginsMixin, CanvasMixin, LiveMixin, CanvasBoardMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -409,6 +410,9 @@ class SessionViewerHandler(
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
         "/api/live/ws": "_g_live_ws",
+        "/api/canvas/board": "_g_canvas_board",
+        "/api/canvas/file": "_g_canvas_file",
+        "/api/canvas/ws": "_g_canvas_ws",
         "/api/call/engine": "_g_call_engine",
         "/api/call/audio": "_g_call_audio",
         "/api/browser/status": "_g_browser_status",
@@ -587,6 +591,7 @@ class SessionViewerHandler(
         "/api/inbox/send": "_p_inbox_send",
         "/api/canvas/show": "_p_canvas_show",
         "/api/canvas/delete": "_p_canvas_delete",
+        "/api/canvas/file": "_p_canvas_file",
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
         "/api/org/intake": "_p_org_intake",
@@ -615,7 +620,8 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws", b"/api/live/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws", b"/api/live/ws",
+                b"/api/canvas/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 

@@ -979,8 +979,9 @@ class WSServer:
         out, self.buf = self.buf[:n], self.buf[n:]
         return out
 
-    def recv(self):
-        """Return (opcode, data) for the next data/close frame; handles ping."""
+    def recv(self, max_payload=None):
+        """Return (opcode, data) for the next data/close frame; handles ping.
+        A frame larger than `max_payload` raises OSError before it is read."""
         while True:
             b1, b2 = self._take(2)
             _fin, opcode = b1 & 0x80, b1 & 0x0F
@@ -989,10 +990,14 @@ class WSServer:
                 ln = struct.unpack("!H", self._take(2))[0]
             elif ln == 127:
                 ln = struct.unpack("!Q", self._take(8))[0]
+            if max_payload is not None and ln > max_payload:
+                raise OSError(f"websocket frame of {ln} bytes exceeds {max_payload}")
             mask = self._take(4) if masked else b"\x00\x00\x00\x00"
             payload = self._take(ln)
-            if masked:
-                payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
+            if masked and ln:
+                # XOR as one big integer: ~100x faster than a per-byte loop.
+                key = (mask * (ln // 4 + 1))[:ln]
+                payload = (int.from_bytes(payload, "big") ^ int.from_bytes(key, "big")).to_bytes(ln, "big")
             if opcode == 0x9:                       # ping -> pong
                 self._send(0xA, payload)
                 continue
