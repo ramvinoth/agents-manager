@@ -13,7 +13,18 @@ export function userHistory(turns: Turn[]): string[] {
   return out
 }
 
-/** Up only recalls when the caret sits on the first line; Down only on the last — otherwise the keys move the caret. */
+/**
+ * Whether Up/Down should walk history rather than move the caret. A typed draft owns
+ * its arrow keys (you are editing it), so history starts only from an empty composer.
+ * While browsing an unedited recalled message, Up on its first line goes older and
+ * Down on its last line goes newer (past the newest: back to the draft).
+ */
+export function walksHistory(text: string, caret: number, browsing: boolean, up: boolean): boolean {
+  if (!browsing) return up && !text.trim()
+  return up ? onFirstLine(text, caret) : onLastLine(text, caret)
+}
+
+/** Caret on the first / last line of a multi-line message. */
 export function onFirstLine(text: string, caret: number): boolean {
   return !text.slice(0, caret).includes("\n")
 }
