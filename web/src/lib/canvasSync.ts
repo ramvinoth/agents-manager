@@ -42,7 +42,7 @@ export function wins(incoming: El, stored: El | undefined): boolean {
 export type RejectItem = [string | null, string, El | null]
 
 /** GET /api/canvas/board: the server's scene, and whether this person may draw. */
-export interface CanvasSnapshot { canvas: number; protocol: number; elements: El[]; checksum: number; editable: boolean }
+export interface CanvasSnapshot { canvas: number; protocol: number; elements: El[]; checksum: number; editable: boolean; actors?: Record<string, string> }
 
 export class Sync {
   private known = new Map<string, number>()

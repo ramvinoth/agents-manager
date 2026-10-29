@@ -2,6 +2,8 @@
  *  project canvas. Pure logic only — components/canvas/DocView renders it; the
  *  side-pane width helpers serve the "Needs you" pane (components/CanvasPane). */
 
+import { formatActor } from "./board.ts"
+
 export type CanvasKind = "markdown" | "mermaid" | "html" | "slides"
 /** The MCP tool name as it appears in a transcript's tool_use block. */
 export const CANVAS_SHOW_TOOL = "mcp__viewer__canvas_show"
@@ -71,4 +73,12 @@ export function canvasDragWidth(width: number, viewport: number): number | "clos
 export function storedCanvasWidth(raw: string | null): number | null {
   const n = Number(raw)
   return raw && Number.isFinite(n) && n >= CANVAS_MIN_W ? Math.round(n) : null
+}
+
+/** Who made a canvas change, for a person: the server's name for an agent known
+ *  only by a short session id (CanvasSnapshot.actors), else the actor's own name. */
+export function canvasActorName(actor: string | null | undefined, actors?: Record<string, string>): string {
+  if (actor && actors?.[actor]) return actors[actor]
+  if (actor && /^session:[0-9a-f]{8}$/.test(actor)) return "An agent"
+  return formatActor(actor).name
 }

@@ -23,13 +23,14 @@ resends whatever it has not had acked.
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import uuid
 
 from viewer import canvas_reconcile as rec
 from viewer import canvas_render, canvas_summary
-from viewer import db, orglogic
+from viewer import db, engine, orglogic
 from viewer.canvas_room import ROOMS
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -50,6 +51,33 @@ MAX_CONTENT = 512 * 1024      # chars; a tile is a view, not a file store
 MAX_TITLE = 120
 MAX_PER_SESSION = 20
 DOC_GAP = 40
+
+
+SHORT_ACTOR = re.compile(r"^session:[0-9a-f]{8}$")
+
+
+def actor_names(elements, name_of):
+    """{actor: display name} for agent actors named only by a short session id
+    (tiles from before agents were labelled). A doc tile records its session's
+    full id, which name_of turns into the chat's title. Labelled actors
+    (session:Harman) already read as names, so they are left out. Pure."""
+    full = {}
+    for e in elements:
+        cd = e.get("customData") or {}
+        actor, sid = cd.get("createdBy") or "", (cd.get("doc") or {}).get("session") or ""
+        if SHORT_ACTOR.match(actor) and sid.startswith(actor[8:]):
+            full[actor] = sid
+    names = {}
+    for actor, sid in full.items():
+        name = name_of(sid)
+        if name:
+            names[actor] = name
+    return names
+
+
+def session_name(sid):
+    explicit, first = engine._session_title(sid)
+    return explicit or first
 
 
 def validate(title, kind, content):
@@ -207,6 +235,7 @@ class CanvasBoardMixin:
             return
         snap = ROOMS.get(cid).snapshot()
         snap["editable"] = can_edit(req.principal)
+        snap["actors"] = actor_names(snap["elements"], session_name)
         self.send_json(snap)
 
     def _g_canvas_file(self, req):

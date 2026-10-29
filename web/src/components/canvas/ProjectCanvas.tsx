@@ -9,6 +9,7 @@ import { backoffMs } from "@/lib/live"
 import { userError } from "@/lib/errors"
 import { PROTOCOL, Sync, checksum, collaborator, missingFiles, replaceById, type CanvasSnapshot, type El, type PresenceMsg, type RejectItem } from "@/lib/canvasSync"
 import { parseCanvasRef, type CanvasRef } from "@/lib/canvasRef"
+import { canvasActorName } from "@/lib/canvas"
 import { DocExpanded, DocTile, isDocLink, type DocMeta } from "./DocTile"
 
 // Fonts are copied into dist by vite.config.ts (excalidrawAssets); without this
@@ -175,7 +176,7 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
             merge(els)
             fetchMissing()
             if (typeof m.from === "string" && m.from.startsWith("session:") && board.editable)
-              setNotice({ text: "An agent changed the canvas.", undo: m.from })
+              setNotice({ text: `${canvasActorName(m.from, board.actors)} changed the canvas.`, undo: m.from })
             break
           }
           case "reject": {
@@ -308,8 +309,9 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
               onOpenRefRef.current(ref)
             }}
             renderEmbeddable={(el) => {
-              const doc = (el.customData as { doc?: DocMeta } | undefined)?.doc
-              return doc ? <DocTile canvas={board.canvas} doc={doc} onExpand={() => setExpanded(doc)} /> : null
+              const cd = el.customData as { doc?: DocMeta; createdBy?: string } | undefined
+              const doc = cd?.doc
+              return doc ? <DocTile canvas={board.canvas} doc={doc} by={cd?.createdBy ? canvasActorName(cd.createdBy, board.actors) : undefined} onExpand={() => setExpanded(doc)} /> : null
             }}
           />
         )}

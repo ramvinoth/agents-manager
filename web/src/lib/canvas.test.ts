@@ -1,4 +1,4 @@
-import { canvasDragWidth, storedCanvasWidth, showSucceeded, splitSlides, themedHtml } from "./canvas.ts"
+import { canvasActorName, canvasDragWidth, storedCanvasWidth, showSucceeded, splitSlides, themedHtml } from "./canvas.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -45,6 +45,13 @@ eq("stored ok", storedCanvasWidth("612"), 612)
 eq("stored junk", storedCanvasWidth("abc"), null)
 eq("stored missing", storedCanvasWidth(null), null)
 eq("stored too small", storedCanvasWidth("100"), null)
+
+// --- canvasActorName ---
+eq("named by server", canvasActorName("session:65cf166a", { "session:65cf166a": "Harman" }), "Harman")
+eq("short id unnamed", canvasActorName("session:65cf166a", {}), "An agent")
+eq("labelled agent", canvasActorName("session:Trader"), "Trader")
+eq("person", canvasActorName("user:ram"), "ram")
+eq("missing", canvasActorName(undefined), "Unknown")
 
 console.log(`canvas: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

@@ -162,3 +162,20 @@ def test_board_by_session_uses_that_chats_project_else_a_plain_404(canvas, monke
     data, status = board(session="sess-new")
     assert status == 404 and "no board yet" in data["error"]
     assert board(session="sess-new", project="15")[1] == 200     # an explicit project still wins
+
+
+def test_actor_names_names_only_short_session_actors_from_their_tile():
+    full = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
+    els = [
+        {"id": "a", "customData": {"createdBy": "session:65cf166a", "doc": {"session": full}}},
+        {"id": "b", "customData": {"createdBy": "session:Harman", "doc": {"session": full}}},
+        {"id": "c", "customData": {"createdBy": "session:dbd49b66", "doc": {"session": full}}},  # wrong prefix
+        {"id": "d", "customData": {"createdBy": "session:0000aaaa"}},                            # no tile
+        {"id": "e", "customData": {"createdBy": "user:o"}},
+        {"id": "f"},
+    ]
+    asked = []
+    names = cb.actor_names(els, lambda sid: asked.append(sid) or "Jarvis")
+    assert names == {"session:65cf166a": "Jarvis"}
+    assert asked == [full]
+    assert cb.actor_names(els, lambda sid: "") == {}

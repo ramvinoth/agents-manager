@@ -38,11 +38,12 @@ function Body({ canvas, doc, keys }: { canvas: number; doc: DocMeta; keys?: bool
 
 /** A doc on the board: title bar plus the doc. Excalidraw lets pointers into it
  *  only once the tile is activated (clicked), so scrolling never fights panning. */
-export function DocTile({ canvas, doc, onExpand }: { canvas: number; doc: DocMeta; onExpand: () => void }) {
+export function DocTile({ canvas, doc, by, onExpand }: { canvas: number; doc: DocMeta; by?: string; onExpand: () => void }) {
   return (
     <div className="flex size-full flex-col overflow-hidden bg-background text-foreground">
       <div className="flex items-center gap-1 border-b border-border px-2 py-1">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{doc.title}</span>
+        {by && <span className="shrink-0 truncate text-[11px] text-muted-foreground" title={`Made by ${by}`}>by {by}</span>}
         <Button variant="ghost" size="icon" className="size-6" onClick={onExpand} aria-label="Expand" title="Expand">
           <Maximize2 className="size-3.5" />
         </Button>
