@@ -22,6 +22,11 @@ function directIO(opts: { up?: boolean; healthy?: boolean } = {}) {
       if (url.endsWith("/healthz")) return Promise.resolve(reply(200, state.healthy ? '{"ok":true}' : "<html>portal</html>"))
       return Promise.resolve(reply(200, "direct"))
     },
+    exchange: (url, init) => {
+      calls.push(`EXCHANGE ${init.method} ${url}`)
+      if (!state.up) return unreachable()
+      return Promise.resolve({ status: 200, headers: { "content-type": "text/plain" }, body: new TextEncoder().encode("direct") })
+    },
     upload: (url) => (calls.push(`UPLOAD ${url}`), state.up ? Promise.resolve(reply(200, "up")) : unreachable()),
     download: (url) => (calls.push(`DOWNLOAD ${url}`), state.up ? Promise.resolve(200) : unreachable()),
     socket: (url) => {
@@ -193,6 +198,26 @@ test("a relayed download lands in the destination file with its status", async (
   await serveRelay(() => ({ status: 404, body: "nope" }))
   assert.equal(await p, 404)
   assert.equal(utf8Decode(files.get("file:///cache/a")!), "nope")
+  t.close()
+})
+
+test("exchange returns bytes and headers on either route", async () => {
+  const direct = make(DIRECT, false)
+  const res = await direct.t.exchange("GET", "/assets/a.js", {})
+  assert.equal(res.headers["content-type"], "text/plain")
+  assert.equal(utf8Decode(res.body), "direct")
+  assert.deepEqual(direct.calls, [`EXCHANGE GET ${DIRECT}/assets/a.js`])
+
+  const { t } = make("", true)
+  const p = t.exchange("POST", "/api/canvas/files", {}, new Uint8Array([1, 2, 3]))
+  await serveRelay((req, body) => {
+    assert.equal(req.method, "POST")
+    assert.deepEqual([...body], [1, 2, 3])
+    return { status: 201, body: new Uint8Array([9]) }
+  })
+  const relayed = await p
+  assert.equal(relayed.status, 201)
+  assert.deepEqual([...relayed.body], [9])
   t.close()
 })
 

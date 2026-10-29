@@ -38,6 +38,17 @@ const INBOX = [
   { ...INBOX_ROW, id: 2, session_id: SESSION, sender_type: "session", sender_id: SESSION, recipient_type: "user", recipient_id: "", kind: "question", ref_id: "toolu_fixture", body: "Question from Native board fixture — ship tonight?\nOptions: yes — ship / no — wait", status: "sent", effective_status: "sent", open: true, created_at: T0 + 60 },
   { ...INBOX_ROW, id: 3, session_id: BOARD_SESSION_B, sender_type: "session", sender_id: BOARD_SESSION_B, recipient_type: "user", recipient_id: "", kind: "message", body: "Report attached in Files.", status: "sent", effective_status: "sent", created_at: T0 + 120 },
 ]
+const CANVAS_PAGE = `<!doctype html><meta name="viewport" content="width=device-width">
+<p id="http">CANVAS_LOADING</p><p id="ws">WS_PENDING</p>
+<script>
+const show = (id, text) => { document.getElementById(id).textContent = text }
+Promise.all([
+  fetch("/api/canvas-probe").then(r => r.json()),
+  fetch("/api/canvas-probe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ping: "pong" }) }).then(r => r.json()),
+]).then(([a, b]) => show("http", a.ok && b.echo === "pong" ? "CANVAS_OK" : "CANVAS_BAD " + JSON.stringify([a, b])), e => show("http", "CANVAS_FAIL " + e))
+const ws = new WebSocket("ws://app/api/canvas-probe-ws")
+ws.onclose = () => show("ws", "WS_CLOSED")
+</script>`
 const clone = value => JSON.parse(JSON.stringify(value))
 const capabilities = { editable: true, customProviders: true, conversationModes: ["agent", "chat"], efforts: ["", "low", "medium", "high", "xhigh", "max"], manualModelId: true }
 const initialSelection = { provider: "", model: null, convMode: "agent", effort: "" }
@@ -135,7 +146,7 @@ const MARKET_MCP = [
   { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
 ]
 
-async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, agents = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, agents = false, canvas = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   // `reply` swaps the newest agent message, so a spec can render any markdown in a real bubble.
@@ -188,7 +199,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1")
     const route = `${req.method} ${url.pathname}`
-    const entry = { route, search: url.search }
+    const entry = { route, search: url.search, auth: Boolean(req.headers.authorization) }
     requests.push(entry)
     const send = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)) }
     let body = {}
@@ -404,6 +415,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       return send({ ...prev, id: body.id || "fixture-new", name: body.name, baseUrl: body.baseUrl, model: body.model,
         models: Object.entries(overrides).map(([id, n]) => modelRow(id, 0, n)) })
     }
+    if (canvas && route === "POST /api/canvas-probe") return send({ echo: body.ping })
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
     if (url.pathname === "/api/org/skills") return send({ skills: [] })
@@ -508,6 +520,14 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       return send({ results: ["viewer/routes/fs.py", "viewer/filesearch.py"].filter(p => p.includes(q)).map(path => ({ path, dir: false })) })
     }
     if (route === "GET /api/drives") return send({ drives: [], vendors: [] })
+    // The canvas screen's page, reduced to what the bridge must carry: its own
+    // document, a GET and a POST with a body, and a socket whose close event
+    // must come back through the app (the fixture has no WebSocket upgrade).
+    if (canvas && (route === "GET /" || route === "GET /index.html")) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+      return res.end(CANVAS_PAGE)
+    }
+    if (canvas && route === "GET /api/canvas-probe") return send({ ok: true })
     return send({ error: `Unhandled fixture route: ${route}` }, 404)
   })
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve) })
