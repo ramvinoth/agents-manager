@@ -55,4 +55,19 @@ describe("Native canvas — the page runs on the app's transport", function () {
         .catch(async e => { throw new Error(`${want}: ${e.message}; page: ${await page()}`) })
     }
   })
+
+  // What Excalidraw does with a link nobody handled: window.open(undefined),
+  // an empty URL. Build 1791768513 crashed on it (Linking.openURL threw).
+  it("a page opening an empty window does not crash the app", async () => {
+    await $("-ios predicate string:label == 'OPEN_BLANK'").click()
+    await browser.pause(1500)
+    assert.equal(await $("~canvas-webview").isDisplayed(), true, "still on the canvas")
+  })
+
+  // A tile's harman://card/N link: the page hands it to the app, which opens
+  // the card's own screen.
+  it("a card link opens the card's screen", async () => {
+    await $("-ios predicate string:label == 'OPEN_CARD'").click()
+    await $("~card-detail-col-101").waitForDisplayed({ timeout: 15000 })
+  })
 })

@@ -8,6 +8,7 @@ import {
   SocketBridge,
   answer,
   bridgePath,
+  externalUrl,
   isImmutable,
   parseOpenRef,
   parsePageMessage,
@@ -215,4 +216,12 @@ test("parseOpenRef: tile links the page asks the app to open", () => {
   ]) assert.equal(open(bad), null, JSON.stringify(bad))
   assert.equal(parseOpenRef("not json"), null)
   assert.equal(parseOpenRef("null"), null)
+})
+
+test("externalUrl: web, mail and phone only; an empty window.open is dropped", () => {
+  assert.equal(externalUrl("https://example.com/a"), "https://example.com/a")
+  assert.equal(externalUrl(" mailto:a@b.c "), "mailto:a@b.c")
+  assert.equal(externalUrl("tel:+15550100"), "tel:+15550100")
+  for (const bad of ["", "   ", undefined, null, 42, "about:blank", "javascript:alert(1)", "file:///etc/passwd", "harman://doc/x", "https://"])
+    assert.equal(externalUrl(bad), null, String(bad))
 })

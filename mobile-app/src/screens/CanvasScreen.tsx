@@ -16,7 +16,7 @@ import type { RootStackParamList } from "../../App"
 import { HarmanWebView } from "../../modules/harman-webview/src"
 import { serverExchange, serverSocket } from "../api/transport"
 import { fromBase64 } from "../lib/bytes"
-import { APP_ORIGIN, AssetCache, SocketBridge, answer, parseOpenRef, parsePageMessage, wsShimScript, type OpenRef } from "../lib/webBridge"
+import { APP_ORIGIN, AssetCache, SocketBridge, answer, externalUrl, parseOpenRef, parsePageMessage, wsShimScript, type OpenRef } from "../lib/webBridge"
 import { activeServerId } from "../state/config"
 import { userError } from "../lib/errors"
 import { useTheme } from "../lib/useTheme"
@@ -101,7 +101,10 @@ export default function CanvasScreen({ navigation, route }: Props) {
         const msg = parsePageMessage(nativeEvent.data)
         if (msg) bridge.handle(msg)
       }}
-      onOpenExternal={({ nativeEvent }) => void Linking.openURL(nativeEvent.url)}
+      onOpenExternal={({ nativeEvent }) => {
+        const url = externalUrl(nativeEvent.url)
+        if (url) Linking.openURL(url).catch(() => {})
+      }}
       onLoadError={({ nativeEvent }) => setError(userError(new Error(nativeEvent.message), "the canvas"))}
     />
   )

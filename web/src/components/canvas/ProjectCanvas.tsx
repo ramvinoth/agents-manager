@@ -303,10 +303,15 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
             onPointerUpdate={onPointer}
             validateEmbeddable={isDocLink}
             onLinkOpen={(el, event) => {
-              const ref = parseCanvasRef(el.link)
-              if (!ref || !onOpenRefRef.current) return
+              // Excalidraw's own fallback is window.open() with no URL, then
+              // setting its location: the phone's web view has no second
+              // window, so every link is handled here.
               event.preventDefault()
-              onOpenRefRef.current(ref)
+              const doc = (el.customData as { doc?: DocMeta } | undefined)?.doc
+              if (doc && el.link && isDocLink(el.link)) return setExpanded(doc)
+              const ref = parseCanvasRef(el.link)
+              if (ref) return onOpenRefRef.current?.(ref)
+              if (el.link && /^https?:\/\//i.test(el.link)) window.open(el.link, "_blank", "noopener")
             }}
             renderEmbeddable={(el) => {
               const cd = el.customData as { doc?: DocMeta; createdBy?: string } | undefined

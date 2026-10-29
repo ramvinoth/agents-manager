@@ -193,6 +193,15 @@ export function parseOpenRef(raw: string): OpenRef | null {
   return null
 }
 
+/** A URL the page asked to open outside the app, or null. Only web, mail
+ *  and phone links leave the app: anything else — an empty window.open(),
+ *  javascript:, file: — is dropped, since an empty URL makes Linking throw. */
+export function externalUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const u = raw.trim()
+  return /^(https?:\/\/\S|mailto:\S|tel:\S)/i.test(u) ? u : null
+}
+
 /** The page's sockets, each opened through the transport. */
 export class SocketBridge {
   private readonly sockets = new Map<number, AppSocket>()

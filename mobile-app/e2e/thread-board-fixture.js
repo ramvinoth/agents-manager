@@ -40,6 +40,8 @@ const INBOX = [
 ]
 const CANVAS_PAGE = `<!doctype html><meta name="viewport" content="width=device-width">
 <p id="http">CANVAS_LOADING</p><p id="ws">WS_PENDING</p>
+<button onclick='webkit.messageHandlers.harman.postMessage(JSON.stringify({ t: "open", kind: "card", id: "201" }))'>OPEN_CARD</button>
+<button onclick='window.open(undefined, "_blank")'>OPEN_BLANK</button>
 <script>
 const show = (id, text) => { document.getElementById(id).textContent = text }
 Promise.all([
