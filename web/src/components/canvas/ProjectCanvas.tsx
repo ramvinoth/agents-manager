@@ -8,6 +8,7 @@ import { api } from "@/lib/api"
 import { backoffMs } from "@/lib/live"
 import { userError } from "@/lib/errors"
 import { PROTOCOL, Sync, checksum, collaborator, missingFiles, replaceById, type CanvasSnapshot, type El, type PresenceMsg, type RejectItem } from "@/lib/canvasSync"
+import { parseCanvasRef, type CanvasRef } from "@/lib/canvasRef"
 import { DocExpanded, DocTile, isDocLink, type DocMeta } from "./DocTile"
 
 // Fonts are copied into dist by vite.config.ts (excalidrawAssets); without this
@@ -28,12 +29,15 @@ export type Status = "connecting" | "live" | "offline" | "reload"
  *
  * `load` fetches the first snapshot (the host knows how to name the board);
  * later resyncs go by canvas id. `settledRef` lets the host ask, before it
- * closes, whether every edit has reached the server.
+ * closes, whether every edit has reached the server. `onOpenRef` opens a
+ * shape's harman:// link (a card, note, inbox, Sift doc or code path) in the
+ * host's own UI; other links open as Excalidraw normally does.
  */
-export function ProjectCanvas({ load, onStatus, settledRef }: {
+export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
   load: () => Promise<CanvasSnapshot>
   onStatus?: (status: Status, editable: boolean) => void
   settledRef?: MutableRefObject<(() => boolean) | null>
+  onOpenRef?: (ref: CanvasRef) => void
 }) {
   const [board, setBoard] = useState<CanvasSnapshot | null>(null)
   const [err, setErr] = useState("")
@@ -56,6 +60,8 @@ export function ProjectCanvas({ load, onStatus, settledRef }: {
 
   const onStatusRef = useRef(onStatus)
   onStatusRef.current = onStatus
+  const onOpenRefRef = useRef(onOpenRef)
+  onOpenRefRef.current = onOpenRef
   useEffect(() => { if (board) onStatusRef.current?.(status, board.editable) }, [status, board])
 
   // The person's net under an agent's edit: the server takes back that agent's
@@ -295,6 +301,12 @@ export function ProjectCanvas({ load, onStatus, settledRef }: {
             onChange={(els, st, files) => onChangeRef.current?.(els, st, files)}
             onPointerUpdate={onPointer}
             validateEmbeddable={isDocLink}
+            onLinkOpen={(el, event) => {
+              const ref = parseCanvasRef(el.link)
+              if (!ref || !onOpenRefRef.current) return
+              event.preventDefault()
+              onOpenRefRef.current(ref)
+            }}
             renderEmbeddable={(el) => {
               const doc = (el.customData as { doc?: DocMeta } | undefined)?.doc
               return doc ? <DocTile canvas={board.canvas} doc={doc} onExpand={() => setExpanded(doc)} /> : null

@@ -19,14 +19,19 @@ const POLL_MS = 5000
  * happens in the list beside it. Files an agent is writing light up amber, live:
  * the dialog re-reads every few seconds while open.
  */
-export function MapDialog({ host, cwd, name, onClose }: {
+export function MapDialog({ host, cwd, name, initialPath, onClose }: {
   host: string
   cwd: string
   name: string
+  /** A repo-relative file or folder to open at (a canvas link to it). */
+  initialPath?: string
   onClose: () => void
 }) {
   const [project, setProject] = useState<OrgProject | null>(null)
-  const [at, setAt] = useState<{ level: MapLevel; path: string }>({ level: "project", path: "" })
+  const [at, setAt] = useState<{ level: MapLevel; path: string }>(() =>
+    !initialPath ? { level: "project", path: "" }
+    : /\.[^/]+$/.test(initialPath) ? { level: "file", path: initialPath }
+    : { level: "folder", path: initialPath.replace(/\/+$/, "") })
   const [view, setView] = useState<MapView | null>(null)
   const [err, setErr] = useState("")
   const dark = document.documentElement.classList.contains("dark")

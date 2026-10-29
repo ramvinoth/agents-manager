@@ -4,7 +4,8 @@ An Excalidraw scene is thousands of fields an agent cannot reason over. The
 summary keeps meaning and drops geometry noise: frames and what sits in them,
 labelled shapes, free text, arrows as from → to edges, workflows (a frame
 marked customData.kind = "workflow") as ordered steps, harman:// references
-resolved to the card or note they name, and freehand ink as spatial groups.
+(card, note, inbox decision, Sift document, code file) resolved to what they
+name, and freehand ink as spatial groups.
 
 Ink is the one thing words cannot carry. Strokes are grouped by proximity
 (bounding boxes within GROUP_GAP px merge, union-find) and each group gets a
@@ -18,7 +19,8 @@ from viewer.canvas_reconcile import fnv1a
 
 GROUP_GAP = 40.0
 CAP = 500                          # per list; `truncated` says when one was cut
-REF_RE = re.compile(r"^harman://(card|note)/(\d+)$")
+REF_RE = re.compile(r"^harman://(card|note|inbox|sift|code)/(.+)$")
+INT_REFS = {"card", "note", "inbox"}   # numeric ids; sift and code ids are strings
 
 
 def bbox(el):
@@ -135,7 +137,11 @@ def summarize(elements, resolve=None):
         m = REF_RE.match((e.get("link") or "").strip())
         if not m:
             return None
-        kind, rid = m.group(1), int(m.group(2))
+        kind, rid = m.group(1), m.group(2)
+        if kind in INT_REFS:
+            if not rid.isdigit():
+                return None
+            rid = int(rid)
         title = resolve(kind, rid) if resolve else None
         refs.append({"kind": kind, "id": rid, "element": e["id"], "title": title,
                      "missing": resolve is not None and title is None})

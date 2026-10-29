@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -50,11 +50,14 @@ export function KanbanDialog({
   host,
   cwd,
   name,
+  initialCard,
   onClose,
 }: {
   host: string
   cwd: string
   name: string
+  /** A card to open once the board has loaded (a canvas link to it). */
+  initialCard?: number
   onClose: () => void
 }) {
   const [project, setProject] = useState<OrgProject | null>(null)
@@ -252,6 +255,14 @@ export function KanbanDialog({
       return false
     }
   }
+
+  // Open the linked card once, after the board loads (openCard reads `cards`).
+  const openedInitial = useRef(false)
+  useEffect(() => {
+    if (loading || !initialCard || openedInitial.current) return
+    openedInitial.current = true
+    void openCard(initialCard).then((ok) => { if (!ok) setErr(`Card ${initialCard} can't be opened — it may have been deleted.`) })
+  }, [loading, initialCard]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

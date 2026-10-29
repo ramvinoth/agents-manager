@@ -1,14 +1,17 @@
 import { useCallback, useRef, useState } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
+import type { CanvasRef } from "@/lib/canvasRef"
 import { ProjectCanvas, StatusDot, type Status } from "./ProjectCanvas"
 
 /** The project canvas in a dialog (web): resolves the chat's folder to its project. */
-export function CanvasDialog({ host, cwd, name, onClose }: {
+export function CanvasDialog({ host, cwd, name, onClose, onOpenRef }: {
   host: string
   cwd: string
   name: string
   onClose: () => void
+  /** A tile linking a card, note, inbox, Sift document or code file was opened. */
+  onOpenRef?: (ref: CanvasRef) => void
 }) {
   const [title, setTitle] = useState(name)
   const [live, setLive] = useState<{ status: Status; editable: boolean } | null>(null)
@@ -42,7 +45,7 @@ export function CanvasDialog({ host, cwd, name, onClose }: {
             One shared drawing board for this project. Everyone who has it open sees each change as it happens.
           </DialogDescription>
         </DialogHeader>
-        <ProjectCanvas load={load} settledRef={settled} onStatus={(status, editable) => setLive({ status, editable })} />
+        <ProjectCanvas load={load} settledRef={settled} onOpenRef={onOpenRef} onStatus={(status, editable) => setLive({ status, editable })} />
       </DialogContent>
     </Dialog>
   )
