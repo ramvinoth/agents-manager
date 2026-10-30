@@ -35,7 +35,8 @@ builtins are changed only by duplicating them.
 The engine passes one `--plugin-dir` per active plugin plus the chat's extras
 to every **local** Claude run. Plugin parts are namespaced (`<plugin>:<skill>`,
 `plugin:<plugin>:<server>`), so they never collide with user/project skills or
-MCP. Remote, Codex, Copilot and custom-provider runs get the persona only.
+MCP. That includes Claude runs on a custom model provider. Remote, Codex and
+Copilot runs get the persona only, and the Plugins tab says so.
 
 The skills write into Harman's own ledgers (notes, cards) through the
 `mcp__viewer__*` tools every session already has — no new storage.

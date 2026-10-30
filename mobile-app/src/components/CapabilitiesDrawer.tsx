@@ -21,10 +21,12 @@ interface Props {
   cwd?: string
   /** Session rel path — surfaces this session's attached plugin skills. */
   session?: string
+  /** The session's harness (claude | codex | copilot); plugins load on Claude only. */
+  agent?: string
   onClose: () => void
 }
 
-export default function CapabilitiesDrawer({ visible, host, cwd, session, onClose }: Props) {
+export default function CapabilitiesDrawer({ visible, host, cwd, session, agent, onClose }: Props) {
   const t = useTheme()
   const insets = useSafeAreaInsets()
 
@@ -102,7 +104,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, onClos
           </TouchableOpacity>
         </View>
 
-        <CapabilitiesPanel host={host} cwd={cwd} session={session} active={visible} testPrefix="drawer" />
+        <CapabilitiesPanel host={host} cwd={cwd} session={session} agent={agent} active={visible} testPrefix="drawer" />
       </Animated.View>
     </View>
   )

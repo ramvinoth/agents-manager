@@ -1396,6 +1396,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         host={host}
         cwd={cwd}
         session={path}
+        agent={agent}
         onClose={() => setCapDrawerOpen(false)}
       />
     </>

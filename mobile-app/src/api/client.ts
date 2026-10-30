@@ -622,13 +622,15 @@ export const api = {
   // `session` (the session rel path) lets the server add the session's attached
   // agent-template plugin skills — they run via --plugin-dir but live outside the
   // scanned skill roots, so without the session they'd be invisible here.
-  capabilities: (host: string, cwd?: string, session?: string) =>
+  // `agent` (codex | copilot) reads that harness's own config instead of Claude's.
+  capabilities: (host: string, cwd?: string, session?: string, agent?: string) =>
     req<Capabilities>(
       "GET",
       `/api/capabilities?${new URLSearchParams({
         ...(host && host !== "local" ? { host } : {}),
         ...(cwd ? { cwd } : {}),
         ...(session ? { session } : {}),
+        ...(agent && agent !== "claude" ? { agent } : {}),
       }).toString()}`
     ),
   skill: (host: string, path: string) =>
