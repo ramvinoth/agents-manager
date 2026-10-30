@@ -9,10 +9,10 @@ from viewer import db, hostenv, pairing, relay, setupcode
 from viewer.config import PUBLIC_URL
 from viewer.agents import ENABLED_AGENTS, agent_env, agent_public, get_agent, is_installed_local, local_agents_status, local_install_argv
 from viewer.login import (
-    CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
+    CODEX_LOGIN, COPILOT_LOGIN, LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
 )
 from viewer.remote import (
-    SSH, remote_agents_status, remote_codex_logged_in, remote_install_agent, save_browser_mcp_all, test_host_config,
+    SSH, remote_agents_status, remote_install_agent, save_browser_mcp_all, test_host_config,
 )
 
 
@@ -251,7 +251,6 @@ class AuthMixin:
 
     def _p_agent_login_submit(self, req):
         body = self.read_body() or {}
-        host = body.get("host", "local")
         if body.get("agent") != "codex":
             self.send_json({"error": "unsupported"}, status=400)
             return
@@ -259,21 +258,15 @@ class AuthMixin:
         if not cb:
             self.send_json({"error": "Paste the callback URL from the browser"}, status=400)
             return
-        if host == "local":
-            ok = CODEX_LOGIN.submit(cb)
-            self.send_json({"ok": ok, "loggedIn": _codex_logged_in()})
-        else:
-            ok = REMOTE_CODEX_LOGIN.submit(cb)
-            self.send_json({"ok": ok, "loggedIn": remote_codex_logged_in(host)})
+        ok = CODEX_LOGIN.submit(cb)
+        self.send_json({"ok": ok, "loggedIn": CODEX_LOGIN.poll()["loggedIn"]})
 
     def _p_agent_login_cancel(self, req):
         body = self.read_body() or {}
         if body.get("agent") == "copilot":
             COPILOT_LOGIN.cancel()
-        elif body.get("host", "local") == "local":
-            CODEX_LOGIN.cancel()
         else:
-            REMOTE_CODEX_LOGIN.cancel()
+            CODEX_LOGIN.cancel()
         self.send_json({"cancelled": True})
 
     def _g_hosts(self, req):
@@ -302,7 +295,7 @@ class AuthMixin:
         if agent != "codex":
             self.send_json({"stage": "idle"})
             return
-        self.send_json(CODEX_LOGIN.poll() if req.host == "local" else REMOTE_CODEX_LOGIN.poll())
+        self.send_json(CODEX_LOGIN.poll())
 
     def _p_hosts_save(self, req):
         body = self.read_body() or {}
@@ -355,12 +348,8 @@ class AuthMixin:
         if agent != "codex":
             self.send_json({"error": "In-app login isn't available for this agent yet"}, status=400)
             return
-        if host == "local":
-            CODEX_LOGIN.start()
-            self.send_json(CODEX_LOGIN.poll())
-        else:
-            REMOTE_CODEX_LOGIN.start(host)
-            self.send_json(REMOTE_CODEX_LOGIN.poll())
+        CODEX_LOGIN.start(host)
+        self.send_json(CODEX_LOGIN.poll())
 
     def _g_agents(self, req):
         if req.host != "local":

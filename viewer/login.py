@@ -307,43 +307,73 @@ def _codex_logged_in():
         return False
 
 
+def _remote_login_pty(host, binpath):
+    """`<cli> login` on a remote host under an SSH pty, as a _SshPty.
+
+    Uses the user's INTERACTIVE login shell (-ilc): a version-managed node
+    (nvm/fnm/...) is usually set up in the interactive rc (~/.zshrc), not the
+    non-interactive one, and a plain `bash -lc` gets the wrong node."""
+    with SSH.lock_for(host):
+        chan = SSH.get(host)["client"].get_transport().open_session()
+        chan.get_pty()
+        shell = "exec " + shlex.quote(binpath) + " login"
+        if "/" in binpath:
+            shell = 'export PATH=' + shlex.quote(posixpath.dirname(binpath)) + ':"$PATH" && ' + shell
+        chan.exec_command("${SHELL:-bash} -ilc " + shlex.quote(shell))
+    return _SshPty(chan)
+
+
 class CodexLoginManager:
-    """Drives `codex login` through a pty (like the Claude flow, but codex runs
-    a localhost:1455 callback server instead of reading a pasted code): exposes
-    the OAuth URL, and FORWARDS the pasted callback URL to codex's local server
-    to complete sign-in. Local only for now."""
+    """Drives `codex login` on a pty (local) or an SSH channel's pty (remote) —
+    one host at a time. Unlike Claude, codex runs a localhost:1455 callback
+    server instead of reading a pasted code: we expose the OAuth URL and FORWARD
+    the pasted callback URL to that server — directly here, or by a `curl` run on
+    the remote (its :1455 binds the remote's loopback)."""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.reset()
 
     def reset(self):
-        self.proc = None
+        self.host = "local"
+        self.remote = False
+        self.proc = None  # a ptyproc process, or _SshPty on a remote host
         self.buffer = ""
         self.url = None
         self.stage = "idle"  # idle | starting | url | done | error
         self.error = ""
         self.started = 0
 
-    def start(self):
+    def _logged_in(self):
+        return remote_codex_logged_in(self.host) if self.remote else _codex_logged_in()
+
+    def start(self, host="local"):
+        host = host or "local"
         with self.lock:
-            if self.stage in ("starting", "url") and self.proc:
-                return
-            if _codex_logged_in():
-                # Already signed in — `codex login` would wipe auth.json to begin
-                # a fresh flow, so a cancelled re-run logs you out. Don't clobber.
-                self.reset()
-                self.stage = "done"
+            if self.stage in ("starting", "url") and self.proc and self.host == host:
                 return
             self.cancel_locked()
             self.reset()
-            missing = _missing_cli("Codex", codex_bin())
-            if missing:
-                self.stage, self.error = "error", missing
+            self.host, self.remote = host, host != "local"
+            if self._logged_in():
+                # Already signed in — `codex login` would wipe auth.json to begin
+                # a fresh flow, so a cancelled re-run logs you out. Don't clobber.
+                self.stage = "done"
                 return
             self.stage = "starting"
             self.started = time.time()
-            self.proc = _pty_spawn([codex_bin(), "login"])
+            try:
+                if self.remote:
+                    self.proc = _remote_login_pty(host, remote_codex_bin(host))
+                else:
+                    missing = _missing_cli("Codex", codex_bin())
+                    if missing:
+                        self.stage, self.error = "error", missing
+                        return
+                    self.proc = _pty_spawn([codex_bin(), "login"])
+            except Exception as e:
+                self.stage, self.error = "error", str(e)
+                return
             threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
     def _reader(self, proc):
@@ -359,14 +389,14 @@ class CodexLoginManager:
                         if m:
                             self.url = m.group(0).rstrip(".,)")
                             self.stage = "url"
-                    if _codex_logged_in() and self.stage != "done":
+                    if self.stage != "done" and self._logged_in():
                         self.stage = "done"
                     continue
             code = proc.wait()
             with self.lock:
                 if self.proc is not proc:
                     return
-                if self.stage == "done" or _codex_logged_in() or code == 0:
+                if self.stage == "done" or self._logged_in() or code == 0:
                     self.stage = "done"
                 else:
                     self.stage = "error"
@@ -381,27 +411,28 @@ class CodexLoginManager:
         with self.lock:
             if self.stage not in ("url", "starting"):
                 return False
+            host, remote = self.host, self.remote
         try:
             u = urlparse((callback_url or "").strip())
             path = u.path or "/auth/callback"
             target = "http://localhost:1455" + path + (("?" + u.query) if u.query else "")
-            try:
+            if remote:
+                remote_run_shell(host, "curl -s " + shlex.quote(target), timeout=20)
+            else:
                 urllib.request.urlopen(target, timeout=15).read()
-            except Exception:
-                pass  # codex may close/redirect the connection — that's fine
         except Exception:
-            return False
+            pass  # codex may close/redirect the connection — auth.json below is the truth
         for _ in range(24):
-            if _codex_logged_in():
+            if self._logged_in():
                 with self.lock:
                     self.stage = "done"
                 return True
             time.sleep(0.5)
-        return _codex_logged_in()
+        return self._logged_in()
 
     def cancel_locked(self):
         if self.proc:
-            # Kill the whole group so codex's localhost:1455 callback server dies with it.
+            # Kill the whole group (or hang up the SSH pty) so codex's :1455 server dies with it.
             self.proc.kill(group=True)
             self.proc.close()
         self.proc = None
@@ -417,8 +448,9 @@ class CodexLoginManager:
                 self.cancel_locked()
                 self.stage = "error"
                 self.error = "Login timed out"
-            return {"stage": "done" if _codex_logged_in() else self.stage, "url": self.url,
-                    "error": self.error, "loggedIn": _codex_logged_in()}
+            done = self._logged_in()
+            return {"stage": "done" if done else self.stage, "url": self.url,
+                    "error": self.error, "loggedIn": done}
 
 
 CODEX_LOGIN = CodexLoginManager()
@@ -546,140 +578,6 @@ class McpLoginManager:
 MCP_LOGIN = McpLoginManager()
 
 
-class RemoteCodexLoginManager:
-    """`codex login` on a REMOTE host over SSH. Same OAuth-URL + paste-callback
-    UX as the local flow, but: the process runs on the remote via an SSH pty
-    (its localhost:1455 callback server binds the remote's loopback), and the
-    pasted callback is forwarded by a `curl` executed ON the remote. One host at
-    a time (a single sign-in in flight is all the UI drives)."""
-
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.reset()
-
-    def reset(self):
-        self.host = None
-        self.chan = None
-        self.buffer = ""
-        self.url = None
-        self.stage = "idle"  # idle | starting | url | done | error
-        self.error = ""
-        self.started = 0
-
-    def _logged_in(self):
-        return remote_codex_logged_in(self.host) if self.host else False
-
-    def start(self, host):
-        with self.lock:
-            if remote_codex_logged_in(host):
-                # Already signed in on the remote — don't run `codex login` (it
-                # wipes auth.json to begin fresh; a cancelled re-run logs you out).
-                self.reset()
-                self.host = host
-                self.stage = "done"
-                return
-            self.cancel_locked()
-            self.reset()
-            self.host = host
-            self.stage = "starting"
-            self.started = time.time()
-            try:
-                binpath = remote_codex_bin(host)
-                with SSH.lock_for(host):
-                    chan = SSH.get(host)["client"].get_transport().open_session()
-                    chan.get_pty()
-                    shell = "exec " + shlex.quote(binpath) + " login"
-                    if "/" in binpath:
-                        shell = 'export PATH=' + shlex.quote(posixpath.dirname(binpath)) + ':"$PATH" && ' + shell
-                    chan.exec_command("bash -lc " + shlex.quote(shell))
-                self.chan = chan
-            except Exception as e:
-                self.stage = "error"
-                self.error = str(e)
-                return
-            threading.Thread(target=self._reader, args=(chan,), daemon=True).start()
-
-    def _reader(self, chan):
-        while True:
-            try:
-                chunk = chan.recv(4096)
-            except Exception:
-                chunk = b""
-            with self.lock:
-                if self.chan is not chan:
-                    return
-                if chunk:
-                    self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
-                    if not self.url:
-                        m = re.search(r"https://auth\.openai\.com/\S*authorize\S+", self.buffer)
-                        if m:
-                            self.url = m.group(0).rstrip(".,)")
-                            self.stage = "url"
-                    if self._logged_in() and self.stage != "done":
-                        self.stage = "done"
-                    continue
-            # EOF: the codex process exited.
-            with self.lock:
-                if self.chan is not chan:
-                    return
-                try:
-                    code = chan.recv_exit_status()
-                except Exception:
-                    code = 0
-                if self.stage == "done" or self._logged_in() or code == 0:
-                    self.stage = "done"
-                else:
-                    self.stage = "error"
-                    self.error = _redact(self.buffer[-500:].strip())
-                self.chan = None
-                return
-
-    def submit(self, callback_url):
-        """Forward the pasted callback to the remote's localhost:1455 via SSH curl."""
-        with self.lock:
-            if self.stage not in ("url", "starting") or not self.host:
-                return False
-            host = self.host
-        try:
-            u = urlparse((callback_url or "").strip())
-            path = u.path or "/auth/callback"
-            target = "http://localhost:1455" + path + (("?" + u.query) if u.query else "")
-            remote_run_shell(host, "curl -s " + shlex.quote(target), timeout=20)
-        except Exception:
-            pass  # codex may close/redirect — the auth.json check below is the truth
-        for _ in range(24):
-            if remote_codex_logged_in(host):
-                with self.lock:
-                    self.stage = "done"
-                return True
-            time.sleep(0.5)
-        return remote_codex_logged_in(host)
-
-    def cancel_locked(self):
-        if self.chan is not None:
-            try:
-                self.chan.close()  # closes the SSH channel → SIGHUP kills codex + its :1455 server
-            except Exception:
-                pass
-        self.chan = None
-
-    def cancel(self):
-        with self.lock:
-            self.cancel_locked()
-            self.stage = "idle"
-
-    def poll(self):
-        with self.lock:
-            li = self._logged_in()
-            if self.stage in ("starting", "url") and time.time() - self.started > 900:
-                self.cancel_locked()
-                self.stage = "error"
-                self.error = "Login timed out"
-            return {"stage": "done" if li else self.stage, "url": self.url,
-                    "error": self.error, "loggedIn": li}
-
-
-REMOTE_CODEX_LOGIN = RemoteCodexLoginManager()
 
 
 def copilot_bin():
@@ -703,9 +601,7 @@ class CopilotLoginManager:
     an SSH channel's pty (remote, through _SshPty) — one host at a time. Unlike Codex there's no localhost
     callback and no paste-back: we capture the device URL + user code, the CLI polls
     GitHub itself, and we complete when it reports success. We also auto-answer the
-    plaintext-token '(y/N)' prompt (shown when there's no OS keychain, e.g. over SSH).
-    Remote runs under a login shell so it gets the right node (a non-login shell may
-    have an unsupported node)."""
+    plaintext-token '(y/N)' prompt (shown when there's no OS keychain, e.g. over SSH)."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -746,19 +642,7 @@ class CopilotLoginManager:
             self.started = time.time()
             try:
                 if self.remote:
-                    binpath = remote_copilot_bin(self.host)
-                    with SSH.lock_for(self.host):
-                        chan = SSH.get(self.host)["client"].get_transport().open_session()
-                        chan.get_pty()
-                        shell = "exec " + shlex.quote(binpath) + " login"
-                        if "/" in binpath:
-                            shell = 'export PATH=' + shlex.quote(posixpath.dirname(binpath)) + ':"$PATH" && ' + shell
-                        # Use the user's INTERACTIVE login shell (-ilc): a version-managed
-                        # node (nvm/fnm/…) is usually set up in the interactive rc (~/.zshrc),
-                        # not the non-interactive one — a plain `bash -lc` gets the wrong node
-                        # and Copilot fails with "no platform package found".
-                        chan.exec_command("${SHELL:-bash} -ilc " + shlex.quote(shell))
-                    self.proc = _SshPty(chan)
+                    self.proc = _remote_login_pty(self.host, remote_copilot_bin(self.host))
                 else:
                     missing = _missing_cli("GitHub Copilot CLI", copilot_bin())
                     if missing:

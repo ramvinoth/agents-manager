@@ -11,16 +11,15 @@ Word a mermaid block stays as its source code; Word has no way to draw it.
 import html
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import time
 import zipfile
-from glob import glob
 from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape as xesc
 
+from viewer.chromefind import find_chrome
 from viewer.procctl import kill_tree
 
 FORMATS = {
@@ -219,29 +218,6 @@ def to_html(title, meta, body):
 
 
 # ── PDF ──────────────────────────────────────────────────────────────────────
-def find_chrome():
-    """A Chrome/Chromium binary on THIS machine, or None."""
-    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
-        if shutil.which(name):
-            return shutil.which(name)
-    for p in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-              "/Applications/Chromium.app/Contents/MacOS/Chromium", "/snap/bin/chromium"):
-        if os.path.exists(p):
-            return p
-    for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):  # Windows installs
-        base = os.environ.get(var)
-        p = base and os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
-        if p and os.path.exists(p):
-            return p
-    for root in ("~/.cache/ms-playwright", "~/Library/Caches/ms-playwright"):
-        root = os.path.expanduser(root)
-        hits = sorted(glob(root + "/chromium-*/chrome-linux/chrome")
-                      + glob(root + "/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"))
-        if hits:
-            return hits[-1]
-    return None
-
-
 def _complete(path):
     with open(path, "rb") as f:
         f.seek(max(0, os.path.getsize(path) - 32))

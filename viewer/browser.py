@@ -7,10 +7,10 @@ import os
 import posixpath
 import re
 import shlex
-import shutil
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -374,7 +374,7 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
 
 
 # Facts needed to decide: stream now / launch / install / explain what's missing.
-BROWSER_PROBE_SCRIPT = r"""
+BROWSER_PROBE_SCRIPT = (Path(__file__).with_name("chromefind.py").read_text() + r"""
 import json, os, glob, shutil, subprocess, platform
 def run(cmd, t=8):
     try:
@@ -383,15 +383,7 @@ def run(cmd, t=8):
     except Exception as e:
         return -1, str(e)
 r = {"os": platform.system()}
-cands = [w for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
-         if (w := shutil.which(n))]
-for pat in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium", "/snap/bin/chromium"):
-    if os.path.exists(pat): cands.append(pat)
-for root in ("~/.cache/ms-playwright", "~/Library/Caches/ms-playwright"):
-    cands += sorted(glob.glob(os.path.expanduser(root + "/chromium-*/chrome-linux/chrome")))
-    cands += sorted(glob.glob(os.path.expanduser(root + "/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium")))
-r["binary"] = cands[0] if cands else None
+r["binary"] = find_chrome()
 # Pick a node that modern tooling can actually run (>=18): the PATH node can be
 # ancient (seen: /usr/local/bin/node v17 while nvm has v20+) and @playwright/mcp
 # crashes on it. Prefer the newest version that qualifies.
@@ -420,34 +412,16 @@ r["display"] = (sorted(os.path.basename(s)[1:] for s in glob.glob("/tmp/.X11-uni
 r["xvfb"] = shutil.which("Xvfb")
 r["pkg_mgr"] = next((m for m in ("apt-get", "dnf", "yum", "apk", "pacman", "zypper") if shutil.which(m)), None)
 print(json.dumps(r))
-"""
+""")
 
 
 def browser_probe(hid):
     if hid != "local":
         txt = remote_run_python(hid, BROWSER_PROBE_SCRIPT)
-        return json.loads(txt.strip().splitlines()[-1])
-    import platform as _pf
-    import glob as _glob
-    r = {"os": _pf.system()}
-    cands = [w for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
-             if (w := shutil.which(n))]
-    for root in ("~/.cache/ms-playwright",):
-        cands += sorted(_glob.glob(os.path.expanduser(root + "/chromium-*/chrome-linux/chrome")))
-    r["binary"] = cands[0] if cands else None
-    r["node"] = shutil.which("node")
-    try:
-        st = os.statvfs(os.path.expanduser("~"))
-        r["free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
-    except Exception:
-        r["free_gb"] = None
-    r["passwordless_sudo"] = subprocess.run("sudo -n true", shell=True, capture_output=True).returncode == 0
-    r["missing_libs"] = []
-    disp = sorted(os.path.basename(s)[1:] for s in _glob.glob("/tmp/.X11-unix/X*"))
-    r["display"] = disp[0] if disp else None
-    r["xvfb"] = shutil.which("Xvfb")
-    r["pkg_mgr"] = next((m for m in ("apt-get", "dnf", "yum", "apk", "pacman", "zypper") if shutil.which(m)), None)
-    return r
+    else:
+        txt = subprocess.run([sys.executable, "-c", BROWSER_PROBE_SCRIPT], capture_output=True,
+                             text=True, timeout=60).stdout
+    return json.loads(txt.strip().splitlines()[-1])
 
 
 # The managed browser is launched, stopped and installed with POSIX shell
