@@ -206,7 +206,14 @@ def _abort(ids, reqs, record, outcome, why):
 def finish_after_boot(sleep=time.sleep, health=None):
     """On a real (non-preflight) boot: close the restart the previous process
     started. Writes the one audit entry and wakes the requesters."""
-    record = db.setting_get(_PENDING_KEY)
+    for attempt in range(24):   # after a reboot Postgres can still be starting: wait up to ~2 min
+        try:
+            record = db.setting_get(_PENDING_KEY)
+            break
+        except Exception:
+            if attempt == 23:
+                raise
+            sleep(5)
     if record:
         db.setting_set(_PENDING_KEY, None)
     else:

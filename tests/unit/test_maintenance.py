@@ -152,3 +152,18 @@ def test_restart_now_is_red_and_request_is_not():
 def test_request_needs_a_reason(store):
     assert "error" in actions._restart_request({"reason": "  "})
     assert store["reqs"] == []
+
+
+def test_boot_waits_for_postgres_still_starting(store, monkeypatch):
+    maintenance.request("a", "s1", "", "x")
+    maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    real, fails = maintenance.db.setting_get, iter([True, True])
+
+    def starting(key):
+        if next(fails, False):
+            raise RuntimeError("FATAL:  the database system is starting up")
+        return real(key)
+    monkeypatch.setattr(maintenance.db, "setting_get", starting)
+    naps = []
+    rec = maintenance.finish_after_boot(sleep=naps.append, health=lambda: {"ok": True})
+    assert rec and {r["status"] for r in store["reqs"]} == {"done"} and len(naps) == 3   # 2 retries + the HTTP wait
