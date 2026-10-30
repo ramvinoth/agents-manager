@@ -30,8 +30,14 @@ export async function pickImage(): Promise<Picked | null> {
   } catch {
     throw new Error("Image picking needs a newer build of the app.")
   }
-  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
-  if (!perm.granted) throw new Error("Photo access was denied.")
+  // Android picks through the system photo picker, which needs no permission.
+  // The app doesn't declare READ_MEDIA_* (plugins/withAndroidPermissions.js), so
+  // asking for it there would always come back denied.
+  const { Platform } = require("react-native")
+  if (Platform.OS !== "android") {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!perm.granted) throw new Error("Photo access was denied.")
+  }
   const res = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions?.Images ?? "images",
     quality: 0.8,
