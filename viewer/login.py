@@ -19,6 +19,7 @@ from viewer.config import (
 from viewer.remote import (
     SSH, remote_codex_bin, remote_codex_logged_in, remote_copilot_bin, remote_copilot_logged_in, remote_run_shell,
 )
+from viewer.termscreen import Screen
 
 
 def _redact(text):
@@ -75,9 +76,33 @@ def _missing_cli(name, binpath):
             f"Install it (or update Harman, which installs it), then try again.")
 
 
+_TOKEN_RE = re.compile(r"sk-ant-oat[0-9A-Za-z_-]{20,}")
+_CLAUDE_URL_RE = re.compile(r"https://claude\.(?:com|ai)/\S*oauth\S+")
+NO_TOKEN_ERROR = "Sign-in finished but Harman could not read the token \u2014 try again."
+
+
+def _drawn_match(screen, pattern, final=False):
+    """First match of pattern on the rendered screen that is fully drawn: the
+    CLI has moved past it (cursor on another line, or more text after it on the
+    same line). A match the cursor is still sitting at the end of may be a
+    token or URL cut mid-chunk. `final` (the CLI exited) accepts any match."""
+    lines = screen.logical_lines()
+    cur = screen.cursor_line()
+    for i, line in enumerate(lines):
+        for m in pattern.finditer(line):
+            if final or i != cur or m.end() < len(line):
+                return m.group(0)
+    return None
+
+
 class LoginManager:
     """Drives `claude setup-token` through a pty: exposes the OAuth URL,
-    forwards the pasted code, and reports completion."""
+    forwards the pasted code, and reports completion. The CLI's output is read
+    through a screen model (viewer/termscreen.py), never by deleting escape
+    codes — Claude Code draws with cursor moves, and stripping them garbles
+    the token it prints."""
+
+    COLS = 2000   # wide, so neither the URL nor the token wraps
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -86,13 +111,13 @@ class LoginManager:
     def reset(self):
         self.pid = None
         self.fd = None
-        self.buffer = ""
+        self.screen = Screen(cols=self.COLS)
         self.url = None
         self.stage = "idle"   # idle | starting | url | done | error
         self.error = ""
         self.started = 0
-        self.code_pos = 0     # buffer offset of the last submitted code
-        self.acked_pos = 0    # buffer offset up to which "press enter" was answered
+        self.code_seq = 0     # screen write counter when the last code was submitted
+        self.acked_seq = 0    # screen write counter when "press enter" was last answered
 
     def start(self):
         with self.lock:
@@ -106,9 +131,16 @@ class LoginManager:
                 return
             self.stage = "starting"
             self.started = time.time()
-            # Wide terminal so the URL is not hard-wrapped by the pty.
-            self.pid, self.fd = _pty_spawn([claude_bin(), "setup-token"])
+            self.pid, self.fd = _pty_spawn([claude_bin(), "setup-token"], cols=self.COLS)
             threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
+
+    def _finish(self, token):
+        """Save the captured token and end the flow — done only if it is on disk."""
+        if self._save_token(token):
+            self.stage = "done"
+        else:
+            self.stage = "error"
+            self.error = "Harman read the token but could not save it \u2014 try again."
 
     def _reader(self, pid, fd):
         while True:
@@ -120,28 +152,29 @@ class LoginManager:
                 if self.pid != pid:
                     return  # superseded by a newer attempt
                 if chunk:
-                    self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
+                    if self.stage in ("done", "error"):
+                        continue  # finished; drain until the CLI exits
+                    self.screen.feed(chunk)
                     if not self.url:
-                        m = re.search(r"https://claude\.(?:com|ai)/\S*oauth\S+", self.buffer)
-                        if m and (m.end() < len(self.buffer) or "state=" in m.group(0)):
-                            self.url = m.group(0).rstrip(".,)")
+                        url = _drawn_match(self.screen, _CLAUDE_URL_RE)
+                        if url:
+                            self.url = url.rstrip(".,)")
                             self.stage = "url"
                     # setup-token prints the long-lived token and then WAITS for a
                     # keypress — success must be detected from output, not exit.
-                    tok = re.search(r"sk-ant-oat[0-9A-Za-z_-]{20,}", self.buffer)
-                    if tok and self.stage != "done":
-                        self._save_token(tok.group(0))
-                        self.stage = "done"
+                    tok = _drawn_match(self.screen, _TOKEN_RE)
+                    if tok:
+                        self._finish(tok)
                         try:
                             os.write(fd, b"\r")
                         except OSError:
                             pass
                         threading.Timer(3.0, self._kill_if_current, args=(pid,)).start()
-                    elif self.stage != "done":
+                    else:
                         # Auto-acknowledge any "press enter to continue" prompts.
-                        recent = self.buffer[self.acked_pos:].lower()
+                        recent = self.screen.text(since=self.acked_seq).lower()
                         if "press enter" in recent or "press any key" in recent:
-                            self.acked_pos = len(self.buffer)
+                            self.acked_seq = self.screen.seq
                             try:
                                 os.write(fd, b"\r")
                             except OSError:
@@ -156,14 +189,16 @@ class LoginManager:
                 if self.pid != pid:
                     return
                 code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
-                token_m = re.search(r"sk-ant-oat[0-9A-Za-z_-]{20,}", self.buffer)
-                if token_m:
-                    self._save_token(token_m.group(0))
-                if self.stage == "done" or code == 0 or token_m:
-                    self.stage = "done"
-                else:
-                    self.stage = "error"
-                    self.error = _redact(self.buffer[-500:].strip())
+                if self.stage not in ("done", "error"):
+                    tok = _drawn_match(self.screen, _TOKEN_RE, final=True)
+                    if tok:
+                        self._finish(tok)
+                    else:
+                        # A clean exit without a token is still a failed sign-in:
+                        # nothing was saved, so the app would say "Not logged in".
+                        self.stage = "error"
+                        self.error = NO_TOKEN_ERROR if code == 0 else (
+                            _redact(self.screen.text()[-500:].strip()) or f"Claude Code exited with code {code}.")
                 self.pid = None
                 try:
                     os.close(fd)
@@ -173,6 +208,7 @@ class LoginManager:
                 return
 
     def _save_token(self, token):
+        """Write the token 0600; True once it is on disk."""
         try:
             # Create with 0600 from the start (open+O_CREAT with mode) so there's no
             # world-readable window between write_text and a later chmod.
@@ -182,8 +218,9 @@ class LoginManager:
             finally:
                 os.close(fd)
             VIEWER_TOKEN_FILE.chmod(0o600)  # tighten if it pre-existed at a looser mode
+            return True
         except Exception:
-            pass
+            return False
 
     def _kill_if_current(self, pid):
         with self.lock:
@@ -199,7 +236,7 @@ class LoginManager:
                 return False
             fd = self.fd
             try:
-                self.code_pos = len(self.buffer)
+                self.code_seq = self.screen.seq
                 os.write(fd, code.encode())
             except OSError:
                 return False
@@ -212,7 +249,7 @@ class LoginManager:
             for delay in (0.3, 1.2):
                 time.sleep(delay)
                 with self.lock:
-                    if self.fd != fd or self.stage == "done":
+                    if self.fd != fd or self.stage in ("done", "error"):
                         return
                     try:
                         os.write(fd, b"\r")
@@ -250,13 +287,13 @@ class LoginManager:
             # Surface mid-flow errors (e.g. invalid code message) without ending
             # the flow — but only in output produced after the last code submit.
             note = ""
-            if self.stage == "url" and self.code_pos:
-                recent = self.buffer[self.code_pos:].lower()
+            if self.stage == "url" and self.code_seq:
+                recent = self.screen.text(since=self.code_seq).lower()
                 if any(p in recent for p in ("invalid", "error", "failed", "expired")):
                     note = "The code was rejected — copy it again and re-paste."
             tail = ""
             if self.stage in ("starting", "url"):
-                tail = re.sub(r"sk-ant-oat[0-9A-Za-z_-]+", "<token>", self.buffer[-600:])
+                tail = _redact(self.screen.text()[-600:])
             return {"stage": self.stage, "url": self.url, "error": self.error, "note": note, "tail": tail}
 
 
