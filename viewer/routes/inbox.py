@@ -17,6 +17,7 @@ Reads derive state, never store it: a decision row is open only while its
 durable source is open (inbox.attach_state against the live sources, the same
 ones /api/decisions/open reads). Snoozed rows resurface when the snooze lapses.
 """
+import sys
 import time
 
 from viewer import audit, db, decisions, inbox
@@ -35,6 +36,23 @@ def red_row(approval):
                 subject=inbox.red_subject(intent),
                 risk=inbox.red_risk(intent),
                 reason=inbox.red_reason(intent))
+
+
+def session_red_items(session_id):
+    """Open org approvals this one session raised, worded for a cold reader —
+    the asking chat's inline Approve/Deny (card 223). Deciding one goes
+    through the same /api/org/approvals/resolve as the queue."""
+    if not session_id:
+        return []
+    try:
+        mine = [red_row(r) for r in db.approval_list_open()
+                if decisions.red_session(r) == session_id]  # word only this chat's
+    except Exception as e:
+        # The chat status this rides on must still answer (a live run polls
+        # it); the Inbox and the board still carry the approval.
+        print(f"[chat] open approvals for {session_id} unreadable: {e}", file=sys.stderr)
+        return []
+    return decisions.session_red(mine, session_id, time.time())
 
 
 def open_decisions_items():

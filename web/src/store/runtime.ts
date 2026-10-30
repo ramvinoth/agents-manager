@@ -114,10 +114,29 @@ export function createRuntime(set: SetState, get: GetState) {
       // ~30s cadence on the 2s poll: refresh the git bar so branch switches
       // made outside the viewer (terminal, agent) show up without a reload.
       if (++gitTick % 15 === 0 && get().git?.repo) get().loadGitStatus()
+      // ~10s: an org approval this chat raised can be decided elsewhere (Inbox,
+      // phone) or raised while no run is watched — keep the inline chip true.
+      if (gitTick % 5 === 0 && !chatTimer) refreshRed()
     } catch {
       /* transient; retry next tick */
     } finally {
       polling = false
+    }
+  }
+
+  /** Take a chatStatus reply's open org approvals — only if it is still the
+   *  open session's (the user may have switched chats during the fetch). */
+  function applyRed(sessionId: string, d: any) {
+    if (sessionIdOf(get().currentSessionPath) === sessionId) set({ pendingRed: d?.pending_red || [] })
+  }
+
+  async function refreshRed() {
+    const sid = sessionIdOf(get().currentSessionPath)
+    if (!sid) return
+    try {
+      applyRed(sid, await api.chatStatus(sid))
+    } catch {
+      /* transient; retry next tick */
     }
   }
 
@@ -131,6 +150,7 @@ export function createRuntime(set: SetState, get: GetState) {
     chatTimer = setInterval(async () => {
       try {
         const d: any = await api.chatStatus(sessionId)
+        applyRed(sessionId, d)
         if (d.running) {
           set({ queue: d.queue || [], pendingApprovals: d.pending_approvals || [] })
           return
@@ -170,9 +190,11 @@ export function createRuntime(set: SetState, get: GetState) {
 
   async function reattach() {
     const sid = sessionIdOf(get().currentSessionPath)
+    set({ pendingRed: [] }) // never show the previous chat's asks
     if (!sid) return
     try {
       const d: any = await api.chatStatus(sid)
+      applyRed(sid, d)
       if (d.running) {
         set({ chatRunning: true, queue: d.queue || [], chatStatus: null })
         watchChat(sid)

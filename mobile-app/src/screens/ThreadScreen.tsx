@@ -19,7 +19,7 @@ import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
+import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk, type SlashCommand } from "../api/client"
 import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { applyMention, hashTerm } from "../lib/fileMention"
@@ -42,6 +42,8 @@ import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
 import QuestionCard from "../components/QuestionCard"
 import PlanCard from "../components/PlanCard"
+import RedApprovalCard from "../components/RedApprovalCard"
+import { resolveRed, withoutRed, type RedResolution } from "../lib/redApproval"
 import { ItemView, PinnedBanner, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
@@ -95,6 +97,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [pending, setPending] = useState<PermApproval[]>([])
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null)
+  // Org (Red) approvals this session raised — decided inline (card 223).
+  // Stamped with the session they were read for: a reused Thread route must
+  // never show the previous chat's asks as this one's.
+  const [redFor, setRedFor] = useState<{ sid: string; asks: RedAsk[] }>({ sid: "", asks: [] })
+  const [redBusy, setRedBusy] = useState("")
+  const [redError, setRedError] = useState<{ id: string; text: string } | null>(null)
   const [queued, setQueued] = useState(0)
   // A reused Thread route may still hold the last chat's state. Existing chats
   // derive identity from the route; new-chat responses belong to one lifetime,
@@ -111,6 +119,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const sessionId = path
     ? (path.split("/").pop() || "").replace(/\.jsonl$/, "").trim()
     : createdSession?.lifetime === routeLifetime ? createdSession.id : ""
+  const pendingRed = sessionId && redFor.sid.trim() === sessionId ? redFor.asks : []
   const setSessionId = useCallback((id: string) => {
     if (isCurrentThread()) setCreatedSession({ lifetime: routeLifetime, id: id.trim() })
   }, [routeLifetime, isCurrentThread])
@@ -441,6 +450,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           .then((s) => {
             setPendingQuestion(s.pending_question || null)
             setPendingPlan(s.pending_plan || null)
+            setRedFor({ sid, asks: s.pending_red || [] })
             if (s.running && !pollRef.current) {
               setBusy(true)
               startPoll(sid)
@@ -656,6 +666,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         setPending(s.pending_approvals || [])
         setPendingQuestion(s.pending_question || null)
         setPendingPlan(s.pending_plan || null)
+        setRedFor({ sid, asks: s.pending_red || [] })
         setQueued(s.queue?.length || 0)
         setQueueList(s.queue || [])
         if (!s.running || ticks > 400) {
@@ -955,6 +966,19 @@ export default function ThreadScreen({ route, navigation }: Props) {
       .catch((e) => setError(userError(e, "your decision", "send")))
   }
 
+  /** Approve or deny an org (Red) approval this session raised — the same
+   *  resolve the Inbox and the cockpit use, so the Inbox row clears too. The
+   *  server tells the asking session the outcome. */
+  function decidePendingRed(id: string | undefined, resolution: RedResolution) {
+    if (redBusy || !id) return
+    setRedBusy(id)
+    setRedError(null)
+    resolveRed(api.orgResolveApproval, id, resolution)
+      .then(() => setRedFor((r) => ({ ...r, asks: withoutRed(r.asks, id) })))
+      .catch((e) => setRedError({ id, text: userError(e, "this approval", "decide") }))
+      .finally(() => setRedBusy(""))
+  }
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -1198,7 +1222,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           so a TALL card (e.g. a multi-question AskUserQuestion) can't push its
           Approve/Submit buttons off-screen — the user must always be able to reach
           them. Capped at ~55% of the screen; the composer stays visible below. */}
-      {(pendingPlan || pendingQuestion || pending.length) ? (
+      {(pendingPlan || pendingQuestion || pending.length || pendingRed.length) ? (
         <ScrollView
           style={{ maxHeight: Dimensions.get("window").height * 0.55 }}
           keyboardShouldPersistTaps="handled"
@@ -1221,6 +1245,16 @@ export default function ThreadScreen({ route, navigation }: Props) {
               <QuestionCard input={pendingQuestion.questions} onAnswer={answerPendingQuestion} />
             </View>
           ) : null}
+
+          {/* Org (Red) approvals this session asked for (a delete, a mode
+              change, a restart): decided here instead of a trip to the Inbox. */}
+          {pendingRed.map((ask) => (
+            <View key={ask.id} style={{ marginHorizontal: 12, marginBottom: 8 }}>
+              <RedApprovalCard testID={`chat-red-${ask.id}`} ask={ask} headline={`Needs your OK: ${ask.summary}`}
+                busy={redBusy === ask.id} error={redError && redError.id === ask.id ? redError.text : ""}
+                onDecide={(resolution) => decidePendingRed(ask.id, resolution)} />
+            </View>
+          ))}
 
           {/* Per-call tool approvals (Allow/Deny). Questions are the card above. */}
           {pending.map((p) => (

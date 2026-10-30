@@ -197,12 +197,17 @@ class ChatMixin:
         from viewer import questions
         pending_q = questions.get_open(sid) if sid else None
         pending_plan = questions.get_open_plan(sid) if sid else None
+        # An org (Red) approval this session raised outlives its run too; the
+        # chat shows it inline with Approve/Deny (card 223).
+        from viewer.routes.inbox import session_red_items
+        pending_red = session_red_items(sid)
         job = CHAT_JOBS.get(sid)
         if not job:
             # No live run, but a durable pending question/plan may still await input
             # (the run ended; they outlive it).
             self.send_json({"running": False, "idle": True,
-                            "pending_question": pending_q, "pending_plan": pending_plan})
+                            "pending_question": pending_q, "pending_plan": pending_plan,
+                            "pending_red": pending_red})
         else:
             self.send_json({
                 "running": job["running"],
@@ -216,6 +221,7 @@ class ChatMixin:
                 "pending_approvals": pending_approvals_public(sid),
                 "pending_question": pending_q,
                 "pending_plan": pending_plan,
+                "pending_red": pending_red,
             })
 
     def _g_decisions_open(self, req):

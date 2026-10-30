@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { AuqBlock } from "@/components/AuqBlock"
 import { PlanBlock } from "@/components/PlanBlock"
+import { DecisionActions, DecisionBox, RedApprovalBlock } from "@/components/RedApproval"
+import { resolveRed } from "@/lib/redApproval"
 import { api } from "@/lib/api"
 import { fmtDuration } from "@/lib/format"
 import { answerBy, firstOpen, stepDecision } from "@/lib/decisions"
@@ -175,32 +177,21 @@ export function DecisionCockpit({
                 : !error && <Unavailable onOpen={openChat} />)}
 
               {d.kind === "approval" && (
-                <Box title={`Allow tool: ${d.tool_name || "tool"}?`}>
+                <DecisionBox title={`Allow tool: ${d.tool_name || "tool"}?`}>
                   <pre className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">{d.summary || "(no preview)"}</pre>
-                  <Actions busy={busy}
+                  <DecisionActions busy={busy}
                     deny={() => run(() => decided(api.chatPermissionDecide({ session: d.session, id: d.id, decision: "deny" })))}
                     allow={() => run(() => decided(api.chatPermissionDecide({ session: d.session, id: d.id, decision: "allow" })))}
                     allowLabel="Allow" />
-                </Box>
+                </DecisionBox>
               )}
 
               {d.kind === "red" && (
-                <Box title="Why it asks">
-                  <p className="text-sm">{d.reason || "No reason given — deny it and the agent can ask again with one."}</p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">If you approve</p>
-                  <p className="text-sm">{d.risk || "The action runs."}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">Deny and nothing happens. The asking session is told either way.</p>
-                  <Actions busy={busy} destructive
-                    deny={() => run(() => api.orgResolveApproval(Number(d.id), "denied").then(() => {}, rejectUnlessGone))}
-                    allow={() => run(() => api.orgResolveApproval(Number(d.id), "approved").then((r) => {
-                      if (r.result?.error) throw new Error(`Approved, but it failed: ${r.result.error}`)
-                    }, rejectUnlessGone))}
-                    allowLabel="Approve" />
-                </Box>
+                <RedApprovalBlock ask={d} busy={busy} onDecide={(decision) => run(() => resolveRed(d.id, decision))} />
               )}
 
               {d.kind === "card" && (
-                <Box title={d.column ? `Parked in ${d.column}` : "Parked for you"}>
+                <DecisionBox title={d.column ? `Parked in ${d.column}` : "Parked for you"}>
                   {d.ask && <p data-testid="cockpit-card-ask" className="mb-2 whitespace-pre-wrap text-sm leading-relaxed">{d.ask}</p>}
                   {answerBy(d.expires_at, Date.now()) && (
                     <p data-testid="cockpit-card-deadline" className="mb-2 text-xs font-medium text-destructive">{answerBy(d.expires_at, Date.now())}</p>
@@ -216,7 +207,7 @@ export function DecisionCockpit({
                       <ClipboardList className="size-3.5" /> Open card
                     </Button>
                   </div>
-                </Box>
+                </DecisionBox>
               )}
 
               {openChat && (
@@ -261,38 +252,13 @@ export function DecisionCockpit({
   )
 }
 
-/** orgResolveApproval throws with `status`; 404 = decided elsewhere or gone. */
-function rejectUnlessGone(e: Error & { status?: number }): void {
-  if (e.status !== 404) throw e
-}
-
-function Box({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/30 p-3">
-      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
-      {children}
-    </div>
-  )
-}
-
-function Actions({ busy, deny, allow, allowLabel, destructive }: {
-  busy: boolean; deny: () => void; allow: () => void; allowLabel: string; destructive?: boolean
-}) {
-  return (
-    <div className="mt-3 flex justify-end gap-2">
-      <Button data-testid="cockpit-deny" size="sm" variant="outline" disabled={busy} onClick={deny}>Deny</Button>
-      <Button data-testid="cockpit-allow" size="sm" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={allow}>{allowLabel}</Button>
-    </div>
-  )
-}
-
 /** A question/plan whose durable row isn't readable here (decided on another
  *  device, or a remote session): the summary is shown, not a stale card. */
 function Unavailable({ onOpen }: { onOpen?: () => void }) {
   return (
-    <Box title="Full details aren't loadable here">
+    <DecisionBox title="Full details aren't loadable here">
       <p className="text-sm">It may already be answered, or the session lives on another machine. Open the chat to decide, or skip — it stays in the queue until it's handled.</p>
       {onOpen && <div className="mt-3 flex justify-end"><Button size="sm" onClick={onOpen}>Open chat</Button></div>}
-    </Box>
+    </DecisionBox>
   )
 }

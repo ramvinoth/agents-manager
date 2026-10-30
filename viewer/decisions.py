@@ -19,6 +19,22 @@ this same gate answers it later via the resume path.
 from viewer import asks, db
 
 
+def red_session(approval):
+    """The session that raised an org approval — the stored intent names it
+    (actions._queue_for_owner); "" for an owner-raised or pre-naming row."""
+    intent = approval.get("detail") if isinstance(approval.get("detail"), dict) else {}
+    return str(intent.get("session") or "")
+
+
+def session_red(red_rows, session_id, now):
+    """The open org approvals ONE session raised, shaped exactly as the queue
+    shapes them — what that session's chat shows inline (card 223). Pure."""
+    if not session_id:
+        return []
+    mine = [r for r in red_rows or [] if red_session(r) == session_id]
+    return open_decisions([], [], [], {}, now, red_rows=mine)["decisions"]
+
+
 def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None,
                    red_rows=None):
     """Shape the decision sources into ONE queue — the kanban decision
@@ -115,7 +131,7 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
         # route) and `risk` (what approving costs), so the headline reads
         # cold: "Delete card: #12 Fix login — asked by session:Harman".
         intent = r.get("detail") if isinstance(r.get("detail"), dict) else {}
-        sid = str(intent.get("session") or "")
+        sid = red_session(r)
         what = r.get("action_label") or str(intent.get("action") or r.get("summary") or "")
         subject = r.get("subject") or ""
         items.append({

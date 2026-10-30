@@ -350,7 +350,13 @@ export type ChatStatus = {
   pending_question?: PendingQuestion | null
   /** A proposed plan (ExitPlanMode) awaiting Approve/Deny. */
   pending_plan?: PendingPlan | null
+  /** Org (Red) approvals THIS session raised, still open — decided inline in
+   *  its chat (card 223). Older servers omit it. */
+  pending_red?: RedAsk[]
 }
+/** What an org approval shows a cold reader: shaped like a "red" queue item. */
+export type RedAsk = Pick<OpenDecision, "id" | "summary" | "reason" | "risk">
+
 export type Session = {
   id: string
   title?: string

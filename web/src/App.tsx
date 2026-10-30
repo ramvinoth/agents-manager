@@ -7,6 +7,7 @@ import { Transcript } from "@/components/Transcript"
 import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
+import { ChatRedApprovals } from "@/components/RedApproval"
 import { RhsPanel } from "@/components/RhsPanel"
 import { CanvasPane } from "@/components/CanvasPane"
 import { latestShow } from "@/lib/canvas"
@@ -339,6 +340,7 @@ function App() {
             <LoginPanel />
           ) : (
             <>
+              <ChatRedApprovals />
               <PermissionPrompt />
               <Composer />
             </>
