@@ -351,8 +351,12 @@ def loop_scheduler(launch):
         try:
             from viewer import board_wake
             from viewer.orchestrator import automation_enabled, loop_mode
-            if automation_enabled() and loop_mode() in ("harman", "both"):
+            autonomous = automation_enabled() and loop_mode() in ("harman", "both")
+            if autonomous:
                 board_wake.sweep()
+            # Expired asks are always recorded (the session's inbox is the
+            # durable record); only the resume is gated with the sweep.
+            board_wake.expire_asks(now, wake=autonomous)
         except Exception:
             pass
 

@@ -56,3 +56,18 @@ export function queueFrom<T extends { session: string; inbox_id: number }>(
   const ordered = [...queue.filter((d) => d.session === session), ...queue.filter((d) => d.session !== session)]
   return { ordered, at: inboxId ? ordered.findIndex((d) => d.inbox_id === inboxId) : -1 }
 }
+
+/** A card ask's deadline (card 235) as the owner reads it: "" when the ask has
+ *  none, "answer within 2h 5m" while it runs, "deadline passed" once it lapsed
+ *  (the server stops listing it then; this covers a stale snapshot).
+ *  `expiresAt` is epoch SECONDS (the queue's `expires_at`), `nowMs` is
+ *  Date.now(). Rounded DOWN, so it never promises more time than is left.
+ *  Mirrors web/src/lib/decisions.ts. */
+export function answerBy(expiresAt: number | undefined, nowMs: number): string {
+  if (!expiresAt || expiresAt <= 0) return ""
+  const left = Math.floor(expiresAt - nowMs / 1000)
+  if (left <= 0) return "deadline passed"
+  const d = Math.floor(left / 86400), h = Math.floor(left / 3600), m = Math.floor(left / 60)
+  const span = d > 0 ? `${d}d ${h % 24}h` : h > 0 ? `${h}h ${m % 60}m` : m > 0 ? `${m}m` : "under a minute"
+  return `answer within ${span}`
+}

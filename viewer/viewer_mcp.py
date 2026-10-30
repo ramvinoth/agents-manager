@@ -160,6 +160,14 @@ _DRIVE_ARG = {"type": "string",
 _REASON_ARG = {"type": "string",
                "description": "One plain line the owner reads on the decision card: why you need this now."}
 
+# A time-bound ask (card 235): once it passes, the ask leaves the owner's queue
+# and the asking session is told to decide itself or re-ask with new facts.
+_EXPIRES_ARG = {"type": "string",
+                "description": ("Only for an ask in Review/Needs-info that stops meaning "
+                                "anything after a time: a relative offset (2h, 1d) or a "
+                                "local time ('2026-11-01 09:00'). Past it, the ask leaves "
+                                "the owner's queue and you are woken to decide yourself.")}
+
 _CONN_ARG = {"type": "string",
              "description": "Account id from integrations_list; only needed when several accounts have the service on."}
 _CAL_ARG = {"type": "string", "description": "Calendar id (default primary)."}
@@ -385,15 +393,17 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"},
          "column_id": {"type": "integer"}, "project_id": {"type": "integer"}}}},
-    {"name": "card_move", "description": "Move a card to a column at a position.",
+    {"name": "card_move", "description": "Move a card to a column at a position. Moving it into Review/Needs-info raises an ask for the owner; one card carries one ask.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "column_id"], "properties": {
-         "card_id": {"type": "integer"}, "column_id": {"type": "integer"}, "position": {"type": "number"}}}},
+         "card_id": {"type": "integer"}, "column_id": {"type": "integer"}, "position": {"type": "number"},
+         "expires_at": _EXPIRES_ARG}}},
     {"name": "card_update", "description": "Update a card's fields.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
-    {"name": "card_comment", "description": "Post a message on a card's thread — how you talk to the owner about that work (status, questions, your read of their decision). The owner gets a push when an agent comments. Your own column moves do not notify you back.",
+    {"name": "card_comment", "description": "Post a message on a card's thread — how you talk to the owner about that work (status, questions, your read of their decision). The owner gets a push when an agent comments. Your own column moves do not notify you back. On a card in Review/Needs-info your comment is the ask the owner sees; one card carries one ask — a second, separate question belongs on its own card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "body"], "properties": {
-         "card_id": {"type": "integer"}, "body": {"type": "string"}}}},
+         "card_id": {"type": "integer"}, "body": {"type": "string"},
+         "expires_at": _EXPIRES_ARG}}},
     {"name": "card_dep_add", "description": "Add a dependency: this card cannot move forward until the other card reaches Done. Use it when your work is blocked on someone else's card — the other card's session is woken with the edge.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "depends_on"], "properties": {
          "card_id": {"type": "integer", "description": "The card that is blocked."},

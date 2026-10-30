@@ -546,6 +546,12 @@ def init_db():
             -- news to it, and waking it on them made it comment "nothing new",
             -- which bumped updated_at, which woke it again next sweep.
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS attention_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- The card's open ask (viewer.asks, card 235): when an agent raised
+            -- it in Review/Needs-info (0 = no open ask) and its optional
+            -- deadline (0 = none). Past the deadline the queue drops it and
+            -- the scheduler tick tells the asking session.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_expires_at DOUBLE PRECISION NOT NULL DEFAULT 0;
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -2182,12 +2188,37 @@ def cards_awaiting_owner():
     with _db() as cur:
         cur.execute(
             "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
-            "bc.name AS column_name, "
+            "c.ask_expires_at, bc.name AS column_name, "
             "coalesce((SELECT max(created_at) FROM card_comments cc "
-            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since "
+            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since, "
+            "(SELECT body FROM card_comments cc WHERE cc.card_id = c.id "
+            "   AND left(cc.author, 8) = 'session:' "
+            "   ORDER BY created_at DESC, id DESC LIMIT 1) AS ask "
             "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
             "WHERE lower(bc.name) IN ('review', 'needs-info') "
             "ORDER BY waiting_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def card_ask_set(card_id, ask_since, ask_expires_at):
+    """Record the card's open ask (viewer.asks decides the values)."""
+    with _db() as cur:
+        cur.execute("UPDATE cards SET ask_since = %s, ask_expires_at = %s WHERE id = %s",
+                    (ask_since, ask_expires_at, card_id))
+
+
+def cards_asks_expired(now):
+    """Cards still parked in Review/Needs-info whose open ask's deadline has
+    passed and whose session has not been told yet (ask_since > 0) — the
+    expiry sweep's work list. Each row: card fields + column_name."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, bc.name AS column_name FROM cards c "
+            "JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE c.ask_since > 0 AND c.ask_expires_at > 0 "
+            "AND c.ask_expires_at <= %s "
+            "AND lower(bc.name) IN ('review', 'needs-info') "
+            "ORDER BY c.ask_expires_at, c.id", (now,))
         return [dict(r) for r in cur.fetchall()]
 
 

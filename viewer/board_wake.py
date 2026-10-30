@@ -20,7 +20,10 @@ never halted):
           "still in Review, no decision" comments, each of which was the
           change that caused the next wake). Idle board = zero cost.
 
-The sweep is exception-safe: a failure here must never break the scheduler
+  EXPIRY — expire_asks: a card's time-bound ask (viewer.asks) whose deadline
+          passed is reported once to the asking session as an inbox message.
+
+Both passes are exception-safe: a failure here must never break the scheduler
 tick.
 
 There is deliberately NO open-question relay: an open question/plan is
@@ -118,3 +121,44 @@ def sweep():
         return fired
     except Exception:
         return []   # a DB error is a missed sweep, not a failed tick
+
+
+EXPIRY_INTERVAL = 30   # how often the ask-expiry pass looks (seconds)
+_expiry_last = [0.0]   # in-memory stamp: a restart just looks again at once
+
+
+def expire_asks(now=None, *, wake=True):
+    """Tell each session whose time-bound ask ran out (card 235, viewer.asks).
+
+    The decision queue already stops showing an expired ask at read time
+    (decisions.open_decisions), so the owner never answers a dead question even
+    if this pass is late. This pass is the OTHER half: the asking session hears
+    "expired — decide yourself, or re-ask with new facts" once, as an inbox
+    message from the system (the durable record; `wake` resumes the session,
+    which the caller gates on the automation switch). The card then keeps its
+    deadline but loses its open ask (ask_since = 0), so it stays out of the
+    queue and is never told twice; a fresh agent ask on the card starts over.
+
+    Called from engine.loop_scheduler's existing 5s tick, throttled to
+    EXPIRY_INTERVAL. Exception-safe. Returns the card ids told."""
+    now = time.time() if now is None else now
+    if now - _expiry_last[0] < EXPIRY_INTERVAL:
+        return []
+    _expiry_last[0] = now
+    from viewer import asks, inbox
+    told = []
+    try:
+        for card in db.cards_asks_expired(now):
+            sid = card.get("session_id")
+            exp = card.get("ask_expires_at")
+            if sid and not inbox.deliver_message(
+                    "system", "", "session", sid,
+                    asks.expired_message(card, exp), wake=wake):
+                continue   # not recorded: leave it open, the next pass retries
+            db.card_ask_set(card["id"], 0, exp)
+            db.audit_append("boardwake", "ask_expired",
+                            {"card": card["id"], "session": sid or ""}, "ok")
+            told.append(card["id"])
+    except Exception:
+        pass   # a DB error is a missed pass, not a failed tick
+    return told

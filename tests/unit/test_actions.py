@@ -21,6 +21,7 @@ class FakeDB:
         self.audit = []          # (actor, action, target, outcome)
         self.approvals = []      # rows opened
         self.cards_moved = []    # proof a handler actually ran
+        self.asks = []           # card_ask_set writes (viewer.asks)
         self.loops = {}          # id -> loop row (agent-loop handler surface)
         self.settings = {}       # key -> value (singleton KV handler surface)
 
@@ -61,6 +62,9 @@ class FakeDB:
 
     def card_last_move(self, card_id, seconds):
         return None  # no recent write by another writer
+
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        self.asks.append((card_id, ask_since, ask_expires_at))
 
     # -- loop handler surface --------------------------------------------------
     # Enough of the loops table for the agent-loop actions to run against. Rows are

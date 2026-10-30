@@ -424,6 +424,10 @@ export interface Card {
  *  durable question, a durable plan, or a live tool approval. The queue is a
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
+/** An org (Red) approval as a decision surface shows it — the queue's "red"
+ *  item, or one of a chat's own (chatStatus `pending_red`, card 223). */
+export type RedAsk = Pick<OpenDecision, "id" | "summary" | "reason" | "risk">
+
 export interface OpenDecision {
   /** "red" is an org approval: an agent's Red action (delete, bypass mode,
    *  restart…) queued for the owner; decided with orgResolveApproval. */
@@ -456,6 +460,11 @@ export interface OpenDecision {
   /** kind "card": the board card parked in Review/Needs-info for the owner, and its column. */
   card?: number
   column?: string
+  /** kind "card": the card's ONE open ask — its asking session's newest
+   *  comment ("" when it only moved the card) — and its deadline in epoch
+   *  seconds (0 = none; the server drops the item once it passes). */
+  ask?: string
+  expires_at?: number
 }
 export interface CardComment {
   id: number

@@ -216,6 +216,13 @@ class FakeBoard:
     def card_last_move(self, card_id, seconds):
         return None  # this fake keeps no audit history — the recency guard is a no-op
 
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        if self.card and self.card.get("id") == card_id:
+            self.card = dict(self.card, ask_since=ask_since, ask_expires_at=ask_expires_at)
+
+    def card_comment_list(self, card_id):
+        return [c for c in self.comments if c["card_id"] == card_id]
+
     def card_comment_add(self, card_id, author, body):
         row = {"id": len(self.comments) + 1, "card_id": card_id,
                "author": author, "body": body}

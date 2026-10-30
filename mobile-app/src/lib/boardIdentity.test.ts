@@ -7,6 +7,7 @@ import ts from "typescript"
 import * as boardSwipe from "./gestures.ts"
 import * as errors from "./errors.ts"
 import { serialize } from "./liveEvents.ts"
+import * as redApproval from "./redApproval.ts"
 
 // Run the actual Thread component, not a copy of its identity expression. The
 // hook runner preserves state/memo deps and commits layout before passive effects,
@@ -104,13 +105,13 @@ function screen(initial: Route) {
     "../api/offlineCache": { offlineCache: { saveThread: async () => {}, loadThread: async () => null } },
     "../components/OfflineBanner": { default: "OfflineBanner" },
     "../lib/useReachability": { useReachability: () => ({ online: true, since: 0 }) },
-    "../lib/errors": errors,
+    "../lib/errors": errors, "../lib/redApproval": redApproval,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/gestures": boardSwipe,
     "../lib/liveEvents": { serialize, THREAD_FALLBACK_MS: [1500],
       startLiveRefresh: (o: { refresh: Function }) => { const id = ++timerId; polls.set(id, o.refresh); return () => polls.delete(id) } },
     "../api/events": { liveEvents: () => null },
-    ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
+    ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "RedApprovalCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", PinnedBanner: "PinnedBanner", WorkingBubble: "WorkingBubble" },
   }
   const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/ThreadScreen.tsx"), "utf8")

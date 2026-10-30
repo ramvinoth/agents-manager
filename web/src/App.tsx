@@ -10,6 +10,7 @@ import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { ToolsDialog } from "@/components/ToolsDialog"
+import { ChatRedApprovals } from "@/components/RedApproval"
 import { CanvasPane } from "@/components/CanvasPane"
 import { canvasDragWidth, storedCanvasWidth } from "@/lib/canvas"
 import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
@@ -419,6 +420,7 @@ function App() {
             <LoginPanel />
           ) : (
             <>
+              <ChatRedApprovals />
               <PermissionPrompt />
               <Composer />
             </>

@@ -2,13 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, View } from "react-native"
 import { TouchableOpacity } from "./Tracked"
 import { api, type ChatStatus, type OpenDecision } from "../api/client"
-import { fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
+import { answerBy, fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
 import { SNOOZE_OPTIONS } from "../lib/inbox"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 import Icon from "./Icon"
 import QuestionCard from "./QuestionCard"
 import PlanCard from "./PlanCard"
+import RedApprovalCard from "./RedApprovalCard"
+import { resolveRed, type RedResolution } from "../lib/redApproval"
 import SheetModal from "./SheetModal"
 import { userError } from "../lib/errors"
 import { success, warning } from "../lib/haptics"
@@ -217,18 +219,14 @@ export default function DecisionCockpit({
   )
 
   const decideRed = useCallback(
-    (resolution: "approved" | "denied") => {
+    (resolution: RedResolution) => {
       if (busy || !d || !d.id) return
       resolution === "approved" ? success() : warning()
       setBusy(true)
-      api
-        .orgResolveApproval({ id: Number(d.id), resolution })
-        .then((r) => (r.result?.error ? setLoadError(`Approved, but it failed: ${r.result.error}`) : goResolved()))
-        .catch((e) => {
-          // 404 = decided elsewhere or gone → it's resolved, advance.
-          if ((e as Error & { status?: number }).status === 404) goResolved()
-          else setLoadError(userError(e, "your answer", "send"))
-        })
+      // Decided (a 404 = decided elsewhere counts) → advance; else say why.
+      resolveRed(api.orgResolveApproval, d.id, resolution)
+        .then(() => goResolved())
+        .catch((e) => setLoadError(userError(e, "your answer", "send")))
         .finally(() => setBusy(false))
     },
     [busy, d, goResolved]
@@ -320,26 +318,16 @@ export default function DecisionCockpit({
           ) : null}
 
           {d.kind === "red" ? (
-            <View testID="cockpit-red" style={styles.permCard}>
-              <Text style={styles.permTitle}>Why it asks</Text>
-              <Text testID="cockpit-red-reason" style={styles.permInput}>{d.reason || "No reason given — deny it and the agent can ask again with one."}</Text>
-              <Text style={styles.permTitle}>If you approve</Text>
-              <Text style={styles.permInput}>{d.risk || "The action runs."}</Text>
-              <Text style={styles.permInput}>Deny and nothing happens. The asking session is told either way.</Text>
-              <View style={styles.permBtnRow}>
-                <TouchableOpacity testID="cockpit-red-deny" style={styles.permDeny} onPress={() => decideRed("denied")} disabled={busy}>
-                  <Text style={styles.permDenyText}>Deny</Text>
-                </TouchableOpacity>
-                <TouchableOpacity testID="cockpit-red-approve" style={styles.permAllow} onPress={() => decideRed("approved")} disabled={busy}>
-                  <Text style={styles.permAllowText}>Approve</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+            <RedApprovalCard testID="cockpit-red" ask={d} busy={busy} onDecide={decideRed} />
           ) : null}
 
           {d.kind === "card" ? (
             <View testID="cockpit-card" style={styles.permCard}>
               <Text style={styles.permTitle}>{d.column ? `Parked in ${d.column}` : "Parked for you"}</Text>
+              {d.ask ? <Text testID="cockpit-card-ask" style={styles.permInput}>{d.ask}</Text> : null}
+              {answerBy(d.expires_at, Date.now()) ? (
+                <Text testID="cockpit-card-deadline" style={[styles.permInput, { color: t.danger }]}>{answerBy(d.expires_at, Date.now())}</Text>
+              ) : null}
               <Text style={styles.permInput}>Open the card to read the full context and move it to Approved or Declined.</Text>
               <View style={styles.permBtnRow}>
                 <TouchableOpacity testID="cockpit-card-open" style={styles.permAllow} onPress={() => d.card && onOpenCard(d.card)} disabled={busy}>

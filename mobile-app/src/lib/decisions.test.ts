@@ -1,5 +1,5 @@
 import assert from "node:assert"
-import { fmtWaiting, firstOpen, queueFrom, stepDecision } from "./decisions.ts"
+import { answerBy, fmtWaiting, firstOpen, queueFrom, stepDecision } from "./decisions.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -74,6 +74,17 @@ test("queueFrom: -1 when the row is not in the visible queue (snoozed / decided)
   // inbox_id 0 means "no row was delivered" — never matched by a real id 0
   assert.equal(queueFrom([{ session: "a", inbox_id: 0 }], 0, "a").at, -1)
   assert.equal(queueFrom([], 1, "a").at, -1)
+})
+
+test("answerBy: a card ask's deadline, rounded down", () => {
+  const now = 1_000_000_000 * 1000
+  assert.equal(answerBy(0, now), "")
+  assert.equal(answerBy(undefined, now), "")
+  assert.equal(answerBy(1_000_000_000 + 7500, now), "answer within 2h 5m")
+  assert.equal(answerBy(1_000_000_000 + 90000, now), "answer within 1d 1h")
+  assert.equal(answerBy(1_000_000_000 + 119, now), "answer within 1m")
+  assert.equal(answerBy(1_000_000_000 + 30, now), "answer within under a minute")
+  assert.equal(answerBy(1_000_000_000, now), "deadline passed")
 })
 
 console.log(`${passed} passing`)
