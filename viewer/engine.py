@@ -590,6 +590,7 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
                "turns": 0, "steered": 0, "stdin_open": False, "mode": "", "model": model,
                "cwd": cwd, "interrupted": False, "host": "local", "agent": "pi"}
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job, {"uuid": session_uuid, "provider": provider})
 
     def run():
         proc = None
@@ -629,6 +630,7 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
                 job["running"] = False
                 job["finished"] = time.time()
                 job["stderr"] = err[-2000:]
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -674,6 +676,7 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
                "turns": 0, "steered": 0, "stdin_open": False, "mode": "", "model": model,
                "cwd": cwd, "interrupted": False, "host": host, "agent": "codex"}
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job, {"codex_id": codex_id})
 
     def run():
         proc = None
@@ -731,6 +734,7 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
                 job["running"] = False
                 job["finished"] = time.time()
                 job["stderr"] = err[-2000:]
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -764,6 +768,7 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                "turns": 0, "steered": 0, "stdin_open": False, "mode": mode, "model": model,
                "cwd": cwd, "interrupted": False, "host": host, "agent": "copilot"}
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job)
 
     def run():
         proc = None
@@ -820,6 +825,7 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                 job["running"] = False
                 job["finished"] = time.time()
                 job["stderr"] = err[-2000:]
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -858,6 +864,7 @@ def _start_copilot_new_remote(message, cwd, host):
            "cwd": cwd, "interrupted": False, "host": host, "agent": "copilot"}
     with CHAT_LOCK:
         CHAT_JOBS[new] = job
+    record_inflight(new, job)
 
     def finalize():
         err = ""
@@ -880,6 +887,7 @@ def _start_copilot_new_remote(message, cwd, host):
                 job["running"] = False
                 job["finished"] = time.time()
                 job["stderr"] = err[-2000:]
+            end_oneshot_inflight(new, job)
 
     threading.Thread(target=finalize, daemon=True).start()
     return new, new + "/events.jsonl"
@@ -928,6 +936,7 @@ def start_copilot_new(message, cwd, host="local"):
            "cwd": cwd, "interrupted": False, "host": "local", "agent": "copilot"}
     with CHAT_LOCK:
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job)
 
     def finalize():
         try:
@@ -944,6 +953,7 @@ def start_copilot_new(message, cwd, host="local"):
             with CHAT_LOCK:
                 job["running"] = False
                 job["finished"] = time.time()
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=finalize, daemon=True).start()
     return session_id, session_id + "/events.jsonl"
@@ -1555,12 +1565,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                # with this set was cut off mid-turn (resume.was_cut_off).
                "turn_open": True}
         CHAT_JOBS[session_id] = job
-    # Durable "this turn is in flight" record: a restart that kills the run
-    # leaves the row behind and boot resumes it (viewer/resume.py).
-    try:
-        db.inflight_run_start(session_id, host, cwd, mode, model, job["started"])
-    except Exception as e:
-        print(f"  ⚠ could not record in-flight turn {session_id[:8]} (a restart will not resume it): {e}")
+    record_inflight(session_id, job)
 
     binary = "claude" if remote else claude_bin()
     cmd = [binary, "-p", "--input-format", "stream-json",
@@ -1950,6 +1955,32 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
 
 
 RESUME_SETTLE = 5  # s: launchd's restart SIGTERMs the whole process group at once
+
+
+def record_inflight(session_id, job, ref=None):
+    """Durable "this turn is in flight" record, for every harness: a restart that
+    kills the run leaves the row behind and boot resumes it (viewer/resume.py).
+    `ref` is what the harness needs to resume beyond the session id."""
+    try:
+        db.inflight_run_start(session_id, job.get("host") or "local", job.get("cwd", ""),
+                              job.get("mode", ""), job.get("model", ""), job["started"],
+                              agent=job.get("agent") or "claude", ref=ref)
+    except Exception as e:
+        print(f"  ⚠ could not record in-flight turn {session_id[:8]} (a restart will not resume it): {e}")
+
+
+def end_oneshot_inflight(session_id, job):
+    """A one-shot run (Codex, Copilot, Pi, custom chat) ended: clear its in-flight
+    row. A failed exit may be the child dying in a restart's group SIGTERM, so
+    wait RESUME_SETTLE first — if the server goes down meanwhile the row
+    survives for boot to resume. One-shots have no turn-open signal, so a failure
+    the server outlives is the run's own and is not auto-resumed."""
+    try:
+        if job.get("returncode") != 0 and not job.get("interrupted"):
+            time.sleep(RESUME_SETTLE)
+        db.inflight_run_clear(session_id, job["started"])
+    except Exception as e:
+        print(f"  ⚠ could not clear in-flight turn {session_id[:8]}: {e}")
 
 
 def _resume_cut_turn(session_id, job, leftovers):

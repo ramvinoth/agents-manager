@@ -20,7 +20,7 @@ from pathlib import Path
 
 from viewer.config import CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT
 from viewer.adapters import _uuid, resolve_agent_session
-from viewer.engine import codex_session_meta, frontmatter_description
+from viewer.engine import codex_session_meta, end_oneshot_inflight, frontmatter_description, record_inflight
 from viewer.login import codex_bin
 from viewer import toml
 
@@ -262,6 +262,7 @@ def start_codex_new(message, cwd, model=""):
            "cwd": cwd, "interrupted": False, "host": "local", "agent": "codex"}
     with CHAT_LOCK:
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job, {"codex_id": codex_session_meta(new)[0]})
 
     def finalize():
         try:
@@ -278,6 +279,7 @@ def start_codex_new(message, cwd, model=""):
             with CHAT_LOCK:
                 job["running"] = False
                 job["finished"] = time.time()
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=finalize, daemon=True).start()
     return session_id, str(new.relative_to(CODEX_SESSIONS))
