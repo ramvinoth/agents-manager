@@ -267,18 +267,14 @@ def _claude_version(path):
 def _claude_candidates():
     """Every claude install on this machine, de-duplicated by real path:
     the server-PATH hit, the two local install spots, and every nvm node
-    version that has one. Order here is irrelevant — the version decides."""
-    cands = []
-    found = shutil.which("claude")
-    if found:
-        cands.append(found)
-    cands += [str(p) for p in (Path.home() / ".local/bin/claude",
-                               Path.home() / ".claude/local/claude")]
-    cands += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin/claude"))
+    version that has one. Order here is irrelevant — the version decides.
+    Each spot is searched with which(), so Windows finds claude.exe/.cmd."""
+    dirs = [None,  # the server's PATH
+            str(Path.home() / ".local" / "bin"), str(Path.home() / ".claude" / "local")]
+    dirs += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin"))
+    cands = [c for c in (shutil.which("claude", path=d) for d in dirs) if c]
     seen, out = set(), []
     for c in cands:
-        if not os.path.exists(c):
-            continue
         real = str(Path(c).resolve())
         if real not in seen:
             seen.add(real)

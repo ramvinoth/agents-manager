@@ -11,6 +11,7 @@ import-safe (no dependency on server.py). Remote detection and the HTTP route
 live in server.py, which has the SSH helpers.
 """
 import os
+import posixpath
 import shlex
 import shutil
 
@@ -67,8 +68,51 @@ DEFAULT_AGENT = "claude"
 
 # Where the viewer installs agents without sudo: a user-writable prefix in $HOME.
 USER_PREFIX = os.path.expanduser("~/.local")
-_BIN_DIRS = [os.path.join(USER_PREFIX, "bin"), "/usr/local/bin", "/usr/bin",
-             "/opt/homebrew/bin", os.path.expanduser("~/.local/bin")]
+
+
+def _user_bin_dirs():
+    """Agent-CLI install dirs searched AHEAD of the server's PATH."""
+    if os.name != "nt":
+        return [os.path.join(USER_PREFIX, "bin")]  # native claude installer; npm --prefix ~/.local
+    dirs = [os.path.join(USER_PREFIX, "bin"),      # native claude.exe installer
+            USER_PREFIX]                           # npm --prefix ~/.local links bins at the prefix root on Windows
+    for var, sub in (("APPDATA", "npm"),           # npm's default global prefix
+                     ("LOCALAPPDATA", os.path.join("Microsoft", "WinGet", "Links"))):
+        if os.environ.get(var):
+            dirs.append(os.path.join(os.environ[var], sub))
+    return dirs
+
+
+def _system_bin_dirs():
+    """Searched BEHIND the server's PATH (only when missing from it): a launchd
+    or systemd PATH can be minimal, but an ancient /usr/local/bin/node must
+    never shadow the version-managed one the server's PATH chose."""
+    return [] if os.name == "nt" else ["/usr/local/bin", "/usr/bin", "/opt/homebrew/bin"]
+
+
+def agent_path(path=None):
+    """The PATH a locally spawned agent CLI runs with: the user install dirs,
+    then `path` (default: the server's own PATH), then the system bin dirs it
+    lacks. Joined with os.pathsep — for THIS machine only; a remote host's
+    PATH is always ':'-joined by the remote shell."""
+    path = os.environ.get("PATH", "") if path is None else path
+    have = set(path.split(os.pathsep))
+    return os.pathsep.join(_user_bin_dirs() + ([path] if path else [])
+                           + [d for d in _system_bin_dirs() if d not in have])
+
+
+def agent_env():
+    """A copy of the server's environment with PATH set by agent_path()."""
+    env = dict(os.environ)
+    env["PATH"] = agent_path(env.get("PATH", ""))
+    return env
+
+
+def find_agent_bin(name):
+    """The full path of an agent CLI on this machine, or None. shutil.which
+    applies PATHEXT on Windows, so `codex` finds codex.cmd — which Popen with
+    a bare name would not."""
+    return shutil.which(name, path=agent_path())
 
 
 def get_agent(aid):
@@ -86,18 +130,28 @@ def agent_public(a, installed):
 
 
 def is_installed_local(a):
-    """Installed on this machine? The runnable binary is resolvable — on PATH or
-    in a common bin dir (~/.local/bin, /usr/local/bin, …). NOT the home dir: a
-    stale config dir must read as 'not installed' so the install flow can offer."""
-    if shutil.which(a["bin"]):
-        return True
-    return any(os.path.exists(os.path.join(d, a["bin"])) for d in _BIN_DIRS)
+    """Installed on this machine? The runnable binary is resolvable on
+    agent_path(). NOT the home dir: a stale config dir must read as 'not
+    installed' so the install flow can offer."""
+    return find_agent_bin(a["bin"]) is not None
+
+
+def _install_argv(a, prefix):
+    """The no-sudo install for an agent: user-prefix npm into <home>/.local."""
+    return ["npm", "install", "-g", "--prefix", prefix, a["pkg"]]
 
 
 def install_command(a, home):
-    """The no-sudo install command for an agent: user-prefix npm into $HOME/.local."""
-    prefix = os.path.join(home, ".local")
-    return f"npm install -g --prefix {shlex.quote(prefix)} {shlex.quote(a['pkg'])}"
+    """The install as a POSIX shell line for a remote host whose home is `home`."""
+    return shlex.join(_install_argv(a, posixpath.join(home, ".local")))
+
+
+def local_install_argv(a):
+    """The install as an argv for this machine, npm resolved like an agent CLI
+    (npm.cmd on Windows). Run it without a shell, with agent_env()."""
+    argv = _install_argv(a, USER_PREFIX)
+    argv[0] = find_agent_bin("npm") or "npm"
+    return argv
 
 
 def local_agents_status():

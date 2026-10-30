@@ -1,15 +1,13 @@
 """viewer.routes.auth — AuthMixin route + business methods."""
 import json
-import os
 import subprocess
 import threading
 import time
 import uuid as uuid_mod
 from collections import deque
-from pathlib import Path
 from viewer import db, hostenv, pairing, relay, setupcode
 from viewer.config import PUBLIC_URL
-from viewer.agents import ENABLED_AGENTS, agent_public, get_agent, install_command, is_installed_local, local_agents_status
+from viewer.agents import ENABLED_AGENTS, agent_env, agent_public, get_agent, is_installed_local, local_agents_status, local_install_argv
 from viewer.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, REMOTE_CODEX_LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
 )
@@ -106,14 +104,16 @@ class AuthMixin:
                 self.send_json({"error": f"SSH: {e}"}, status=502)
             return
         try:
-            home = str(Path.home())
-            env = dict(os.environ)
-            env["PATH"] = f"{home}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
-            proc = subprocess.run(install_command(a, home), shell=True, capture_output=True,
-                                  text=True, timeout=400, env=env)
+            proc = subprocess.run(local_install_argv(a), capture_output=True,
+                                  text=True, timeout=400, env=agent_env())
             out = ((proc.stdout or "") + (proc.stderr or ""))[-6000:]
             self.send_json({"ok": proc.returncode == 0, "returncode": proc.returncode,
                             "output": out, "installed": is_installed_local(a)})
+        except FileNotFoundError:
+            # No shell to print "npm: command not found", so say it ourselves.
+            self.send_json({"ok": False, "returncode": 127, "installed": False,
+                            "output": "npm was not found on this computer. Install Node.js "
+                                      "(it includes npm), then try again."})
         except subprocess.TimeoutExpired:
             self.send_json({"error": "Install timed out", "output": ""}, status=504)
         except Exception as e:

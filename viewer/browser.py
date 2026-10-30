@@ -450,10 +450,24 @@ def browser_probe(hid):
     return r
 
 
+# The managed browser is launched, stopped and installed with POSIX shell
+# lines (nohup, pkill, Xvfb), on SSH hosts and on this machine alike.
+NO_LOCAL_SHELL = ("The live browser needs a macOS or Linux host — this server runs on Windows. "
+                  "Run it on a Linux host (or in WSL) and add that as a host.")
+
+
+def _no_local_shell(hid):
+    """NO_LOCAL_SHELL when hid is this machine and it is Windows, else None."""
+    return NO_LOCAL_SHELL if hid == "local" and os.name == "nt" else None
+
+
 def browser_status(hid):
     """Everything the panel needs: running?, or what to do about it, with the
     exact reason for anything that blocks streaming."""
     st = {"running": False, "reasons": [], "action": None}
+    if _no_local_shell(hid):
+        st["reasons"].append(NO_LOCAL_SHELL)
+        return st
     running_ua = ""
     try:
         v = cdp_http(hid, "/json/version")
@@ -557,6 +571,8 @@ def ensure_xvfb(hid, display):
 
 
 def browser_start(hid, headless=None):
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_status(hid)
     if st.get("running"):
         return {"started": True, "already": True}
@@ -603,6 +619,8 @@ def browser_start(hid, headless=None):
 
 
 def browser_stop(hid):
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     browser_conn_drop(hid)
     kill = f"pkill -f {shlex.quote(BROWSER_PROFILE)} 2>/dev/null; true"
     if hid == "local":
@@ -618,6 +636,8 @@ def browser_stop(hid):
 def browser_install(hid):
     """User-space Chromium via Playwright — no sudo. Slow (hundreds of MB), so
     the HTTP request stays open while it runs; the UI shows a spinner."""
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_probe(hid)
     if not st.get("node"):
         return {"error": "node not found on the host (checked PATH and ~/.nvm) — install node first."}
@@ -644,6 +664,8 @@ def browser_install(hid):
 def browser_install_xvfb(hid):
     """Install Xvfb (a system package, needs sudo) so a display-less Linux host
     can run a real HEADED browser instead of the Google-blocked headless one."""
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_probe(hid)
     if not st.get("pkg_mgr"):
         return {"error": "No supported package manager (apt/dnf/apk/pacman/zypper) found — "

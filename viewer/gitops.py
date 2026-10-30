@@ -283,8 +283,9 @@ def _scrub(text, token):
     return (text or "").replace(token, "***").strip()[-500:]
 
 
-# One shell round-trip: every field on a GIT| line so remote pty noise (\r,
-# login-shell banners) can't break parsing. Exit 3/4 = not a dir / not a repo.
+# A remote host's status in one shell round-trip: every field on a GIT| line
+# so remote pty noise (\r, login-shell banners) can't break parsing.
+# Exit 3/4 = not a dir / not a repo.
 _STATUS_SH = (
     'cd {cwd} 2>/dev/null || exit 3; '
     'git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 4; '
@@ -298,24 +299,56 @@ _STATUS_SH = (
 )
 
 
+def _local_status_fields(cwd, timeout=15):
+    """The _STATUS_SH fields for a directory on THIS machine, read by running
+    git directly — no shell, so it works where there is no bash (Windows).
+    None when it is not a directory, not a repo, or git is missing."""
+    d = os.path.expanduser((cwd or "").strip())
+    if not d or not os.path.isdir(d):
+        return None
+    deadline = time.time() + timeout
+
+    def git(*args):
+        p = subprocess.run(["git", *args], cwd=d, capture_output=True, text=True,
+                           timeout=max(1.0, deadline - time.time()))
+        return p.returncode, p.stdout.strip()
+    try:
+        if git("rev-parse", "--is-inside-work-tree")[0] != 0:
+            return None
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")[1]
+        root = git("rev-parse", "--show-toplevel")[1]
+        remote = git("remote", "get-url", "origin")[1]
+        dirty = str(len(git("status", "--porcelain")[1].splitlines()))
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        behind = git("rev-list", "--count", "HEAD..@{u}")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (branch, dirty, ahead[1] if ahead[0] == 0 else "-",
+            behind[1] if behind[0] == 0 else "-", remote, root)
+
+
+def _remote_status_fields(hid, cwd):
+    """The _STATUS_SH fields for a directory on an SSH host, or None."""
+    from viewer.remote import remote_run_shell
+    rc, out = remote_run_shell(hid, _STATUS_SH.format(cwd=_q_path(cwd)), timeout=20)
+    line = next((ln.strip() for ln in out.replace("\r", "").splitlines()
+                 if ln.strip().startswith("GIT|")), "")
+    parts = line.split("|")
+    if rc != 0 or len(parts) < 7:
+        return None
+    return tuple(parts[1:7])
+
+
 def repo_status(hid, cwd):
     """{"repo": bool, name, branch, dirty, ahead, behind, remote, root} for a
     working directory on the host. ahead/behind are None with no upstream."""
-    script = _STATUS_SH.format(cwd=_q_path(cwd))
     if not hid or hid == "local":
-        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=15)
-        rc, out = p.returncode, p.stdout
+        fields = _local_status_fields(cwd)
     else:
-        from viewer.remote import remote_run_shell
-        rc, out = remote_run_shell(hid, script, timeout=20)
-    line = next((ln.strip() for ln in out.replace("\r", "").splitlines()
-                 if ln.strip().startswith("GIT|")), "")
-    if rc != 0 or not line:
+        fields = _remote_status_fields(hid, cwd)
+    if not fields:
         return {"repo": False}
-    parts = line.split("|")
-    if len(parts) < 7:
-        return {"repo": False}
-    _, branch, dirty, ahead, behind, remote, root = parts[:7]
+    branch, dirty, ahead, behind, remote, root = fields
     m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", remote)
     name = m.group(1) if m else (root.rstrip("/").rsplit("/", 1)[-1] if root else "")
     return {"repo": True, "branch": branch, "name": name, "remote": remote, "root": root,
