@@ -32,7 +32,7 @@ from urllib.parse import urlparse, parse_qs
 # Below this a JSON body isn't worth the compress/decompress round trip.
 GZIP_MIN_BYTES = 1024
 
-from viewer import db, orglogic, setupcode
+from viewer import db, events, orglogic, setupcode
 from viewer.remote import tailnet_ipv4
 from viewer.config import (
     CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, VIEWER_PREFLIGHT, claude_bin,
@@ -258,6 +258,8 @@ class SessionViewerHandler(
         name = self.POST_ROUTES.get(req.path)
         if name:
             getattr(self, name)(req)
+            if req.path in self.LIST_MUTATIONS:
+                events.publish_list_changed()
             return
         for prefix, pname in self.POST_PREFIX:
             if req.path.startswith(prefix):
@@ -404,6 +406,7 @@ class SessionViewerHandler(
         "/api/gmail/read": "_g_gmail_read",
         "/api/calendar/events": "_g_calendar_events",
         "/api/terminal/ws": "_g_terminal_ws",
+        "/api/events/ws": "_g_events_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
@@ -598,6 +601,13 @@ class SessionViewerHandler(
         ("/api/browser/", "_p_browser"),
         ("/api/intake/", "_p_intake"),
     ]
+    # POSTs that change what the chat list shows: once one is handled, every
+    # live-events subscriber is told to refetch the list (viewer.events).
+    LIST_MUTATIONS = frozenset({
+        "/api/session/fork", "/api/session/restore", "/api/session/backup-restore",
+        "/api/session/delete", "/api/session/rename", "/api/session/seen",
+        "/api/session-meta",
+    })
 
 
 class PooledHTTPServer(http.server.ThreadingHTTPServer):
@@ -614,7 +624,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
     WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws",
-                b"/api/voice/nemotron/ws")
+                b"/api/voice/nemotron/ws", b"/api/events/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
