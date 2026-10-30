@@ -17,9 +17,23 @@ export type LiveEvent =
   | { type: "turn-start" | "turn-end" | "status-changed"; session: string }
   | { type: "transcript-changed"; session: string; size?: number; uuid?: string }
   | { type: "list-changed" | "resync" }
+  /** The server's answer to a watch: whether it can see that transcript. */
+  | { type: "watching"; session: string; ok: boolean }
 
-const EVENT_TYPES = new Set(["turn-start", "turn-end", "status-changed", "transcript-changed", "list-changed", "resync"])
-const SESSION_EVENTS = new Set(["turn-start", "turn-end", "status-changed", "transcript-changed"])
+const EVENT_TYPES = new Set(["turn-start", "turn-end", "status-changed", "transcript-changed", "list-changed", "resync", "watching"])
+const SESSION_EVENTS = new Set(["turn-start", "turn-end", "status-changed", "transcript-changed", "watching"])
+
+/** One transcript a screen has open. The server reports its growth even when
+ *  no run of this server writes it (a CLI in a terminal, another host's chat). */
+export interface WatchSpec {
+  session: string
+  host: string
+  agent: string
+  path: string
+}
+
+/** The server watches at most this many per client (viewer/events.py WATCH_MAX). */
+export const WATCH_MAX = 4
 
 /** A frame the screens act on, or null (hello/ping/garbage/unknown types from
  *  a newer server — ignored, never thrown). hello and ping only prove the
@@ -30,6 +44,7 @@ export function parseLiveEvent(data: unknown): LiveEvent | null {
   const ev = obj as { type?: unknown; session?: unknown }
   if (typeof ev.type !== "string" || !EVENT_TYPES.has(ev.type)) return null
   if (SESSION_EVENTS.has(ev.type) && typeof ev.session !== "string") return null
+  if (ev.type === "watching" && typeof (obj as { ok?: unknown }).ok !== "boolean") return null
   return obj as LiveEvent
 }
 
@@ -103,6 +118,9 @@ export class LiveStream {
   private retryTimer: unknown = null
   private staleTimer: unknown = null
   private lingerTimer: unknown = null
+  private watches = new Map<object, WatchSpec>()
+  /** Sessions the server answered `watching ok` for since the last watch frame. */
+  private seen = new Set<string>()
 
   private readonly open: () => AppSocket
   private readonly timers: Timers
@@ -114,6 +132,34 @@ export class LiveStream {
 
   get live() {
     return this.isLive
+  }
+
+  /** Whether the server said it sees this session's transcript. */
+  watching(session: string) {
+    return this.isLive && this.seen.has(session)
+  }
+
+  /** Ask the server to report one transcript's growth while the caller holds
+   *  it. Returns release(). Re-sent on every reconnect. */
+  watch(spec: WatchSpec): () => void {
+    const key = {}
+    this.watches.set(key, spec)
+    this.sendWatch()
+    return () => {
+      if (this.watches.delete(key)) this.sendWatch()
+    }
+  }
+
+  private sendWatch() {
+    this.seen.clear()
+    if (!this.isLive || !this.sock) return
+    const specs = new Map<string, WatchSpec>()
+    for (const w of this.watches.values()) if (specs.size < WATCH_MAX && !specs.has(w.session)) specs.set(w.session, w)
+    try {
+      this.sock.send(JSON.stringify({ type: "watch", sessions: [...specs.values()] }))
+    } catch {
+      // closing; the next hello re-sends
+    }
   }
 
   subscribe(l: LiveListener): () => void {
@@ -150,9 +196,14 @@ export class LiveStream {
       if (frameType(ev.data) === "hello") {
         this.reconnect.reset()
         this.setLive(true)
+        if (this.watches.size) this.sendWatch()
         return
       }
       const parsed = parseLiveEvent(ev.data)
+      if (parsed?.type === "watching") {
+        if (parsed.ok) this.seen.add(parsed.session)
+        else this.seen.delete(parsed.session)
+      }
       if (parsed) for (const l of [...this.listeners]) l.onEvent?.(parsed)
     }
     sock.onerror = () => {}
@@ -206,6 +257,7 @@ export class LiveStream {
   private setLive(live: boolean) {
     if (this.isLive === live) return
     this.isLive = live
+    if (!live) this.seen.clear()
     for (const l of [...this.listeners]) l.onLive?.(live)
   }
 
@@ -250,6 +302,10 @@ export interface LiveRefreshOptions {
    *  cannot see (a durable question parked after the run ended…). */
   liveMs: number
   onEvent?: (ev: LiveEvent) => void
+  /** The transcript this resource is. With `needsAck` the stream only counts
+   *  as live for it once the server says it sees the file (another host's
+   *  chat: no run of this server reports it otherwise). */
+  watch?: WatchSpec & { needsAck?: boolean }
   timers?: Timers
 }
 
@@ -261,7 +317,9 @@ export function startLiveRefresh(o: LiveRefreshOptions): () => void {
   const timers = o.timers ?? realTimers
   const backoff = new Backoff(o.fallbackMs)
   const refresh = serialize(o.refresh)
-  let live = o.stream?.live ?? false
+  const stream = o.stream
+  const isLive = () => !!stream && (o.watch?.needsAck ? stream.watching(o.watch.session) : stream.live)
+  let live = isLive()
   let timer: unknown = null
   let stopped = false
 
@@ -279,25 +337,31 @@ export function startLiveRefresh(o: LiveRefreshOptions): () => void {
       .catch(() => {})
       .finally(schedule)
   }
-  const unsubscribe = o.stream?.subscribe({
+  const turn = () => {
+    const now = isLive()
+    if (stopped || now === live) return
+    live = now
+    backoff.reset()
+    if (timer != null) timers.clearTimeout(timer)
+    timer = null
+    if (now) tick()
+    else schedule()
+  }
+  const unsubscribe = stream?.subscribe({
     onEvent: (ev) => {
-      if (!stopped) o.onEvent?.(ev)
+      if (stopped) return
+      if (ev.type === "watching") turn()
+      o.onEvent?.(ev)
     },
-    onLive: (now) => {
-      if (stopped || now === live) return
-      live = now
-      backoff.reset()
-      if (timer != null) timers.clearTimeout(timer)
-      timer = null
-      if (now) tick()
-      else schedule()
-    },
+    onLive: turn,
   })
+  const unwatch = o.watch && stream ? stream.watch(o.watch) : undefined
   schedule()
   return () => {
     stopped = true
     if (timer != null) timers.clearTimeout(timer)
     timer = null
+    unwatch?.()
     unsubscribe?.()
   }
 }

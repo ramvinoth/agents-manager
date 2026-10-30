@@ -66,6 +66,26 @@ export function reactTo(ev: SessionEvent, openSession: string): Reaction {
   }
 }
 
+/** Whether an event may mean a chat being created (`pending`, its id known
+ *  before its transcript exists) has now got one — or failed: its run's
+ *  boundaries and its file's first bytes all name it. The engine then asks
+ *  /api/resolve once instead of every second. */
+export function settlesNewChat(ev: SessionEvent, pending: string): boolean {
+  if (!pending) return false
+  switch (ev.type) {
+    case "resync":
+    case "list-changed":
+      return true
+    case "turn-start":
+    case "turn-end":
+    case "status-changed":
+    case "transcript-changed":
+      return ev.session === pending
+    default:
+      return false
+  }
+}
+
 /** Fallback transcript reads happen on every poll tick during a run and on
  *  every IDLE_EVERY-th tick otherwise (an idle chat can still be written by a
  *  CLI in a terminal, but nobody is waiting on it). */

@@ -702,8 +702,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
       }
     })
     const stopLive = startLiveRefresh({
-      // Only this machine's transcripts are watched; another host's chat polls.
-      stream: host === "local" ? liveEvents() : null,
+      // The server reports this transcript's growth wherever it lives; another
+      // host's chat counts as live only once the server says it can see it.
+      stream: liveEvents(),
+      watch: { session: sid, host, agent, path: path || "", needsAck: host !== "local" },
       refresh: tick,
       fallbackMs: THREAD_FALLBACK_MS,
       liveMs: 15000,

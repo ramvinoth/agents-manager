@@ -1,4 +1,4 @@
-import { parseSessionEvent, pollStatus, pollTranscript, reactTo, watchFrame, IDLE_EVERY } from "./sessionEvents.ts"
+import { parseSessionEvent, pollStatus, pollTranscript, reactTo, settlesNewChat, watchFrame, IDLE_EVERY } from "./sessionEvents.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -27,6 +27,14 @@ eq("another session's growth is ignored", reactTo(ev('{"type":"transcript-change
 eq("no open chat ignores per-session events", reactTo(ev('{"type":"turn-end","session":""}'), ""), null)
 for (const t of ["turn-start", "turn-end", "status-changed"])
   eq(`${t} re-checks the run`, reactTo(ev(`{"type":"${t}","session":"a"}`), "a"), "status")
+eq("no pending chat: nothing settles", settlesNewChat(ev('{"type":"list-changed"}'), ""), false)
+for (const t of ["turn-start", "turn-end", "status-changed", "transcript-changed"]) {
+  eq(`${t} of the new chat settles it`, settlesNewChat(ev(`{"type":"${t}","session":"n"}`), "n"), true)
+  eq(`${t} of another chat does not`, settlesNewChat(ev(`{"type":"${t}","session":"o"}`), "n"), false)
+}
+eq("list-changed may be the new file", settlesNewChat(ev('{"type":"list-changed"}'), "n"), true)
+eq("resync may have hidden it", settlesNewChat(ev('{"type":"resync"}'), "n"), true)
+eq("a ping does not", settlesNewChat(ev('{"type":"ping"}'), "n"), false)
 eq("hello needs no action", reactTo(ev('{"type":"hello"}'), "a"), null)
 eq("watching needs no action", reactTo(ev('{"type":"watching","session":"a","ok":true}'), "a"), null)
 

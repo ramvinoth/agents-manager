@@ -6,6 +6,7 @@ import {
   LiveStream,
   RECONNECT_MS,
   STALE_MS,
+  WATCH_MAX,
   parseLiveEvent,
   serialize,
   startLiveRefresh,
@@ -58,7 +59,10 @@ class FakeSocket implements AppSocket {
   onmessage: ((ev: { data: unknown }) => void) | null = null
   onerror: ((ev: { message?: string }) => void) | null = null
   onclose: ((ev: { code?: number; reason?: string }) => void) | null = null
-  send() {}
+  sent: string[] = []
+  send(data: string | ArrayBuffer | Uint8Array) {
+    this.sent.push(String(data))
+  }
   close() {
     this.closed = true
     this.readyState = 3
@@ -93,6 +97,8 @@ test("parseLiveEvent accepts the server's events and rejects the rest", () => {
   assert.equal(parseLiveEvent('{"type":"from-the-future"}'), null)
   assert.equal(parseLiveEvent("not json"), null)
   assert.equal(parseLiveEvent(new ArrayBuffer(2)), null)
+  assert.deepEqual(parseLiveEvent('{"type":"watching","session":"s","ok":true}'), { type: "watching", session: "s", ok: true })
+  assert.equal(parseLiveEvent('{"type":"watching","session":"s"}'), null) // no verdict
   assert.equal(parseLiveEvent("null"), null)
 })
 
@@ -346,4 +352,83 @@ test("a stream already live when a screen subscribes skips the fallback beat", a
   assert.equal(r.calls(), 0)
   await clock.advance(1)
   assert.equal(r.calls(), 1)
+})
+
+// ---- watch ----------------------------------------------------------------------
+
+const spec = (session: string, host = "local") => ({ session, host, agent: "claude", path: `p/${session}.jsonl` })
+const watched = (sock: FakeSocket) => {
+  const last = sock.sent.at(-1)
+  return last ? (JSON.parse(last).sessions as { session: string }[]).map((w) => w.session) : null
+}
+
+test("watch frames go out on hello and on every change, never before live", async () => {
+  const { stream, sockets } = streamWith()
+  stream.subscribe({})
+  const off = stream.watch(spec("a"))
+  assert.equal(sockets[0].sent.length, 0) // not live yet
+  sockets[0].frame({ type: "hello" })
+  assert.deepEqual(watched(sockets[0]), ["a"])
+  const offB = stream.watch(spec("b"))
+  assert.deepEqual(watched(sockets[0]), ["a", "b"])
+  off()
+  assert.deepEqual(watched(sockets[0]), ["b"])
+  offB()
+  assert.deepEqual(watched(sockets[0]), []) // an empty frame clears the server side
+})
+
+test("a reconnect re-sends the watch and forgets the old acks", async () => {
+  const { stream, sockets, clock } = streamWith()
+  stream.subscribe({})
+  stream.watch(spec("a", "box"))
+  sockets[0].frame({ type: "hello" })
+  sockets[0].frame({ type: "watching", session: "a", ok: true })
+  assert.equal(stream.watching("a"), true)
+  sockets[0].drop()
+  assert.equal(stream.watching("a"), false)
+  await clock.advance(RECONNECT_MS[0])
+  sockets[1].frame({ type: "hello" })
+  assert.deepEqual(watched(sockets[1]), ["a"])
+  assert.equal(stream.watching("a"), false) // until the new socket answers
+})
+
+test("watch frames carry one entry per session, at most WATCH_MAX", async () => {
+  const { stream, sockets } = streamWith()
+  stream.subscribe({})
+  sockets[0].frame({ type: "hello" })
+  stream.watch(spec("a"))
+  stream.watch(spec("a")) // two screens on one chat
+  for (let i = 0; i < WATCH_MAX + 2; i++) stream.watch(spec(`s${i}`))
+  const w = watched(sockets[0])!
+  assert.equal(w.length, WATCH_MAX)
+  assert.equal(new Set(w).size, w.length)
+})
+
+test("another host's chat stays on its poll until the server says it sees the file", async () => {
+  const { stream, sockets, clock } = streamWith()
+  const r = refresher()
+  startLiveRefresh({ stream, watch: { ...spec("a", "box"), needsAck: true }, refresh: r.refresh, fallbackMs: [1500], liveMs: 15000, timers: clock.timers })
+  sockets[0].frame({ type: "hello" })
+  await clock.advance(1500)
+  assert.equal(r.calls(), 1) // still polling: no ack yet
+  sockets[0].frame({ type: "watching", session: "a", ok: true })
+  await flush()
+  assert.equal(r.calls(), 2) // catch-up on turning live
+  await clock.advance(14999)
+  assert.equal(r.calls(), 2) // now on the slow safety beat
+  sockets[0].frame({ type: "watching", session: "a", ok: false })
+  await clock.advance(1500)
+  assert.equal(r.calls(), 3) // the server lost the file: back to polling
+})
+
+test("a local chat is live on hello and still registers its watch", async () => {
+  const { stream, sockets, clock } = streamWith()
+  const r = refresher()
+  const stop = startLiveRefresh({ stream, watch: spec("a"), refresh: r.refresh, fallbackMs: [1500], liveMs: 15000, timers: clock.timers })
+  sockets[0].frame({ type: "hello" })
+  await flush()
+  assert.equal(r.calls(), 1)
+  assert.deepEqual(watched(sockets[0]), ["a"])
+  stop()
+  assert.deepEqual(watched(sockets[0]), [])
 })

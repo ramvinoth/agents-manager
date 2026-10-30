@@ -10,7 +10,7 @@
 import { api } from "../lib/api"
 import { describeHost } from "../lib/host"
 import { SocketFeed, socketUrl } from "../lib/socketFeed"
-import { parseSessionEvent, pollStatus, pollTranscript, reactTo, watchFrame } from "../lib/sessionEvents"
+import { parseSessionEvent, pollStatus, pollTranscript, reactTo, settlesNewChat, watchFrame } from "../lib/sessionEvents"
 import { watchLive } from "../components/useLive"
 import type { GetState, SetState } from "./types"
 import { pickOpen, reloadForHost, sessionIdOf } from "./helpers"
@@ -40,6 +40,8 @@ let redOff: (() => void) | null = null
 let live = false
 /** Sessions the server answered `watching ok` for since the last watch frame. */
 const seen = new Set<string>()
+/** A chat being created: its id, until /api/resolve finds its transcript. */
+let pendingNew = ""
 
 export type Runtime = ReturnType<typeof createRuntime>
 
@@ -47,7 +49,7 @@ export function createRuntime(set: SetState, get: GetState) {
   function stopTimers() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
     if (chatTimer) { clearInterval(chatTimer); chatTimer = null }
-    if (nsTimer) { clearInterval(nsTimer); nsTimer = null }
+    endNew()
   }
 
   // Load everything once we're authenticated (called from init and after login).
@@ -79,34 +81,57 @@ export function createRuntime(set: SetState, get: GetState) {
   }
 
   // The session's name is stored by the server at creation; no rename here.
+  /** Open a chat just created once its transcript exists. Live, the new run's
+   *  events (turn-start, its file's first bytes, turn-end on a failed start)
+   *  trigger the /api/resolve lookup; the 1s interval asks only while the
+   *  stream is down. */
   function watchNewSession(sid: string, immediatePath?: string) {
     const open = async (path: string) => {
       await get().loadSession(path)
-      api.sessions().then((s: any) => Array.isArray(s) && set({ sessions: s })).catch(() => {})
+      refreshList()
       set({ chatRunning: true, chatStatus: null })
       watchChat(sessionIdOf(path))
     }
+    if (nsTimer) { clearInterval(nsTimer); nsTimer = null }
     // Codex returns the rollout path up front (the session already exists), so
-    // open it directly instead of polling /api/resolve (a Claude-only lookup).
-    if (immediatePath) { open(immediatePath); return }
-    if (nsTimer) clearInterval(nsTimer)
-    nsTimer = setInterval(async () => {
-      try {
-        const d: any = await api.resolve(sid)
-        if (d.found) {
-          if (nsTimer) { clearInterval(nsTimer); nsTimer = null }
-          await open(d.path)
-        } else if (!d.running) {
-          if (nsTimer) { clearInterval(nsTimer); nsTimer = null }
-          set({
-            chatRunning: false,
-            chatStatus: { kind: "error", text: d.stderr ? "claude: " + d.stderr.slice(-400) : "Session failed to start" },
-          })
-        }
-      } catch {
-        /* keep trying */
+    // open it directly instead of resolving (a Claude-only lookup).
+    if (immediatePath) { pendingNew = ""; open(immediatePath); return }
+    pendingNew = sid
+    nsOpen = open
+    resolveNew()
+    nsTimer = setInterval(() => { if (!live) resolveNew() }, 1000)
+  }
+
+  let nsOpen: ((path: string) => Promise<void>) | null = null
+  let resolving = false
+
+  async function resolveNew() {
+    const sid = pendingNew
+    if (!sid || resolving) return
+    resolving = true
+    try {
+      const d: any = await api.resolve(sid)
+      if (pendingNew !== sid) return // superseded by another new chat
+      if (d.found) {
+        endNew()
+        await nsOpen?.(d.path)
+      } else if (!d.running) {
+        endNew()
+        set({
+          chatRunning: false,
+          chatStatus: { kind: "error", text: d.stderr ? "claude: " + d.stderr.slice(-400) : "Session failed to start" },
+        })
       }
-    }, 1000)
+    } catch {
+      /* keep trying: the next event or tick asks again */
+    } finally {
+      resolving = false
+    }
+  }
+
+  function endNew() {
+    pendingNew = ""
+    if (nsTimer) { clearInterval(nsTimer); nsTimer = null }
   }
 
   /** Read the open transcript's new lines. Skipped while a session load is in
@@ -190,14 +215,16 @@ export function createRuntime(set: SetState, get: GetState) {
     feed.send(watchFrame(sid ? [{ session: sid, host: currentHost, agent: currentAgent, path: currentSessionPath }] : []))
   }
 
-  /** list-changed speaks for this machine's chats; a remote host's list is
-   *  refreshed by its own loads. */
+  /** Refetch the chat list of the host on screen. list-changed covers every
+   *  run this server drives on any host (its turn boundaries) plus this
+   *  machine's session files, so a remote host's list follows it too. */
   async function refreshList() {
-    if (listing || get().currentHost !== "local") return
+    if (listing) return
+    const host = get().currentHost
     listing = true
     try {
       const s: any = await api.sessions()
-      if (Array.isArray(s) && get().currentHost === "local") set({ sessions: s })
+      if (Array.isArray(s) && get().currentHost === host) set({ sessions: s })
     } catch {
       /* the next change or reload catches up */
     } finally {
@@ -214,6 +241,7 @@ export function createRuntime(set: SetState, get: GetState) {
       checkRun(sid)
     }
     refreshList()
+    resolveNew()
   }
 
   function onEvent(raw: string) {
@@ -230,6 +258,7 @@ export function createRuntime(set: SetState, get: GetState) {
       else seen.delete(ev.session)
       return
     }
+    if (settlesNewChat(ev, pendingNew)) resolveNew()
     const sid = sessionIdOf(get().currentSessionPath)
     switch (reactTo(ev, sid)) {
       case "transcript":

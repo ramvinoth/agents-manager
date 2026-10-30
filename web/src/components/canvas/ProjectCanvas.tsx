@@ -5,7 +5,7 @@ import type { AppState, BinaryFileData, BinaryFiles, Collaborator, ExcalidrawImp
 import "@excalidraw/excalidraw/index.css"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import { backoffMs } from "@/lib/socketFeed"
+import { SocketFeed, socketUrl } from "@/lib/socketFeed"
 import { userError } from "@/lib/errors"
 import { PROTOCOL, Sync, checksum, collaborator, missingFiles, replaceById, type CanvasSnapshot, type El, type PresenceMsg, type RejectItem } from "@/lib/canvasSync"
 import { parseCanvasRef, type CanvasRef } from "@/lib/canvasRef"
@@ -72,9 +72,11 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
       .then((r) => setNotice({ text: r.reverted ? `Undid the agent's last change (${r.reverted} element${r.reverted === 1 ? "" : "s"}).` : "Nothing left to undo — it was already undone or changed since." }))
       .catch((e) => setNotice({ text: `Could not undo: ${userError(e, "the agent's change")}.` }))
 
-  // The live half: one socket per open dialog, reconnecting with backoff.
+  // The live half: one socket per open dialog. Its own channel (the canvas
+  // sync protocol, /api/canvas/ws), on the same self-healing loop as the
+  // event feeds (lib/socketFeed).
   const sync = useRef<Sync | null>(null)
-  const ws = useRef<WebSocket | null>(null)
+  const feed = useRef<SocketFeed | null>(null)
   const onChangeRef = useRef<((els: unknown, s: AppState, files: BinaryFiles) => void) | null>(null)
   useEffect(() => {
     if (!board || !api_) return
@@ -89,21 +91,19 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
     s.reset(board.elements)
     const peers = new Map<SocketId, Collaborator>()
     let closed = false
-    let attempt = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
     let sendTimer: ReturnType<typeof setTimeout> | undefined
 
     const scene = () => ex.getSceneElementsIncludingDeleted() as unknown as El[]
-    const send = (m: unknown) => {
-      if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(m))
-    }
+    const live = new SocketFeed(() => new WebSocket(socketUrl(`/api/canvas/ws?canvas=${cid}`)))
+    feed.current = live
+    const send = (m: unknown) => live.send(JSON.stringify(m))
     const apply = (els: El[]) =>
       ex.updateScene({ elements: els as never, captureUpdate: CaptureUpdateAction.NEVER })
     const merge = (remote: El[]) =>
       apply(reconcileElements(scene() as never, remote as never, ex.getAppState()) as unknown as El[])
 
     const flush = () => {
-      if (ws.current?.readyState !== WebSocket.OPEN || !board.editable) return
+      if (!live.open || !board.editable) return
       for (const batch of s.outgoing(scene())) send({ t: "elements", elements: batch })
     }
     const upload = (files: BinaryFiles) => {
@@ -149,76 +149,71 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
         for (const e of b.elements) if (e.type === "image" && e.fileId) uploaded.add(e.fileId)
         fetchMissing()
         flush()                                 // anything the server lacks goes now
-      }, () => ws.current?.close())
+      }, () => { if (!closed) { off(); off = subscribe() } })   // reconnect for a fresh snapshot
 
-    const connect = () => {
-      if (closed) return
-      setStatus("connecting")
-      const proto = location.protocol === "https:" ? "wss" : "ws"
-      const sock = new WebSocket(`${proto}://${location.host}/api/canvas/ws?canvas=${cid}`)
-      ws.current = sock
-      sock.onopen = () => sock.send(JSON.stringify({ t: "hello", protocol: PROTOCOL }))
-      sock.onmessage = (ev) => {
-        let m: { t?: string; [k: string]: unknown }
-        try { m = JSON.parse(ev.data) } catch { return }
-        switch (m.t) {
-          case "hello":
-            attempt = 0
-            setStatus("live")
-            resnap()
-            break
-          case "ack":
-            s.acked()
-            break
-          case "elements": {
-            const els = (m.elements as El[]) || []
-            s.received(els)
-            merge(els)
-            fetchMissing()
-            if (typeof m.from === "string" && m.from.startsWith("session:") && board.editable)
-              setNotice({ text: `${canvasActorName(m.from, board.actors)} changed the canvas.`, undo: m.from })
-            break
-          }
-          case "reject": {
-            const local = new Map(scene().map((e) => [e.id, e]))
-            const adopt = s.rejected((m.items as RejectItem[]) || [], local)
-            if (adopt.length) apply(replaceById(scene(), adopt))
-            if ((m.items as RejectItem[]).some(([, why]) => why === "read-only")) setNotice({ text: "This canvas is read-only for you." })
-            flush()
-            break
-          }
-          case "checksum":
-            if (s.settled(scene()) && checksum(scene()) !== m.checksum) resnap()
-            break
-          case "resync":
-            resnap()
-            break
-          case "reload":
-            closed = true
-            setStatus("reload")
-            sock.close()
-            break
-          case "presence": {
-            const p = m as unknown as PresenceMsg
-            peers.set(p.peer as SocketId, collaborator(p) as Collaborator)
-            ex.updateScene({ collaborators: new Map(peers) })
-            break
-          }
-          case "leave":
-            if (peers.delete(m.peer as SocketId)) ex.updateScene({ collaborators: new Map(peers) })
-            break
+    const onMessage = (raw: string) => {
+      let m: { t?: string; [k: string]: unknown }
+      try { m = JSON.parse(raw) } catch { return }
+      switch (m.t) {
+        case "hello":
+          setStatus("live")
+          resnap()
+          break
+        case "ack":
+          s.acked()
+          break
+        case "elements": {
+          const els = (m.elements as El[]) || []
+          s.received(els)
+          merge(els)
+          fetchMissing()
+          if (typeof m.from === "string" && m.from.startsWith("session:") && board.editable)
+            setNotice({ text: `${canvasActorName(m.from, board.actors)} changed the canvas.`, undo: m.from })
+          break
         }
-      }
-      sock.onclose = () => {
-        if (ws.current === sock) ws.current = null
-        peers.clear()
-        ex.updateScene({ collaborators: new Map() })
-        if (closed) return
-        setStatus("offline")
-        timer = setTimeout(connect, backoffMs(attempt++))
+        case "reject": {
+          const local = new Map(scene().map((e) => [e.id, e]))
+          const adopt = s.rejected((m.items as RejectItem[]) || [], local)
+          if (adopt.length) apply(replaceById(scene(), adopt))
+          if ((m.items as RejectItem[]).some(([, why]) => why === "read-only")) setNotice({ text: "This canvas is read-only for you." })
+          flush()
+          break
+        }
+        case "checksum":
+          if (s.settled(scene()) && checksum(scene()) !== m.checksum) resnap()
+          break
+        case "resync":
+          resnap()
+          break
+        case "reload":
+          closed = true
+          setStatus("reload")
+          off()
+          break
+        case "presence": {
+          const p = m as unknown as PresenceMsg
+          peers.set(p.peer as SocketId, collaborator(p) as Collaborator)
+          ex.updateScene({ collaborators: new Map(peers) })
+          break
+        }
+        case "leave":
+          if (peers.delete(m.peer as SocketId)) ex.updateScene({ collaborators: new Map(peers) })
+          break
       }
     }
-    connect()
+    const subscribe = () => {
+      setStatus("connecting")
+      return live.subscribe({
+        onOpen: () => send({ t: "hello", protocol: PROTOCOL }),
+        onMessage,
+        onClose: () => {
+          peers.clear()
+          ex.updateScene({ collaborators: new Map() })
+          if (!closed) setStatus("offline")
+        },
+      })
+    }
+    let off = subscribe()
 
     onChangeRef.current = (_els, _state, files) => {
       upload(files)
@@ -228,11 +223,10 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
     }
     return () => {
       closed = true
-      clearTimeout(timer)
       clearTimeout(sendTimer)
       onChangeRef.current = null
-      ws.current?.close()
-      ws.current = null
+      off()
+      feed.current = null
       sync.current = null
     }
   }, [board, api_])
@@ -250,9 +244,9 @@ export function ProjectCanvas({ load, onStatus, settledRef, onOpenRef }: {
   const lastPresence = useRef(0)
   const onPointer = useCallback((p: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => {
     const now = Date.now()
-    if (now - lastPresence.current < PRESENCE_MS || ws.current?.readyState !== WebSocket.OPEN || !api_) return
+    if (now - lastPresence.current < PRESENCE_MS || !feed.current?.open || !api_) return
     lastPresence.current = now
-    ws.current.send(JSON.stringify({
+    feed.current.send(JSON.stringify({
       t: "presence", pointer: p.pointer, button: p.button, selected: api_.getAppState().selectedElementIds,
     }))
   }, [api_])

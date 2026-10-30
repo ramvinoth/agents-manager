@@ -60,6 +60,7 @@ function ChatsPage({ gesture, navigation }: { gesture: ReturnType<typeof Gesture
  */
 export default function HomeTabs({ navigation }: Props) {
   const t = useTheme()
+  useSeen("swipe-tab", undefined, true)
   const insets = useSafeAreaInsets()
 
   // The Inbox badge: how many messages/decisions wait on this reader. It has to
@@ -111,6 +112,9 @@ export default function HomeTabs({ navigation }: Props) {
     <SideMenuProvider value={() => setMenuOpen(true)}>
     <Tab.Navigator
       tabBarPosition="bottom"
+      // A swipe between pages is a control like a tab tap; count it so the
+      // usage report can tell whether anyone pages by gesture.
+      screenListeners={{ swipeEnd: () => recordSwipe("swipe-tab") }}
       screenOptions={({ route }) => ({
         swipeEnabled: true,
         // A stable handle for tests and a clean VoiceOver name: the icon+label
