@@ -24,55 +24,127 @@
 </head>
 <body>
 <h1>Privacy Policy</h1>
-<p class="updated">Harman — last updated 8 September 2026</p>
+<p class="updated">Harman — last updated 30 October 2026</p>
 
-<p>Harman is a personal, single-user assistant built and operated by Ram Vinoth for his own
-use. It is not a commercial product, it has no other users, and it does not offer accounts
-to the public.</p>
+<p>Harman is self-hosted software: a team of AI agents that runs on a computer you own, plus an
+iPhone app that talks to it. This policy explains what data Harman handles, where it goes, and
+what we (the company that makes Harman) can and cannot see. "You" means the customer who installs
+and runs Harman.</p>
 
-<h2>Who runs this</h2>
-<p>Harman is operated by an individual. Contact:
-<a href="mailto:ramvinoth37@gmail.com">ramvinoth37@gmail.com</a>.</p>
+<h2>Who we are</h2>
+<p>Harman is made by [LEGAL ENTITY] ("we", "us"). Questions about this policy:
+<a href="mailto:[CONTACT EMAIL]">[CONTACT EMAIL]</a>.</p>
 
-<h2>What data is accessed</h2>
-<p>With the operator's explicit Google consent, Harman may access:</p>
+<h2>The short version</h2>
 <ul>
-  <li><strong>Gmail</strong> — message metadata (sender, subject, date), message bodies, and
-      attachments, in order to summarise the operator's own inbox and surface items needing
-      attention. It may also compose drafts and send mail at the operator's request.</li>
-  <li><strong>Google Calendar</strong> — events, in order to report the operator's own schedule.</li>
+  <li>The Harman server runs on your machine, and your data lives in your own Postgres database
+      on that machine. We do not host it and cannot read it.</li>
+  <li>Your prompts and the data agents work on go to the AI model provider you choose, under
+      that provider's terms.</li>
+  <li>We run two small services: a relay that lets your phone reach your server (end-to-end
+      encrypted, so it cannot read your traffic) and a private update feed.</li>
+  <li>We do not sell your data, use it for advertising, or use it to train models.</li>
 </ul>
-<p>Only the operator's own Google account is ever accessed.</p>
 
-<h2>How data is used</h2>
-<p>Data is used solely to present the operator's own information back to him in a personal
-dashboard, and to carry out actions he explicitly asks for. It is not used for advertising,
-profiling, or training machine-learning models, and it is never sold, rented, or shared
-with third parties.</p>
+<h2>Data that stays on your machine</h2>
+<p>Everything Harman works with is stored on the computer you install it on: chats and agent
+transcripts, board cards, notes, files, settings, the sign-in tokens for accounts you connect,
+API keys for model providers, and the device tokens your phone registers for notifications.
+You control that machine, so you control the data: you can read it, back it up, or delete it.</p>
 
-<h2>Where data is stored</h2>
-<p>Retrieved content is stored in a private database on hardware the operator physically
-controls. The dashboard is not exposed to the public internet; it is reachable only from the
-operator's own machine and private network. OAuth tokens are stored locally with restricted
-file permissions and are never transmitted anywhere except to Google.</p>
+<h2>The phone relay</h2>
+<p>So your phone can reach your server without opening it to the internet, both dial out to a
+relay we run on Cloudflare (<code>relay.suhai.ai</code>). After a short handshake, every message
+between phone and server is end-to-end encrypted (NaCl box: X25519 and XSalsa20-Poly1305). The
+phone learns your server's public key from the pairing QR code, so only your server can decrypt
+it. The relay passes along encrypted bytes it cannot read.</p>
+<p>What the relay does handle: your server's random relay ID; a hash of your server's relay
+token, kept so nobody else can claim that ID; connection timing and size; and the phone's IP
+address, which it passes to your server so your server can limit repeated sign-in attempts.
+Cloudflare keeps standard request and error logs for this service. You can turn the relay off
+and reach your server another way, such as a private network.</p>
 
-<h2>Sharing</h2>
-<p>No human other than the operator has access. Message content may be sent to a language-model
-provider strictly to generate the operator's own summaries. No data is shared for any other
-purpose.</p>
+<h2>Accounts you connect</h2>
+<p>You can connect accounts such as Google, Dropbox, Microsoft OneDrive, and API accounts like
+cloud or analytics providers. Each connection is set up by you, and its sign-in token is stored
+on your server, not with us. Agents use a connection only for the operations you have switched on
+for it. Data from these accounts is read by your server and may be sent to your chosen model
+provider as part of an agent's work. It is not sent to us.</p>
+<p>For Google, Harman asks only for these permissions, and only for the services you connect:</p>
+<ul>
+  <li><strong>Gmail</strong> (<code>gmail.readonly</code>, <code>gmail.compose</code>): search and
+      read your mail, and write drafts. Harman does not send mail; you send a draft yourself from
+      Gmail.</li>
+  <li><strong>Google Calendar</strong> (<code>calendar.readonly</code>, and
+      <code>calendar.events</code> when agents may change events): read your events to plan around
+      them, and add or move events unless you switch that off. Deleting events is off unless you
+      turn it on. Harman never emails your guests.</li>
+  <li><strong>Google Drive</strong> (<code>drive</code>): browse, read and save files, which appear
+      in Harman's Files tab. Deleting files is off unless you turn it on.</li>
+  <li><strong>Your Google account address</strong> (<code>openid</code>, <code>email</code>): so
+      Harman knows which account a connection belongs to.</li>
+</ul>
+<p>You can disconnect an account in Harman at any time, and revoke Google access at
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+
+<h2>Google Limited Use disclosure</h2>
+<p>Harman's use and transfer to any other app of information received from Google APIs will
+adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google
+API Services User Data Policy</a>, including the Limited Use requirements.</p>
+<p>In practice: Google data is used only to provide the features you asked for. It is not used
+for advertising, not sold, not used to train general AI models, and not read by people at
+[LEGAL ENTITY]. It is passed to the model provider you configure only so an agent can do the task
+you gave it.</p>
+
+<h2>AI model providers</h2>
+<p>Agents think by sending prompts to a large language model. Prompts, and whatever data an agent
+includes to do its job (mail, files, notes, web pages), go to the provider you configure: for
+example Anthropic, OpenAI, Google, or a model you host yourself. Speech features likewise use the
+speech service you configure. That provider handles the data under its own terms and privacy
+policy, using your account or API key. Choose a provider whose terms suit your data.</p>
+
+<h2>Push notifications</h2>
+<p>When an agent finishes a turn or needs your decision, your server sends a notification to your
+iPhone through Apple Push Notification service. A notification carries a short title, a preview of
+up to about 300 characters (for example the first line of an agent's reply or the question it is
+asking), and an internal reference so tapping it opens the right screen. Apple delivers it to your
+device. You can turn notifications off in iOS Settings.</p>
+
+<h2>Updates</h2>
+<p>Your server checks our private update feed (<code>releases.suhai.ai</code>) about once an hour
+and downloads new versions when they are published. Each request carries the update token issued
+to your installation, so the feed sees that token's use, your server's IP address, and which files
+it fetched. No other data from your server is sent. Updates are signed, and your server checks the
+signature before installing.</p>
+
+<h2>Usage statistics</h2>
+<p>To improve the app, your Harman web and phone clients record which screens and controls you
+use, and any feedback notes you write. These records are sent only to your own server and stored
+there. They are not sent to us.</p>
+
+<h2>The iPhone app</h2>
+<p>The app has no advertising or third-party analytics. It signs in to your own server, not to an
+account with us. Some screens load open-source display libraries (for terminals, diagrams and
+math) from public code CDNs, which see an ordinary download request.</p>
+
+<h2>This website</h2>
+<p>Our website (<code>suhai.ai</code>) is a static page with no analytics scripts or tracking
+cookies of its own. If you email us,
+for example to ask for early access, we keep your message and address to reply to you and to run
+the beta.</p>
 
 <h2>Retention and deletion</h2>
-<p>Data persists until the operator deletes it. Because the database is under his direct
-control, it can be erased at any time. Google access can be revoked at any moment at
-<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>, which
-immediately ends Harman's ability to read any further data.</p>
+<p>Data on your server stays until you delete it. Removing Harman and its database from your
+machine erases it. To have us delete what we hold about you (your update token, early-access
+emails, billing records), email <a href="mailto:[CONTACT EMAIL]">[CONTACT EMAIL]</a>. Relay and
+feed logs are kept by Cloudflare for its standard log period. We may keep billing records as long
+as the law requires.</p>
 
-<h2>Limited Use disclosure</h2>
-<p>Harman's use and transfer of information received from Google APIs adheres to the
-<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services
-User Data Policy</a>, including its Limited Use requirements.</p>
+<h2>Children</h2>
+<p>Harman is not meant for children under 16, and we do not knowingly collect their data.</p>
 
 <h2>Changes</h2>
-<p>Any change to this policy will be published at this URL with a revised date above.</p>
+<p>If this policy changes, the new version is published at this address with a new date above.
+For a significant change we will also tell customers by email.</p>
 </body>
 </html>
