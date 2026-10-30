@@ -183,8 +183,11 @@ def init_db():
             );
             -- Turns in flight, so a server restart or a run that dies mid-turn
             -- pauses them instead of dropping them: boot resumes every row left
-            -- behind, and the run finalizer resumes its own (viewer/resume.py). Written when a run starts, kept in step
-            -- with its message queue, deleted when the run ends.
+            -- behind, and the run finalizer resumes its own (viewer/resume.py).
+            -- Written when a run of any harness starts, kept in step with its
+            -- message queue, deleted when the run ends. `agent` is the harness
+            -- (claude, custom, codex, copilot, pi); `ref` is what that harness
+            -- needs to resume beyond the session id (e.g. Codex's own id).
             CREATE TABLE IF NOT EXISTS inflight_runs (
               session_id TEXT PRIMARY KEY,
               host       TEXT NOT NULL DEFAULT 'local',
@@ -204,6 +207,8 @@ def init_db():
               host           TEXT NOT NULL DEFAULT 'local',
               created_at     DOUBLE PRECISION NOT NULL
             );
+            ALTER TABLE inflight_runs ADD COLUMN IF NOT EXISTS agent TEXT NOT NULL DEFAULT 'claude';
+            ALTER TABLE inflight_runs ADD COLUMN IF NOT EXISTS ref JSONB NOT NULL DEFAULT '{}';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
@@ -1164,17 +1169,19 @@ def pending_question_delete(session_id):
 # (and the durable pending question/plan that references them) stay authorized
 # across a restart. Cleared when the run's job is reaped.
 
-def inflight_run_start(session_id, host, cwd, mode, model, started):
+def inflight_run_start(session_id, host, cwd, mode, model, started, agent="claude", ref=None):
     """Record a turn as in flight. `resumes` is kept across upserts: it counts
     automatic restart-resumes and only resets when a run ends normally (row
     deleted), so a turn that keeps killing the server cannot resume forever."""
     with _db() as cur:
         cur.execute(
-            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at) "
-            "VALUES(%s,%s,%s,%s,%s,'[]',%s) ON CONFLICT (session_id) DO UPDATE SET "
+            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at, agent, ref) "
+            "VALUES(%s,%s,%s,%s,%s,'[]',%s,%s,%s) ON CONFLICT (session_id) DO UPDATE SET "
             "host = EXCLUDED.host, cwd = EXCLUDED.cwd, mode = EXCLUDED.mode, "
-            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at",
-            (session_id, host or "local", cwd or "", mode or "", model or "", started))
+            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at, "
+            "agent = EXCLUDED.agent, ref = EXCLUDED.ref",
+            (session_id, host or "local", cwd or "", mode or "", model or "", started,
+             agent or "claude", json.dumps(ref or {})))
 
 
 def inflight_run_queue(session_id, queue):

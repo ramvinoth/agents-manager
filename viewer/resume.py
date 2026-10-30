@@ -20,9 +20,13 @@ Not resumed:
 - a turn already auto-resumed MAX_RESUMES times without ending: something about
   it keeps cutting it off (or taking the server down), so the owner is told.
   The counter lives on the row and resets only when a turn ends normally.
-Claude runs only (local and SSH hosts); the codex/copilot/pi/custom-chat runners
-do not record in-flight turns.
+Every harness records its turns: Claude (local and SSH, incl. Agent mode on a
+custom Anthropic-compatible endpoint), custom-provider chat, Codex, Copilot and
+Pi. The row's `agent` picks the launcher in _LAUNCHERS; the run-end self-resume
+(was_cut_off) is Claude's only — the one-shot runners have no turn-open signal
+to tell a cut from a failure, so they resume at boot only.
 """
+import os
 import time
 
 from viewer import db
@@ -102,23 +106,60 @@ def resume_inflight(start=None, sleep=time.sleep):
 
 
 def _start(row):
-    """Re-launch one cut-off turn through the same selection the composer uses
-    (the provider env is re-resolved, never stored), then re-queue its backlog."""
-    from viewer import ai, providers
+    """Re-launch one cut-off turn with the launcher of the harness that ran it."""
+    launch = _LAUNCHERS.get(row.get("agent") or "claude")
+    return bool(launch and launch(row))
+
+
+def _cwd(row):
+    """The recorded cwd; a local one that is gone falls back to home (Popen
+    neither expands '~' nor survives a missing dir)."""
+    cwd = row["cwd"] or "~"
+    if (row["host"] or "local") != "local":
+        return cwd
+    cwd = os.path.expanduser(cwd)
+    return cwd if os.path.isdir(cwd) else os.path.expanduser("~")
+
+
+def _resume_turn(row):
+    """Claude and custom-provider sessions: through turn.start_turn, the one
+    place the composer launches them, so the AI selection (custom chat, Agent
+    mode endpoint env, or plain Claude) is re-resolved, never stored. Then
+    re-queue the messages that were waiting behind the cut turn."""
     from viewer.config import transcript_path
-    from viewer.engine import start_claude_run, enqueue_chat
+    from viewer.engine import enqueue_chat
+    from viewer.turn import start_turn
     sid, host = row["session_id"], row["host"] or "local"
     if host == "local" and not transcript_path(sid):
         return False  # cut before its first transcript line: nothing to resume
-    resolved = ai.resolve(db.session_meta_get(sid) or {}, row["model"], host)
-    provider_env = None
-    if resolved["provider"]:
-        provider_env = providers.anthropic_env(resolved["provider"], model=resolved["model"],
-                                               preset=resolved["preset"])
-    if not start_claude_run(sid, ["--resume", sid], RESUME_PROMPT, row["mode"] or "acceptEdits",
-                            row["cwd"] or "~", "" if provider_env else resolved["model"], host,
-                            provider_env=provider_env, effort=resolved["effort"]):
+    if start_turn(sid, RESUME_PROMPT, row["mode"] or "acceptEdits", row["cwd"] or "~",
+                  row["model"], host) is not None:
         return False
     for msg in row.get("queue") or []:
         enqueue_chat(sid, msg)
     return True
+
+
+def _resume_codex(row):
+    from viewer.engine import start_codex_run
+    codex_id = (row.get("ref") or {}).get("codex_id")
+    return bool(codex_id) and start_codex_run(row["session_id"], codex_id, RESUME_PROMPT,
+                                              _cwd(row), row["model"], row["host"] or "local")
+
+
+def _resume_copilot(row):
+    from viewer.engine import start_copilot_run
+    return start_copilot_run(row["session_id"], RESUME_PROMPT, _cwd(row), row["host"] or "local",
+                             row["model"], row["mode"])
+
+
+def _resume_pi(row):
+    from viewer.engine import start_pi_run
+    ref = row.get("ref") or {}
+    return bool(ref.get("uuid")) and start_pi_run(row["session_id"], ref["uuid"], RESUME_PROMPT,
+                                                  _cwd(row), ref.get("provider", ""), row["model"])
+
+
+# Harness (CHAT_JOBS "agent", recorded on the in-flight row) -> its resume launcher.
+_LAUNCHERS = {"claude": _resume_turn, "custom": _resume_turn, "codex": _resume_codex,
+              "copilot": _resume_copilot, "pi": _resume_pi}
