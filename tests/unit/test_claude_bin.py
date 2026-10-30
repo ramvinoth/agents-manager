@@ -6,6 +6,8 @@ whose stdio-MCP hang was fixed upstream, while a current nvm install sat
 unused. The probe and candidate discovery are injected, so no real binary
 is needed.
 """
+import shutil
+
 import pytest
 from pathlib import Path
 
@@ -38,7 +40,21 @@ def _mk(tmp_path, *rel):
     p = tmp_path.joinpath(*rel)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.touch()
+    p.chmod(0o755)  # which() only finds executables
     return str(p)
+
+
+_real_which = shutil.which
+
+
+def _server_path(target):
+    """A stand-in for shutil.which: the server-PATH lookup (no path=) finds
+    target for "claude"; a lookup in one install folder is the real which."""
+    def which(name, path=None):
+        if path is not None:
+            return _real_which(name, path=path)
+        return target if name == "claude" else None
+    return which
 
 
 def _home(monkeypatch, tmp_path, which_target=None, installs=()):
@@ -46,7 +62,7 @@ def _home(monkeypatch, tmp_path, which_target=None, installs=()):
     and create the given install paths under tmp_path. Returns (probe, home)."""
     monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
     monkeypatch.setattr(config.shutil, "which",
-                        lambda name: which_target if name == "claude" else None)
+                        _server_path(which_target))
     paths = [_mk(tmp_path, *p.split("/")) for p in installs]
     return paths
 
@@ -67,7 +83,7 @@ class TestResolution:
         nvm_path = _mk(tmp_path, ".nvm/versions/node/v24.19.0/bin/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 84), nvm_path: (2, 1, 278)})
         monkeypatch.setattr(config, "_claude_version", probe)
         # The STALE one is first on the server PATH (the incident).
@@ -78,7 +94,7 @@ class TestResolution:
         nvm_path = _mk(tmp_path, ".nvm/versions/node/v24.19.0/bin/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 278), nvm_path: (2, 1, 84)})
         monkeypatch.setattr(config, "_claude_version", probe)
         assert config.claude_bin() == which_path
@@ -87,14 +103,14 @@ class TestResolution:
         old_node = _mk(tmp_path, ".nvm/versions/node/v18.17.0/bin/claude")
         new_node = _mk(tmp_path, ".nvm/versions/node/v24.19.0/bin/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
-        monkeypatch.setattr(config.shutil, "which", lambda name: None)
+        monkeypatch.setattr(config.shutil, "which", _server_path(None))
         probe = _Probe({old_node: (2, 1, 270), new_node: (2, 1, 278)})
         monkeypatch.setattr(config, "_claude_version", probe)
         assert config.claude_bin() == new_node
 
     def test_no_installs_falls_back_to_bare_name(self, monkeypatch, tmp_path):
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
-        monkeypatch.setattr(config.shutil, "which", lambda name: None)
+        monkeypatch.setattr(config.shutil, "which", _server_path(None))
         probe = _Probe({})
         monkeypatch.setattr(config, "_claude_version", probe)
         assert config.claude_bin() == "claude"
@@ -106,7 +122,7 @@ class TestResolution:
         which_path = _mk(tmp_path, "usr/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         monkeypatch.setattr(config, "_claude_version", _Probe({}))
         assert config.claude_bin() == which_path
 
@@ -116,7 +132,7 @@ class TestResolution:
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(real)
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
-        monkeypatch.setattr(config.shutil, "which", lambda name: None)
+        monkeypatch.setattr(config.shutil, "which", _server_path(None))
         probe = _Probe({str(link): (2, 1, 278)})
         monkeypatch.setattr(config, "_claude_version", probe)
         out = config.claude_bin()
@@ -129,7 +145,7 @@ class TestCache:
         which_path = _mk(tmp_path, "usr/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 84)})
         monkeypatch.setattr(config, "_claude_version", probe)
         first = config.claude_bin()
@@ -141,7 +157,7 @@ class TestCache:
         which_path = _mk(tmp_path, "usr/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 84)})
         monkeypatch.setattr(config, "_claude_version", probe)
         import time as _t
@@ -158,7 +174,7 @@ class TestCache:
         which_path = _mk(tmp_path, "usr/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 84)})
         monkeypatch.setattr(config, "_claude_version", probe)
         config.claude_bin()
@@ -235,7 +251,7 @@ class TestDegradedProbe:
         nvm_path = _mk(tmp_path, ".nvm/versions/node/v24.19.0/bin/claude")
         monkeypatch.setattr(config.Path, "home", _cm(lambda: tmp_path))
         monkeypatch.setattr(config.shutil, "which",
-                            lambda name: which_path if name == "claude" else None)
+                            _server_path(which_path))
         probe = _Probe({which_path: (2, 1, 84)})  # nvm probe fails
         monkeypatch.setattr(config, "_claude_version", probe)
         assert config.claude_bin() == which_path

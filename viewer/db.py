@@ -1,7 +1,8 @@
 """viewer.db — Postgres store for accounts, login sessions, and per-user prefs.
 
 Connects with psycopg2 to DATABASE_URL (default: the local `dbname=viewer` over
-the unix socket, peer auth). A ThreadedConnectionPool serves the HTTP worker
+the unix socket with peer auth; on Windows, which has neither, over TCP to
+localhost:5432). A ThreadedConnectionPool serves the HTTP worker
 threads — Postgres forks a backend per connection, so per-op connecting would be
 wasteful. The per-request session lookup is cached briefly so auth doesn't hit
 the DB on every API call.
@@ -30,7 +31,17 @@ from viewer import orglogic
 # it here is cycle-free. init_db() stamps config.VERSION into app_meta on every boot.
 from viewer import config
 
-DATABASE_URL = os.environ.get("DATABASE_URL") or "dbname=viewer"
+
+def default_dsn():
+    """The database to use when DATABASE_URL is unset: the local `viewer` DB.
+    POSIX reaches it over the unix socket (peer auth); Windows Postgres has no
+    unix socket, so there it is TCP on the standard port."""
+    if os.name == "nt":
+        return "dbname=viewer host=localhost port=5432"
+    return "dbname=viewer"
+
+
+DATABASE_URL = os.environ.get("DATABASE_URL") or default_dsn()
 SESSION_COOKIE = "viewer_session"
 SESSION_TTL = 30 * 86400          # 30 days
 _PBKDF2_ROUNDS = 200_000

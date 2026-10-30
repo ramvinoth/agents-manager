@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import urlparse
 from viewer import ptyproc
+from viewer.agents import find_agent_bin
 from viewer.config import (
     ANSI_RE, CREDENTIALS_FILE, VIEWER_TOKEN_FILE, claude_bin,
 )
@@ -49,6 +50,39 @@ def _pty_spawn(argv, cols=2000, cwd=None):
     "Could not start ..." and exits 127 (viewer.ptyproc's contract), which the
     reader turns into an error stage instead of sitting at "starting"."""
     return ptyproc.spawn(argv, cols, 50, cwd=cwd)
+
+
+class _SshPty:
+    """An SSH channel with a pty, shaped like a viewer.ptyproc process (read,
+    write, wait, kill, close), so one reader loop drives a sign-in CLI whether
+    it runs on this machine or on a remote host."""
+
+    def __init__(self, chan):
+        self.chan = chan
+
+    def read(self, n):
+        try:
+            return self.chan.recv(n)
+        except Exception:
+            return b""
+
+    def write(self, data):
+        self.chan.sendall(data)
+
+    def wait(self):
+        try:
+            return self.chan.recv_exit_status()
+        except Exception:
+            return 0
+
+    def kill(self, group=False):
+        self.close()  # closing the channel hangs up the remote pty
+
+    def close(self):
+        try:
+            self.chan.close()
+        except Exception:
+            pass
 
 
 def _missing_cli(name, binpath):
@@ -262,7 +296,7 @@ LOGIN = LoginManager()
 
 
 def codex_bin():
-    return shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
+    return find_agent_bin("codex") or "codex"
 
 
 def _codex_logged_in():
@@ -649,7 +683,7 @@ REMOTE_CODEX_LOGIN = RemoteCodexLoginManager()
 
 
 def copilot_bin():
-    return shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+    return find_agent_bin("copilot") or "copilot"
 
 
 def _copilot_logged_in():
@@ -665,8 +699,8 @@ def _copilot_logged_in():
 
 
 class CopilotLoginManager:
-    """Drives `copilot login` (GitHub OAuth **device flow**) via a pty (local) or
-    an SSH channel (remote) — one host at a time. Unlike Codex there's no localhost
+    """Drives `copilot login` (GitHub OAuth **device flow**) on a pty (local) or
+    an SSH channel's pty (remote, through _SshPty) — one host at a time. Unlike Codex there's no localhost
     callback and no paste-back: we capture the device URL + user code, the CLI polls
     GitHub itself, and we complete when it reports success. We also auto-answer the
     plaintext-token '(y/N)' prompt (shown when there's no OS keychain, e.g. over SSH).
@@ -680,8 +714,7 @@ class CopilotLoginManager:
     def reset(self):
         self.host = "local"
         self.remote = False
-        self.proc = None
-        self.chan = None
+        self.proc = None  # a ptyproc process, or _SshPty on a remote host
         self.buffer = ""
         self.url = None
         self.code = None
@@ -695,9 +728,7 @@ class CopilotLoginManager:
 
     def _write(self, s):
         try:
-            if self.remote and self.chan is not None:
-                self.chan.sendall(s.encode())
-            elif self.proc is not None:
+            if self.proc is not None:
                 self.proc.write(s.encode())
         except Exception:
             pass
@@ -727,15 +758,14 @@ class CopilotLoginManager:
                         # not the non-interactive one — a plain `bash -lc` gets the wrong node
                         # and Copilot fails with "no platform package found".
                         chan.exec_command("${SHELL:-bash} -ilc " + shlex.quote(shell))
-                    self.chan = chan
-                    threading.Thread(target=self._reader_remote, args=(chan,), daemon=True).start()
+                    self.proc = _SshPty(chan)
                 else:
                     missing = _missing_cli("GitHub Copilot CLI", copilot_bin())
                     if missing:
                         self.stage, self.error = "error", missing
                         return
                     self.proc = _pty_spawn([copilot_bin(), "login"])
-                    threading.Thread(target=self._reader_local, args=(self.proc,), daemon=True).start()
+                threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
             except Exception as e:
                 self.stage = "error"
                 self.error = str(e)
@@ -759,7 +789,7 @@ class CopilotLoginManager:
         if (self._logged_in() or "Signed in successfully" in self.buffer) and self.stage != "done":
             self.stage = "done"
 
-    def _reader_local(self, proc):
+    def _reader(self, proc):
         while True:
             chunk = proc.read(4096)
             with self.lock:
@@ -779,41 +809,11 @@ class CopilotLoginManager:
                 proc.close()
                 return
 
-    def _reader_remote(self, chan):
-        while True:
-            try:
-                chunk = chan.recv(4096)
-            except Exception:
-                chunk = b""
-            with self.lock:
-                if self.chan is not chan:
-                    return
-                if chunk:
-                    self._absorb(chunk.decode("utf-8", "replace"))
-                    continue
-            with self.lock:
-                if self.chan is not chan:
-                    return
-                try:
-                    code = chan.recv_exit_status()
-                except Exception:
-                    code = 0
-                self.stage = "done" if (self.stage == "done" or self._logged_in() or code == 0) else "error"
-                if self.stage == "error":
-                    self.error = self.buffer[-400:].strip()
-                self.chan = None
-                return
-
     def cancel_locked(self):
         if self.proc:
             self.proc.kill(group=True)
             self.proc.close()
-        if self.chan is not None:
-            try:
-                self.chan.close()
-            except Exception:
-                pass
-        self.proc = self.chan = None
+        self.proc = None
 
     def cancel(self):
         with self.lock:

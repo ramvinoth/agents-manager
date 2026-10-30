@@ -17,8 +17,9 @@ The contract is the same on both backends:
 import os
 import signal
 import struct
-import subprocess
 import time
+
+from viewer.procctl import kill_tree
 
 
 def spawn(argv, cols, rows, cwd=None, env=None, fallback=None):
@@ -108,13 +109,10 @@ class _PosixPty:
     def kill(self, group=False):
         """SIGKILL the child; group=True takes its whole process group (the
         child is a session leader), so helpers it started die with it."""
+        if group:
+            kill_tree(self.pid)
+            return
         try:
-            if group:
-                try:
-                    os.killpg(os.getpgid(self.pid), signal.SIGKILL)
-                    return
-                except Exception:
-                    pass
             os.kill(self.pid, signal.SIGKILL)
         except OSError:
             pass
@@ -178,13 +176,12 @@ class _WinPty:
 
     def kill(self, group=False):
         """TerminateProcess the child; group=True takes its whole process tree."""
+        if group:
+            kill_tree(self.pid)
+            return
         try:
-            if group:
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.pid)],
-                               capture_output=True, timeout=15)
-            else:
-                os.kill(self.pid, signal.SIGTERM)  # TerminateProcess on Windows
-        except (OSError, subprocess.SubprocessError):
+            os.kill(self.pid, signal.SIGTERM)  # TerminateProcess on Windows
+        except OSError:
             pass
 
     def wait(self):

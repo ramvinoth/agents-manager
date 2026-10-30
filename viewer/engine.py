@@ -8,7 +8,6 @@ import re
 import secrets
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +16,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from viewer.agents import agent_env, find_agent_bin
 from viewer.config import (
     CHAT_JOBS, CHAT_LOCK, CHAT_IDLE_TIMEOUT, CHAT_TIMEOUT, CLAUDE_DIR, PERM_TIMEOUT, PORT, QUESTION_TIMEOUT, VIEWER_TOKEN_FILE, session_plugin_dirs, claude_bin, claude_version_gate, invalidate_claude_bin_cache, transcript_path,
 )
@@ -24,7 +24,7 @@ from viewer.browser import (
     ensure_mcp_browser,
 )
 from viewer.login import (
-    auth_status, codex_bin,
+    auth_status, codex_bin, copilot_bin,
 )
 from viewer.remote import (
     SSH, _remote_expand, remote_capabilities, remote_claude_bin, remote_codex_bin, remote_copilot_bin, remote_extract_cwd, remote_fs, remote_full_path, remote_list_sessions, remote_mcp_save, remote_projects, remote_resolve, remote_run_python, remote_run_shell,
@@ -36,7 +36,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import codemap, db, inference_health, orglogic, project_plugins, resume
+from viewer import codemap, db, procctl, inference_health, orglogic, project_plugins, resume
 from viewer import live as live_events  # `live` is a local name in several functions
 from viewer.sessions import compute_session_summary, last_cwd_in_file
 
@@ -603,16 +603,16 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
         proc = None
         err = ""
         try:
-            env = dict(os.environ)
-            env["PATH"] = f"{Path.home()}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
-            cmd = ["pi", "-p", "--offline", "-ne", "-ns", "-np", "--no-themes"]
+            env = agent_env()
+            cmd = [find_agent_bin("pi") or "pi", "-p", "--offline", "-ne", "-ns", "-np", "--no-themes"]
             if re.fullmatch(r"[A-Za-z0-9._-]+", provider or ""):
                 cmd += ["--provider", provider]
             if re.fullmatch(r"[A-Za-z0-9._/-]+", model or ""):
                 cmd += ["--model", model]
             cmd += ["--session", session_uuid, message]
             proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    **procctl.interruptible_kwargs())
             with CHAT_LOCK:
                 job["proc"] = proc
             out, e = proc.communicate(timeout=CHAT_TIMEOUT)
@@ -621,10 +621,7 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
                 job["returncode"] = proc.returncode
                 job["stdout"] = (out or "")[-4000:]
         except subprocess.TimeoutExpired:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            procctl.kill(proc)
             err = "pi run timed out"
             with CHAT_LOCK:
                 job["returncode"] = -1
@@ -712,11 +709,11 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
                     job["returncode"] = proc.returncode
                     job["stdout"] = (out or "")[-4000:]
             else:
-                env = dict(os.environ)
-                env["PATH"] = f"{Path.home()}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
+                env = agent_env()
                 cmd[0] = codex_bin()
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
-                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
                     job["proc"] = proc
                 out, e = proc.communicate(timeout=CHAT_TIMEOUT)
@@ -725,10 +722,7 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
                     job["returncode"] = proc.returncode
                     job["stdout"] = (out or "")[-4000:]
         except subprocess.TimeoutExpired:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            procctl.kill(proc)
             err = "codex run timed out"
             with CHAT_LOCK:
                 job["returncode"] = -1
@@ -799,15 +793,16 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                     job["returncode"] = proc.returncode
                     job["stdout"] = (out or "")[-4000:]
             else:
-                env = dict(os.environ)
-                env["PATH"] = f"{Path.home()}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
+                env = agent_env()
                 try:  # per-host env vars (e.g. GH_TOKEN) so Copilot can authenticate
                     from viewer.hostenv import host_env
                     env.update(host_env(host))
                 except Exception:
                     pass
+                cmd[0] = copilot_bin()
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
-                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
                     job["proc"] = proc
                 out, e = proc.communicate(timeout=CHAT_TIMEOUT)
@@ -816,10 +811,7 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                     job["returncode"] = proc.returncode
                     job["stdout"] = (out or "")[-4000:]
         except subprocess.TimeoutExpired:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            procctl.kill(proc)
             err = "copilot run timed out"
             with CHAT_LOCK:
                 job["returncode"] = -1
@@ -909,16 +901,16 @@ def start_copilot_new(message, cwd, host="local"):
     from viewer.adapters import _root
     root = _root("copilot")
     before = {p.name for p in root.iterdir()} if root.is_dir() else set()
-    env = dict(os.environ)
-    env["PATH"] = f"{Path.home()}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
+    env = agent_env()
     try:
         from viewer.hostenv import host_env
         env.update(host_env("local"))
     except Exception:
         pass
     try:
-        proc = subprocess.Popen(["copilot", "-p", message, "--allow-all-tools"], cwd=cwd, env=env,
-                                text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen([copilot_bin(), "-p", message, "--allow-all-tools"], cwd=cwd, env=env,
+                                text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                **procctl.interruptible_kwargs())
     except Exception:
         return None
 
@@ -1689,8 +1681,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         proc = None
         stderr_buf = []
         try:
-            env = dict(os.environ)
-            env["PATH"] = f"{Path.home()}/.local/bin:" + env.get("PATH", "")
+            env = agent_env()
             # The session's name, for tools that sign their edits with it (a
             # project plugin's MCP server, e.g. Sift's "edited by" line).
             env["HARMAN_SESSION_LABEL"] = job.get("label") or ""
@@ -1777,7 +1768,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             else:
                 proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE)
+                                        stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
             with CHAT_LOCK:
                 job["proc"] = proc
                 job["stdin_open"] = True
@@ -1855,10 +1846,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             print(f"  ⚠ run {session_id[:8]} failed: {type(e).__name__}: {e}")
             traceback.print_exc()
             if proc:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+                procctl.kill(proc)
         finally:
             # Must never raise: the running/queue cleanup below has to run so the
             # session doesn't stay wedged as "busy" after the process exits.
@@ -2029,10 +2017,7 @@ def _watch_endpoint(job, proc, base_url, model, api_key=""):
                                 time.time() - since)
         if verdict and job["running"] and job["model_wait"].since is not None:
             job["endpoint_issue"] = verdict
-            try:
-                proc.terminate()
-            except OSError:
-                pass
+            procctl.terminate(proc)
             return
 
 
@@ -2076,7 +2061,8 @@ def _persist_queue(session_id, backlog):
 
 
 def interrupt_chat(session_id):
-    """Abort the running turn (Esc in the TUI): SIGINT, escalating if needed.
+    """Abort the running turn (Esc in the TUI): an interrupt (SIGINT, or
+    CTRL_BREAK on Windows), escalating to terminate and then a tree kill.
     Queued messages are dropped — an interrupt means 'stop what's planned'."""
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -2087,19 +2073,16 @@ def interrupt_chat(session_id):
         job["queue"] = []
         job["stdin_open"] = False
     if proc:
-        try:
-            proc.send_signal(signal.SIGINT)
-        except OSError:
-            pass
+        procctl.interrupt(proc)
 
-        def escalate(sig_fn):
+        def escalate(stop):
             try:
                 if proc.poll() is None:
-                    sig_fn()
+                    stop(proc)
             except OSError:
                 pass
-        threading.Timer(4.0, lambda: escalate(proc.terminate)).start()
-        threading.Timer(8.0, lambda: escalate(proc.kill)).start()
+        threading.Timer(4.0, escalate, (procctl.terminate,)).start()
+        threading.Timer(8.0, escalate, (procctl.kill,)).start()
     return True
 
 
