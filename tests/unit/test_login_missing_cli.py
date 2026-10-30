@@ -2,7 +2,7 @@
 (2026-10-17: a customer box had no claude; the forked child failed exec, fell
 back into a copy of the server, and the browser sat at "Starting login…")."""
 import os
-import time
+import threading
 import unittest
 from unittest import mock
 
@@ -17,25 +17,31 @@ class MissingCliTest(unittest.TestCase):
         d = m.poll()
         self.assertEqual(d["stage"], "error")
         self.assertIn("not installed", d["error"])
-        self.assertIsNone(m.pid)
+        self.assertIsNone(m.proc)
 
-    def test_failed_exec_exits_child_with_reason(self):
-        pid, fd = login._pty_spawn(["/nonexistent/x"])
-        out = b""
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            try:
-                chunk = os.read(fd, 512)
-            except OSError:
-                break
-            if not chunk:
-                break
-            out += chunk
-        _, status = os.waitpid(pid, 0)
-        os.close(fd)
-        self.assertEqual(os.waitstatus_to_exitcode(status), 127)
-        self.assertIn(b"Could not start /nonexistent/x", out)
+    @unittest.skipIf(os.name == "nt", "stty is POSIX; ConPTY sizing is covered in test_ptyproc")
+    def test_sign_in_pty_is_wide_enough_not_to_wrap_the_url(self):
+        # A failed exec (exit 127 + reason) is ptyproc's contract, tested there.
+        # The child waits for a line so it reads the size after spawn set it.
+        proc = login._pty_spawn(["sh", "-c", "read x; stty size"])
+        proc.write(b"\n")
+        out = []
 
+        def drain():
+            while True:
+                chunk = proc.read(512)
+                if not chunk:
+                    return
+                out.append(chunk)
+
+        t = threading.Thread(target=drain, daemon=True)
+        t.start()
+        t.join(10)
+        if t.is_alive():
+            proc.kill()
+        self.assertEqual(proc.wait(), 0)
+        proc.close()
+        self.assertIn(b"50 2000", b"".join(out))
 
 if __name__ == "__main__":
     unittest.main()

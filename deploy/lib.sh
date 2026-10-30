@@ -54,12 +54,6 @@ HM_PREFIX="${HM_PREFIX:-/opt/harman}"
 HM_RELEASES="$HM_PREFIX/releases"
 HM_CURRENT="$HM_PREFIX/current"
 
-# Every third-party Python module the server imports. paramiko backs remote
-# hosts (terminal / files / sessions over SSH); PyJWT signs the APNs token;
-# tomli/tomli-w read and write Codex's config.toml (tomllib is stdlib only from
-# 3.11, and the system python on macOS is 3.9).
-HM_PY_DEPS="psycopg2-binary paramiko PyJWT tomli tomli-w pynacl"
-
 # Python deps live in a venv INSIDE each app dir (releases/vX/.venv), never in
 # the system/user site: PEP 668 distros (Ubuntu 24.04+, Homebrew Python) refuse
 # `pip install --user`, and a per-release venv means a rollback also rolls back
@@ -157,7 +151,9 @@ hm_pyenv() {
     python3 -m venv "$HM_APP_DIR/.venv"
   fi
   hm_log "Installing Python deps into the venv…"
-  "$py" -m pip install --quiet --disable-pip-version-check $HM_PY_DEPS
+  # Every third-party module the server imports: deploy/requirements.txt.
+  "$py" -m pip install --quiet --disable-pip-version-check \
+    -r "$HM_APP_DIR/deploy/requirements.txt"
   # Optional: tree-sitter grammars for the code Map lens. Wheels exist for the
   # common platforms; where they do not, the Map says "install code map" and
   # nothing else is affected — so a failure here never fails the install.
