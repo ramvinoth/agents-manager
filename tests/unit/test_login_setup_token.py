@@ -115,7 +115,7 @@ class SetupTokenFlowTest(unittest.TestCase):
         self.assertEqual(d["stage"], "url", d)
         self.assertEqual(d["url"], URL)
         self.assertTrue(m.submit_code("dummy-code#dummy-state"))
-        d = self._wait(m, lambda d: d["stage"] in ("done", "error") and m.pid is None)
+        d = self._wait(m, lambda d: d["stage"] in ("done", "error") and m.proc is None)
         return m, d
 
     def _wait(self, m, cond, timeout=10):

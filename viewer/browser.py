@@ -1,24 +1,21 @@
 """viewer.browser — headless-Chrome/CDP control, the browser & terminal
 WebSocket engines, and MCP-CDP wiring."""
 import base64
-import fcntl
 import hashlib
 import json
 import os
 import posixpath
-import pty
 import re
 import shlex
 import shutil
-import signal
 import socket
 import struct
 import subprocess
-import termios
 import threading
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
+from viewer import ptyproc
 from viewer.remote import (
     SSH, remote_run_python,
 )
@@ -931,7 +928,7 @@ def dispatch_input_fast(cdp, events):
 # ===== Live terminal (PTY over a WebSocket) =====
 #
 # A real interactive shell per host, streamed to xterm.js in the browser.
-# Local uses pty.fork()+shell (same primitive as the login flow); remote uses
+# Local uses viewer.ptyproc + the login shell (same seam as the login flow); remote uses
 # paramiko invoke_shell() over the pooled SSH connection. The transport is a
 # WebSocket the plain HTTP server upgrades in-place — server→client frames are
 # raw PTY output (binary), client→server frames are JSON control (input/resize).
@@ -1051,30 +1048,21 @@ class TerminalSession:
                 self.chan = c["client"].invoke_shell(term="xterm-256color", width=cols, height=rows)
             self.chan.settimeout(None)
         else:
-            self.pid, self.fd = pty.fork()
-            if self.pid == 0:
-                os.environ["TERM"] = "xterm-256color"
-                try:  # per-host env vars (e.g. GH_TOKEN) — set in the child, never echoed
-                    from viewer.hostenv import host_env
-                    os.environ.update(host_env("local"))
-                except Exception:
-                    pass
-                shell = os.environ.get("SHELL") or "/bin/bash"
-                try:
-                    os.execvp(shell, [shell, "-l"])
-                except Exception:
-                    try:
-                        os.execvp("/bin/sh", ["/bin/sh"])
-                    finally:
-                        os._exit(127)  # never fall back into a second copy of the server
-            self.resize(cols, rows)
+            env = {**os.environ, "TERM": "xterm-256color"}
+            try:  # per-host env vars (e.g. GH_TOKEN) — given to the child, never echoed
+                from viewer.hostenv import host_env
+                env.update(host_env("local"))
+            except Exception:
+                pass
+            argv, fallback = ptyproc.login_shell(env)
+            self.proc = ptyproc.spawn(argv, cols, rows, env=env, fallback=fallback)
 
     def read(self):
         """Blocking read of terminal output; b'' on EOF."""
         try:
             if self.remote:
                 return self.chan.recv(65536)
-            return os.read(self.fd, 65536)
+            return self.proc.read(65536)
         except OSError:
             return b""
 
@@ -1085,7 +1073,7 @@ class TerminalSession:
             if self.remote:
                 self.chan.send(data)
             else:
-                os.write(self.fd, data)
+                self.proc.write(data)
         except OSError:
             pass
 
@@ -1095,7 +1083,7 @@ class TerminalSession:
             if self.remote:
                 self.chan.resize_pty(width=cols, height=rows)
             else:
-                fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                self.proc.resize(cols, rows)
         except OSError:
             pass
 
@@ -1104,9 +1092,9 @@ class TerminalSession:
             if self.remote:
                 self.chan.close()
             else:
-                os.close(self.fd)
-                os.kill(self.pid, signal.SIGKILL)
-                os.waitpid(self.pid, 0)
+                self.proc.close()
+                self.proc.kill()
+                self.proc.wait()
         except OSError:
             pass
 

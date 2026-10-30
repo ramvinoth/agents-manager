@@ -1,0 +1,13 @@
+# Every third-party Python module the server imports — the one list the
+# installer (deploy/lib.sh hm_pyenv) and CI both install from.
+# paramiko backs remote hosts (terminal / files / sessions over SSH); PyJWT
+# signs the APNs token; tomli/tomli-w read and write Codex's config.toml
+# (tomllib is stdlib only from 3.11, and the system python on macOS is 3.9);
+# pywinpty is the Windows pseudo-terminal (ConPTY) behind viewer/ptyproc.py.
+psycopg2-binary
+paramiko
+PyJWT
+tomli
+tomli-w
+pynacl
+pywinpty; sys_platform == "win32"

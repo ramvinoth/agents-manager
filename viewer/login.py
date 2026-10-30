@@ -1,18 +1,14 @@
 """viewer.login — Claude, Codex, Copilot and MCP-server OAuth login managers and auth status."""
-import fcntl
 import json
 import os
 import posixpath
-import pty
 import re
 import shlex
 import shutil
-import signal
-import struct
-import termios
 import threading
 import time
 from urllib.parse import urlparse
+from viewer import ptyproc
 from viewer.config import (
     ANSI_RE, CREDENTIALS_FILE, VIEWER_TOKEN_FILE, claude_bin,
 )
@@ -48,23 +44,11 @@ def auth_status():
 
 
 def _pty_spawn(argv, cols=2000, cwd=None):
-    """Fork argv onto a fresh pty; returns (pid, fd). The child must never
-    return into the server: a failed exec (binary missing) would otherwise run
-    on as a second copy of the viewer holding the pty open, and the flow would
-    sit at "starting" forever. Instead it prints a plain reason and exits 127,
-    which the reader turns into an error stage."""
-    pid, fd = pty.fork()
-    if pid == 0:
-        try:
-            if cwd:
-                os.chdir(cwd)
-            os.execvp(argv[0], argv)
-        except BaseException as e:
-            os.write(1, f"Could not start {argv[0]}: {e}\n".encode())
-        finally:
-            os._exit(127)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, cols, 0, 0))
-    return pid, fd
+    """Start a sign-in CLI on a fresh 50-row pty, wide (2000 columns by default)
+    so the OAuth URL is never hard-wrapped. A CLI that cannot start reads
+    "Could not start ..." and exits 127 (viewer.ptyproc's contract), which the
+    reader turns into an error stage instead of sitting at "starting"."""
+    return ptyproc.spawn(argv, cols, 50, cwd=cwd)
 
 
 def _missing_cli(name, binpath):
@@ -109,8 +93,7 @@ class LoginManager:
         self.reset()
 
     def reset(self):
-        self.pid = None
-        self.fd = None
+        self.proc = None
         self.screen = Screen(cols=self.COLS)
         self.url = None
         self.stage = "idle"   # idle | starting | url | done | error
@@ -121,7 +104,7 @@ class LoginManager:
 
     def start(self):
         with self.lock:
-            if self.stage in ("starting", "url") and self.pid:
+            if self.stage in ("starting", "url") and self.proc:
                 return  # already in progress; frontend will pick up the URL
             self.cancel_locked()
             self.reset()
@@ -131,8 +114,8 @@ class LoginManager:
                 return
             self.stage = "starting"
             self.started = time.time()
-            self.pid, self.fd = _pty_spawn([claude_bin(), "setup-token"], cols=self.COLS)
-            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
+            self.proc = _pty_spawn([claude_bin(), "setup-token"], cols=self.COLS)
+            threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
     def _finish(self, token):
         """Save the captured token and end the flow — done only if it is on disk."""
@@ -142,14 +125,11 @@ class LoginManager:
             self.stage = "error"
             self.error = "Harman read the token but could not save it \u2014 try again."
 
-    def _reader(self, pid, fd):
+    def _reader(self, proc):
         while True:
-            try:
-                chunk = os.read(fd, 4096)
-            except OSError:
-                chunk = b""
+            chunk = proc.read(4096)
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return  # superseded by a newer attempt
                 if chunk:
                     if self.stage in ("done", "error"):
@@ -166,29 +146,25 @@ class LoginManager:
                     if tok:
                         self._finish(tok)
                         try:
-                            os.write(fd, b"\r")
+                            proc.write(b"\r")
                         except OSError:
                             pass
-                        threading.Timer(3.0, self._kill_if_current, args=(pid,)).start()
+                        threading.Timer(3.0, self._kill_if_current, args=(proc,)).start()
                     else:
                         # Auto-acknowledge any "press enter to continue" prompts.
                         recent = self.screen.text(since=self.acked_seq).lower()
                         if "press enter" in recent or "press any key" in recent:
                             self.acked_seq = self.screen.seq
                             try:
-                                os.write(fd, b"\r")
+                                proc.write(b"\r")
                             except OSError:
                                 pass
                     continue
             # EOF: process exited
-            try:
-                _, status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                status = 0
+            code = proc.wait()
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
-                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
                 if self.stage not in ("done", "error"):
                     tok = _drawn_match(self.screen, _TOKEN_RE, final=True)
                     if tok:
@@ -199,12 +175,8 @@ class LoginManager:
                         self.stage = "error"
                         self.error = NO_TOKEN_ERROR if code == 0 else (
                             _redact(self.screen.text()[-500:].strip()) or f"Claude Code exited with code {code}.")
-                self.pid = None
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self.fd = None
+                self.proc = None
+                proc.close()
                 return
 
     def _save_token(self, token):
@@ -222,22 +194,19 @@ class LoginManager:
         except Exception:
             return False
 
-    def _kill_if_current(self, pid):
+    def _kill_if_current(self, proc):
         with self.lock:
-            if self.pid == pid:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            if self.proc is proc:
+                proc.kill()
 
     def submit_code(self, code):
         with self.lock:
-            if not self.fd or self.stage not in ("url", "starting"):
+            if not self.proc or self.stage not in ("url", "starting"):
                 return False
-            fd = self.fd
+            proc = self.proc
             try:
                 self.code_seq = self.screen.seq
-                os.write(fd, code.encode())
+                proc.write(code.encode())
             except OSError:
                 return False
 
@@ -249,10 +218,10 @@ class LoginManager:
             for delay in (0.3, 1.2):
                 time.sleep(delay)
                 with self.lock:
-                    if self.fd != fd or self.stage in ("done", "error"):
+                    if self.proc is not proc or self.stage in ("done", "error"):
                         return
                     try:
-                        os.write(fd, b"\r")
+                        proc.write(b"\r")
                     except OSError:
                         return
 
@@ -260,18 +229,10 @@ class LoginManager:
         return True
 
     def cancel_locked(self):
-        if self.pid:
-            try:
-                os.kill(self.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
-        self.pid = None
-        self.fd = None
+        if self.proc:
+            self.proc.kill()
+            self.proc.close()
+        self.proc = None
 
     def cancel(self):
         with self.lock:
@@ -323,8 +284,7 @@ class CodexLoginManager:
         self.reset()
 
     def reset(self):
-        self.pid = None
-        self.fd = None
+        self.proc = None
         self.buffer = ""
         self.url = None
         self.stage = "idle"  # idle | starting | url | done | error
@@ -333,7 +293,7 @@ class CodexLoginManager:
 
     def start(self):
         with self.lock:
-            if self.stage in ("starting", "url") and self.pid:
+            if self.stage in ("starting", "url") and self.proc:
                 return
             if _codex_logged_in():
                 # Already signed in — `codex login` would wipe auth.json to begin
@@ -349,17 +309,14 @@ class CodexLoginManager:
                 return
             self.stage = "starting"
             self.started = time.time()
-            self.pid, self.fd = _pty_spawn([codex_bin(), "login"])
-            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
+            self.proc = _pty_spawn([codex_bin(), "login"])
+            threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
-    def _reader(self, pid, fd):
+    def _reader(self, proc):
         while True:
-            try:
-                chunk = os.read(fd, 4096)
-            except OSError:
-                chunk = b""
+            chunk = proc.read(4096)
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
                 if chunk:
                     self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
@@ -371,25 +328,17 @@ class CodexLoginManager:
                     if _codex_logged_in() and self.stage != "done":
                         self.stage = "done"
                     continue
-            try:
-                _, status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                status = 0
+            code = proc.wait()
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
-                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
                 if self.stage == "done" or _codex_logged_in() or code == 0:
                     self.stage = "done"
                 else:
                     self.stage = "error"
                     self.error = _redact(self.buffer[-500:].strip())
-                self.pid = None
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self.fd = None
+                self.proc = None
+                proc.close()
                 return
 
     def submit(self, callback_url):
@@ -417,23 +366,11 @@ class CodexLoginManager:
         return _codex_logged_in()
 
     def cancel_locked(self):
-        if self.pid:
-            # pty.fork makes the child a session leader — kill the whole group so
-            # codex's localhost:1455 callback server dies with it.
-            try:
-                os.killpg(os.getpgid(self.pid), signal.SIGKILL)
-            except Exception:
-                try:
-                    os.kill(self.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
-        self.pid = None
-        self.fd = None
+        if self.proc:
+            # Kill the whole group so codex's localhost:1455 callback server dies with it.
+            self.proc.kill(group=True)
+            self.proc.close()
+        self.proc = None
 
     def cancel(self):
         with self.lock:
@@ -470,8 +407,7 @@ class McpLoginManager:
         self.reset()
 
     def reset(self):
-        self.pid = None
-        self.fd = None
+        self.proc = None
         self.buffer = ""
         self.url = None
         self.name = ""
@@ -490,7 +426,7 @@ class McpLoginManager:
             argv += ["--settings", json.dumps({"enabledMcpjsonServers": [name]})]
         argv += ["mcp", "login", name, "--no-browser"]
         with self.lock:
-            if self.stage in ("starting", "url") and self.pid and self.name == name:
+            if self.stage in ("starting", "url") and self.proc and self.name == name:
                 return
             self.cancel_locked()
             self.reset()
@@ -499,17 +435,14 @@ class McpLoginManager:
             if missing:
                 self.stage, self.error = "error", missing
                 return
-            self.pid, self.fd = _pty_spawn(argv, cols=4000, cwd=cwd)
-            threading.Thread(target=self._reader, args=(self.pid, self.fd), daemon=True).start()
+            self.proc = _pty_spawn(argv, cols=4000, cwd=cwd)
+            threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
-    def _reader(self, pid, fd):
+    def _reader(self, proc):
         while True:
-            try:
-                chunk = os.read(fd, 4096)
-            except OSError:
-                chunk = b""
+            chunk = proc.read(4096)
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
                 if chunk:
                     self.buffer += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
@@ -517,14 +450,10 @@ class McpLoginManager:
                     if m:
                         self.url, self.stage = m.group(1), "url"
                     continue
-            try:
-                _, status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                status = 0
+            code = proc.wait()
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
-                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
                 if code == 0:
                     self.stage = "done"
                 else:
@@ -532,12 +461,8 @@ class McpLoginManager:
                     # Drop the authorize URL and any pasted code: neither belongs on a screen.
                     tail = re.sub(r"https://\S+", "", self.buffer[-500:]).strip()
                     self.error = tail.splitlines()[-1] if tail else "Sign-in failed."
-                self.pid = None
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self.fd = None
+                self.proc = None
+                proc.close()
                 return
 
     def submit(self, redirect_url):
@@ -548,39 +473,28 @@ class McpLoginManager:
         if u.scheme not in ("http", "https") or "code=" not in u.query:
             return False
         with self.lock:
-            if not self.fd or self.stage != "url":
+            if not self.proc or self.stage != "url":
                 return False
-            fd = self.fd
+            proc = self.proc
             try:
-                os.write(fd, redirect_url.strip().encode())
+                proc.write(redirect_url.strip().encode())
             except OSError:
                 return False
         time.sleep(0.3)
         with self.lock:
-            if self.fd == fd:
+            if self.proc is proc:
                 try:
-                    os.write(fd, b"\r")
+                    proc.write(b"\r")
                 except OSError:
                     pass
         return True
 
     def cancel_locked(self):
-        if self.pid:
+        if self.proc:
             # Kill the group so the CLI's localhost callback listener dies with it.
-            try:
-                os.killpg(os.getpgid(self.pid), signal.SIGKILL)
-            except Exception:
-                try:
-                    os.kill(self.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
-        self.pid = None
-        self.fd = None
+            self.proc.kill(group=True)
+            self.proc.close()
+        self.proc = None
 
     def cancel(self):
         with self.lock:
@@ -766,8 +680,7 @@ class CopilotLoginManager:
     def reset(self):
         self.host = "local"
         self.remote = False
-        self.pid = None
-        self.fd = None
+        self.proc = None
         self.chan = None
         self.buffer = ""
         self.url = None
@@ -784,8 +697,8 @@ class CopilotLoginManager:
         try:
             if self.remote and self.chan is not None:
                 self.chan.sendall(s.encode())
-            elif self.fd is not None:
-                os.write(self.fd, s.encode())
+            elif self.proc is not None:
+                self.proc.write(s.encode())
         except Exception:
             pass
 
@@ -821,8 +734,8 @@ class CopilotLoginManager:
                     if missing:
                         self.stage, self.error = "error", missing
                         return
-                    self.pid, self.fd = _pty_spawn([copilot_bin(), "login"])
-                    threading.Thread(target=self._reader_local, args=(self.pid, self.fd), daemon=True).start()
+                    self.proc = _pty_spawn([copilot_bin(), "login"])
+                    threading.Thread(target=self._reader_local, args=(self.proc,), daemon=True).start()
             except Exception as e:
                 self.stage = "error"
                 self.error = str(e)
@@ -846,35 +759,24 @@ class CopilotLoginManager:
         if (self._logged_in() or "Signed in successfully" in self.buffer) and self.stage != "done":
             self.stage = "done"
 
-    def _reader_local(self, pid, fd):
+    def _reader_local(self, proc):
         while True:
-            try:
-                chunk = os.read(fd, 4096)
-            except OSError:
-                chunk = b""
+            chunk = proc.read(4096)
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
                 if chunk:
                     self._absorb(chunk.decode("utf-8", "replace"))
                     continue
-            try:
-                _, status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                status = 0
+            code = proc.wait()
             with self.lock:
-                if self.pid != pid:
+                if self.proc is not proc:
                     return
-                code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
                 self.stage = "done" if (self.stage == "done" or self._logged_in() or code == 0) else "error"
                 if self.stage == "error":
                     self.error = self.buffer[-400:].strip()
-                self.pid = None
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                self.fd = None
+                self.proc = None
+                proc.close()
                 return
 
     def _reader_remote(self, chan):
@@ -903,25 +805,15 @@ class CopilotLoginManager:
                 return
 
     def cancel_locked(self):
-        if self.pid:
-            try:
-                os.killpg(os.getpgid(self.pid), signal.SIGKILL)
-            except Exception:
-                try:
-                    os.kill(self.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
+        if self.proc:
+            self.proc.kill(group=True)
+            self.proc.close()
         if self.chan is not None:
             try:
                 self.chan.close()
             except Exception:
                 pass
-        self.pid = self.fd = self.chan = None
+        self.proc = self.chan = None
 
     def cancel(self):
         with self.lock:
