@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type LearnedSkill, type OrgProject } from "../api/client"

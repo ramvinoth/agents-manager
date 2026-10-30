@@ -10,7 +10,8 @@
  * starts at `start` (the chat's current folder, or home).
  */
 import React, { useEffect, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type FileEntry } from "../api/client"
 import { fsScope, HOST_LOCATION } from "../lib/location"
 import { joinPath, sortEntries } from "../lib/files"

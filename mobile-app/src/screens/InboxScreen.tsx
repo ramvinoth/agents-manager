@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, Text, TextInput, View } from "react-native"
+import { Pressable, TouchableOpacity } from "../components/Tracked"
 import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"

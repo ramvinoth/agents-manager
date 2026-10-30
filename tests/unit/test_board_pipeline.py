@@ -323,6 +323,18 @@ def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
                              {"card": 42})]
 
 
+def test_agent_reply_on_an_unbound_card_still_pushes_the_owner(board):
+    """An in-app feedback card has no session; an agent answering it must still
+    reach the owner (card 130) — there is simply nobody to wake."""
+    board.db.card = dict(BOARD_CARD, session_id="", title="Feedback · Profile: slow")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "Fixed in the next build",
+                                          "author": "session:bob"}, "session:bob"),
+                    "owner", "ic", acting_session="sess-2")
+    assert board.wakes == [] and board.db.attention == []
+    assert board.pushes == [("Card 42 · Feedback · Profile: slow",
+                             "session:bob: Fixed in the next build", {"card": 42})]
+
+
 def test_human_comment_wakes_without_push(board):
     actions.execute(_it("card_comment", {"card_id": 42, "body": "go ahead"}),
                     "owner", "")

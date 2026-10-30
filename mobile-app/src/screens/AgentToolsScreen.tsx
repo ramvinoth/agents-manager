@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, FlatList, Modal, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, Modal, ScrollView, Text, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

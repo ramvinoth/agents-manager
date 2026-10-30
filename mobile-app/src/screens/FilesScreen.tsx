@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Dimensions, FlatList, PanResponder, RefreshControl, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Dimensions, FlatList, PanResponder, RefreshControl, Text, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import * as DocumentPicker from "expo-document-picker"
 import * as ImagePicker from "expo-image-picker"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"

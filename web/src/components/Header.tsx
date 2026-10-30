@@ -285,7 +285,7 @@ export function Header() {
       {feedbackOpen && (
         <TextFieldDialog
           title="Send feedback"
-          description="What is confusing, slow, missing or never used? Agents read every note in the usage report and turn it into work on the board."
+          description="What is confusing, slow, missing or never used? Each note becomes a card in your board's Feedback column; an agent answers there and you get its reply as a notification."
           value=""
           saveLabel="Send"
           clearable={false}

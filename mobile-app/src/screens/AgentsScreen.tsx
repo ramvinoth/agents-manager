@@ -19,9 +19,9 @@ import {
   ScrollView,
   SectionList,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

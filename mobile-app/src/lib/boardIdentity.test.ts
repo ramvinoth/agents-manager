@@ -76,6 +76,9 @@ function screen(initial: Route) {
   const native = Object.fromEntries(["ActivityIndicator", "FlatList", "Image", "KeyboardAvoidingView", "Pressable", "ScrollView", "Text", "TextInput", "TouchableOpacity", "View"].map(n => [n, n]))
   const modules: Record<string, any> = {
     react: { ...react, default: react },
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...native, Platform: { OS: "ios" }, Dimensions: { get: () => ({ width: 400 }) }, Animated: { Value: class {}, View: "Animated.View" }, PanResponder: { create: (handlers: any) => ({ panHandlers: handlers }) }, Alert: { alert: (...args: any[]) => alerts.push(args) } },
     "@react-navigation/native": { useFocusEffect: (fn: Function) => effect(passive, () => focused ? fn() : undefined, [fn, focused]) },
     "@react-navigation/elements": { useHeaderHeight: () => 40 },

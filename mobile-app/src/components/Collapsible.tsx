@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react"
-import { Pressable, Text, View } from "react-native"
+import { Text, View } from "react-native"
+import { Pressable } from "./Tracked"
 import { collapsePreview } from "../lib/collapse"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { UNSTABLE_usePreventRemove as usePreventRemove, useFocusEffect, type NavigationAction } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

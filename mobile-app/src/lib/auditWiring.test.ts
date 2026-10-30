@@ -32,6 +32,9 @@ function harness(path: string, props: Record<string, unknown> = {}) {
   }
   const modules: Record<string, unknown> = {
     react: { ...react, default: react },
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": Object.fromEntries(["ActivityIndicator", "Pressable", "SectionList", "ScrollView", "Text", "View"].map(name => [name, name])),
     "react-native-safe-area-context": { useSafeAreaInsets: () => ({ bottom: 0 }) },
     "../api/client": { api: { orgAudit: (filter: audit.AuditFilter, before?: number) => new Promise<audit.AuditPage>((resolve, reject) => calls.push({ filter, before, resolve, reject })) } },

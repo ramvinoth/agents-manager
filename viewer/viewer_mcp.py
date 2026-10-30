@@ -228,7 +228,7 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "limit": {"type": "integer", "description": "How many entries (default 100)."}}}},
     {"name": "usage_report",
-     "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Read it before proposing UI changes; cite it on the card.",
+     "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most tapped, with times seen), dead controls (on screen 20+ times, never tapped — candidates to remove, merge or move; web only: the phone reports taps, not what was on screen), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Each feedback note is also a card in the Feedback column of the feedback channel's board (intake_list: the app_feedback one) — answer it there with card_comment and the owner gets your reply as a push. Read it before proposing UI changes; cite it on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "days": {"type": "integer", "description": "Window in days (default 30)."}}}},
     {"name": "intake_list",

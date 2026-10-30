@@ -7,7 +7,8 @@
  * (a featured plugin like Microsoft 365) goes straight on to its sign-in.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Linking, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, Linking, Modal, ScrollView, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type MarketItem, type McpSignin } from "../api/client"
 import { filledValues, installNote, missingInput, scopes, signinRedirectProblem, SCOPE_LABEL, type InstallScope, type MarketKind } from "../lib/marketplace"
 import { userError } from "../lib/errors"

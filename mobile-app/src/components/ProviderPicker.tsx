@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
-import { ActivityIndicator, FlatList, Modal, SafeAreaView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, FlatList, Modal, SafeAreaView, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type Provider } from "../api/client"
 import { aiError, modelChoices, sameAI, switchAIProvider, type AIConfig, type AISelection, type ModelDiscovery } from "../lib/aiSelection"
 import { useTheme } from "../lib/useTheme"

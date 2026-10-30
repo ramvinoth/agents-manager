@@ -10,7 +10,8 @@
  * the canvas works wherever the rest of the app does. See lib/webBridge.ts.
  */
 import React, { useEffect, useMemo, useState } from "react"
-import { Linking, Pressable, Text, View } from "react-native"
+import { Linking, Text, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { HarmanWebView } from "../../modules/harman-webview/src"

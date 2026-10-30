@@ -6,7 +6,8 @@
  * Dismisses on backdrop tap, swipe-right, or toggling the icon again.
  */
 import React, { useEffect, useRef, useState } from "react"
-import { Animated, Dimensions, PanResponder, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native"
+import { Animated, Dimensions, PanResponder, StyleSheet, Text, View } from "react-native"
+import { Pressable, TouchableOpacity } from "./Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../lib/useTheme"
 import CapabilitiesPanel from "./CapabilitiesPanel"

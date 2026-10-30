@@ -13,7 +13,8 @@
  * `testPrefix` keeps the two hosts' testIDs distinct ("cap" / "drawer").
  */
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
 import { chatPluginsApply, pluginScopeNote } from "../lib/chatPlugins"
