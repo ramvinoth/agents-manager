@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { ActivityIndicator, Alert, FlatList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
 import { api, type Capabilities, type McpServer, type Plugin, type Skill } from "../api/client"
 import type { MarketKind } from "../lib/marketplace"
+import { chatPluginsApply, pluginScopeNote } from "../lib/chatPlugins"
 import { userError } from "../lib/errors"
 import { textFilter } from "../lib/textFilter"
 import { useTheme } from "../lib/useTheme"
@@ -26,11 +27,13 @@ import Icon from "./Icon"
 
 type Tab = "skills" | "mcp" | "plugins"
 
-export default function CapabilitiesPanel({ host, cwd, session, active = true, testPrefix }: {
+export default function CapabilitiesPanel({ host, cwd, session, agent = "claude", active = true, testPrefix }: {
   host: string
   cwd?: string
   /** Session rel path — lets the server include this session's attached plugin skills. */
   session?: string
+  /** The session's harness; plugins and "this chat" scope apply to Claude only. */
+  agent?: string
   /** Reload whenever this turns true (screen focus, drawer open). */
   active?: boolean
   testPrefix: "cap" | "drawer"
@@ -48,21 +51,23 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
 
   const load = useCallback(() => {
     setError("")
-    api.capabilities(host, cwd, session).then(setCaps).catch(e => { setCaps(null); setError(userError(e, "skills and tools")) })
-  }, [host, cwd, session])
+    api.capabilities(host, cwd, session, agent).then(setCaps).catch(e => { setCaps(null); setError(userError(e, "skills and tools")) })
+  }, [host, cwd, session, agent])
 
   useEffect(() => { if (active) load() }, [active, load])
 
   const id = (s: string) => `${testPrefix}-${s}`
-  // The server lists plugins only for a local Claude chat — the one place they
-  // (and "this chat" scope) apply, since they ride --plugin-dir on its runs.
+  // Plugins (and "this chat" scope) apply only to a local Claude chat, since
+  // they ride --plugin-dir on its runs; anywhere else the tab says why.
   const plugins = caps?.plugins
-  const chat = plugins && session ? session : undefined
+  const scope = { host, agent, session }
+  const chat = chatPluginsApply(scope) ? session : undefined
+  const pluginNote = pluginScopeNote(scope)
   const counts: Record<Tab, number> = {
     skills: caps?.skills.length ?? 0, mcp: caps?.mcp.length ?? 0,
     plugins: plugins?.filter(p => p.active).length ?? 0,
   }
-  const tabs: (readonly [Tab, string])[] = [["skills", "Skills"], ["mcp", "MCP tools"], ...(plugins ? [["plugins", "Plugins"] as const] : [])]
+  const tabs: (readonly [Tab, string])[] = [["skills", "Skills"], ["mcp", "MCP tools"], ["plugins", "Plugins"]]
 
   async function toggle(p: Plugin) {
     if (!chat) return
@@ -77,13 +82,13 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
     }
   }
 
-  const agent = chat ? caps?.agent : undefined
+  const fromAgent = chat ? caps?.agent : undefined
   const [kept, setKept] = useState(false)
 
   function keepOnAgent() {
-    if (!agent || !chat) return
-    Alert.alert(`Keep on ${agent.name}?`,
-      `Every new ${agent.name} chat will start with this chat's plugins, skills and MCP tools. This replaces what ${agent.name} kept before; chats already running are not changed.`, [
+    if (!fromAgent || !chat) return
+    Alert.alert(`Keep on ${fromAgent.name}?`,
+      `Every new ${fromAgent.name} chat will start with this chat's plugins, skills and MCP tools. This replaces what ${fromAgent.name} kept before; chats already running are not changed.`, [
         { text: "Cancel", style: "cancel" },
         { text: "Keep", onPress: async () => {
           setBusy("agent"); setError("")
@@ -92,7 +97,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
             setKept(true)
             load()
           } catch (e) {
-            setError(userError(e, `this setup on ${agent.name}`, "keep"))
+            setError(userError(e, `this setup on ${fromAgent.name}`, "keep"))
           } finally {
             setBusy("")
           }
@@ -136,10 +141,10 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
         {p.description ? <Text style={[styles.capRowDesc, { color: t.textMuted }]} numberOfLines={2}>{p.description}</Text> : null}
       </View>
       {p.included ? <Text style={styles.capBadge}>Included</Text> : null}
-      {p.source === "agent" ? (
+      {p.source === "agent" && chat ? (
         <Switch testID={id(`plugin-toggle-${p.name}`)} value={p.active} disabled={!!busy}
           accessibilityLabel={`${p.active ? "Remove" : "Add"} ${p.name}`} onValueChange={() => toggle(p)} />
-      ) : <Text style={styles.capBadge}>on this Mac</Text>}
+      ) : p.source === "machine" ? <Text style={styles.capBadge}>on this Mac</Text> : null}
     </View>
   )
   const skillRow = (s: Skill) => (
@@ -196,10 +201,13 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
           keyboardDismissMode="on-drag"
           ListHeaderComponent={<>
             {tab !== "plugins" ? <AddRows kind={tab} /> : null}
-            {tab === "plugins" && agent ? (
+            {tab === "plugins" && pluginNote ? (
+              <Text testID={id("plugins-note")} style={[styles.capRowDesc, { color: t.textMuted, paddingHorizontal: 16, paddingVertical: 8 }]}>{pluginNote}</Text>
+            ) : null}
+            {tab === "plugins" && fromAgent ? (
               <View style={[styles.capRow, { alignItems: "center" }]}>
                 <Text style={[styles.capRowDesc, { flex: 1, color: t.textMuted }]}>
-                  {kept ? `Saved: new ${agent.name} chats start with this setup.` : `Started from ${agent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}
+                  {kept ? `Saved: new ${fromAgent.name} chats start with this setup.` : `Started from ${fromAgent.name}. Keep this chat's plugins, skills and MCP for its next chats?`}
                 </Text>
                 <TouchableOpacity testID={id("keep-on-agent")} disabled={!!busy} onPress={keepOnAgent}>
                   <Text style={{ color: t.accent, fontWeight: "600" }}>Keep on agent</Text>
@@ -212,7 +220,7 @@ export default function CapabilitiesPanel({ host, cwd, session, active = true, t
                 value={query} onChangeText={setQuery} autoCorrect={false} autoCapitalize="none" clearButtonMode="while-editing" />
             ) : null}
           </>}
-          ListEmptyComponent={<Text style={styles.capEmpty}>{
+          ListEmptyComponent={tab === "plugins" && pluginNote && !query.trim() ? null : <Text style={styles.capEmpty}>{
             query.trim() ? `Nothing matches "${query.trim()}".`
               : tab === "skills" ? "No skills yet. Write one, or pull one from the Marketplace."
               : tab === "mcp" ? "No MCP tools yet. Add one by hand, or pull one from the Marketplace."
