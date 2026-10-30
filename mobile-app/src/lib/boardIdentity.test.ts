@@ -6,6 +6,7 @@ import { CommonActions, StackRouter } from "@react-navigation/routers"
 import ts from "typescript"
 import * as boardSwipe from "./gestures.ts"
 import * as errors from "./errors.ts"
+import { serialize } from "./liveEvents.ts"
 
 // Run the actual Thread component, not a copy of its identity expression. The
 // hook runner preserves state/memo deps and commits layout before passive effects,
@@ -47,6 +48,8 @@ function screen(initial: Route) {
   const layout = new Map<number, Function>(), passive = new Map<number, Function>()
   const intervals = new Map<number, Function>(), timers = new Map<number, Function>()
   let timerId = 0
+  // Live-run refresh loops (startLiveRefresh) the screen has running.
+  const polls = new Map<number, Function>()
   const reads: Array<{ path: string } & ReturnType<typeof deferred<any>>> = []
   const chats: Array<{ request: any } & ReturnType<typeof deferred<any>>> = []
   const navigations: any[][] = [], alerts: any[][] = [], sheets: any[][] = []
@@ -101,6 +104,9 @@ function screen(initial: Route) {
     "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/gestures": boardSwipe,
+    "../lib/liveEvents": { serialize, THREAD_FALLBACK_MS: [1500],
+      startLiveRefresh: (o: { refresh: Function }) => { const id = ++timerId; polls.set(id, o.refresh); return () => polls.delete(id) } },
+    "../api/events": { liveEvents: () => null },
     ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", PinnedBanner: "PinnedBanner", WorkingBubble: "WorkingBubble" },
   }
@@ -139,7 +145,7 @@ function screen(initial: Route) {
     return find(tree, "composer-send")!.props.onPress()
   }
   const unmount = () => { for (const s of slots) s?.cleanup?.(); layout.clear(); passive.clear() }
-  return { render, commit, menu, profile, profileAction, gesture, send, reads, chats, navigations, intervals, unmount,
+  return { render, commit, menu, profile, profileAction, gesture, send, reads, chats, navigations, intervals, polls, unmount,
     focus(value: boolean) { focused = value; render(); commit() },
   }
 }
@@ -196,7 +202,7 @@ test("pathless chat uses the session returned by its own send for Board and prof
   assert.equal(view.navigations[0][1].sessionId, "CREATED")
   assert.deepEqual(view.navigations[1], ["Kanban", { session: "CREATED", title: "New chat" }])
   view.unmount()
-  assert.equal(view.intervals.size, 0)
+  assert.equal(view.intervals.size + view.polls.size, 0)
 })
 
 for (const transition of ["different-route", "same-key-return", "unmount"] as const) {
@@ -209,7 +215,7 @@ for (const transition of ["different-route", "same-key-return", "unmount"] as co
     if (transition === "unmount") view.unmount()
     else view.commit()
     view.chats[0].resolve({ session: "OLD-CREATED" }); await sent
-    assert.equal(view.intervals.size, 0, "obsolete send cannot start a poll")
+    assert.equal(view.intervals.size + view.polls.size, 0, "obsolete send cannot start a poll")
     if (transition !== "unmount") {
       view.render(); view.menu()()
       assert.deepEqual(view.navigations, [["Org"]])

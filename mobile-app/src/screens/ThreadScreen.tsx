@@ -48,6 +48,8 @@ import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
+import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
+import { liveEvents } from "../api/events"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -78,8 +80,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [fromCache, setFromCache] = useState(false)
   const { online } = useReachability()
   // Back online while showing the saved copy → swap in the live transcript.
-  // (An idle thread has no poll of its own; any request anywhere — the Chats
-  // list, the inbox badge — flips `online`.) Declared before reload, so read
+  // (An idle thread has no refresh loop of its own; any request anywhere — the
+  // Chats list, the inbox badge — flips `online`.) Declared before reload, so read
   // through a ref.
   const reloadRef = useRef<() => unknown>(() => {})
   useEffect(() => {
@@ -283,7 +285,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // devices — this is what makes the keyboard land flush against the composer.
   const headerHeight = useHeaderHeight()
   const listRef = useRef<FlatList<ListItem>>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // stop() for the live run's refresh loop (startPoll), null when none runs.
+  const pollRef = useRef<(() => void) | null>(null)
   const localId = useRef(0)
   // Optimistic user bubbles (fresh send + steer) that the server transcript may
   // not have caught up to yet. reload() keeps re-appending these until the server
@@ -447,9 +450,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   )
 
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
+    return () => pollRef.current?.()
   }, [])
 
   // A chat opened the moment it was started (`starting`): its transcript isn't
@@ -635,25 +636,36 @@ export default function ThreadScreen({ route, navigation }: Props) {
     setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === id)))
   }
 
+  /** Follow a live run until it ends. The server's live-events stream says
+   *  when this run's transcript grew (fetch just the new bytes) or its state
+   *  moved (status + transcript); while the stream is down — another host's
+   *  chat, an older server, a dropped socket — it polls, backing off
+   *  1.5s -> 4s -> 10s while nothing changes. */
   function startPoll(sid: string) {
     if (!isCurrentThread()) return
-    if (pollRef.current) clearInterval(pollRef.current)
-    let ticks = 0
-    let inFlight = false // guard: a slow status+reload must not overlap the next tick
-    pollRef.current = setInterval(async () => {
-      if (inFlight) return // previous tick still awaiting — skip so setItems can't race
-      inFlight = true
-      ticks++
+    pollRef.current?.()
+    let done = false
+    let lastStatus = ""
+    // Serialized: a slow status+read never overlaps the next, so setItems can't race.
+    const pollOnce = serialize(async () => {
+      const before = loadedRef.current
+      await poll()
+      return loadedRef.current !== before
+    })
+    const tick = serialize(async () => {
+      if (done) return false
       try {
         const s = await api.chatStatus(sid)
+        if (done) return false
         setPending(s.pending_approvals || [])
         setPendingQuestion(s.pending_question || null)
         setPendingPlan(s.pending_plan || null)
         setQueued(s.queue?.length || 0)
         setQueueList(s.queue || [])
-        if (!s.running || ticks > 400) {
-          if (pollRef.current) clearInterval(pollRef.current)
-          pollRef.current = null
+        if (!s.running) {
+          done = true
+          stop()
+          if (pollRef.current === stop) pollRef.current = null
           await poll() // final response replaces the "working" bubble
           // The run ended. It may have ended WAITING on you — a per-tool approval
           // or a parked AskUserQuestion (pending_question). Either way the server
@@ -661,17 +673,35 @@ export default function ThreadScreen({ route, navigation }: Props) {
           // the card(s) render. An unanswered prompt is not "done".
           setActivity("")
           setBusy(false)
-          return
+          return true
         }
+        const sig = JSON.stringify([s.queue, s.pending_approvals, s.pending_question, s.pending_plan, s.turns])
+        const statusMoved = sig !== lastStatus
+        lastStatus = sig
         // Still running → stream the new steps in. poll() fetches only bytes
         // appended since the last read, so it's cheap enough to run every tick.
-        await poll()
+        return (await pollOnce()) || statusMoved
       } catch {
-        /* keep polling through transient errors */
-      } finally {
-        inFlight = false
+        return false // transient; the next tick retries
       }
-    }, 1500)
+    })
+    const stopLive = startLiveRefresh({
+      // Only this machine's transcripts are watched; another host's chat polls.
+      stream: host === "local" ? liveEvents() : null,
+      refresh: tick,
+      fallbackMs: THREAD_FALLBACK_MS,
+      liveMs: 15000,
+      onEvent: (ev) => {
+        if (ev.type !== "resync" && ("session" in ev ? ev.session : "") !== sid) return
+        if (ev.type === "transcript-changed") pollOnce()
+        else if (ev.type !== "list-changed") tick()
+      },
+    })
+    const stop = () => {
+      done = true
+      stopLive()
+    }
+    pollRef.current = stop
   }
 
   /**
@@ -750,10 +780,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // Recover the UI immediately rather than waiting on the next poll tick —
       // if the server run is wedged, the poll might never report !running, which
       // would otherwise leave the user stuck in the "busy" state forever.
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
+      pollRef.current?.()
+      pollRef.current = null
       setBusy(false)
       setActivity("")
       setQueued(0)
