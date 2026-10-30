@@ -22,15 +22,29 @@ Events are JSON text frames:
   {"type": "list-changed"}                           the chat list may differ
   {"type": "resync"}                                 events were dropped: refetch all
   {"type": "ping"}                                   keepalive every PING_EVERY s
+  {"type": "watching", "session": id, "ok": bool}    answer to a watch (below)
+
+A client may send one kind of text frame back:
+  {"type": "watch", "sessions": [{"session": id, "host": h, "agent": a, "path": rel}]}
+naming the transcripts it has open (at most WATCH_MAX; each frame replaces the
+last). A watched session gets transcript-changed even when no run of this
+server owns it — a CLI in a terminal, any agent's format — and on another
+host too. "watching" says, per session, whether the server can see its file:
+ok=false means "keep polling it yourself"; it flips to true once the size is
+known (a remote host's first stat lands a couple of seconds later).
 
 Where events come from: one Watcher thread diffs snapshots of the state the
 polls read (CHAT_JOBS, local transcript sizes, project-folder mtimes) — so no
 runner (claude, codex, copilot, pi, custom) has to remember to publish, and
 the CLI's own transcript writes are seen at all. It runs only while someone
-is subscribed. Route handlers that change the list (rename, delete, fork…)
+is subscribed. Transcripts on other hosts are statted by RemoteSizes: one
+thread per host, off the tick (an SSH op can take seconds), one SFTP channel
+per poll for all of that host's sessions, only while something there is
+running or watched. Route handlers that change the list (rename, delete, fork…)
 publish list-changed directly (server.LIST_MUTATIONS).
 
-Pure parts (Hub, diff, list_due, last_uuid) are unit-tested without a server.
+Pure parts (Hub, diff, list_due, last_uuid, parse_watch, watch_acks) are
+unit-tested without a server.
 """
 import json
 import queue
@@ -44,6 +58,11 @@ LIST_MIN_GAP = 3.0    # a running transcript changes every tick; the list refetc
 PING_EVERY = 25       # keepalive; the client treats ~2 missed pings as a dead stream
 QUEUE_MAX = 256       # events buffered per subscriber before it is told to resync
 TAIL_BYTES = 64 * 1024
+WATCH_MAX = 4         # transcripts one client may watch (a phone or a browser shows one)
+WATCH_FRAME_MAX = 4096
+REMOTE_EVERY = 2.0    # seconds between one host's stat polls
+REMOTE_BACKOFF = 15.0 # after a failed poll (host down or unreachable)
+REMOTE_IDLE = 10.0    # a host poller nobody has asked about for this long exits
 
 
 # ---- pub-sub ------------------------------------------------------------------
@@ -57,6 +76,8 @@ class Subscription:
         self._lock = threading.Lock()
         self._overflow = False
         self.closed = False
+        self.watch = {}    # session id -> {"host", "agent", "path"}; a watch frame replaces it whole
+        self.acked = {}    # session id -> the last "ok" this client was told
 
     def put(self, event):
         try:
@@ -119,6 +140,18 @@ class Hub:
     def count(self):
         with self._lock:
             return len(self._subs)
+
+    def subscribers(self):
+        with self._lock:
+            return list(self._subs)
+
+    def watched(self):
+        """Every session some subscriber watches -> its spec (first one wins)."""
+        out = {}
+        for sub in self.subscribers():
+            for sid, spec in sub.watch.items():
+                out.setdefault(sid, spec)
+        return out
 
     def publish(self, event):
         with self._lock:
@@ -187,6 +220,139 @@ def last_uuid(tail):
     return ""
 
 
+def parse_watch(text):
+    """A client's watch frame -> {session: {"host", "agent", "path"}}, or None
+    when `text` is not a well-formed watch frame (ignored, never an error).
+    Only the first WATCH_MAX valid entries count. The path is only a hint: it
+    is resolved under the agent's own sessions root before anything is
+    statted (local_transcript, remote.remote_*full_path)."""
+    try:
+        msg = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(msg, dict) or msg.get("type") != "watch" or not isinstance(msg.get("sessions"), list):
+        return None
+    out = {}
+    for e in msg["sessions"]:
+        if len(out) >= WATCH_MAX:
+            break
+        if not isinstance(e, dict):
+            continue
+        sid = e.get("session")
+        host, agent, path = e.get("host") or "local", e.get("agent") or "claude", e.get("path") or ""
+        if not (isinstance(sid, str) and 0 < len(sid) <= 200 and "/" not in sid
+                and all(isinstance(v, str) and len(v) <= 1024 for v in (host, agent, path))):
+            continue
+        out[sid] = {"host": host, "agent": agent, "path": path}
+    return out
+
+
+def watch_acks(watch, acked, snap):
+    """The "watching" answers a subscriber is owed: one per watched session
+    whose visibility (its size known in `snap`) differs from what it was last
+    told. Updates `acked` in place and forgets sessions no longer watched."""
+    for sid in list(acked):
+        if sid not in watch:
+            del acked[sid]
+    out = []
+    for sid in sorted(watch):
+        ok = (snap.get(sid) or {}).get("size") is not None
+        if acked.get(sid) is not ok:
+            acked[sid] = ok
+            out.append({"type": "watching", "session": sid, "ok": ok})
+    return out
+
+
+# ---- transcripts on other hosts ------------------------------------------------------
+
+def _remote_stat(host, specs, paths):
+    """Sizes of `specs` ({session: spec}) on `host`, over ONE SFTP channel.
+    `paths` caches session -> absolute remote path across polls (finding a
+    Claude session by id is an exec `ls`, not per-poll cheap); a file that is
+    gone drops its entry so it is looked up again. Raises when the host is
+    unreachable — the caller backs off."""
+    from viewer import remote
+    for sid, spec in specs.items():
+        if sid in paths:
+            continue
+        full = None
+        if spec["path"]:
+            full = (remote.remote_full_path(host, spec["path"]) if spec["agent"] == "claude"
+                    else remote.remote_agent_full_path(host, spec["agent"], spec["path"]))
+        elif spec["agent"] == "claude":
+            found = remote.remote_resolve(host, sid)
+            if found.get("found"):
+                full = remote.remote_full_path(host, found["path"])
+        # another agent's file is found only by the path its client names
+        if full:
+            paths[sid] = full
+    sizes = {}
+    with remote.SSH.sftp(host) as sftp:
+        for sid in specs:
+            if sid not in paths:
+                continue
+            try:
+                sizes[sid] = sftp.stat(paths[sid]).st_size
+            except FileNotFoundError:   # moved or deleted: resolve it again next poll. A dead
+                paths.pop(sid, None)    # host raises another OSError: the whole poll backs off
+    return sizes
+
+
+class RemoteSizes:
+    """Transcript sizes on other hosts, polled off the watcher's tick. want()
+    names the whole set wanted now, by host; each host with something wanted
+    gets one daemon thread that stats its sessions every REMOTE_EVERY seconds,
+    waits REMOTE_BACKOFF after a failure (its sizes then read unknown, so a
+    client is told ok=false and polls), and exits once its host is no longer
+    wanted or nobody has called want() for REMOTE_IDLE seconds."""
+
+    def __init__(self, stat=_remote_stat):
+        self._stat = stat
+        self._lock = threading.Lock()
+        self._want = {}      # host -> {session: spec}
+        self._sizes = {}     # host -> {session: size}
+        self._threads = {}   # host -> Thread
+        self._asked = 0.0
+
+    def want(self, by_host):
+        with self._lock:
+            self._want = {h: dict(specs) for h, specs in by_host.items() if specs}
+            self._asked = time.monotonic()
+            for host in self._want:
+                if host not in self._threads:
+                    t = threading.Thread(target=self._run, args=(host,), daemon=True,
+                                         name="events-remote")
+                    self._threads[host] = t
+                    t.start()
+
+    def size(self, host, sid):
+        with self._lock:
+            return (self._sizes.get(host) or {}).get(sid)
+
+    def polling(self):
+        with self._lock:
+            return set(self._threads)
+
+    def _run(self, host):
+        paths = {}
+        while True:
+            with self._lock:
+                specs = self._want.get(host)
+                if not specs or time.monotonic() - self._asked > REMOTE_IDLE:
+                    self._threads.pop(host, None)
+                    self._sizes.pop(host, None)
+                    return
+            try:
+                sizes, pause = self._stat(host, specs, paths), REMOTE_EVERY
+            except Exception as e:
+                print(f"[events] remote stat on {host} failed: {e}", flush=True)
+                sizes, pause = {}, REMOTE_BACKOFF
+                paths.clear()
+            with self._lock:
+                self._sizes[host] = sizes
+            time.sleep(pause)
+
+
 # ---- the watcher ------------------------------------------------------------------
 
 class Watcher:
@@ -195,8 +361,9 @@ class Watcher:
     its own when the last one leaves (atomically with ensure(), so a
     subscriber arriving at that moment always gets a running watcher)."""
 
-    def __init__(self, hub):
+    def __init__(self, hub, remote=None):
         self.hub = hub
+        self.remote = remote or RemoteSizes()
         self._lock = threading.Lock()
         self._thread = None
         self._paths = {}   # session id -> transcript Path (the glob is not per-tick cheap)
@@ -215,6 +382,7 @@ class Watcher:
             with self._lock:
                 if self.hub.count() == 0:
                     self._thread = None
+                    self.remote.want({})
                     return
             try:
                 cur, cur_dirs = self._snapshot(), self._dirs()
@@ -225,6 +393,9 @@ class Watcher:
                     if ev["type"] == "transcript-changed":
                         ev["uuid"] = self._tail_uuid(ev["session"], ev["size"])
                     self.hub.publish(ev)
+                for sub in self.hub.subscribers():
+                    for ack in watch_acks(sub.watch, sub.acked, cur):
+                        sub.put(ack)
                 now = time.monotonic()
                 if list_due(urgent, dirty, now, last_list):
                     self.hub.publish({"type": "list-changed"})
@@ -234,21 +405,34 @@ class Watcher:
                 print(f"[events] watcher tick failed: {e}", flush=True)
 
     def _snapshot(self):
+        """{session: {running, status, size}} for every run this server owns
+        and every session a client watches. A watched session no run owns is
+        idle with no status: only its transcript can change."""
         with CHAT_LOCK:
-            jobs = {sid: (job.get("host", "local"), job_state(job)) for sid, job in CHAT_JOBS.items()}
+            jobs = {sid: (job.get("host", "local"), job.get("agent") or "claude", job_state(job))
+                    for sid, job in CHAT_JOBS.items()}
+        specs = {sid: {"host": h, "agent": a, "path": ""} for sid, (h, a, _) in jobs.items()}
+        specs.update(self.hub.watched())    # a client's path finds files an id cannot
+        remote = {}
+        for sid, spec in specs.items():
+            if spec["host"] != "local":
+                remote.setdefault(spec["host"], {})[sid] = spec
+        self.remote.want(remote)
         snap = {}
-        for sid, (host, state) in jobs.items():
-            state["size"] = self._size(sid) if host == "local" else None
+        for sid, spec in specs.items():
+            state = jobs[sid][2] if sid in jobs else {"running": False, "status": None}
+            state["size"] = (self._size(sid, spec) if spec["host"] == "local"
+                             else self.remote.size(spec["host"], sid))
             snap[sid] = state
         for sid in list(self._paths):
-            if sid not in jobs:
+            if sid not in specs:
                 self._paths.pop(sid, None)
         return snap
 
-    def _size(self, sid):
+    def _size(self, sid, spec):
         path = self._paths.get(sid)
         if path is None:
-            path = transcript_path(sid)   # a new chat's file appears after its CLI starts
+            path = local_transcript(sid, spec)   # a new chat's file appears after its CLI starts
             if path is None:
                 return None
             self._paths[sid] = path
@@ -279,8 +463,27 @@ class Watcher:
             return {}
 
 
+def local_transcript(sid, spec):
+    """A session's transcript file on this machine: a Claude session by the
+    client's projects/... path or else by its id; another agent's only by the
+    path its client names, resolved under that agent's own root. None when
+    absent, or when the path escapes its root (compared by path components)."""
+    agent, rel = spec.get("agent") or "claude", spec.get("path") or ""
+    if agent != "claude":
+        from viewer.adapters import resolve_agent_session
+        return resolve_agent_session(agent, rel) if rel else None
+    if rel:
+        try:
+            full, root = (CLAUDE_DIR.parent / rel).resolve(), CLAUDE_DIR.resolve()
+        except (OSError, RuntimeError):
+            full = root = None
+        if full and root in full.parents and full.is_file():
+            return full
+    return transcript_path(sid)
+
+
 HUB = Hub()
-WATCHER = Watcher(HUB)
+WATCHER = Watcher(HUB, RemoteSizes())
 HUB._on_first = WATCHER.ensure
 
 
@@ -293,7 +496,8 @@ def publish_list_changed():
 def serve_ws(handler):
     """Hold one subscriber's stream until it hangs up. Runs on the dedicated
     thread PooledHTTPServer gives every WS_PATHS connection; a second small
-    thread reads, only to notice the close."""
+    thread reads the client's watch frames and notices the close (a frame
+    over WATCH_FRAME_MAX ends the connection)."""
     from viewer.browser import WSServer
     ws = WSServer.upgrade(handler)
     if not ws:
@@ -303,9 +507,12 @@ def serve_ws(handler):
     def _reader():
         try:
             while True:
-                op, _ = ws.recv()
+                op, data = ws.recv(WATCH_FRAME_MAX)
                 if op == 0x8:
                     break
+                watch = parse_watch(data.decode("utf-8", "replace")) if op == 0x1 else None
+                if watch is not None:
+                    sub.watch = watch      # the watcher answers "watching" on its next tick
         except OSError:
             pass
         finally:

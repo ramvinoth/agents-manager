@@ -56,8 +56,38 @@ def test_report_hot_dead_cold_screens():
     assert [c["element"] for c in r["cold"]] == ["old"]
     assert r["screens"] == [{"client": "web", "surface": "inbox", "opens": 9, "people": 1}]
     assert r["feedback"] == [{"detail": "too many buttons"}]
-    assert r["totals"] == {"controls": 4, "taps": 40}
+    assert r["totals"] == {"controls": 4, "uses": 40, "taps": 40, "long_presses": 0, "swipes": 0}
     assert "last_ts" not in r["hot"][0]
+
+
+def _ios(kind, element, n=0, n_before=0, surface="Thread"):
+    return dict(_row(kind, element, n, n_before, surface), client="ios")
+
+
+def test_clean_accepts_phone_gestures_with_a_name():
+    raw = [{"kind": "long_press", "surface": "Thread", "element": "chat-message"},
+           {"kind": "swipe", "surface": "Thread", "element": "swipe-board"},
+           {"kind": "swipe", "surface": "Thread", "element": ""}]          # a gesture needs a name
+    events, dropped = usage.clean_events(raw, "ios", now=NOW)
+    assert [e["kind"] for e in events] == ["long_press", "swipe"] and dropped == 1
+
+
+def test_report_counts_every_gesture_as_a_use_and_flags_phone_dead_controls():
+    rows = [
+        _ios("seen", "chat-message", n=60), _ios("long_press", "chat-message", n=7),
+        _ios("seen", "swipe-board", n=25), _ios("swipe", "swipe-board", n=3),
+        _ios("tap", "swipe-board", n=1),
+        _ios("seen", "attach", n=40),                       # phone control, never used → dead
+        _ios("seen", "menu", n=30), _ios("swipe", "menu", n=0, n_before=2),   # gesture went cold
+        _row("seen", "attach", n=40), _row("tap", "attach", n=5),            # same name on web: apart
+    ]
+    r = usage.report(rows, [], 30)
+    by = {(c["client"], c["element"]): c for c in r["hot"]}
+    assert by[("ios", "chat-message")]["long_presses"] == 7 and by[("ios", "chat-message")]["uses"] == 7
+    assert by[("ios", "swipe-board")]["uses"] == 4 and by[("ios", "swipe-board")]["swipes"] == 3
+    assert [(c["client"], c["element"]) for c in r["dead"]] == [("ios", "attach")]
+    assert [(c["client"], c["element"]) for c in r["cold"]] == [("ios", "menu")]
+    assert r["totals"] == {"controls": 5, "uses": 16, "taps": 6, "long_presses": 7, "swipes": 3}
 
 
 def test_report_empty():

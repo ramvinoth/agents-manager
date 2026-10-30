@@ -25,7 +25,7 @@ export interface AuthSlice {
 }
 
 export const createAuthSlice: Slice<AuthSlice> = (set, get, rt) => {
-  const { stopTimers, bootApp } = rt
+  const { stopTimers, stopFeed, bootApp } = rt
 
   function watchLogin() {
     if (loginTimer) clearInterval(loginTimer)
@@ -99,6 +99,7 @@ export const createAuthSlice: Slice<AuthSlice> = (set, get, rt) => {
     },
     signout: async () => {
       stopTimers()
+      stopFeed()
       await api.signout().catch(() => {})
       // Wipe every per-account view so the shell is clean, not stale (LHS
       // sessions, RHS skills/MCP, top-bar host/agent/session all reset).

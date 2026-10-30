@@ -7,7 +7,8 @@
  */
 import React, { useEffect, useRef, useState } from "react"
 import { Animated, Dimensions, PanResponder, StyleSheet, Text, View } from "react-native"
-import { Pressable, TouchableOpacity } from "./Tracked"
+import { Pressable, TouchableOpacity, useSeen } from "./Tracked"
+import { recordSwipe } from "../lib/usageReporter"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../lib/useTheme"
 import CapabilitiesPanel from "./CapabilitiesPanel"
@@ -60,6 +61,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, agent,
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx > DRAWER_W * 0.3 || g.vx > 0.5) {
+          recordSwipe("swipe-close-capabilities")
           onClose()
         } else {
           Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }).start()
@@ -67,6 +69,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, agent,
       },
     })
   ).current
+  useSeen("swipe-close-capabilities", undefined, visible)
 
   if (!rendered) return null
 

@@ -257,7 +257,7 @@ export function CardDetail({
                   <span className="text-muted-foreground" title={card.session_id}>Not on this host</span>
                 )
               ) : (
-                <span className="text-muted-foreground">None — created on the board</span>
+                <span className="text-muted-foreground" data-testid="card-no-agent">No agent assigned</span>
               )}
             </Field>
 

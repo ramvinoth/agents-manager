@@ -13,7 +13,8 @@ import {
   TextInput,
   View,
 } from "react-native"
-import { TouchableOpacity } from "../components/Tracked"
+import { TouchableOpacity, useSeen } from "../components/Tracked"
+import { recordSwipe } from "../lib/usageReporter"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -199,10 +200,14 @@ export default function ThreadScreen({ route, navigation }: Props) {
     },
     onPanResponderRelease: (_event, g) => {
       if (!boardSwipeCancelled.current && boardSwipeState.current.enabled
-        && completesBoardSwipe(g)) boardSwipeState.current.openBoard()
+        && completesBoardSwipe(g)) {
+        recordSwipe("swipe-board")
+        boardSwipeState.current.openBoard()
+      }
     },
     onPanResponderTerminate: () => { boardSwipeCancelled.current = true },
   })).current
+  useSeen("swipe-board", undefined, true)
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
   // WhatsApp-style floating day header: the date of the topmost visible message,

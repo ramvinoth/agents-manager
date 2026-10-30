@@ -1,10 +1,13 @@
-// usage.ts — which screens the owner opens on the phone, which buttons they
-// tap there, plus in-app feedback, reported to the owner's own server
-// (POST /api/usage; report: viewer/usage.py, MCP usage_report).
+// usage.ts — which screens the owner opens on the phone, which controls are on
+// them, which they use there (tap, long-press, swipe), plus in-app feedback,
+// reported to the owner's own server (POST /api/usage; report: viewer/usage.py,
+// MCP usage_report — the same hot/dead/cold digest the web feeds).
 // Pure rules here; App.tsx feeds screen changes, components/Tracked.tsx feeds
-// taps, lib/usageReporter.ts holds the queue and flushes it.
+// presses and what is on screen, swipe sites call recordSwipe, and
+// lib/usageReporter.ts holds the queue and flushes it.
 
-export type UsageKind = "view" | "tap" | "feedback"
+export type UseKind = "tap" | "long_press" | "swipe"
+export type UsageKind = "seen" | UseKind | "view" | "feedback"
 export type UsageEvent = { kind: UsageKind; surface: string; element?: string; detail?: string; ts: number }
 
 export const QUEUE_MAX = 300
@@ -13,9 +16,9 @@ export const LABEL_MAX = 32
 const SEGMENT = /^[A-Za-z]{1,20}$/
 const SEGMENTS_MAX = 5
 
-/** The props a pressable carries that may name it. Never its visible text:
+/** The props a control carries that may name it. Never its visible text:
  *  that is the owner's content (a session title, a prompt, a file name). */
-export type TapFacts = { testID?: string | null; accessibilityLabel?: string | null }
+export type ControlFacts = { testID?: string | null; accessibilityLabel?: string | null }
 
 /** testIDs are kebab-case and often end in an interpolated id, path or label
  *  (`chat-board-<uuid>`, `file-mention-<path>`, `auq-option-<label>`). Keep the
@@ -44,17 +47,30 @@ function labelName(label: string): string {
 /** A stable control name, or "" when the control has none worth reporting
  *  (an unnamed button is a finding in itself, not a row). testID first: it is
  *  the developer's name for the control and does not change with the copy. */
-export function tapName(f: TapFacts): string {
+export function controlName(f: ControlFacts): string {
   const name = (f.testID && testIdName(f.testID)) || (f.accessibilityLabel && labelName(f.accessibilityLabel)) || ""
   return name.slice(0, NAME_MAX)
 }
 
-/** A tap on the screen the owner is on, or null when it cannot be reported
- *  (no screen yet, or a control with no name). */
-export function tapEvent(surface: string | undefined, f: TapFacts, ts: number): UsageEvent | null {
-  const element = tapName(f)
+/** A use of a control on the screen the owner is on, or null when it cannot be
+ *  reported (no screen yet, or a control with no name). */
+export function gestureEvent(kind: UseKind, surface: string | undefined, f: ControlFacts, ts: number): UsageEvent | null {
+  const element = controlName(f)
   if (!surface || !element) return null
-  return { kind: "tap", surface, element, ts }
+  return { kind, surface, element, ts }
+}
+
+/** "seen" once per control per screen visit — the denominator for dead-control
+ *  detection, the same rule as the web's (web/src/lib/usage.ts seenEvents).
+ *  Returns the events for names not already in `seen` (which it updates). */
+export function seenEvents(surface: string, names: string[], seen: Set<string>, ts: number): UsageEvent[] {
+  const out: UsageEvent[] = []
+  for (const n of names) {
+    if (!n || seen.has(n)) continue
+    seen.add(n)
+    out.push({ kind: "seen", surface, element: n, ts })
+  }
+  return out
 }
 
 /** Append with a hard cap — offline for days, the oldest go first. */

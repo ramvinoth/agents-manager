@@ -308,6 +308,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
 
         <Text style={styles.cdMeta}>
           opened by <ActorName name={creator.name} kind={creator.kind} /> · {fmt(card.created_at)}
+          {/* A card with no session wakes nobody when it is answered — say so
+              (the web's Session field does the same). */}
+          {card.session_id ? null : <Text testID="card-detail-no-agent"> · No agent assigned</Text>}
         </Text>
 
         {/* the pipeline in one row: tap a column to move the card there. When

@@ -887,7 +887,18 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
             push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
                             f"{actor}: {excerpt}"[:300],
                             data={"card": card["id"]})
+        if not card.get("session_id") and action == "card_comment":
+            # A reply on a card that came through a door bound since (the
+            # owner answering an old feedback note): the door's session owns
+            # it now, so the card is handed to it and the reply wakes it.
+            # Only a reply adopts — a move or edit is board tidying, and an
+            # unbinding must not be undone behind the owner's back.
+            cid = intake.channel_id_of(card)
+            sid = intake.door_session(card, db.intake_get(cid) if cid else None)
+            if sid:
+                card = db.card_update(card["id"], session_id=sid) or dict(card, session_id=sid)
         if not card.get("session_id"):
+            # Nobody to wake: the board shows the card as "No agent assigned".
             return
         own = agent and card.get("session_id") == (acting_session or "")
         # The card's column, resolved once for the move-event text.

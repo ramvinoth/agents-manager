@@ -13,6 +13,8 @@ import Icon, { type IconName } from "../components/Icon"
 import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
 import { menuDragProgress, menuSettlesOpen } from "../lib/gestures"
+import { recordSwipe } from "../lib/usageReporter"
+import { useSeen } from "../components/Tracked"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -30,6 +32,18 @@ const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> 
 }
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">
+
+/** The Chats page and its menu swipe. Its own component so the swipe counts as
+ *  on screen only while Chats is the page in front (its tab's navigation),
+ *  not on Inbox or Profile where it does nothing. */
+function ChatsPage({ gesture, navigation }: { gesture: ReturnType<typeof Gesture.Pan>; navigation: Props["navigation"] }) {
+  useSeen("swipe-menu", undefined, true)
+  return (
+    <GestureDetector gesture={gesture}>
+      <View style={{ flex: 1 }}><ChatsScreen navigation={navigation} /></View>
+    </GestureDetector>
+  )
+}
 
 /**
  * WhatsApp-style bottom tab bar with left/right swipe between tabs. Built on
@@ -85,7 +99,11 @@ export default function HomeTabs({ navigation }: Props) {
     .failOffsetY([-12, 12])
     .onStart(() => setMenuDragging(true))
     .onUpdate((e) => menuProgress.setValue(menuDragProgress(e.translationX, panelWRef.current)))
-    .onEnd((e) => setMenuOpen(menuSettlesOpen({ dx: e.translationX, dy: e.translationY, vx: e.velocityX })))
+    .onEnd((e) => {
+      const open = menuSettlesOpen({ dx: e.translationX, dy: e.translationY, vx: e.velocityX })
+      if (open) recordSwipe("swipe-menu")
+      setMenuOpen(open)
+    })
     // Ended or cancelled, the drag is over; the menu settles from where it is.
     .onFinalize(() => setMenuDragging(false)), [menuProgress])
 
@@ -155,11 +173,7 @@ export default function HomeTabs({ navigation }: Props) {
         },
       })}
     >
-      <Tab.Screen name="Chats">{() => (
-        <GestureDetector gesture={menuSwipe}>
-          <View style={{ flex: 1 }}><ChatsScreen navigation={navigation} /></View>
-        </GestureDetector>
-      )}</Tab.Screen>
+      <Tab.Screen name="Chats">{() => <ChatsPage gesture={menuSwipe} navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>

@@ -107,6 +107,27 @@ def view(channel):
     return c
 
 
+def channel_id_of(card):
+    """The id of the intake channel a card came in through, or ''."""
+    cb = (card or {}).get("created_by") or ""
+    return cb[len(EXTERNAL_PREFIX):] if cb.startswith(EXTERNAL_PREFIX) else ""
+
+
+def door_session(card, channel):
+    """The session an unbound card that came through `channel` belongs to now:
+    the door's session, when the door was bound after the card came in (a
+    feedback note filed while In-app feedback woke nobody, answered once the
+    owner pointed it at a chat). '' when the card is already bound, did not come
+    through this door, or the door still wakes nobody — then no agent is
+    assigned and the board says so. There is no per-board default session: a
+    door's binding is the only standing "who handles this board's mail"."""
+    if not card or card.get("session_id") or not channel:
+        return ""
+    if channel_id_of(card) != channel.get("id"):
+        return ""
+    return channel.get("session_id") or ""
+
+
 def feedback_channel():
     """Where the owner's in-app feedback goes: the channel flagged app_feedback;
     with none flagged, the built-in channel on the server's own project (the
