@@ -46,6 +46,23 @@ def test_token_hash_verify_and_view():
     assert "token_hash" not in v and v["path"] == "/api/intake/ch_1"
 
 
+def test_channel_id_of_reads_only_a_door_card():
+    assert intake.channel_id_of({"created_by": "intake:ch_feedback"}) == "ch_feedback"
+    assert intake.channel_id_of({"created_by": "user:ram"}) == ""
+    assert intake.channel_id_of({}) == "" and intake.channel_id_of(None) == ""
+
+
+def test_door_session_is_the_doors_binding_for_its_own_unbound_cards():
+    door = {"id": "ch_1", "session_id": "sess-x"}
+    card = {"created_by": "intake:ch_1", "session_id": ""}
+    assert intake.door_session(card, door) == "sess-x"
+    assert intake.door_session(dict(card, session_id="sess-y"), door) == "", "already bound: kept"
+    assert intake.door_session(dict(card, created_by="intake:ch_2"), door) == "", "another door"
+    assert intake.door_session(dict(card, created_by="user:ram"), door) == "", "typed on the board"
+    assert intake.door_session(card, dict(door, session_id="")) == "", "door wakes nobody"
+    assert intake.door_session(card, None) == "" and intake.door_session(None, door) == ""
+
+
 # -- deliver ------------------------------------------------------------------
 class FakeDB:
     def __init__(self):

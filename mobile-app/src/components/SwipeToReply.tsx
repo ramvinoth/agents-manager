@@ -5,6 +5,8 @@ import Animated, { Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSha
 import Icon from "./Icon"
 import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
+import { recordSwipe } from "../lib/usageReporter"
+import { useSeen } from "./Tracked"
 
 const TRIGGER = 56 // px of drag before the reply fires — comfortably past a scroll jitter
 const EDGE = 30 // px from the screen's left edge reserved for iOS's native swipe-back
@@ -28,7 +30,8 @@ export default function SwipeToReply({
   // FlatList the inline closure changes every render.
   const onReplyRef = useRef(onReply)
   onReplyRef.current = onReply
-  const fire = () => onReplyRef.current()
+  const fire = () => { recordSwipe("swipe-reply"); onReplyRef.current() }
+  useSeen("swipe-reply", undefined, true)
 
   const pan = useMemo(() => Gesture.Pan()
     // Claim only a decidedly rightward drag; vertical scroll and left drags pass through.

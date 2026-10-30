@@ -1,7 +1,7 @@
 /** Realtime invalidation events (server: viewer/live.py, /api/live/ws).
  *  An event only says "rows in this table changed" — the client refetches
  *  through the ordinary GET routes. These are the pure decisions; the socket
- *  lives in components/useLive.ts. */
+ *  lives in components/useLive.ts (watchLive for the store, useLive for views). */
 
 export type LiveEvent =
   | { t: "hello" | "ping" | "resync" }
@@ -16,11 +16,6 @@ export function matches(ev: LiveEvent, tables: readonly string[], projectId: num
   if (ev.t !== "change") return false
   if (!tables.includes(ev.table)) return false
   return projectId == null || ev.project_id == null || ev.project_id === projectId
-}
-
-/** Reconnect delay after `attempt` consecutive failures: 1s doubling to 30s. */
-export function backoffMs(attempt: number): number {
-  return Math.min(30_000, 1000 * 2 ** Math.max(0, attempt))
 }
 
 export function parse(raw: string): LiveEvent | null {

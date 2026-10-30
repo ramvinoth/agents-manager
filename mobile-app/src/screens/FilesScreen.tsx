@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Alert, Dimensions, FlatList, PanResponder, RefreshControl, Text, View } from "react-native"
-import { TouchableOpacity } from "../components/Tracked"
+import { TouchableOpacity, useSeen } from "../components/Tracked"
+import { recordSwipe } from "../lib/usageReporter"
 import * as DocumentPicker from "expo-document-picker"
 import * as ImagePicker from "expo-image-picker"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -133,11 +134,13 @@ export default function FilesScreen({ navigation }: Props) {
         return false
       },
       onPanResponderRelease: (_e, g) => {
-        if (g.dx > TRIGGER && canBackRef.current) backRef.current()
-        else if (g.dx < -TRIGGER && canFwdRef.current) fwdRef.current()
+        if (g.dx > TRIGGER && canBackRef.current) { recordSwipe("swipe-files-back"); backRef.current() }
+        else if (g.dx < -TRIGGER && canFwdRef.current) { recordSwipe("swipe-files-forward"); fwdRef.current() }
       },
     })
   ).current
+  useSeen("swipe-files-back", undefined, canBack)
+  useSeen("swipe-files-forward", undefined, canForward)
 
   async function doUploadPhoto() {
     const res = await ImagePicker.launchImageLibraryAsync({ quality: 1 })

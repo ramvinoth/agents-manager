@@ -5,7 +5,7 @@ import type { AppState, BinaryFileData, BinaryFiles, Collaborator, ExcalidrawImp
 import "@excalidraw/excalidraw/index.css"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import { backoffMs } from "@/lib/live"
+import { backoffMs } from "@/lib/socketFeed"
 import { userError } from "@/lib/errors"
 import { PROTOCOL, Sync, checksum, collaborator, missingFiles, replaceById, type CanvasSnapshot, type El, type PresenceMsg, type RejectItem } from "@/lib/canvasSync"
 import { parseCanvasRef, type CanvasRef } from "@/lib/canvasRef"

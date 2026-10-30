@@ -1,5 +1,6 @@
 import React from "react"
-import { Text, TouchableOpacity, View } from "react-native"
+import { Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import type { RedAsk } from "../api/client"
 import type { RedResolution } from "../lib/redApproval"
 import { useStyles } from "../lib/styles"

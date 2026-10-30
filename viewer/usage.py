@@ -6,17 +6,23 @@ digest (GET /api/usage/report, MCP usage_report) to decide what to improve,
 remove or move — the measuring half of the build → measure → change loop.
 
 Event kinds:
-  seen      a control was on screen (once per page load / screen visit)
-  tap       a control was used
-  view      a screen or dialog opened (element = "")
-  feedback  the owner wrote a note about this surface (detail = the note)
+  seen        a control was on screen (once per page load / screen visit)
+  tap         a control was pressed
+  long_press  a control was long-pressed (phone)
+  swipe       a swipe gesture completed (phone; element = the gesture's name)
+  view        a screen or dialog opened (element = "")
+  feedback    the owner wrote a note about this surface (detail = the note)
 
 Pure logic only (validation, the report shape) so it is unit-tested without a
 database; db.py holds the SQL.
 """
 import time
 
-KINDS = ("seen", "tap", "view", "feedback")
+# A use of a control: every gesture that acts on it counts, not only a tap.
+USE_KINDS = ("tap", "long_press", "swipe")
+# The report's per-gesture field for each use kind.
+_USE_FIELD = {"tap": "taps", "long_press": "long_presses", "swipe": "swipes"}
+KINDS = ("seen",) + USE_KINDS + ("view", "feedback")
 CLIENTS = ("web", "ios")
 MAX_BATCH = 200
 _FIELD_MAX = {"surface": 80, "element": 80, "detail": 2000}
@@ -41,7 +47,7 @@ def clean_events(raw, client, now=None):
         for f, cap in _FIELD_MAX.items():
             v = e.get(f)
             ev[f] = v.strip()[:cap] if isinstance(v, str) else ""
-        if not ev["surface"] or (ev["kind"] in ("seen", "tap") and not ev["element"]) \
+        if not ev["surface"] or (ev["kind"] in ("seen",) + USE_KINDS and not ev["element"]) \
                 or (ev["kind"] == "feedback" and not ev["detail"]):
             dropped += 1
             continue
@@ -54,13 +60,16 @@ def clean_events(raw, client, now=None):
 def report(rows, feedback, days, limit=25):
     """Shape db.ui_usage_rows into the digest an agent acts on.
 
-    hot    controls by taps in the window (with how many times they were seen,
-           so tap rate is visible);
+    A control's `uses` are its taps, long-presses and swipes together (each is
+    also reported on its own, so a control used only by long-press is not dead).
+    hot    controls by uses in the window (with how many times they were seen,
+           so the use rate is visible);
     dead   controls seen at least `_DEAD_MIN_SEEN` times in the window and never
-           tapped, ever — on screen, ignored: candidates to remove, merge or move;
-    cold   controls tapped before the window and not in it — something changed
+           used, ever — on screen, ignored: candidates to remove, merge or move;
+    cold   controls used before the window and not in it — something changed
            (a control is cold OR dead, never both);
     screens  screen/dialog opens in the window.
+    Web and phone rows stay apart (`client`): one name on both is two controls.
     """
     ctl = {}
     screens = []
@@ -71,23 +80,26 @@ def report(rows, feedback, days, limit=25):
                 screens.append({"client": r["client"], "surface": r["surface"], "opens": r["n"],
                                 "people": r["actors"]})
             continue
-        c = ctl.setdefault(key, {"client": key[0], "surface": key[1], "element": key[2],
-                                 "taps": 0, "seen": 0, "taps_before": 0, "last_ts": 0})
-        if r["kind"] == "tap":
-            c["taps"] += r["n"]
-            c["taps_before"] += r["n_before"]
-            c["last_ts"] = max(c["last_ts"], r["last_ts"] or 0)
+        c = ctl.get(key)
+        if c is None:
+            c = ctl[key] = {"client": key[0], "surface": key[1], "element": key[2],
+                            "uses": 0, "seen": 0, "uses_before": 0}
+            c.update((f, 0) for f in _USE_FIELD.values())
+        if r["kind"] in _USE_FIELD:
+            c[_USE_FIELD[r["kind"]]] += r["n"]
+            c["uses"] += r["n"]
+            c["uses_before"] += r["n_before"]
         elif r["kind"] == "seen":
             c["seen"] += r["n"]
     controls = list(ctl.values())
-    hot = sorted((c for c in controls if c["taps"]), key=lambda c: -c["taps"])[:limit]
-    dead = sorted((c for c in controls if not c["taps"] and not c["taps_before"]
+    hot = sorted((c for c in controls if c["uses"]), key=lambda c: -c["uses"])[:limit]
+    dead = sorted((c for c in controls if not c["uses"] and not c["uses_before"]
                    and c["seen"] >= _DEAD_MIN_SEEN),
                   key=lambda c: -c["seen"])[:limit]
-    cold = sorted((c for c in controls if not c["taps"] and c["taps_before"]),
-                  key=lambda c: -c["taps_before"])[:limit]
-    for c in hot + dead + cold:
-        c.pop("last_ts", None)
+    cold = sorted((c for c in controls if not c["uses"] and c["uses_before"]),
+                  key=lambda c: -c["uses_before"])[:limit]
+    totals = {"controls": len(controls), "uses": sum(c["uses"] for c in controls)}
+    totals.update((f, sum(c[f] for c in controls)) for f in _USE_FIELD.values())
     return {
         "days": days,
         "hot": hot,
@@ -95,7 +107,7 @@ def report(rows, feedback, days, limit=25):
         "cold": cold,
         "screens": sorted(screens, key=lambda s: -s["opens"])[:limit],
         "feedback": feedback,
-        "totals": {"controls": len(controls), "taps": sum(c["taps"] for c in controls)},
+        "totals": totals,
     }
 
 

@@ -1,4 +1,4 @@
-import { backoffMs, matches, parse, type LiveEvent } from "./live.ts"
+import { matches, parse, type LiveEvent } from "./live.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -16,9 +16,6 @@ eq("unscoped event matches every project", matches(card(null), ["cards"], 3), tr
 eq("unscoped view wants every project", matches(card(4), ["cards"], null), true)
 eq("other table does not", matches(card(3), ["notes"], 3), false)
 
-eq("backoff starts at 1s", backoffMs(0), 1000)
-eq("backoff doubles", backoffMs(3), 8000)
-eq("backoff caps at 30s", backoffMs(20), 30000)
 
 eq("parse change", parse('{"t":"change","table":"cards","id":1,"op":"","project_id":null}')?.t, "change")
 eq("parse junk", parse("nope"), null)
