@@ -23,14 +23,16 @@ class UsageMixin:
                         **({"cards": cards} if cards else {})})
 
     def _feedback_to_board(self, p, notes):
-        """Hand each feedback note to the intake channel flagged app_feedback
-        (viewer.intake), if the owner set one: it becomes a card on that board
-        and wakes that board's session. The note is already stored, so a
-        delivery failure is logged, never returned as a failed post."""
+        """Hand each feedback note to the feedback intake channel (viewer.intake
+        .feedback_channel — the owner's pick, else the built-in one): it becomes
+        a card in that board's Feedback column, wakes the channel's session if
+        it has one, and an agent's reply there reaches the owner as the board's
+        comment push. The note is already stored, so a delivery failure is
+        logged, never returned as a failed post."""
         if not notes:
             return []
         try:
-            channel = db.intake_feedback_channel()
+            channel = intake.feedback_channel()
             if not channel:
                 return []
             cards = []
@@ -40,7 +42,8 @@ class UsageMixin:
                     {"title": f"Feedback · {e['surface']}: {e['detail']}",
                      "text": e["detail"], "surface": e["surface"], "client": e["client"]},
                     f"{p['actor']} (in-app feedback, {e['client']} {e['surface']} screen)",
-                    human_role=p["human_role"], session_level="", actor=p["actor"])
+                    human_role=p["human_role"], session_level="", actor=p["actor"],
+                    column=intake.FEEDBACK_COLUMN)
                 if status == 200 and resp.get("id"):
                     cards.append(resp["id"])
             return cards

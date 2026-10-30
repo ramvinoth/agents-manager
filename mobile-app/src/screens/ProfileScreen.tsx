@@ -429,7 +429,7 @@ export default function ProfileScreen({ navigation }: Props) {
         />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8, gap: 12 }}>
           <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }]}>
-            {feedbackSent ? "Sent — thank you." : "Saved on the server, where the agents improving Harman read it."}
+            {feedbackSent ? "Sent — thank you." : "Becomes a card on your board's Feedback column; an agent's reply comes back as a notification."}
           </Text>
           <TouchableOpacity
             testID="send-feedback"

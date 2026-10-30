@@ -1509,6 +1509,26 @@ def board_column_create(project_id, name, position=0):
         return dict(cur.fetchone())
 
 
+def board_column_ensure(project_id, name, position=-1):
+    """The project's column called `name` (case-insensitive), created at
+    `position` when the board has none. Idempotent: the name is the contract,
+    so a column the owner moved is found, never duplicated. The advisory lock
+    makes find-or-create one step: two posts at once cannot both create it."""
+    name = name.strip()
+    with _db() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"board_column:{project_id}:{name.lower()}",))
+        cur.execute("SELECT * FROM board_columns WHERE project_id = %s "
+                    "AND lower(trim(name)) = lower(%s) ORDER BY id LIMIT 1",
+                    (project_id, name))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("INSERT INTO board_columns(project_id, name, position) "
+                        "VALUES(%s,%s,%s) RETURNING *", (project_id, name, position))
+            row = cur.fetchone()
+    return dict(row)
+
+
 def board_column_update(column_id, **fields):
     allowed = {k: v for k, v in fields.items() if k in ("name", "position") and v is not None}
     if not allowed:

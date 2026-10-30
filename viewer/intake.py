@@ -10,8 +10,12 @@ board_wake sweep re-wakes it until the session answers. No new wake path.
 
 The owner's own in-app feedback is just one client: the channel flagged
 `app_feedback` also receives every feedback note the web/phone clients post
-(routes.usage). That is how Harman's developers route "this screen is bad"
-to the session building Harman — and how any other org routes it anywhere.
+(routes.usage), as a card in that board's "Feedback" column. That is how
+Harman's developers route "this screen is bad" to the session building
+Harman — and how any other org routes it anywhere. With no channel flagged,
+feedback_channel() opens the built-in one on the server's own project, so a
+note always becomes a card an agent can answer (the owner gets the reply as
+the board's comment push) — feedback is a conversation by default.
 
 Trust: a channel's text comes from OUTSIDE the org. The wake tells the
 session so (actions._board_followup), and the card body says where it came
@@ -25,6 +29,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import sys
 
 # Cards one channel may create per hour. A leaked token or a looping sender
 # must not bury the board or burn the session's budget on wakes.
@@ -32,6 +37,12 @@ RATE_PER_HOUR = 30
 TITLE_MAX = 120
 BODY_MAX = 8000
 EXTERNAL_PREFIX = "intake:"      # actor/created_by of a card that came through a door
+# The built-in feedback channel (fixed id, so it is opened once and re-flagged,
+# never duplicated) and the column its cards land in on whichever board
+# receives feedback.
+FEEDBACK_CHANNEL_ID = "ch_feedback"
+FEEDBACK_CHANNEL_NAME = "In-app feedback"
+FEEDBACK_COLUMN = "Feedback"
 
 
 def new_token():
@@ -96,7 +107,36 @@ def view(channel):
     return c
 
 
-def deliver(channel, payload, origin, human_role="", session_level="ic", actor=""):
+def feedback_channel():
+    """Where the owner's in-app feedback goes: the channel flagged app_feedback;
+    with none flagged, the built-in channel on the server's own project (the
+    one the agents building this install work in), opened on first use and
+    re-flagged if the owner switched every channel off. Its token is minted
+    and discarded: nobody outside can post to it until the owner takes a New
+    token in Integrations."""
+    import os
+    from viewer import config, db
+    ch = db.intake_feedback_channel()
+    if ch:
+        return ch
+    if db.intake_get(FEEDBACK_CHANNEL_ID):
+        return db.intake_update(FEEDBACK_CHANNEL_ID, app_feedback=True)
+    root = str(config.STATIC_DIR)
+    project = db.project_ensure("local", root, os.path.basename(root.rstrip("/")) or root)
+    try:
+        return db.intake_create(FEEDBACK_CHANNEL_ID, FEEDBACK_CHANNEL_NAME, project["id"], "",
+                                new_token()[1], True, "system")
+    except Exception as ex:
+        # A concurrent post opened it first (primary key): use that one. Any
+        # other failure leaves nothing to return, so it is logged, not lost.
+        winner = db.intake_get(FEEDBACK_CHANNEL_ID)
+        if not winner:
+            print(f"[intake] opening the built-in feedback channel failed: {ex}",
+                  file=sys.stderr)
+        return winner
+
+
+def deliver(channel, payload, origin, human_role="", session_level="ic", actor="", column=""):
     """Turn one inbound event into a card on the channel's board. Returns
     (payload, status) like actions.execute.
 
@@ -110,7 +150,8 @@ def deliver(channel, payload, origin, human_role="", session_level="ic", actor="
     and their actor, so it wakes like a card the owner typed.
 
     created_by is always the channel, whoever the actor: it is the rate-limit
-    ledger and tells the board where the card came in."""
+    ledger and tells the board where the card came in. `column` names the
+    lane (found or created on the channel's board); default: the first lane."""
     from viewer import actions, db
     if db.intake_touch(channel["id"]) > RATE_PER_HOUR:
         return {"error": f"rate limit: {RATE_PER_HOUR} cards per hour"}, 429
@@ -119,5 +160,7 @@ def deliver(channel, payload, origin, human_role="", session_level="ic", actor="
     args = {"title": title, "body": body, "project_id": channel["project_id"],
             "session": channel.get("session_id") or None,
             "created_by": EXTERNAL_PREFIX + channel["id"]}
+    if column:
+        args["column_id"] = db.board_column_ensure(channel["project_id"], column)["id"]
     return actions.execute(actions.intent("card_create", args, actor),
                            human_role, session_level)

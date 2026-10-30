@@ -816,23 +816,17 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # purpose — a card with no bound session (owner-created) still parks in
         # those columns and still needs the delivery. Never raises.
         _card_inbox_delivery(card, action, args, bool(session_level))
-        if not card or not card.get("id") or not card.get("session_id"):
+        if not card or not card.get("id"):
             return
         agent = bool(session_level)
-        own = agent and card.get("session_id") == (acting_session or "")
-        # The card's column, resolved once for the move-event text.
-        col = None
-        if action == "card_move" and card.get("project_id"):
-            cols = db.board_columns_list(card["project_id"])
-            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
-        # The sweep's ledger: a foreign event marks the card as having news for
-        # its session; the session's own write means it has read the board.
-        db.card_mark_attention(card["id"], by_own_session=own)
         if action == "card_comment":
             body = (args.get("body") or "").strip()
             excerpt = body[:200] + ("…" if len(body) > 200 else "")
         else:
             excerpt = ""
+        # The push is for the owner, so it fires whether or not the card is
+        # bound to a session: an agent answering an unbound card (an in-app
+        # feedback note, a card the owner typed) must still reach them.
         if agent and action == "card_comment":
             from viewer import push
             # The owner reads this cold, possibly hours later: the title must
@@ -843,6 +837,17 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
             push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
                             f"{actor}: {excerpt}"[:300],
                             data={"card": card["id"]})
+        if not card.get("session_id"):
+            return
+        own = agent and card.get("session_id") == (acting_session or "")
+        # The card's column, resolved once for the move-event text.
+        col = None
+        if action == "card_move" and card.get("project_id"):
+            cols = db.board_columns_list(card["project_id"])
+            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
+        # The sweep's ledger: a foreign event marks the card as having news for
+        # its session; the session's own write means it has read the board.
+        db.card_mark_attention(card["id"], by_own_session=own)
         if own:
             # The session closing its own card has read it: a wake still queued
             # from an earlier event would only resume it on finished work.

@@ -15,7 +15,8 @@ const SELECT = "h-7 rounded-md border border-border bg-background px-1 text-xs"
  * world onto a board (viewer/intake.py). Each channel is a URL + token bound
  * to one project board and optionally one session; a POST becomes a card
  * there and wakes that session. One channel may also receive the owner's
- * in-app feedback ("Send feedback" on web and phone).
+ * in-app feedback ("Send feedback" on web and phone); with none switched on,
+ * the server opens and switches on its built-in "In-app feedback" channel.
  *
  * The token is shown ONCE (on create / New token): only its hash is stored.
  */
@@ -77,6 +78,7 @@ export function IntakeSection() {
         <span className="flex-1">
           A link anything outside can post to — a website form, a failing build, an alert, your own app feedback.
           Each post becomes a card on the board you pick and wakes the chat you pick to work on it.
+          Your app feedback always lands on one: the switched-on channel, else the built-in "In-app feedback".
         </span>
         {busy && <Loader2 className="size-3.5 animate-spin" />}
       </p>
@@ -126,6 +128,7 @@ export function IntakeSection() {
               <Switch on={c.app_feedback} disabled={!!busy} testId={`intake-feedback-${c.id}`}
                 onClick={() => run(`fb:${c.id}`, () => api.intakeUpdate({ id: c.id, app_feedback: !c.app_feedback }))} />
               Also receives my in-app feedback
+              {c.app_feedback && <span className="text-muted-foreground">· cards land in its board's Feedback column</span>}
             </label>
           </div>
         ))}
