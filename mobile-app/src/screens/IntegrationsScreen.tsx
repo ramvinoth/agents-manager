@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState, type SetupStep } from "../api/client"
 import { useNavigation } from "@react-navigation/native"

@@ -8,7 +8,8 @@
  * agent's revision replaces the old version in place.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, ScrollView, Text, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import { WebView } from "react-native-webview"

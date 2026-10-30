@@ -1,5 +1,6 @@
 import React, { useState } from "react"
-import { Modal, Pressable, Text, TouchableOpacity, View } from "react-native"
+import { Modal, Text, View } from "react-native"
+import { Pressable, TouchableOpacity } from "./Tracked"
 import Icon from "./Icon"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"

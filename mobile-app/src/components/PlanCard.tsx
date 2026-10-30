@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react"
-import { Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { planDecision, planStateLabel, planText } from "../lib/plan"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"

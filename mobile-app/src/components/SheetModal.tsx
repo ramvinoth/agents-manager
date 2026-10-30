@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
-import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from "react-native"
+import { Animated, KeyboardAvoidingView, Modal, Platform, StyleSheet } from "react-native"
+import { Pressable } from "./Tracked"
 import { useStyles } from "../lib/styles"
 
 /**

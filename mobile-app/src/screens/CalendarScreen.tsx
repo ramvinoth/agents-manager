@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react"
-import { ActivityIndicator, Alert, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, Platform, RefreshControl, SectionList, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import DateTimePicker from "@react-native-community/datetimepicker"

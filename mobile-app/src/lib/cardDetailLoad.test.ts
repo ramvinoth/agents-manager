@@ -44,6 +44,9 @@ function screen(response: unknown, status?: number) {
   const native = Object.fromEntries(["ActivityIndicator", "KeyboardAvoidingView", "Pressable", "ScrollView", "Text", "TextInput", "View"].map(x => [x, x]))
   const modules: Record<string, unknown> = {
     react: { ...react, default: react },
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...native, Platform: { OS: "ios" }, Alert: { alert(title: string, message: string, buttons?: any[]) { alerts.push({ title, message, buttons }) } } },
     "@react-navigation/elements": { useHeaderHeight: () => 40 },
     "react-native-safe-area-context": { useSafeAreaInsets: () => ({ bottom: 0 }) },

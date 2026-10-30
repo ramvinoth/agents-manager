@@ -23,7 +23,8 @@
  * caller closes the sheet.
  */
 import React, { useState } from "react"
-import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Platform, ScrollView, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import SheetModal from "./SheetModal"
 import DateTimePicker from "@react-native-community/datetimepicker"
 import { type Provider } from "../api/client"

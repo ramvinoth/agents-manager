@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type ChatStatus, type OpenDecision } from "../api/client"
 import { fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
 import { SNOOZE_OPTIONS } from "../lib/inbox"

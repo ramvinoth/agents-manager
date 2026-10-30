@@ -6,7 +6,8 @@
  * polling and the composer.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Image, Pressable, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Image, Text, View } from "react-native"
+import { Pressable, TouchableOpacity } from "./Tracked"
 import { extractImages, fmtClock, resultToText, type Block, type ImagePart, type ThreadItem, type ToolBlock } from "../lib/thread"
 import { splitThinking } from "../lib/thinking"
 import { useTheme } from "../lib/useTheme"

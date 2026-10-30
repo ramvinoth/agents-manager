@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
-import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Alert, ScrollView, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Provider } from "../api/client"

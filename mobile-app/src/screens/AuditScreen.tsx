@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from "react"
-import { ActivityIndicator, Pressable, ScrollView, SectionList, Text, View } from "react-native"
+import { ActivityIndicator, ScrollView, SectionList, Text, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

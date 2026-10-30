@@ -12,9 +12,9 @@ import {
   ScrollView,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { api, type McpServer, type Skill } from "../api/client"
 import { useTheme } from "../lib/useTheme"

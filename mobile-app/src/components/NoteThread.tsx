@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { api, type NoteComment, type NoteCommentSort } from "../api/client"
 import { formatActor } from "../lib/board"
 import { userError } from "../lib/errors"

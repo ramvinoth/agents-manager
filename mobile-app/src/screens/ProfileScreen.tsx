@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState, type ReactNode } from "react"
-import { Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Alert, ScrollView, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import Constants from "expo-constants"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"

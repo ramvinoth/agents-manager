@@ -1,5 +1,6 @@
 import React from "react"
-import { Image, Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native"
+import { Image, Modal, ScrollView, Text, View, useWindowDimensions } from "react-native"
+import { Pressable } from "./Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../lib/useTheme"
 

@@ -1,5 +1,6 @@
 import React from "react"
-import { Text, TouchableOpacity, View } from "react-native"
+import { Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import Icon from "./Icon"
 import { useReachability } from "../lib/useReachability"
 import { useTheme } from "../lib/useTheme"

@@ -1,5 +1,6 @@
 import React from "react"
-import { TouchableOpacity, type StyleProp, type ViewStyle } from "react-native"
+import { type StyleProp, type ViewStyle } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import Icon, { type IconName } from "./Icon"
 import { useStyles } from "../lib/styles"
 
