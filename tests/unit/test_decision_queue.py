@@ -205,7 +205,7 @@ class TestRoute:
         d.pop("waiting_s")  # the route uses the real clock
         assert d == {"kind": "card", "session": "sc", "host": "local",
                      "label": "Worker", "summary": "#53 Phone calls",
-                     "card": 53, "column": "Review",
+                     "card": 53, "column": "Review", "ask": "", "expires_at": 0.0,
                      "inbox_id": 0, "snoozed_until": 0}
 
     def test_a_snoozed_item_is_held_back_until_it_lapses(self, monkeypatch):

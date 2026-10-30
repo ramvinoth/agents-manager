@@ -255,6 +255,11 @@ export type OpenDecision = {
   /** kind "card": the board card parked in Review/Needs-info for the owner. */
   card?: number
   column?: string
+  /** kind "card": the card's ONE open ask — its asking session's newest
+   *  comment ("" when it only moved the card) — and its deadline in epoch
+   *  seconds (0 = none; the server drops the item once it passes). */
+  ask?: string
+  expires_at?: number
   /** The item's inbox row (0 when none was delivered) — the handle a snooze
    *  takes. The queue already omits items whose snooze is live. */
   inbox_id: number

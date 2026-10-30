@@ -7,7 +7,7 @@ import { AuqBlock } from "@/components/AuqBlock"
 import { PlanBlock } from "@/components/PlanBlock"
 import { api } from "@/lib/api"
 import { fmtDuration } from "@/lib/format"
-import { firstOpen, stepDecision } from "@/lib/decisions"
+import { answerBy, firstOpen, stepDecision } from "@/lib/decisions"
 import { SNOOZE_OPTIONS } from "@/lib/inbox"
 import type { OpenDecision, ToolUseBlock } from "@/lib/types"
 import { userError } from "@/lib/errors"
@@ -201,7 +201,11 @@ export function DecisionCockpit({
 
               {d.kind === "card" && (
                 <Box title={d.column ? `Parked in ${d.column}` : "Parked for you"}>
-                  <p className="text-sm">The card holds the full context and the question. Open it to read the thread, comment, or move it to Approved or Declined.</p>
+                  {d.ask && <p data-testid="cockpit-card-ask" className="mb-2 whitespace-pre-wrap text-sm leading-relaxed">{d.ask}</p>}
+                  {answerBy(d.expires_at, Date.now()) && (
+                    <p data-testid="cockpit-card-deadline" className="mb-2 text-xs font-medium text-destructive">{answerBy(d.expires_at, Date.now())}</p>
+                  )}
+                  <p className="text-sm text-muted-foreground">The card holds the full context. Open it to read the thread, comment, or move it to Approved or Declined.</p>
                   <div className="mt-3 flex justify-end">
                     <Button size="sm" disabled={!d.card || !onOpenCard} onClick={async () => {
                       setError("")

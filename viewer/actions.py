@@ -20,7 +20,7 @@ and writes the audit trail; it is the only place that does.
 import sys
 import time
 
-from viewer import db, notelinks, orglogic
+from viewer import asks, db, notelinks, orglogic
 
 
 def _card_create(a):
@@ -64,7 +64,16 @@ def _card_update(a):
             fields["column_id"] = next((c["id"] for c in cols
                                         if str(c.get("name", "")).lower() == name),
                                        cols[0]["id"])
-    return db.card_update(a.get("card_id"), **fields) or {"error": "not found"}
+    before = db.card_get(a.get("card_id")) if "column_id" in fields else None
+    updated = db.card_update(a.get("card_id"), **fields)
+    if not updated:
+        return {"error": "not found"}
+    if before and before.get("column_id") != updated.get("column_id"):
+        # A column change here is a move without card_move's ask rules: it
+        # ends whatever ask was open, deadline included (viewer.asks) — else
+        # an expired deadline would keep the card out of the queue forever.
+        db.card_ask_set(updated["id"], 0, 0)
+    return updated
 
 
 # Columns whose NAME (case-insensitive) marks the owner's judgement. An agent
@@ -116,8 +125,22 @@ def _card_move(a, *, by_agent=False):
                 return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
                                   "a different writer just acted. I won't overwrite a fresh "
                                   "move; comment on the card and let the owner decide.")}
-    return db.card_move(card["id"], a.get("column_id"),
-                        a.get("position", 1.0)) or {"error": "not found"}
+    now = time.time()
+    into_decision = asks.is_decision_column(target.get("name"))
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (into_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent moving its "
+                         "card into Review or Needs-info"}
+    moved = db.card_move(card["id"], a.get("column_id"), a.get("position", 1.0))
+    if not moved:
+        return {"error": "not found"}
+    # The column is the ask's source of truth: moving in opens one, any other
+    # move ends whatever was open (viewer.asks).
+    since, exp = asks.after_move(into_decision, by_agent, expires, now)
+    db.card_ask_set(card["id"], since, exp)
+    return dict(moved, ask_since=since, ask_expires_at=exp)
 
 
 def _card_delete(a):
@@ -259,8 +282,11 @@ def _task_done(a, *, by_agent=False):
                 return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
                                   "a different writer just acted. I won't overwrite a fresh "
                                   "move; comment on the card and let the owner decide.")}
-    return db.card_move(a.get("card_id"), done_id,
-                        a.get("position", 1.0)) or {"error": "not found"}
+    moved = db.card_move(a.get("card_id"), done_id, a.get("position", 1.0))
+    if not moved:
+        return {"error": "not found"}
+    db.card_ask_set(moved["id"], 0, 0)   # a finished card asks nothing (viewer.asks)
+    return moved
 
 
 def _inbox_send(a):
@@ -286,18 +312,42 @@ def _inbox_send(a):
     return row or {"error": "send failed"}
 
 
-def _card_comment(a):
+def _card_comment(a, *, by_agent=False):
     """Post a comment on a card's discussion thread (db.card_comments).
     The author is stamped by the route from the resolved principal — never
     trusted from the body — so a forged author cannot talk in someone else's
-    voice on the board."""
+    voice on the board.
+
+    On a card in Review/Needs-info the comment is part of the card's ONE ask
+    (viewer.asks): an agent's comment words or raises it — optionally with an
+    `expires_at` deadline — and a human's answers it. An agent raising a
+    second ask while the first is still open gets `warning` back, telling it
+    to split the new one onto its own card."""
     card = db.card_get(a.get("card_id"))
     if not card:
         return {"error": "not found"}
     body = (a.get("body") or "").strip()
     if not body:
         return {"error": "empty comment"}
-    return db.card_comment_add(card["id"], a.get("author", ""), body)
+    now = time.time()
+    cols = db.board_columns_list(card["project_id"]) if card.get("project_id") else []
+    col = next((c for c in cols if c.get("id") == card.get("column_id")), None)
+    in_decision = asks.is_decision_column((col or {}).get("name"))
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (in_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent's comment on "
+                         "a card in Review or Needs-info"}
+    state = (card.get("ask_since") or 0, card.get("ask_expires_at") or 0)
+    worded = by_agent and in_decision and asks.has_open_ask_text(
+        db.card_comment_list(card["id"]), state[0])
+    row = db.card_comment_add(card["id"], a.get("author", ""), body)
+    new_state, second = asks.after_comment(state, by_agent, in_decision, worded,
+                                           expires, now)
+    if new_state != (float(state[0]), float(state[1])):
+        db.card_ask_set(card["id"], *new_state)
+    return dict(row, warning=asks.SPLIT_WARNING) if second else row
 
 
 def _card_dep_add(a):
@@ -957,12 +1007,14 @@ def execute(it, human_role, session_level, acting_session=""):
             and not orglogic.self_approves(human_role, session_level)):
         return _queue_for_owner(it, acting_session, "queued:red",
                                 need_reason=bool(session_level))
-    if action in ("card_move", "task_done"):
+    if action in ("card_move", "task_done", "card_comment"):
         # The two handlers that resolve their target column at RUN time — which
         # is exactly where they can clobber a human's live move — get the
         # actor's class so their race guards can tell an agent apart from the
-        # owner. (An agent-queued intent later approved by a human re-runs with
-        # no session level and takes the human path, as intended.)
+        # owner; card_comment needs it to tell an agent's ask from the owner's
+        # answer (viewer.asks). (An agent-queued intent later approved by a
+        # human re-runs with no session level and takes the human path, as
+        # intended.)
         payload = handler(args, by_agent=bool(session_level))
     else:
         payload = handler(args)

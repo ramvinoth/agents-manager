@@ -1,4 +1,4 @@
-import { firstOpen, queueFrom, stepDecision } from "./decisions.ts"
+import { answerBy, firstOpen, queueFrom, stepDecision } from "./decisions.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -22,6 +22,15 @@ eq("tapped session first", r.ordered.map((d) => d.inbox_id), [2, 4, 1, 0])
 eq("tapped index", r.at, 1)
 eq("not listed", queueFrom(q, 9, "b").at, -1)
 eq("no inbox row never matches", queueFrom(q, 0, "a").at, -1)
+
+const now = 1_000_000_000 * 1000
+eq("no deadline", answerBy(0, now), "")
+eq("undefined deadline", answerBy(undefined, now), "")
+eq("hours and minutes", answerBy(1_000_000_000 + 7500, now), "answer within 2h 5m")
+eq("days", answerBy(1_000_000_000 + 90000, now), "answer within 1d 1h")
+eq("rounds down", answerBy(1_000_000_000 + 119, now), "answer within 1m")
+eq("under a minute", answerBy(1_000_000_000 + 30, now), "answer within under a minute")
+eq("passed", answerBy(1_000_000_000, now), "deadline passed")
 
 console.log(`decisions: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

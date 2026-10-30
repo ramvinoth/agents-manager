@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Modal, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native"
 import { api, type ChatStatus, type OpenDecision } from "../api/client"
-import { fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
+import { answerBy, fmtWaiting, firstOpen, stepDecision } from "../lib/decisions"
 import { SNOOZE_OPTIONS } from "../lib/inbox"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
@@ -339,6 +339,10 @@ export default function DecisionCockpit({
           {d.kind === "card" ? (
             <View testID="cockpit-card" style={styles.permCard}>
               <Text style={styles.permTitle}>{d.column ? `Parked in ${d.column}` : "Parked for you"}</Text>
+              {d.ask ? <Text testID="cockpit-card-ask" style={styles.permInput}>{d.ask}</Text> : null}
+              {answerBy(d.expires_at, Date.now()) ? (
+                <Text testID="cockpit-card-deadline" style={[styles.permInput, { color: t.danger }]}>{answerBy(d.expires_at, Date.now())}</Text>
+              ) : null}
               <Text style={styles.permInput}>Open the card to read the full context and move it to Approved or Declined.</Text>
               <View style={styles.permBtnRow}>
                 <TouchableOpacity testID="cockpit-card-open" style={styles.permAllow} onPress={() => d.card && onOpenCard(d.card)} disabled={busy}>

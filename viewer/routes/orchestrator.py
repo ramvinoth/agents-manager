@@ -411,6 +411,7 @@ class OrchestratorMixin:
         self._org_send(req, "card_comment",
                        {"card_id": body.get("card_id"),
                         "body": body.get("body", ""),
+                        "expires_at": body.get("expires_at"),
                         "author": req.principal["actor"]})
 
     def _p_org_card_dep_add(self, req):

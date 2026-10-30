@@ -16,7 +16,7 @@ double-counted. On timeout the row is never touched (engine keeps it), so a
 skipped question or plan resurfaces — the next card, the next heartbeat — and
 this same gate answers it later via the resume path.
 """
-from viewer import db
+from viewer import asks, db
 
 
 def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None,
@@ -89,6 +89,11 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
         # blocker. The summary names the card by number and title so the
         # reader knows what it is without opening it (the "which card is 53?"
         # failure), and `card` lets a tap open that card, not a thread.
+        # A card carries ONE ask — its newest session comment (`ask`) — and an
+        # ask whose deadline passed is no longer the owner's to answer: it
+        # leaves the queue (viewer.asks; the scheduler tick tells the asker).
+        if asks.is_expired(r.get("ask_expires_at"), now):
+            continue
         sid = r.get("session_id") or ""
         cid = r.get("id")
         items.append({
@@ -100,6 +105,8 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
             "summary": f"#{cid} {r.get('title') or ''}"[:120],
             "card": cid,
             "column": r.get("column_name") or "",
+            "ask": str(r.get("ask") or "").strip()[:1000],
+            "expires_at": float(r.get("ask_expires_at") or 0),
         })
     for r in red_rows or []:
         # An org Red approval (db `approvals`): an agent asked for something
