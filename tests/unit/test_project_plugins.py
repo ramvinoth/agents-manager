@@ -4,6 +4,7 @@ for the owner signed in at that folder's project. Hermetic: env and the app's
 HTTP calls are patched; the plugin folder is a tmp dir."""
 import io
 import json
+import os
 import unittest
 import urllib.error
 from pathlib import Path
@@ -26,6 +27,7 @@ class TestSift(unittest.TestCase):
                     "SIFT_EMAIL": "a@example.com", "SIFT_ROOT": str(self.root)}
         patch.dict("os.environ", self.env, clear=False).start()
         self.addCleanup(patch.stopall)
+        os.environ.pop("SIFT_PUBLIC_URL", None)  # the host's real value would leak in; patch.dict restores it
         self.calls = []
 
         def call(_self, path, body):

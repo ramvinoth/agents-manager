@@ -389,10 +389,11 @@ _TOOL_LIST = [
          "path": {"type": "string"}, "name": {"type": "string"},
          "drive": _DRIVE_ARG, "host": _HOST_ARG}}},
     # ── Act on the board ────────────────────────────────────────────────────
-    {"name": "card_create", "description": "Create a card on the board (title required). Board cards are the durable work ledger: park deferred, handed-off, or follow-up work here so it survives this session.",
+    {"name": "card_create", "description": "Create a card on the board (title required). Board cards are the durable work ledger: park deferred, handed-off, or follow-up work here so it survives this session. Creating it straight into Review/Needs-info raises an ask for the owner, the same as moving it there.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"},
-         "column_id": {"type": "integer"}, "project_id": {"type": "integer"}}}},
+         "column_id": {"type": "integer"}, "project_id": {"type": "integer"},
+         "expires_at": _EXPIRES_ARG}}},
     {"name": "card_move", "description": "Move a card to a column at a position. Moving it into Review/Needs-info raises an ask for the owner; one card carries one ask.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "column_id"], "properties": {
          "card_id": {"type": "integer"}, "column_id": {"type": "integer"}, "position": {"type": "number"},

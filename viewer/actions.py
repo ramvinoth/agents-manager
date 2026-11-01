@@ -23,23 +23,45 @@ import time
 from viewer import asks, db, notelinks, orglogic
 
 
-def _card_create(a):
+def _card_create(a, *, by_agent=False):
     # A card is born in a LANE, not just on a board: with no column named, the
     # board's first column (Todo in the seeded pipeline). The route already
     # refuses a card with no board; a null column here would make the card
     # exist in no lane and render on no board view (the other end of fc89546's
     # rule). Every create path (HTTP, MCP, orchestrator intent, approval) runs
     # through this one handler, so the default lives here, not in N clients.
+    # Born in a column is the same act as moved into it: an agent cannot create
+    # into a judgement column, and creating into Review/Needs-info opens the ask
+    # exactly as _card_move would (else the owner is never asked).
     column_id = a.get("column_id")
-    if not column_id and a.get("project_id"):
+    cols = []
+    if a.get("project_id"):
         try:
             cols = db.board_columns_list(int(a["project_id"]))
         except (TypeError, ValueError):
             cols = []
+    if not column_id and cols:
         column_id = orglogic.project_columns(cols)["todo"]
-    return db.card_create(a.get("title", ""), a.get("body", ""), column_id,
+    name = next((c.get("name") for c in cols if str(c.get("id")) == str(column_id)), "")
+    if by_agent and str(name).lower() in _JUDGEMENT_COLUMNS:
+        return {"error": (f"{name} is the owner's judgement — create the card in "
+                          "Review and comment your proposal.")}
+    now = time.time()
+    into_decision = asks.is_decision_column(name)
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (into_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent creating its "
+                         "card in Review or Needs-info"}
+    card = db.card_create(a.get("title", ""), a.get("body", ""), column_id,
                           a.get("project_id"), a.get("session"),
                           a.get("position", 1.0), a.get("created_by", ""))
+    if not (into_decision and by_agent and card and card.get("id")):
+        return card
+    since, exp = asks.after_move(True, True, expires, now)
+    db.card_ask_set(card["id"], since, exp)
+    return dict(card, ask_since=since, ask_expires_at=exp)
 
 
 def _card_update(a):
@@ -1023,14 +1045,15 @@ def execute(it, human_role, session_level, acting_session=""):
             and not orglogic.self_approves(human_role, session_level)):
         return _queue_for_owner(it, acting_session, "queued:red",
                                 need_reason=bool(session_level))
-    if action in ("card_move", "task_done", "card_comment"):
+    if action in ("card_create", "card_move", "task_done", "card_comment"):
         # The two handlers that resolve their target column at RUN time — which
         # is exactly where they can clobber a human's live move — get the
         # actor's class so their race guards can tell an agent apart from the
         # owner; card_comment needs it to tell an agent's ask from the owner's
         # answer (viewer.asks). (An agent-queued intent later approved by a
         # human re-runs with no session level and takes the human path, as
-        # intended.)
+        # intended.) card_create needs it for the same ask/judgement rules as
+        # card_move: a card born in Review is an agent's ask.
         payload = handler(args, by_agent=bool(session_level))
     else:
         payload = handler(args)
