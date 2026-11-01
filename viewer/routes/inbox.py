@@ -109,7 +109,7 @@ class InboxMixin:
             session = p["session"]  # an agent reads its own mailbox only
         project = (q.get("project") or [None])[0]
         kind = (q.get("kind") or [None])[0]
-        unread_only = (q.get("unread_only") or [None])[0] not in (None, "")
+        unread_only = (q.get("unread_only") or [""])[0].lower() not in ("", "0", "false")
         archived = (q.get("archived") or [None])[0] not in (None, "")
         pid = int(project) if project else None
         items = open_decisions_items()
@@ -120,8 +120,15 @@ class InboxMixin:
             # not the full list it would throw away.
             self.send_json({"unread": unread})
             return
-        rows = db.inbox_list(session_id=session, project_id=pid,
-                             kind=kind, unread_only=unread_only, archived=archived)
+        # An agent reads its inbox on every wake: newest 20 by default, not the
+        # whole history (hundreds of rows → hundreds of KB of context per read).
+        default_limit = 20 if p["kind"] == "mcp" else 200
+        try:
+            limit = max(1, min(200, int((q.get("limit") or [default_limit])[0])))
+        except ValueError:
+            limit = default_limit
+        rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
+                             unread_only=unread_only, archived=archived, limit=limit)
         messages = inbox.attach_state(rows, items)
         out = {"messages": messages, "unread": unread}
         if p["kind"] == "app":

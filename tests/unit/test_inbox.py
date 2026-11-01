@@ -297,3 +297,36 @@ def test_red_subject_names_a_level_in_words_not_its_key(monkeypatch):
     assert ask("ic") == "s1 → Own work", "the internal key never reaches the owner"
     assert ask("lead") == "s1 → Workspace"
     assert ask("") == "s1 → the agent it was started from"
+
+
+class TestInboxRouteLimit:
+    """An agent reads its inbox on every wake: it gets the newest 20 by
+    default, never the whole history, and `unread_only=False` means false."""
+
+    def _run(self, monkeypatch, principal, query):
+        from viewer.routes import inbox as ri
+        calls = []
+        monkeypatch.setattr(ri, "open_decisions_items", lambda: [])
+        monkeypatch.setattr(ri.db, "inbox_list", lambda **kw: calls.append(kw) or [])
+        monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items: 0)
+        monkeypatch.setattr(ri.inbox, "attach_state", lambda rows, items: rows)
+        monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i: {})
+        h = ri.InboxMixin.__new__(ri.InboxMixin)
+        h.send_json = lambda data, status=200: None
+        req = type("R", (), {"principal": principal, "query": query})()
+        h._g_inbox(req)
+        return calls[-1]
+
+    def test_agent_default_is_newest_twenty(self, monkeypatch):
+        kw = self._run(monkeypatch, {"kind": "mcp", "session": "s1"}, {})
+        assert kw["limit"] == 20 and kw["session_id"] == "s1"
+
+    def test_owner_default_and_clamp(self, monkeypatch):
+        assert self._run(monkeypatch, {"kind": "app"}, {})["limit"] == 200
+        assert self._run(monkeypatch, {"kind": "app"}, {"limit": ["9999"]})["limit"] == 200
+        assert self._run(monkeypatch, {"kind": "app"}, {"limit": ["junk"]})["limit"] == 200
+
+    def test_unread_only_false_is_false(self, monkeypatch):
+        mcp = {"kind": "mcp", "session": "s1"}
+        assert self._run(monkeypatch, mcp, {"unread_only": ["False"]})["unread_only"] is False
+        assert self._run(monkeypatch, mcp, {"unread_only": ["True"]})["unread_only"] is True
