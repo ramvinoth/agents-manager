@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>Harman</title>
+<style>
+  :root { color-scheme: light dark; font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  body { max-width: 640px; margin: 64px auto; padding: 0 24px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { color: GrayText; margin: 0 0 16px; }
+  button { font: inherit; padding: 8px 18px; border-radius: 8px; border: 0; background: #2563eb; color: white; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  pre { background: rgba(127,127,127,.12); border-radius: 8px; padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+  code.big { display: inline-block; font-size: 22px; letter-spacing: 2px; padding: 6px 12px; border-radius: 8px; background: rgba(127,127,127,.12); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <section id="auto" hidden>
+    <h1>Install Harman on this Mac</h1>
+    <p>Harman runs on your own computer. Installing sets up its database and a background service
+       that starts with your Mac. It needs <a href="https://brew.sh">Homebrew</a> and takes about 5–10 minutes.</p>
+    <button id="go">Install</button>
+  </section>
+  <section id="manual" hidden>
+    <h1>Install Harman</h1>
+    <p>Installing on Linux needs your password for system packages, so run this once in a terminal, then press Retry:</p>
+    <pre id="cmd"></pre>
+    <button class="retry">Retry</button>
+  </section>
+  <section id="starting" hidden>
+    <h1>Starting Harman…</h1>
+    <p>The Harman service is installed but was not running. Starting it now.</p>
+  </section>
+  <section id="down" hidden>
+    <h1>Harman didn't start</h1>
+    <p>The service is installed but did not answer within a minute. Its log is in
+       <code>~/.harman/server/deploy/harman-viewer.log</code>.</p>
+    <button class="retry">Retry</button>
+  </section>
+  <section id="done" hidden>
+    <h1>Harman is installed</h1>
+    <p id="codeline">Create your owner account with this one-time setup code:</p>
+    <p><code class="big" id="code"></code></p>
+    <button id="open">Open Harman</button>
+  </section>
+  <pre id="log" hidden></pre>
+<script>
+  const $ = (id) => document.getElementById(id)
+  const show = (id) => document.querySelectorAll("section").forEach((s) => (s.hidden = s.id !== id))
+  const api = window.harmanDesktop
+  show(new URLSearchParams(location.search).get("mode") || "auto")
+  document.querySelectorAll(".retry").forEach((b) => (b.onclick = () => api.retry()))
+  api.manualCommand().then((c) => ($("cmd").textContent = c))
+  api.onLog((line) => { const l = $("log"); l.hidden = false; l.textContent += line; l.scrollTop = l.scrollHeight })
+  $("open").onclick = () => api.open()
+  $("go").onclick = async () => {
+    $("go").disabled = true
+    $("go").textContent = "Installing…"
+    const r = await api.install()
+    if (!r || !r.ok) { $("go").disabled = false; $("go").textContent = "Try again"; return }
+    show("done")
+    if (r.setupCode) $("code").textContent = r.setupCode
+    else $("codeline").textContent = "Sign in with your existing owner account."
+  }
+</script>
+</body>
+</html>

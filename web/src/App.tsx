@@ -17,6 +17,7 @@ import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
 import { api } from "@/lib/api"
 import type { OpenDecision } from "@/lib/types"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
+import { PairPhoneDialog } from "@/components/lazyDialogs"
 import { SearchBar } from "@/components/SearchBar"
 import { LoginPanel } from "@/components/LoginPanel"
 import { AuthGate } from "@/components/AuthGate"
@@ -77,6 +78,15 @@ function App() {
   const mainRef = useRef<HTMLDivElement>(null)
   const loadDroppedFile = useStore((s) => s.loadDroppedFile)
   const [dragging, setDragging] = useState(false)
+  // /?pair=1 (the desktop app's "Pair a phone…") opens the QR dialog once signed in;
+  // the param is dropped at once so a reload or a shared link does not reopen it.
+  const [pairFromLink, setPairFromLink] = useState(() => {
+    const q = new URLSearchParams(window.location.search)
+    if (q.get("pair") !== "1") return false
+    q.delete("pair")
+    window.history.replaceState(null, "", window.location.pathname + (q.size ? `?${q}` : "") + window.location.hash)
+    return true
+  })
   const follow = useRef(true)
   const prependAnchor = useRef<number | null>(null)
   const [showJump, setShowJump] = useState(false)
@@ -461,6 +471,7 @@ function App() {
         </Suspense>
       )}
       <AgentLoginDialog />
+      {pairFromLink && !needsAuth && <PairPhoneDialog onClose={() => setPairFromLink(false)} />}
     </div>
   )
 }

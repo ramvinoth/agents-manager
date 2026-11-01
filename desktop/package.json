@@ -1,0 +1,23 @@
+{
+  "name": "harman-desktop",
+  "productName": "Harman",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harman desktop: installs the local Harman server on first run, then opens it.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test src/*.test.js",
+    "stage": "bash scripts/stage-server.sh",
+    "dist:mac": "npm run stage && electron-builder --mac",
+    "dist:linux": "npm run stage && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true,
+    "electron-winstaller": false
+  }
+}
