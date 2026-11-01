@@ -22,7 +22,7 @@ mac:
   # electron-builder falls back to an Apple Development identity: that build runs
   # only on this team's registered Macs, so never hand it to a customer.
   hardenedRuntime: true
-  notarize: false
+  notarize: true   # needs APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER (an App Store Connect API key)
 linux:
   target: AppImage
   category: Utility
