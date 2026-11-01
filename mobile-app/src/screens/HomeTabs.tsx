@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
-import { Animated, Text, View, useWindowDimensions } from "react-native"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Animated, AppState, Text, View, useWindowDimensions } from "react-native"
 import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import { createMaterialTopTabNavigator } from "@react-navigation/material-top-tabs"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -15,6 +15,8 @@ import { useTheme } from "../lib/useTheme"
 import { menuDragProgress, menuSettlesOpen } from "../lib/gestures"
 import { recordSwipe } from "../lib/usageReporter"
 import { useSeen } from "../components/Tracked"
+import { useDecisionCockpit } from "../components/useDecisionCockpit"
+import { shouldAutoOpenDeck } from "../lib/decisionDeck"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -76,17 +78,51 @@ export default function HomeTabs({ navigation }: Props) {
   const panelWRef = useRef(panelW)
   panelWRef.current = panelW
   const alive = useRef(true)
+  const pollUnread = useCallback(() => {
+    api.inboxUnread()
+      .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
+      .catch(() => {})
+  }, [])
   useEffect(() => {
     alive.current = true
-    const poll = () => {
-      api.inboxUnread()
-        .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
+    pollUnread()
+    const id = setInterval(pollUnread, 15000)
+    return () => { alive.current = false; clearInterval(id) }
+  }, [pollUnread])
+
+  // Opening the app with decisions waiting goes straight to the decision deck
+  // — on launch, and on coming back after a real absence. A notification tap
+  // that already took the owner to a card or chat wins: by the time the queue
+  // has loaded, Home is no longer the focused screen, so the deck stays shut.
+  const deck = useDecisionCockpit(navigation, { onResolved: pollUnread })
+  const deckOpen = useRef(false)
+  deckOpen.current = deck.element !== null
+  // open() is rebuilt every render (its guard is an inline default); reach it
+  // through a ref so the launch read runs once, not on every render.
+  const openDeck = useRef(deck.open)
+  openDeck.current = deck.open
+  useEffect(() => {
+    const tryOpen = (awayMs: number | null) => {
+      api.openDecisions()
+        .then((r) => {
+          if (!alive.current) return
+          const decisions = r.decisions || []
+          if (shouldAutoOpenDeck({ count: decisions.length, deepLinkPending: !navigation.isFocused(), deckOpen: deckOpen.current, awayMs })) openDeck.current(decisions, 0)
+        })
         .catch(() => {})
     }
-    poll()
-    const id = setInterval(poll, 15000)
-    return () => { alive.current = false; clearInterval(id) }
-  }, [])
+    tryOpen(null)
+    let leftAt: number | null = null
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background") leftAt = Date.now()
+      else if (state === "active" && leftAt !== null) {
+        const away = Date.now() - leftAt
+        leftAt = null
+        tryOpen(away)
+      }
+    })
+    return () => sub.remove()
+  }, [navigation])
 
   // Chats is the leftmost page: a rightward drag there has no page to reach, so
   // it pulls out the side menu, which follows the finger and settles open or
@@ -182,6 +218,7 @@ export default function HomeTabs({ navigation }: Props) {
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
     <SideMenu visible={menuOpen} dragging={menuDragging} progress={menuProgress} onClose={() => setMenuOpen(false)} navigation={navigation} />
+    {deck.element}
     </SideMenuProvider>
   )
 }

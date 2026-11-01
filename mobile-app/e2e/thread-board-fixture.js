@@ -148,14 +148,25 @@ const MARKET_MCP = [
   { id: "io.github.acme/docker-only", title: "docker-only", description: "Ships only as an image", version: "1", publisher: "io.github.acme", repo: "", install: null, inputs: [] },
 ]
 
-async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, agents = false, canvas = false, reply = null, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
+async function startFixture({ jobs = false, ai = false, audit = false, integrations = false, inbox = false, market = false, agents = false, canvas = false, reply = null, deck = false, boardIsolation = false, boardMutations = false, port = Number(process.env.E2E_FIXTURE_PORT || 18769) } = {}) {
   if (boardMutations && !boardIsolation) throw new Error("Board mutations require the isolated board fixture")
   const requests = [], forbidden = []
   // `reply` swaps the newest agent message, so a spec can render any markdown in a real bubble.
   const thread = reply ? [...lines.slice(0, -1), record("assistant", reply, lines.length - 1)] : lines
   const boardCards = clone(boardIsolation ? [...cards, ...cards.map(c => ({ ...c, id: c.id + 10, title: `B ${c.title}`, session_id: BOARD_SESSION_B }))] : cards)
   let nextCardId = Math.max(...boardCards.map(c => c.id)) + 1
-  const boardSessions = boardIsolation || inbox ? [SESSION, BOARD_SESSION_B] : [SESSION]
+  const boardSessions = boardIsolation || inbox || deck ? [SESSION, BOARD_SESSION_B] : [SESSION]
+  // The decision deck: one open item of each decidable kind, in queue order.
+  // Each decide route records its write and closes its row, as the real ones do.
+  const DECK_ROW = { host: "local", waiting_s: 60, snoozed_until: 0, open: true }
+  const deckRows = deck ? [
+    { ...DECK_ROW, kind: "approval", session: SESSION, label: "Native board fixture", summary: "Run npm test", id: "perm-1", tool_name: "Bash", inbox_id: 0 },
+    { ...DECK_ROW, kind: "plan", session: BOARD_SESSION_B, label: "Plan fixture", summary: "Plan: refactor the parser", tool_use_id: "toolu_plan", inbox_id: 11 },
+    { ...DECK_ROW, kind: "red", session: SESSION, label: "Native board fixture", summary: "Delete loop nightly-sync", id: "7", action: "loop_delete", requested_by: SESSION, reason: "The loop is retired.", risk: "The loop and its history are gone.", inbox_id: 12 },
+    { ...DECK_ROW, kind: "card", session: SESSION, label: "Native board fixture", summary: "user fixture card", card: 201, column: "Review", ask: "Ship the parser tonight?", inbox_id: 13 },
+  ] : []
+  const deckWrites = []
+  const closeDeck = test => { const r = deckRows.find(r => r.open && test(r)); if (r) r.open = false; return r }
   const holds = []
   const board = boardIsolation ? {
     holdNext(endpoint, session) {
@@ -417,6 +428,17 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       return send({ ...prev, id: body.id || "fixture-new", name: body.name, baseUrl: body.baseUrl, model: body.model,
         models: Object.entries(overrides).map(([id, n]) => modelRow(id, 0, n)) })
     }
+    if (deck && ["POST /api/chat/permission/decide", "POST /api/chat/plan/decide", "POST /api/chat/question/answer", "POST /api/org/cards/move",
+      "POST /api/org/card_comment", "POST /api/org/approvals/resolve", "POST /api/inbox/send"].includes(route)) {
+      deckWrites.push({ route, body: clone(body) })
+      const p = url.pathname
+      if (p === "/api/chat/permission/decide") closeDeck(r => r.kind === "approval" && r.id === body.id)
+      if (p === "/api/chat/plan/decide" || p === "/api/chat/question/answer") closeDeck(r => r.kind === (p.includes("plan") ? "plan" : "question") && r.session === body.session)
+      if (p === "/api/org/approvals/resolve") closeDeck(r => r.kind === "red" && Number(r.id) === body.id)
+      if (p === "/api/org/cards/move" || p === "/api/org/card_comment") closeDeck(r => r.kind === "card" && r.card === body.card_id)
+      // A message to the asking chat leaves its decision open.
+      return send({ ok: true })
+    }
     if (canvas && route === "POST /api/canvas-probe") return send({ echo: body.ping })
     if (req.method !== "GET") { forbidden.push(route); return send({ error: "Fixture rejects writes" }, 403) }
     if (auditScenario?.handle(req, url, send)) return
@@ -437,7 +459,10 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       permission_mode: ai ? state.permissionMode : "", level: "", effective_level: "ic" })
     if (url.pathname === "/api/session-summary") return send({ models: [], messages: 20, toolCalls: 0 })
     if (url.pathname === "/api/git/status") return send({ repo: false })
-    if (url.pathname === "/api/chat/status") return send({ running: false, pending_approvals: [] })
+    if (url.pathname === "/api/chat/status") {
+      const plan = deckRows.find(r => r.open && r.kind === "plan" && r.session === url.searchParams.get("id"))
+      return send({ running: false, pending_approvals: [], ...(plan ? { pending_plan: { tool_use_id: plan.tool_use_id, plan: "## Refactor the parser\n\n1. Split the lexer\n2. Add tests" } } : {}) })
+    }
     if (url.pathname === "/api/resolve" && ai) return send({ found: true, path: `/fixture/${NEW_SESSION}.jsonl` })
     if (url.pathname === "/api/org/harman") return send({ enabled: false, automation_enabled: false, projects: [] })
     if (url.pathname === "/api/org/loop-control") return send({ mode: loopMode })
@@ -464,7 +489,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     if (url.pathname === "/api/org/card") {
       const card = boardCards.find(c => c.id === Number(url.searchParams.get("id")))
       if (!card) return send({ error: "Unknown fixture card" }, 404)
-      const detail = { card, columns, comments: [] }
+      const detail = { card, columns: deck ? [...columns, { id: 104, name: "Approved", position: 3 }, { id: 105, name: "Declined", position: 4 }] : columns, comments: [] }
       if (boardMutations) entry.response = clone(detail)
       return send(detail)
     }
@@ -499,6 +524,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
         kind: r.kind, session: r.session_id, host: "local", label: "Native board fixture",
         waiting_s: 60, summary: r.body, tool_use_id: r.ref_id, inbox_id: r.id, snoozed_until: 0,
       }))
+      decisions.push(...deckRows.filter(r => r.open).map(({ open, ...d }) => d))
       return send({ count: decisions.length, decisions })
     }
     if (route === "GET /api/integrations") return send(integrations ? integrationsState : NO_INTEGRATIONS)
@@ -534,7 +560,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
   })
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve) })
   return {
-    url: `http://127.0.0.1:${server.address().port}`, requests, forbidden, state, board, jobWrites, audit: auditScenario?.state,
+    url: `http://127.0.0.1:${server.address().port}`, requests, forbidden, state, board, jobWrites, deckWrites, audit: auditScenario?.state,
     close: () => new Promise(resolve => { holds.forEach(h => h.release(503)); server.close(resolve); server.closeIdleConnections() }),
   }
 }

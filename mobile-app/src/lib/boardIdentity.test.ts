@@ -78,7 +78,7 @@ function screen(initial: Route) {
   const modules: Record<string, any> = {
     react: { ...react, default: react },
     // Screens press through components/Tracked (counted taps); here it is the plain element.
-    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity", useSeen: () => {} },
     "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...native, Platform: { OS: "ios" }, Dimensions: { get: () => ({ width: 400 }) }, Animated: { Value: class {}, View: "Animated.View" }, PanResponder: { create: (handlers: any) => ({ panHandlers: handlers }) }, Alert: { alert: (...args: any[]) => alerts.push(args) } },
     "@react-navigation/native": { useFocusEffect: (fn: Function) => effect(passive, () => focused ? fn() : undefined, [fn, focused]) },
@@ -108,6 +108,7 @@ function screen(initial: Route) {
     "../lib/errors": errors, "../lib/redApproval": redApproval,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/gestures": boardSwipe,
+    "../lib/usageReporter": { recordSwipe: () => {} },
     "../lib/liveEvents": { serialize, THREAD_FALLBACK_MS: [1500],
       startLiveRefresh: (o: { refresh: Function }) => { const id = ++timerId; polls.set(id, o.refresh); return () => polls.delete(id) } },
     "../api/events": { liveEvents: () => null },

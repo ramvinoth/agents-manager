@@ -11,11 +11,13 @@ import { useTheme } from "../lib/useTheme"
  * and the asking session's chat (card 223), so the two cannot drift. Both
  * decide through lib/redApproval's resolveRed. `headline` names the ask where
  * the surrounding screen does not (the chat); `error` is the last failure.
+ * Without `onDecide` the card only explains — the decision deck decides
+ * through its own swipe and round buttons.
  */
 export default function RedApprovalCard({ ask, busy, onDecide, testID, headline, error }: {
   ask: RedAsk
-  busy: boolean
-  onDecide: (resolution: RedResolution) => void
+  busy?: boolean
+  onDecide?: (resolution: RedResolution) => void
   testID: string
   headline?: string
   error?: string
@@ -31,14 +33,14 @@ export default function RedApprovalCard({ ask, busy, onDecide, testID, headline,
       <Text style={styles.permInput}>{ask.risk || "The action runs."}</Text>
       <Text style={styles.permInput}>Deny and nothing happens. The asking session is told either way.</Text>
       {error ? <Text testID={`${testID}-error`} style={[styles.permInput, { color: t.danger }]}>{error}</Text> : null}
-      <View style={styles.permBtnRow}>
+      {onDecide ? <View style={styles.permBtnRow}>
         <TouchableOpacity testID={`${testID}-deny`} style={styles.permDeny} onPress={() => onDecide("denied")} disabled={busy}>
           <Text style={styles.permDenyText}>Deny</Text>
         </TouchableOpacity>
         <TouchableOpacity testID={`${testID}-approve`} style={styles.permAllow} onPress={() => onDecide("approved")} disabled={busy}>
           <Text style={styles.permAllowText}>Approve</Text>
         </TouchableOpacity>
-      </View>
+      </View> : null}
     </View>
   )
 }
