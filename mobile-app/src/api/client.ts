@@ -10,7 +10,7 @@ import { normModel } from "../lib/model"
 import { isTransportError } from "../lib/errors"
 import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
-import type { NewChatJob } from "../lib/newChat"
+import type { CloneStatus, NewChatJob } from "../lib/newChat"
 import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
@@ -507,6 +507,14 @@ export const api = {
     ),
   // Distinct working directories seen across sessions — the cwd suggestions.
   // Server returns [{cwd, modified}], newest first.
+  // Clone owner/name into <dir>/<name> in the background; poll the job.
+  gitClone: (body: { repo: string; dir: string; branch?: string; host: string }) =>
+    req<{ job: string }>("POST", "/api/git/clone", body),
+  gitCloneStatus: (job: string) =>
+    req<CloneStatus>("GET", `/api/git/clone/status?id=${encodeURIComponent(job)}`),
+  // One environment variable on a host (e.g. GH_TOKEN for clones).
+  envSet: (host: string, key: string, value: string) =>
+    req<{ saved: boolean }>("POST", "/api/env/set", { host, key, value }),
   projects: (host: string) =>
     req<Project[]>(
       "GET",
@@ -739,6 +747,15 @@ export const api = {
   // adapter trashes it vendor-side).
   fsDelete: (scope: FsScope, body: { path: string }) =>
     req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", { ...body, ...scope }),
+
+  // Rename in place; `name` is a single segment (409 if it already exists).
+  fsRename: (scope: FsScope, body: { path: string; name: string }) =>
+    req<{ renamed?: string; error?: string }>("POST", "/api/fs/rename", { ...body, ...scope }),
+
+  // Zip `names` (entries of folder `path`) into one archive beside them; the
+  // server picks a free "<name>.zip" / "Archive.zip" and returns its path.
+  fsCompress: (scope: FsScope, body: { path: string; names: string[] }) =>
+    req<{ created?: string; error?: string }>("POST", "/api/fs/compress", { ...body, ...scope }),
 
   // Upload a local file into `dir` as one multipart part; the server parses
   // the body into (filename, bytes) — see _p_fs_upload. Returns the server's

@@ -23,6 +23,7 @@ import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
 import { useTheme } from "../lib/useTheme"
 import { showActions } from "../lib/actionSheet"
+import CreateSheet from "../components/CreateSheet"
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, keyof RootStackParamList> }
 
@@ -176,27 +177,39 @@ export default function FilesScreen({ navigation }: Props) {
     ])
   }
 
-  function promptNewFolder() {
-    // iOS supports Alert.prompt; guard for platforms that don't.
-    const AlertAny = Alert as unknown as {
-      prompt?: (t: string, m: string | undefined, cb: (v: string) => void) => void
+  // One form sheet for both name prompts (CreateSheet works on Android too,
+  // unlike Alert.prompt). Each act reloads so the list is the server's truth.
+  const [nameSheet, setNameSheet] = useState<{ rename?: FileEntry } | null>(null)
+  async function act(what: string, verb: string, run: () => Promise<{ error?: string }>) {
+    setBusy(true)
+    setError("")
+    try {
+      const r = await run()
+      if (r?.error) setError(r.error)
+      await fetchDir(path, host, location)
+    } catch (e) {
+      setError(userError(e, what, verb))
+    } finally {
+      setBusy(false)
     }
-    if (!AlertAny.prompt) return
-    AlertAny.prompt("New folder", undefined, async (name: string) => {
-      const n = (name || "").trim()
-      if (!n) return
-      setBusy(true)
-      setError("")
-      try {
-        const r = await api.fsMkdir(scope, { path, name: n })
-        if (r?.error) setError(r.error)
-        else await fetchDir(path, host, location)
-      } catch (e) {
-        setError(userError(e, "the folder", "create"))
-      } finally {
-        setBusy(false)
-      }
-    })
+  }
+  function submitName(v: Record<string, string>) {
+    const target = nameSheet?.rename
+    setNameSheet(null)
+    if (target) {
+      if (v.name === target.name) return
+      return act("this item", "rename", () => api.fsRename(scope, { path: joinPath(path, target.name), name: v.name }))
+    }
+    return act("the folder", "create", () => api.fsMkdir(scope, { path, name: v.name }))
+  }
+
+  function itemActions(item: FileEntry) {
+    showActions(item.name, [
+      ...(item.dir ? [] : [{ text: "Download / Share", onPress: () => downloadShare(item) }]),
+      { text: "Rename…", onPress: () => setNameSheet({ rename: item }) },
+      { text: "Compress", onPress: () => act("this item", "compress", () => api.fsCompress(scope, { path, names: [item.name] })) },
+      { text: "Move to trash…", destructive: true, onPress: () => confirmRemove(item) },
+    ])
   }
 
   async function downloadShare(item: FileEntry) {
@@ -277,7 +290,7 @@ export default function FilesScreen({ navigation }: Props) {
         </Text>
         <TouchableOpacity
           testID="files-newfolder"
-          onPress={promptNewFolder}
+          onPress={() => setNameSheet({})}
           hitSlop={8}
           style={{ padding: 6 }}
         >
@@ -299,6 +312,15 @@ export default function FilesScreen({ navigation }: Props) {
         hostLabel={hostLabel}
         navigation={navigation}
         onChange={(loc, all) => { setDrives(all); setLocation(loc) }}
+      />
+      <CreateSheet
+        visible={!!nameSheet}
+        title={nameSheet?.rename ? "Rename" : "New folder"}
+        submitLabel={nameSheet?.rename ? "Rename" : "Create"}
+        fields={[{ key: "name", label: "Name", required: true, autoCapitalize: "none" }]}
+        initial={nameSheet?.rename ? { name: nameSheet.rename.name } : undefined}
+        onSubmit={submitName}
+        onClose={() => setNameSheet(null)}
       />
       {busy ? (
         <View style={styles.fsBusy}>
@@ -339,7 +361,7 @@ export default function FilesScreen({ navigation }: Props) {
               testID={`filestab-${item.name}`}
               style={styles.fsRow}
               onPress={() => (item.dir ? go(joinPath(path, item.name)) : downloadShare(item))}
-              onLongPress={() => confirmRemove(item)}
+              onLongPress={() => itemActions(item)}
               delayLongPress={350}
             >
               <Icon name={item.dir ? "folder" : "file"} size={18} color={item.dir ? t.warning : t.textMuted} />
