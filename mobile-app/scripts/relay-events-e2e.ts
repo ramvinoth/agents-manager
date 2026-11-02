@@ -37,7 +37,7 @@ import type { AppSocket } from "../src/lib/deferredSocket.ts"
 const ROOT = resolve(dirname(process.argv[1]), "../..")
 const RELAY_PORT = Number(process.env.E2E_RELAY_PORT || 8787)
 const VIEWER_PORT = Number(process.env.E2E_VIEWER_PORT || 8099)
-const PY = "/usr/bin/python3" // the interpreter launchd runs the viewer with
+const PY = join(ROOT, ".venv/bin/python") // the server venv deploy/lib.sh hm_pyenv builds
 const STEP_MS = 20_000
 
 const children: ChildProcess[] = []

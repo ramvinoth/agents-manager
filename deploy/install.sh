@@ -8,7 +8,7 @@
 # Every step is a no-op when already done, so it is safe to re-run.
 #
 #   Linux : apt + `sudo -u postgres` DB + systemd unit (harman-viewer.service)
-#   macOS : Homebrew + `brew services` DB + launchd agent (com.harman.viewer)
+#   macOS : Homebrew (node, Postgres) + Harman's own Python + launchd agent (com.harman.viewer)
 #
 # The steps themselves live in deploy/lib.sh so the `harman` update path reuses
 # them verbatim; this file just sequences them. See lib.sh for the env knobs.

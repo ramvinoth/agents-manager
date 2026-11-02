@@ -60,6 +60,38 @@ HM_CURRENT="$HM_PREFIX/current"
 # the deps. The service runs this interpreter through the `current` symlink.
 hm_py() { echo "${1:-$HM_APP_DIR}/.venv/bin/python"; }
 
+# macOS: the venv is built from a Python Harman owns, never /usr/bin/python3 (a
+# shim into Xcode/CLT, absent on a fresh Mac and moved by every Xcode update) or
+# Homebrew's (bumped by any `brew upgrade`, which breaks the venv). A pinned
+# python-build-standalone release unpacked under ~/.harman/python stays at one
+# path for the life of the install. Linux keeps the distro python3 (no TCC there).
+HM_PBS_TAG=20261026
+HM_PBS_PY=3.12.16
+HM_PBS_SHA_aarch64=fbf4afef53c2a6b72bb741bc06d5671a9dfaf87bd84e5aa73ac9b3d0d589f14e
+HM_PBS_SHA_x86_64=a962e47df522889eaa7ff0d6a56203f1079f68aabb65ffdbe8455f362bc769f3
+HM_PY_HOME="${HM_PY_HOME:-$HOME/.harman/python}"
+
+# Prints the interpreter new venvs are built from (downloading it on first use).
+hm_base_python() {
+  if [[ "$OS" != "Darwin" ]]; then command -v python3; return; fi
+  local arch; arch="$(uname -m)"; [[ "$arch" == arm64 ]] && arch=aarch64
+  local dir="$HM_PY_HOME/cpython-$HM_PBS_PY"
+  if [[ ! -x "$dir/bin/python3" ]]; then
+    local sha_var="HM_PBS_SHA_$arch"
+    local name="cpython-$HM_PBS_PY+$HM_PBS_TAG-$arch-apple-darwin-install_only.tar.gz"
+    local tmp; tmp="$(mktemp -d)"
+    hm_log "Downloading Harman's Python $HM_PBS_PY ($arch)…" >&2
+    curl -fsSL -o "$tmp/py.tgz" \
+      "https://github.com/astral-sh/python-build-standalone/releases/download/$HM_PBS_TAG/$name"
+    if [[ "$(shasum -a 256 "$tmp/py.tgz" | cut -d' ' -f1)" != "${!sha_var}" ]]; then
+      rm -rf "$tmp"; echo "Python download failed its checksum — refusing to install it." >&2; return 1
+    fi
+    tar -xzf "$tmp/py.tgz" -C "$tmp"     # unpacks to ./python
+    mkdir -p "$HM_PY_HOME"; rm -rf "$dir"; mv "$tmp/python" "$dir"; rm -rf "$tmp"
+  fi
+  echo "$dir/bin/python3"
+}
+
 # Vite 8 (web build) needs node >= 20.19; distro nodejs is often older
 # (Ubuntu 24.04 ships 18.19). Below this major we install NodeSource's 22.x.
 HM_NODE_MIN_MAJOR=20
@@ -87,8 +119,9 @@ hm_deps() {
     if ! command -v brew >/dev/null 2>&1; then
       echo "Homebrew not found. Install it first: https://brew.sh" >&2; return 1
     fi
-    hm_log "Installing system packages via Homebrew (python, node, postgresql@16)…"
-    brew install python node postgresql@16
+    # No brew python: the server runs on Harman's own (hm_base_python).
+    hm_log "Installing system packages via Homebrew (node, postgresql@16)…"
+    brew install node postgresql@16
     brew services start postgresql@16
   else
     hm_log "Unknown package manager on $OS — ensure python3/node/psql are present, or use SKIP_DEPS=1."
@@ -145,10 +178,16 @@ hm_db() {
 
 # 2b. Python venv for this app dir (idempotent: reuses an existing venv) ──────
 hm_pyenv() {
-  local py; py="$(hm_py)"
+  local py base; py="$(hm_py)"; base="$(hm_base_python)"
+  # A venv made from another interpreter (an older install's Xcode or Homebrew
+  # python) is rebuilt, so the service never keeps running on a moving target.
+  if [[ "$OS" == "Darwin" && -x "$py" ]] && ! grep -qF "home = $(dirname "$base")" "$HM_APP_DIR/.venv/pyvenv.cfg" 2>/dev/null; then
+    hm_log "Rebuilding the venv on $base…"
+    rm -rf "$HM_APP_DIR/.venv"
+  fi
   if [[ ! -x "$py" ]]; then
     hm_log "Creating Python venv at $HM_APP_DIR/.venv…"
-    python3 -m venv "$HM_APP_DIR/.venv"
+    "$base" -m venv "$HM_APP_DIR/.venv"
   fi
   hm_log "Installing Python deps into the venv…"
   # Every third-party module the server imports: deploy/requirements.txt.

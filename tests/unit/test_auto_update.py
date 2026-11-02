@@ -3,7 +3,7 @@ private feed serves. The success path is `harman update`, covered elsewhere;
 these pin the refusals — nothing unsigned, tampered, or already-failed gets
 staged. Hermetic: a throwaway HM_PREFIX and a loopback feed.
 
-Run with:  /usr/bin/python3 -m pytest tests/unit/test_auto_update.py -v
+Run with:  python3 -m pytest tests/unit/test_auto_update.py -v
 """
 import base64
 import functools
@@ -35,7 +35,10 @@ def box(tmp_path):
         shutil.copy(REPO / "deploy" / f, rel / "deploy" / f)
     (rel / "deploy" / "release-pubkey.txt").write_text(base64.b64encode(bytes(sk.verify_key)).decode())
     (rel / ".venv" / "bin").mkdir(parents=True)
-    os.symlink(sys.executable, rel / ".venv" / "bin" / "python")
+    # An exec shim, not a symlink: a symlinked venv python loses its pyvenv.cfg
+    # and with it the venv's site-packages (pynacl).
+    py = rel / ".venv" / "bin" / "python"
+    py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n'); py.chmod(0o755)
     os.symlink("releases/1.0.0", tmp_path / "prefix" / "current")
     shim = tmp_path / "bin"; shim.mkdir()
     (shim / "flock").write_text("#!/bin/sh\nexit 0\n"); (shim / "flock").chmod(0o755)

@@ -1,6 +1,6 @@
 """deploy/release_manifest.py: what a customer box accepts from the update feed.
 
-Run with:  /usr/bin/python3 -m pytest tests/unit/test_release_manifest.py -v
+Run with:  .venv/bin/python -m pytest tests/unit/test_release_manifest.py -v
 """
 import base64
 import importlib.util

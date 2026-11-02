@@ -2291,23 +2291,40 @@ REMOTE_SUMMARY_CACHE = StatCache()   # (hid, path) invalidated by (mtime, size)
 _TCC_GUARDED = ("Desktop", "Documents", "Downloads")
 
 
+def _responsible_app():
+    """The .app macOS charges this process's privacy grants to: the bundle whose
+    executable is our parent (Harman.app's launcher on an installed Mac). None
+    when the server was started some other way (a terminal, a bare launchd job)."""
+    try:
+        exe = subprocess.run(["ps", "-o", "comm=", "-p", str(os.getppid())],
+                             capture_output=True, text=True, timeout=2).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.match(r"(.*/([^/]+)\.app)/Contents/MacOS/", exe)
+    return (m.group(2), m.group(1)) if m else None
+
+
 def _permission_denied_hint(p):
     """The 403 text for a folder this server's process may not read. On macOS,
     Desktop/Documents/Downloads under the home folder are gated per app by
     privacy consent (TCC), not by unix mode bits — the owner can `ls` them in
-    Terminal while a launchd-started python cannot. Name the switch to flip;
-    elsewhere the plain unix answer is the truth."""
+    Terminal while a launchd-started python cannot. Name the switch to flip, and
+    the entry it lists under: the wrapping app when there is one, else the
+    interpreter; elsewhere the plain unix answer is the truth."""
     try:
         rel = p.relative_to(Path.home())
     except ValueError:
         return "Permission denied"
     if sys.platform == "darwin" and rel.parts and rel.parts[0] in _TCC_GUARDED:
+        head = (f"macOS blocks this server from reading ~/{rel.parts[0]} (privacy consent). "
+                "Open System Settings → Privacy & Security → Full Disk Access, ")
+        app = _responsible_app()
+        if app:
+            return head + (f"turn on “{app[0]}” (or click +, press ⌘⇧G and paste  {app[1]} ), "
+                           "then restart the server.")
         exe = sys.executable or "the python interpreter running this server"
-        return (f"macOS blocks this server from reading ~/{rel.parts[0]} (privacy consent). "
-                "Open System Settings → Privacy & Security → Full Disk Access, click +, press ⌘⇧G, "
-                f"and paste this exact path:  {exe}  — it lists under that binary's own name "
-                "(e.g. “Python”), not “Harman”, because that is the interpreter the server runs as. "
-                "Enable it, then restart the server.")
+        return head + (f"click +, press ⌘⇧G, and paste this exact path:  {exe}  — it lists under "
+                       "that binary's own name (e.g. “Python”). Enable it, then restart the server.")
     return "Permission denied"
 
 

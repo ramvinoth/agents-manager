@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python: ["3.9", "3.12"]   # 3.9 = macOS /usr/bin/python3 the LaunchAgent runs
+        python: ["3.9", "3.12"]   # 3.9 = oldest distro python3 a Linux box may have
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

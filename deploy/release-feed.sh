@@ -19,7 +19,7 @@ set -euo pipefail
 HM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FEED_DIR="$HM_DIR/../release-feed"
 KEY="${HARMAN_RELEASE_KEY:-$HOME/.harman/release-signing.key}"
-PY=/usr/bin/python3   # has pynacl; the same interpreter launchd runs
+PY="$HM_DIR/../.venv/bin/python"   # the server venv (has pynacl); hm_pyenv builds it
 
 die() { echo "release-feed: $*" >&2; exit 1; }
 kv_put() {  # <key> <file>
