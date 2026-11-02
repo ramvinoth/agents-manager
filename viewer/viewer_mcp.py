@@ -146,6 +146,10 @@ _RAW = {"session_read", "fs_read"}
 # board stays inside the project it is working in. card_create is NOT here: the
 # create route resolves the card's project from the session itself (the one rule
 # in routes.orchestrator), so the MCP never carries a second copy of it.
+# Tools that always ask the server for a fixed variant of a shared route (the
+# web board needs every card in full; an agent needs the compact open ledger).
+_FIXED_ARGS = {"card_list": {"view": "ledger"}}
+
 _PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project",
                     "note_graph": "project", "code_map": "project",
                     "canvas_read": "project", "canvas_patch": "project", "canvas_snapshot": "project"}
@@ -261,9 +265,10 @@ _TOOL_LIST = [
     {"name": "board_list", "description": "List your project's board columns.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}}}},
-    {"name": "card_list", "description": "List cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries comment_count (how many messages are in its thread) and its current column. Optionally filtered by session.",
+    {"name": "card_list", "description": "List the open cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries its column name, comment_count and a body preview (read one in full with card). Done cards are left out and counted in done_hidden; pass include_done=true to list them too. Optionally filtered by session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string"}, "project": {"type": "integer"}}}},
+         "session": {"type": "string"}, "project": {"type": "integer"},
+         "include_done": {"type": "boolean"}}}},
     {"name": "card", "description": "Read one card in full with its comment thread. On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
@@ -538,6 +543,7 @@ def _call(tool, args):
     payload = dict(args or {})
     payload["session"] = SESSION
     payload["token"] = TOKEN
+    payload.update(_FIXED_ARGS.get(tool, {}))
     if PROJECT and tool in _PROJECT_DEFAULT:
         payload.setdefault(_PROJECT_DEFAULT[tool], PROJECT)
     if tool in _PATH_ARG:
