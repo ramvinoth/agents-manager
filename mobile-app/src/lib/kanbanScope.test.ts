@@ -54,7 +54,7 @@ function harness(params: any = { session: "A", project: 7 }) {
     "../state/config": { setToken: (value: any) => { token = value } },
     "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/errors": errors, "../lib/haptics": { tap() {}, success() {}, warning() {} },
-    "../lib/actionSheet": { showActions() {} },
+    "../lib/actionSheet": { showActions() {} }, "../components/CreateSheet": { default: "CreateSheet" },
   }
   // The real cockpit host (its scope guard is under test here too), loaded
   // through the same transpile with the same stubs.

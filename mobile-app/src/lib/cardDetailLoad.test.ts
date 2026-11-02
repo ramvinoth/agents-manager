@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { test } from "node:test"
 import ts from "typescript"
-import { formatActor } from "./board.ts"
+import { blockerChoices, formatActor } from "./board.ts"
+import * as errors from "./errors.ts"
 
 // Exercise the actual screen's load callback and rendered branches without
 // native dependencies. Native navigation/layout are verified separately.
@@ -76,7 +77,8 @@ function screen(response: unknown, status?: number) {
     } }, isQueued: (r: any) => r?.queued === true },
     "../state/config": { setToken: (value: unknown) => { token = value }, username: () => "" },
     "../components/Icon": { default: "Icon" },
-    "../lib/board": { formatActor },
+    "../lib/board": { blockerChoices, formatActor },
+    "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) },
     "../lib/styles": { useStyles: () => ({}) },
   }
