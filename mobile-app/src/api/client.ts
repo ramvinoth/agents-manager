@@ -194,6 +194,8 @@ export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
+/** An app sharing a project's folder (viewer/project_plugins.py), e.g. Sift. */
+export type ProjectPlugin = { id: string; label: string; icon: string; description: string }
 export type BoardColumn = { id: number; name: string; position: number }
 /** A door from the outside onto a board (viewer/intake.py): a POST to `path`
  *  with the token becomes a card there and wakes `session_id`. */
@@ -906,6 +908,10 @@ export const api = {
   },
 
   // ---- org / Kanban (the "empire") ----
+  projectPlugins: () => req<{ plugins: ProjectPlugin[] }>("GET", "/api/project-plugins"),
+  /** A one-time signed-in URL opening the plugin at this folder's project (human only). */
+  projectPluginOpen: (body: { id: string; host: string; cwd: string }) =>
+    req<{ url: string }>("POST", "/api/project-plugins/open", body),
   intakeList: () => req<{ channels: IntakeChannel[] }>("GET", "/api/org/intake"),
   intakeCreate: (body: { name: string; project_id: number; for_session?: string; app_feedback?: boolean }) =>
     req<IntakeReply>("POST", "/api/org/intake", body),
