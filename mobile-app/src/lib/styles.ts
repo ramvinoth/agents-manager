@@ -679,6 +679,13 @@ function buildStyles(t: Theme) {
     cdActor: { flexDirection: "row", alignItems: "center", gap: 4 },
     cdActorName: { color: t.text, fontSize: 12, fontWeight: "700" },
     cdActorAgent: { color: t.accent, fontSize: 10, fontWeight: "700" },
+    cdEditActions: { flexDirection: "row", justifyContent: "flex-end", gap: 16 },
+    cdDepRow: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 36 },
+    cdDepDot: { width: 8, height: 8, borderRadius: 4 },
+    cdDepTitle: { color: t.text, fontSize: 14, flex: 1 },
+    cdDepDone: { color: t.textMuted, textDecorationLine: "line-through" },
+    cdDepCol: { color: t.textMuted, fontSize: 11 },
+    cdLink: { color: t.accent, fontSize: 14, fontWeight: "600", paddingVertical: 6 },
     dimmed: { opacity: 0.6 },
     // Note editor (NoteEditorScreen): header icons, kind chips, link panel
     neMissing: { color: t.danger, padding: 20 },

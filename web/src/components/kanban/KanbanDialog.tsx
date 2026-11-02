@@ -188,7 +188,8 @@ export function KanbanDialog({
     const created = await api.orgCreateColumn({
       project_id: project.id,
       name: newColName.trim(),
-      position: columns.length,
+      // Append after the last column; positions can have gaps, so not columns.length.
+      position: Math.max(-1, ...columns.map((c) => c.position)) + 1,
     })
     setColumns((cs) => [...cs, created])
     setNewColName("")

@@ -32,6 +32,7 @@ export default function CreateSheet({
   title,
   fields,
   submitLabel = "Create",
+  initial,
   onSubmit,
   onClose,
 }: {
@@ -39,6 +40,8 @@ export default function CreateSheet({
   title: string
   fields: CreateField[]
   submitLabel?: string
+  /** Prefilled values, e.g. the current name when the sheet renames something. */
+  initial?: Record<string, string>
   onSubmit: (values: Record<string, string>) => void | Promise<void>
   onClose: () => void
 }) {
@@ -50,10 +53,10 @@ export default function CreateSheet({
   // Reset the form each time the sheet opens so stale input never carries over.
   useEffect(() => {
     if (visible) {
-      setValues({})
+      setValues(initial || {})
       setBusy(false)
     }
-  }, [visible])
+  }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps -- `initial` is read only on open
 
   const canSubmit = fields.every((f) => !f.required || (values[f.key] || "").trim())
 

@@ -248,6 +248,8 @@ export type OpenDecision = {
   snoozed_until: number
 }
 export type Card = { id: number; title: string; body: string; column_id: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
+// A card this one waits on (GET /api/org/card `dependencies`): done = its blocker reached a Done column.
+export type CardDep = { id: number; title: string; column_name: string; done: boolean }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type CardFilter = { session?: string; project?: number }
@@ -890,6 +892,13 @@ export const api = {
     const q = p.toString()
     return req<{ columns: BoardColumn[] }>("GET", `/api/org/board${q ? "?" + q : ""}`)
   },
+  // The board's SHAPE (Workspace level): cards in a deleted column survive, unplaced.
+  orgCreateColumn: (body: { project_id: number; name: string; position?: number }) =>
+    req<BoardColumn>("POST", "/api/org/columns", body),
+  orgUpdateColumn: (body: { id: number; name?: string; position?: number }) =>
+    req<BoardColumn>("POST", "/api/org/columns/update", body),
+  orgDeleteColumn: (id: number) =>
+    req<{ deleted?: boolean }>("POST", "/api/org/columns/delete", { id }),
   // Scope is a project, or a session whose bound project the server resolves.
   orgMap: (scope: { project?: number; session?: string }, level: MapLevel, path = "") => {
     const p = new URLSearchParams({ level, path })
@@ -923,7 +932,13 @@ export const api = {
   // else its session's bound one; the server resolves, so an empty list means
   // the card is on no board yet and the detail screen offers to attach it).
   orgCard: (id: number) =>
-    req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[] }>("GET", `/api/org/card?id=${id}`),
+    req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[]; dependencies?: CardDep[] }>("GET", `/api/org/card?id=${id}`),
+  // Dependency edges are green (orglogic): the card cannot move forward until
+  // `depends_on` reaches Done; the card's session is woken either way.
+  orgAddCardDep: (body: { card_id: number; depends_on: number }) =>
+    req<{ exists?: boolean }>("POST", "/api/org/card_dep_add", body),
+  orgRemoveCardDep: (body: { card_id: number; depends_on: number }) =>
+    req<{ removed?: boolean }>("POST", "/api/org/card_dep_remove", body),
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
   // ---- notes (the knowledge ledger; scoped like cards) ----

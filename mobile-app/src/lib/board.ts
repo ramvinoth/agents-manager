@@ -114,3 +114,15 @@ export function nextPosition(cardsInColumn: Card[], index: number): number {
   if (index >= n) return pos(ordered[n - 1]) + 1
   return (pos(ordered[index - 1]) + pos(ordered[index])) / 2
 }
+
+/**
+ * blockerChoices — the cards this one may be made to wait on: same board
+ * (project, else the session's board when the card has no project), never
+ * itself, never one it already waits on. Same rule as the web card detail.
+ */
+export function blockerChoices(cards: Card[], card: Card, depIds: number[]): Card[] {
+  const sameBoard = (c: Card) => card.project_id != null
+    ? c.project_id === card.project_id
+    : card.session_id != null && c.session_id === card.session_id
+  return cards.filter((c) => c.id !== card.id && !depIds.includes(c.id) && sameBoard(c))
+}
