@@ -1,4 +1,4 @@
-import { orderColumn, groupByColumn, nextPosition, formatActor, matchesQuery, type Card, type BoardColumn } from "./board.ts"
+import { orderColumn, groupByColumn, nextPosition, formatActor, matchesQuery, blockerChoices, type Card, type BoardColumn } from "./board.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -68,6 +68,17 @@ eq("id is not a prefix match", matchesQuery(q, "10"), false)
 eq("title substring, any case", matchesQuery(q, "PRIVACY"), true)
 eq("body substring", matchesQuery(q, "disk access"), true)
 eq("no match", matchesQuery(q, "tunnel"), false)
+
+// blockerChoices: same board, not itself, not already a blocker
+{
+  const me = C({ id: 1, project_id: 7 })
+  const pool = [me, C({ id: 2, project_id: 7 }), C({ id: 3, project_id: 7 }), C({ id: 4, project_id: 8 })]
+  eq("same project, minus self and existing", blockerChoices(pool, me, [3]).map((c) => c.id), [2])
+  const loose = C({ id: 5, session_id: "s" })
+  const spool = [loose, C({ id: 6, session_id: "s" }), C({ id: 7, session_id: "t" }), C({ id: 8, project_id: 7 })]
+  eq("no project: the session's cards", blockerChoices(spool, loose, []).map((c) => c.id), [6])
+  eq("no project, no session: nothing", blockerChoices(pool, C({ id: 9 }), []), [])
+}
 
 console.log(`${pass} passing${fail ? `, ${fail} FAILING` : ""}`)
 if (fail) process.exit(1)

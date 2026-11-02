@@ -28,6 +28,14 @@ export interface Reply {
   text(): Promise<string>
 }
 
+/** A whole HTTP response as bytes, with its headers (lower-cased names) —
+ *  for callers that relay a response on as-is (the canvas page's requests). */
+export interface RawReply {
+  status: number
+  headers: Record<string, string>
+  body: Uint8Array
+}
+
 /** A local file to send as one multipart part. */
 export type FilePart = { uri: string; name: string; type: string; field: string }
 
@@ -35,6 +43,8 @@ export type FilePart = { uri: string; name: string; type: string; field: string 
  *  be reached at all; an HTTP error status resolves normally. */
 export interface DirectIO {
   fetch(url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<Reply>
+  /** Like fetch, but bytes in and out, with the response headers. */
+  exchange(url: string, init: { method: string; headers: Record<string, string>; body?: Uint8Array }): Promise<RawReply>
   /** Multipart upload of a local file, streamed by the platform. */
   upload(url: string, headers: Record<string, string>, file: FilePart): Promise<Reply>
   /** Save the response body to `dest` (an error body too); resolve its status. */
@@ -147,6 +157,16 @@ export class ServerTransport {
       () => this.deps.direct.fetch(this.routes.direct + path, { method, headers, body }),
       async (link) =>
         relayReply(await link.fetch({ method, path, headers, body: body === undefined ? undefined : utf8Encode(body) }))
+    )
+  }
+
+  /** A request whose response is wanted whole, as bytes with its headers.
+   *  The relay holds it in memory, so it is capped at RELAY_FILE_MAX there. */
+  exchange(method: string, path: string, headers: Record<string, string>, body?: Uint8Array): Promise<RawReply> {
+    return this.route(
+      IDEMPOTENT.has(method),
+      () => this.deps.direct.exchange(this.routes.direct + path, { method, headers, body }),
+      (link) => link.fetch({ method, path, headers, body }, RELAY_FILE_MAX)
     )
   }
 

@@ -219,25 +219,15 @@ SPEECH_TIMEOUT = int(os.environ.get("AGENTS_SPEECH_TIMEOUT", "180"))  # per STT/
 # The main speech service (:8095) handles STT + non-streaming TTS but NOT
 # streaming AAC. Falls back to SPEECH_SERVICE_URL if unset.
 TTS_STREAM_URL = os.environ.get("AGENTS_TTS_STREAM_URL", "")
+# LFM3-Audio speaks the call natively (one model: board tools + spoken audio, see
+# callbrain.lfm3_turn). Empty = the call uses the Qwen brain + Pocket TTS instead.
+LFM3_SERVICE_URL = os.environ.get("AGENTS_LFM3_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from AGENTS_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
 VERIFY_SERVICE_URL = os.environ.get(
     "AGENTS_VERIFY_URL", "")
 VERIFY_TIMEOUT = int(os.environ.get("AGENTS_VERIFY_TIMEOUT", "20"))  # per segment
-
-# ===== Nemotron turn-based voicechat (deploy/voicechat_service.py) =====
-# A SEPARATE, single-slot GPU backend (see deploy/voicechat.md) — not the
-# sherpa-onnx STT/TTS service above. Empty URL/token-file disables it: no
-# production default, so a fresh install never proxies to a box it hasn't
-# been pointed at. The service token lives in a private file (same 0600
-# read-a-secret-file convention as VIEWER_TOKEN_FILE / viewer/login.py),
-# never in an env var a process listing could show, and is read fresh on
-# each request rather than cached in memory at import time.
-NEMOTRON_URL = os.environ.get("AGENTS_NEMOTRON_URL", "")
-NEMOTRON_TOKEN_FILE = (Path(os.environ["AGENTS_NEMOTRON_TOKEN_FILE"])
-                      if os.environ.get("AGENTS_NEMOTRON_TOKEN_FILE") else None)
-NEMOTRON_TIMEOUT = int(os.environ.get("AGENTS_NEMOTRON_TIMEOUT", "15"))  # /health only
 
 CHAT_JOBS = {}   # session_id -> {running, returncode, stderr, stdout, started, message}
 CHAT_LOCK = threading.Lock()
@@ -295,18 +285,14 @@ def _claude_version(path):
 def _claude_candidates():
     """Every claude install on this machine, de-duplicated by real path:
     the server-PATH hit, the two local install spots, and every nvm node
-    version that has one. Order here is irrelevant — the version decides."""
-    cands = []
-    found = shutil.which("claude")
-    if found:
-        cands.append(found)
-    cands += [str(p) for p in (Path.home() / ".local/bin/claude",
-                               Path.home() / ".claude/local/claude")]
-    cands += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin/claude"))
+    version that has one. Order here is irrelevant — the version decides.
+    Each spot is searched with which(), so Windows finds claude.exe/.cmd."""
+    dirs = [None,  # the server's PATH
+            str(Path.home() / ".local" / "bin"), str(Path.home() / ".claude" / "local")]
+    dirs += sorted(str(p) for p in Path.home().glob(".nvm/versions/node/*/bin"))
+    cands = [c for c in (shutil.which("claude", path=d) for d in dirs) if c]
     seen, out = set(), []
     for c in cands:
-        if not os.path.exists(c):
-            continue
         real = str(Path(c).resolve())
         if real not in seen:
             seen.add(real)

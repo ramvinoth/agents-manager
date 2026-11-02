@@ -21,6 +21,7 @@ class FakeDB:
         self.audit = []          # (actor, action, target, outcome)
         self.approvals = []      # rows opened
         self.cards_moved = []    # proof a handler actually ran
+        self.asks = []           # card_ask_set writes (viewer.asks)
         self.loops = {}          # id -> loop row (agent-loop handler surface)
         self.settings = {}       # key -> value (singleton KV handler surface)
 
@@ -61,6 +62,9 @@ class FakeDB:
 
     def card_last_move(self, card_id, seconds):
         return None  # no recent write by another writer
+
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        self.asks.append((card_id, ask_since, ask_expires_at))
 
     # -- loop handler surface --------------------------------------------------
     # Enough of the loops table for the agent-loop actions to run against. Rows are
@@ -285,6 +289,47 @@ def test_card_create_without_columns_or_project_stays_laneless(fdb):
         "owner", "ic")
     assert status == 200
     assert fdb.cards_moved == [("create", "orphan", None, None)]
+
+
+def _pipeline(fdb):
+    fdb.board_columns_list = lambda project_id: [
+        {"id": 70, "name": "Todo"}, {"id": 75, "name": "Needs-info"},
+        {"id": 76, "name": "Approved"}, {"id": 77, "name": "Done"}]
+
+
+def test_agent_card_created_into_needs_info_opens_the_ask(fdb):
+    """Born in Needs-info is the same act as moved there: the owner is asked.
+    (Before, the card sat in Needs-info with no ask until something moved it.)"""
+    _pipeline(fdb)
+    resp, status = actions.execute(
+        actions.intent("card_create", {"title": "q", "project_id": 7, "column_id": 75},
+                       "session:jarvis"), "owner", "ic")
+    assert status == 200
+    assert resp["ask_since"] > 0 and fdb.asks == [(1, resp["ask_since"], 0.0)]
+
+
+def test_human_card_created_into_needs_info_asks_nothing(fdb):
+    _pipeline(fdb)
+    resp, status = actions.execute(
+        actions.intent("card_create", {"title": "q", "project_id": 7, "column_id": 75},
+                       "owner"), "owner", "")
+    assert status == 200 and fdb.asks == [] and "ask_since" not in resp
+
+
+def test_agent_cannot_create_a_card_into_a_judgement_column(fdb):
+    _pipeline(fdb)
+    resp, _ = actions.execute(
+        actions.intent("card_create", {"title": "q", "project_id": 7, "column_id": 76},
+                       "session:jarvis"), "owner", "ic")
+    assert "judgement" in resp["error"] and fdb.cards_moved == []
+
+
+def test_card_create_expiry_only_on_an_ask(fdb):
+    _pipeline(fdb)
+    resp, _ = actions.execute(
+        actions.intent("card_create", {"title": "q", "project_id": 7, "column_id": 70,
+                                       "expires_at": "2h"}, "session:jarvis"), "owner", "ic")
+    assert "expires_at" in resp["error"] and fdb.cards_moved == []
 
 
 # ── skill_propose vs skill_promote: same write, different risk ───────────────

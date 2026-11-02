@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native"
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type BoardColumn, type Card, type CardComment, type OrgProject } from "../api/client"
+import { api, isQueued, type BoardColumn, type Card, type CardComment, type CardDep, type OrgProject } from "../api/client"
 import { setToken, username } from "../state/config"
-import { formatActor, type ActorKind } from "../lib/board"
+import { blockerChoices, formatActor, type ActorKind } from "../lib/board"
+import { userError } from "../lib/errors"
 import Icon from "../components/Icon"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
@@ -22,6 +24,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "CardDetail">
  * the card to Review/Approved/Declined from here (or by dragging on the board)
  * and comments here to talk; the card's session wakes on that (boardwatch).
  * Polls like the board; missing or inaccessible cards show a safe retry state.
+ * The owner can also edit the title and description, and say what the card
+ * waits on ("Blocked by") — the same controls as the web card detail.
  *
  * The composer is the SAME one as the thread screen (styles.ts composerWrap/
  * composerBar/composerInput/circleBtn) — the app has one input pattern, and it
@@ -56,6 +60,14 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   const [attaching, setAttaching] = useState(false)
   const attachPending = useRef(false)
   const draftRevision = useRef(0)
+  // Cards this one waits on; it cannot move forward until each reaches Done.
+  const [deps, setDeps] = useState<CardDep[]>([])
+  // Same-board cards offered as new blockers: fetched when the picker opens.
+  const [choices, setChoices] = useState<Card[] | null>(null)
+  const [depBusy, setDepBusy] = useState(false)
+  // Title/description edit: a draft the 4s poll never overwrites.
+  const [edit, setEdit] = useState<{ title: string; body: string } | null>(null)
+  const [saving, setSaving] = useState(false)
   const sheet = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const lastCommentCount = useRef(0)
   const reads = useRef({ issued: 0, applied: 0 })
@@ -76,6 +88,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         // board (the card's own project, else its session's bound one) and
         // returns its columns — one round trip, no client-side re-derivation.
         setColumns(r.columns || [])
+        setDeps(r.dependencies || [])
       } else {
         setCard(null)
         setComments([])
@@ -221,6 +234,67 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     ])
   }, [card, navigation])
 
+  // One handler for every write below: sign out on 401, else a plain notice.
+  const failed = useCallback((e: unknown, what: string, verb: string) => {
+    if ((e as { status?: number })?.status === 401) {
+      setToken(null)
+      navigation.replace("Login")
+      return
+    }
+    setNotice({ tone: "error", text: userError(e, what, verb) })
+  }, [navigation])
+
+  const saveEdit = useCallback(async () => {
+    if (!card || !edit || saving) return
+    const title = edit.title.trim()
+    if (!title) {
+      setNotice({ tone: "error", text: "A card needs a title." })
+      return
+    }
+    setSaving(true)
+    setNotice(null)
+    try {
+      await api.orgUpdateCard({ card_id: card.id, title, body: edit.body.trim() })
+      setEdit(null)
+      await load()
+    } catch (e) {
+      failed(e, "this card", "save")
+    } finally {
+      setSaving(false)
+    }
+  }, [card, edit, saving, load, failed])
+
+  // The blocker picker: the card's board is its project, else its session's.
+  const openPicker = useCallback(async () => {
+    if (!card) return
+    if (choices) { setChoices(null); return }
+    const filter = card.project_id != null ? { project: card.project_id }
+      : card.session_id ? { session: card.session_id } : null
+    if (!filter) { setChoices([]); return }
+    try {
+      const r = await api.orgCards(filter)
+      setChoices(r.cards || [])
+    } catch (e) {
+      failed(e, "this board's cards", "load")
+    }
+  }, [card, choices, failed])
+
+  const changeDep = useCallback(async (dependsOn: number, add: boolean) => {
+    if (!card || depBusy) return
+    setDepBusy(true)
+    setNotice(null)
+    try {
+      const body = { card_id: card.id, depends_on: dependsOn }
+      await (add ? api.orgAddCardDep(body) : api.orgRemoveCardDep(body))
+      if (add) setChoices(null)
+      await load()
+    } catch (e) {
+      failed(e, "this blocker", add ? "add" : "remove")
+    } finally {
+      setDepBusy(false)
+    }
+  }, [card, depBusy, load, failed])
+
   const post = useCallback(async () => {
     const body = newComment.trim()
     if (!body || !card || postPending.current) return
@@ -273,6 +347,8 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   // person — the same rule the web card detail uses (lib/board.ts).
   const self = username()
   const creator = formatActor(card.created_by, self)
+  const openDeps = deps.filter((d) => !d.done).length
+  const pickable = choices ? blockerChoices(choices, card, deps.map((d) => d.id)) : []
 
   return (
     <KeyboardAvoidingView
@@ -292,21 +368,65 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.cdContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.cdHead}>
-          <Text style={styles.cdTitle}>
-            <Text style={styles.cdTitleId}>#{card.id} </Text>{card.title}
-          </Text>
-          <Pressable onPress={deleteCard} hitSlop={8} testID="card-detail-delete">
-            <Icon name="trash" size={18} color={t.danger} />
-          </Pressable>
-        </View>
+        {edit ? (
+          <>
+            <TextInput
+              testID="card-detail-edit-title"
+              style={styles.input}
+              value={edit.title}
+              onChangeText={(title) => setEdit({ ...edit, title })}
+              placeholder="Title"
+              placeholderTextColor={t.textMuted}
+              autoFocus
+            />
+            <TextInput
+              testID="card-detail-edit-body"
+              style={[styles.input, { minHeight: 96, textAlignVertical: "top" }]}
+              value={edit.body}
+              onChangeText={(body) => setEdit({ ...edit, body })}
+              placeholder="Description — what is this, and what does done look like?"
+              placeholderTextColor={t.textMuted}
+              multiline
+            />
+            <View style={styles.cdEditActions}>
+              <Pressable testID="card-detail-edit-cancel" accessibilityRole="button" onPress={() => setEdit(null)} disabled={saving} style={styles.cdAction}>
+                <Text style={styles.cdActionText}>Cancel</Text>
+              </Pressable>
+              <Pressable testID="card-detail-edit-save" accessibilityRole="button" onPress={saveEdit}
+                disabled={saving || !edit.title.trim()} accessibilityState={{ busy: saving }}
+                style={[styles.cdAction, (saving || !edit.title.trim()) && styles.dimmed]}>
+                <Text style={[styles.cdActionText, { color: t.accent, fontWeight: "600" }]}>{saving ? "Saving…" : "Save"}</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.cdHead}>
+              <Text style={styles.cdTitle}>
+                <Text style={styles.cdTitleId}>#{card.id} </Text>{card.title}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 16 }}>
+                <Pressable onPress={() => setEdit({ title: card.title, body: card.body || "" })} hitSlop={8}
+                  testID="card-detail-edit" accessibilityLabel="edit title and description">
+                  <Icon name="edit" size={18} color={t.textMuted} />
+                </Pressable>
+                <Pressable onPress={deleteCard} hitSlop={8} testID="card-detail-delete" accessibilityLabel="delete card">
+                  <Icon name="trash" size={18} color={t.danger} />
+                </Pressable>
+              </View>
+            </View>
 
-        {card.body ? (
-          <Text style={styles.cdBody}>{card.body}</Text>
-        ) : null}
+            {card.body ? (
+              <Text style={styles.cdBody}>{card.body}</Text>
+            ) : null}
+          </>
+        )}
 
         <Text style={styles.cdMeta}>
           opened by <ActorName name={creator.name} kind={creator.kind} /> · {fmt(card.created_at)}
+          {/* A card with no session wakes nobody when it is answered — say so
+              (the web's Session field does the same). */}
+          {card.session_id ? null : <Text testID="card-detail-no-agent"> · No agent assigned</Text>}
         </Text>
 
         {/* the pipeline in one row: tap a column to move the card there. When
@@ -367,6 +487,44 @@ export default function CardDetailScreen({ route, navigation }: Props) {
               )}
             </>
           )}
+        </View>
+
+        {/* What this card waits on — the web's "Blocked by". A blocker is a
+            card on the same board; the card cannot move forward until each one
+            reaches Done, and its session is woken when that changes. */}
+        <View>
+          <Text style={styles.cdSectionLabel}>
+            {openDeps ? `BLOCKED BY ${openDeps}` : "BLOCKED BY"}
+          </Text>
+          {deps.length ? deps.map((d) => (
+            <View key={d.id} style={styles.cdDepRow} testID={`card-detail-dep-${d.id}`}>
+              <View style={[styles.cdDepDot, { backgroundColor: d.done ? t.success : t.danger }]} />
+              <Pressable style={{ flex: 1 }} onPress={() => navigation.push("CardDetail", { id: d.id })}>
+                <Text style={[styles.cdDepTitle, d.done && styles.cdDepDone]} numberOfLines={2}>
+                  #{d.id} {d.title} <Text style={styles.cdDepCol}>· {d.column_name || "no column"}</Text>
+                </Text>
+              </Pressable>
+              <Pressable testID={`card-detail-dep-remove-${d.id}`} hitSlop={8} disabled={depBusy}
+                accessibilityLabel={`stop waiting on ${d.title}`} onPress={() => changeDep(d.id, false)}>
+                <Icon name="close" size={16} color={t.textMuted} />
+              </Pressable>
+            </View>
+          )) : (
+            <Text style={styles.cdEmpty}>Nothing — free to move.</Text>
+          )}
+          <Pressable testID="card-detail-dep-add" accessibilityRole="button" onPress={openPicker} disabled={depBusy}>
+            <Text style={styles.cdLink}>{choices ? "Close" : "+ Add a blocker"}</Text>
+          </Pressable>
+          {choices ? (
+            pickable.length ? pickable.map((c) => (
+              <Pressable key={c.id} testID={`card-detail-dep-pick-${c.id}`} disabled={depBusy}
+                onPress={() => changeDep(c.id, true)} style={[styles.cdDepRow, depBusy && styles.dimmed]}>
+                <Text style={styles.cdDepTitle} numberOfLines={2}>#{c.id} {c.title}</Text>
+              </Pressable>
+            )) : (
+              <Text style={styles.cdEmpty}>No other cards on this board to wait on.</Text>
+            )
+          ) : null}
         </View>
 
         <View style={styles.cdRule} />

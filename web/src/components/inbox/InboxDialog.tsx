@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { BellOff, Check, Gavel, Loader2, Send, Zap } from "lucide-react"
+import { useLive } from "../useLive"
+import { DECISION_TABLES } from "../../lib/live"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,7 +20,7 @@ import { queueFrom } from "@/lib/decisions"
 import { DecisionCockpit } from "@/components/kanban/DecisionCockpit"
 import { userError } from "@/lib/errors"
 
-const POLL_MS = 10000
+const POLL_MS = 60_000  // fallback only: live events refetch on change
 
 /**
  * InboxDialog — the message ledger (viewer/inbox) as a two-pane modal: the
@@ -126,8 +128,9 @@ export function InboxDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, project?.id])
 
-  // Poll while open (a live channel: a peer's message appears without a
-  // manual refresh), and stop when the tab is hidden.
+  // Live: a peer's message or a decision change refetches at once. The slow
+  // poll is the fallback for a dropped socket; it stops when the tab is hidden.
+  useLive(DECISION_TABLES, null, load)
   useEffect(() => {
     const id = setInterval(() => {
       if (!document.hidden) load()

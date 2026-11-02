@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState, type ReactNode } from "react"
-import { Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Alert, ScrollView, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import Constants from "expo-constants"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
@@ -429,7 +430,7 @@ export default function ProfileScreen({ navigation }: Props) {
         />
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, marginTop: 8, gap: 12 }}>
           <Text style={[styles.ssRowHint, { flex: 1, maxWidth: undefined }]}>
-            {feedbackSent ? "Sent — thank you." : "Saved on the server, where the agents improving Manager read it."}
+            {feedbackSent ? "Sent — thank you." : "Becomes a card on your board's Feedback column; an agent's reply comes back as a notification."}
           </Text>
           <TouchableOpacity
             testID="send-feedback"

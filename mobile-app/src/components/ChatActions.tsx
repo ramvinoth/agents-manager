@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { Text, TextInput, TouchableOpacity, View } from "react-native"
+import { Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import SheetModal from "./SheetModal"
 import { useStyles } from "../lib/styles"
 

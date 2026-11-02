@@ -22,7 +22,7 @@ import {
   Server,
   Puzzle,
   PanelLeft,
-  Presentation,
+  BellRing,
 } from "lucide-react"
 import { TextFieldDialog } from "./settings/TextFieldDialog"
 import { recordFeedback } from "@/usageTracker"
@@ -82,10 +82,8 @@ export function Header() {
   const needsAuth = useStore((s) => s.needsAuth)
   const openTools = useStore((s) => s.openTools)
   const currentAgent = useStore((s) => s.currentAgent)
-  const canvases = useStore((s) => s.canvases)
   const canvasOpen = useStore((s) => s.canvasOpen)
   const canvasUnseen = useStore((s) => s.canvasUnseen)
-  const openCanvas = useStore((s) => s.openCanvas)
   const closeCanvas = useStore((s) => s.closeCanvas)
   const needs = useStore((s) => s.canvasNeeds)
   const showNeeds = useStore((s) => s.showNeeds)
@@ -282,26 +280,23 @@ export function Header() {
 
       {!authUser && themeToggle}
 
-      {/* The right edge belongs to the canvas alone (Skills/MCP/Plugins are in Tools). */}
-      {(canvases.length > 0 || needs.length > 0) && (
+      {/* The right edge holds what this chat waits on you for (Skills/MCP/Plugins are in Tools). */}
+      {needs.length > 0 && (
         <Button
           variant="ghost"
           size="icon"
           className={"relative size-7 shrink-0" + (canvasOpen ? " bg-accent" : "")}
-          onClick={() => (canvasOpen ? closeCanvas() : needs.length ? showNeeds() : openCanvas())}
-          data-track="canvas toggle"
-          aria-label={canvasOpen ? "Hide canvas" : "Show canvas"}
+          onClick={() => (canvasOpen ? closeCanvas() : showNeeds())}
+          data-track="needs toggle"
+          aria-label={canvasOpen ? "Hide what needs you" : "Show what needs you"}
           aria-pressed={canvasOpen}
-          title={canvasOpen ? "Hide canvas"
-            : needs.length ? `${needs.length} in this chat waiting on you`
-            : canvasUnseen ? "The agent updated the canvas" : "Canvas"}
+          title={canvasOpen ? "Hide" : `${needs.length} in this chat waiting on you`}
         >
-          <Presentation className="size-4" />
-          {needs.length > 0 ? (
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground tabular-nums">
-              {needs.length}
-            </span>
-          ) : canvasUnseen > 0 && <span className="absolute right-0.5 top-0.5 size-2 rounded-full bg-primary" />}
+          <BellRing className="size-4" />
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-primary-foreground tabular-nums">
+            {needs.length}
+          </span>
+          {canvasUnseen > 0 && <span className="absolute -bottom-0.5 right-0.5 size-1.5 rounded-full bg-primary" />}
         </Button>
       )}
 
@@ -311,7 +306,7 @@ export function Header() {
       {feedbackOpen && (
         <TextFieldDialog
           title="Send feedback"
-          description="What is confusing, slow, missing or never used? Agents read every note in the usage report and turn it into work on the board."
+          description="What is confusing, slow, missing or never used? Each note becomes a card in your board's Feedback column; an agent answers there and you get its reply as a notification."
           value=""
           saveLabel="Send"
           clearable={false}

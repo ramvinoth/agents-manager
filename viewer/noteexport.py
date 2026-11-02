@@ -11,15 +11,16 @@ Word a mermaid block stays as its source code; Word has no way to draw it.
 import html
 import os
 import re
-import shutil
-import signal
 import subprocess
 import tempfile
 import time
 import zipfile
-from glob import glob
 from io import BytesIO
+from pathlib import Path
 from xml.sax.saxutils import escape as xesc
+
+from viewer.chromefind import find_chrome
+from viewer.procctl import kill_tree
 
 FORMATS = {
     "md": ("text/markdown; charset=utf-8", "md"),
@@ -217,24 +218,6 @@ def to_html(title, meta, body):
 
 
 # ── PDF ──────────────────────────────────────────────────────────────────────
-def find_chrome():
-    """A Chrome/Chromium binary on THIS machine, or None."""
-    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
-        if shutil.which(name):
-            return shutil.which(name)
-    for p in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-              "/Applications/Chromium.app/Contents/MacOS/Chromium", "/snap/bin/chromium"):
-        if os.path.exists(p):
-            return p
-    for root in ("~/.cache/ms-playwright", "~/Library/Caches/ms-playwright"):
-        root = os.path.expanduser(root)
-        hits = sorted(glob(root + "/chromium-*/chrome-linux/chrome")
-                      + glob(root + "/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"))
-        if hits:
-            return hits[-1]
-    return None
-
-
 def _complete(path):
     with open(path, "rb") as f:
         f.seek(max(0, os.path.getsize(path) - 32))
@@ -252,11 +235,11 @@ def to_pdf(title, meta, body, chrome=None):
         # A private profile so this never collides with the owner's own Chrome
         # or the viewer's CDP browser; virtual time lets mermaid finish drawing.
         cmd = [chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-               f"--user-data-dir={d}/profile", "--no-pdf-header-footer", "--virtual-time-budget=8000",
-               f"--print-to-pdf={dst}", "file://" + src]
+               "--user-data-dir=" + os.path.join(d, "profile"), "--no-pdf-header-footer", "--virtual-time-budget=8000",
+               f"--print-to-pdf={dst}", Path(src).as_uri()]
         # Chrome writes the PDF and then may never exit (on macOS its updater
         # keeps the process alive), so wait for the file to stop growing and
-        # end the whole process group ourselves.
+        # end its whole process tree ourselves.
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
             deadline, last = time.time() + 60, -1
@@ -269,10 +252,7 @@ def to_pdf(title, meta, body, chrome=None):
                 last = size
                 time.sleep(0.5)
         finally:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            kill_tree(proc.pid)
             proc.wait()
         if not os.path.exists(dst) or not _complete(dst):
             raise ExportUnavailable("Chrome could not print the PDF")

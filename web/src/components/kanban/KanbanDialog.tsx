@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -12,6 +12,7 @@ import {
 } from "@dnd-kit/core"
 import { useDraggable } from "@dnd-kit/core"
 import { Plus, Trash2, Pencil, Loader2, GripVertical, Check, X, MessageSquare, History, Search } from "lucide-react"
+import { useLive } from "../useLive"
 import {
   Dialog,
   DialogContent,
@@ -43,15 +44,20 @@ import { AuditDialog } from "@/components/lazyDialogs"
  * columns. Every write goes to
  * /api/org/* — the same board an agent chat session sees through its kanban MCP.
  */
+const BOARD_TABLES = ["cards", "card_comments", "card_deps"]
+
 export function KanbanDialog({
   host,
   cwd,
   name,
+  initialCard,
   onClose,
 }: {
   host: string
   cwd: string
   name: string
+  /** A card to open once the board has loaded (a canvas link to it). */
+  initialCard?: number
   onClose: () => void
 }) {
   const [project, setProject] = useState<OrgProject | null>(null)
@@ -121,6 +127,9 @@ export function KanbanDialog({
     const c = await api.orgCards({ project: project.id })
     setCards(c.cards || [])
   }
+  // Another session's (or tab's) card writes show at once; a comment changes
+  // the card's thread count. Skipped mid-drag so a refetch never yanks a card.
+  useLive(BOARD_TABLES, project?.id ?? null, () => { if (activeId == null) reload().catch(() => {}) })
 
   /** Open a decision-queue item in the thread of the session that owns it (its
    *  thread renders the actual decision card). Resolves the session from the
@@ -179,7 +188,8 @@ export function KanbanDialog({
     const created = await api.orgCreateColumn({
       project_id: project.id,
       name: newColName.trim(),
-      position: columns.length,
+      // Append after the last column; positions can have gaps, so not columns.length.
+      position: Math.max(-1, ...columns.map((c) => c.position)) + 1,
     })
     setColumns((cs) => [...cs, created])
     setNewColName("")
@@ -246,6 +256,14 @@ export function KanbanDialog({
       return false
     }
   }
+
+  // Open the linked card once, after the board loads (openCard reads `cards`).
+  const openedInitial = useRef(false)
+  useEffect(() => {
+    if (loading || !initialCard || openedInitial.current) return
+    openedInitial.current = true
+    void openCard(initialCard).then((ok) => { if (!ok) setErr(`Card ${initialCard} can't be opened — it may have been deleted.`) })
+  }, [loading, initialCard]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

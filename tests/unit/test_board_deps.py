@@ -285,6 +285,9 @@ class FakeDepBoard:
     def card_dep_remove(self, card_id, depends_on):
         return True
 
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        pass  # the ask ledger — covered in test_asks
+
     def audit_append(self, *a):
         self.audit.append(a)
 

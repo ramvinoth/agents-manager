@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { test } from "node:test"
 import ts from "typescript"
-import { formatActor } from "./board.ts"
+import { blockerChoices, formatActor } from "./board.ts"
+import * as errors from "./errors.ts"
 
 // Exercise the actual screen's load callback and rendered branches without
 // native dependencies. Native navigation/layout are verified separately.
@@ -44,6 +45,9 @@ function screen(response: unknown, status?: number) {
   const native = Object.fromEntries(["ActivityIndicator", "KeyboardAvoidingView", "Pressable", "ScrollView", "Text", "TextInput", "View"].map(x => [x, x]))
   const modules: Record<string, unknown> = {
     react: { ...react, default: react },
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...native, Platform: { OS: "ios" }, Alert: { alert(title: string, message: string, buttons?: any[]) { alerts.push({ title, message, buttons }) } } },
     "@react-navigation/elements": { useHeaderHeight: () => 40 },
     "react-native-safe-area-context": { useSafeAreaInsets: () => ({ bottom: 0 }) },
@@ -73,7 +77,8 @@ function screen(response: unknown, status?: number) {
     } }, isQueued: (r: any) => r?.queued === true },
     "../state/config": { setToken: (value: unknown) => { token = value }, username: () => "" },
     "../components/Icon": { default: "Icon" },
-    "../lib/board": { formatActor },
+    "../lib/board": { blockerChoices, formatActor },
+    "../lib/errors": errors,
     "../lib/useTheme": { useTheme: () => ({}) },
     "../lib/styles": { useStyles: () => ({}) },
   }

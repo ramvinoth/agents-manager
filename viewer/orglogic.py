@@ -40,6 +40,28 @@ def order_column(cards):
     return sorted(cards, key=lambda c: _pos(c))
 
 
+LEDGER_BODY_CHARS = 280
+
+
+def ledger_view(cards, column_names, include_done=False):
+    """The agents' read of a board (MCP card_list): what is open, compactly.
+    The full board (every Done card, every body) runs to hundreds of KB on a
+    mature project and overflows a model's tool-result limit, so the ledger
+    names each card's column, trims the body to a preview (`card` reads one in
+    full) and leaves Done out unless asked, counting what it left out."""
+    out, done = [], 0
+    for c in cards:
+        col = column_names.get(c.get("column_id"), "")
+        if col.lower() == "done" and not include_done:
+            done += 1
+            continue
+        body = c.get("body") or ""
+        out.append({**c, "column": col,
+                    "body": body if len(body) <= LEDGER_BODY_CHARS
+                    else body[:LEDGER_BODY_CHARS].rstrip() + "…"})
+    return {"cards": out, "done_hidden": done}
+
+
 def _pos(card):
     try:
         return float(card.get("position", 0.0) or 0.0)

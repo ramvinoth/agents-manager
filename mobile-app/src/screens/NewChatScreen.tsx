@@ -7,9 +7,9 @@ import {
   ScrollView,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useHeaderHeight } from "@react-navigation/elements"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -24,7 +24,7 @@ import { aiError, aiSummary, newChatAI, type AIConfig } from "../lib/aiSelection
 import { TEMPLATE_CATEGORIES } from "../lib/templateCategories"
 import { userError } from "../lib/errors"
 import { describeSchedule } from "../lib/interval"
-import { chatLabel, MODES, modeOf, projectOptions, startBlocker, type NewChatJob } from "../lib/newChat"
+import { chatLabel, MODES, modeOf, parseRepo, projectOptions, startBlocker, waitForClone, type NewChatJob } from "../lib/newChat"
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 
@@ -32,6 +32,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
 
 // The folder menu's "Browse folders…" entry: a value no folder path starts with.
 const BROWSE = ":browse"
+// …and its "Clone a GitHub repo…" entry: the chat starts in the fresh clone.
+const CLONE = ":clone"
 
 // Name, then message: both are required, in that order — the name is how the
 // owner tells this chat apart in every list, push and decision card later, so
@@ -54,6 +56,16 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const [cwd, setCwd] = useState(route.params?.cwd ?? "")
   const [customCwd, setCustomCwd] = useState(false)
   const [browsing, setBrowsing] = useState(false)
+  // Clone source: owner/name (or a pasted URL), an optional new working
+  // branch, and the folder the clone lands under.
+  const [cloning, setCloning] = useState(false)
+  const [repo, setRepo] = useState("")
+  const [branch, setBranch] = useState("")
+  const [cloneParent, setCloneParent] = useState("~")
+  const [cloneProgress, setCloneProgress] = useState("")
+  // Shown once the server says this host has no GitHub token.
+  const [needToken, setNeedToken] = useState(false)
+  const [token, setToken] = useState("")
   const [message, setMessage] = useState("")
   const messageRef = useRef<TextInput>(null)
   const [title, setTitle] = useState(template?.name ?? "")
@@ -105,7 +117,10 @@ export default function NewChatScreen({ navigation, route }: Props) {
   }, [host])
 
   const aiReady = !!ai && !!aiConfig?.capabilities.editable
+  const repoId = parseRepo(repo)
   const blocker = startBlocker({ title, message, aiReady, aiError: aiErrorText, busy })
+    || (cloning && !repoId ? (repo.trim() ? "Repo must be owner/name or a GitHub link" : "Name the repo to clone") : "")
+    || (cloning && needToken && !token.trim() ? "Add a GitHub token to clone" : "")
   // Type a path when asked to, or when the folder isn't one of the recent ones
   // (e.g. typed before the list loaded) — the picker must never show a folder
   // other than the one the chat will start in.
@@ -114,16 +129,44 @@ export default function NewChatScreen({ navigation, route }: Props) {
   async function start() {
     const msg = message.trim()
     const name = title.trim()
-    if (!name || !msg || busy || !ai || !aiConfig?.capabilities.editable) return
+    if (busy || blocker || !ai) return
     setError("")
     setBusy(true)
+    let dir = cwd.trim() || "~"
+    if (cloning) {
+      try {
+        if (needToken) {
+          await api.envSet(host, "GH_TOKEN", token.trim())
+          setNeedToken(false)
+          setToken("")
+        }
+        setCloneProgress("Starting clone…")
+        const { job } = await api.gitClone({ repo: repoId, dir: cloneParent.trim() || "~", branch: branch.trim() || undefined, host })
+        dir = await waitForClone(() => api.gitCloneStatus(job), setCloneProgress)
+        // Cloned: from here on it is an ordinary folder, so a failed start
+        // below retries in it instead of cloning a second time.
+        setCloning(false)
+        setCustomCwd(true)
+        setCwd(dir)
+      } catch (e) {
+        // No token: the inline field under the repo says what to do (the
+        // server's text points at a web-only dialog).
+        const noToken = /GH_TOKEN|GitHub token/i.test((e as Error)?.message ?? "")
+        setNeedToken(noToken)
+        setError(noToken ? "" : userError(e, "the repo", "clone"))
+        setBusy(false)
+        return
+      } finally {
+        setCloneProgress("")
+      }
+    }
     try {
       const res = await api.newSession({
         message: msg,
         // Sent with the create: the server stores it as the chat's name and
         // passes it to the run (claude --name) — there is no later rename.
         title: name,
-        cwd: cwd.trim() || "~",
+        cwd: dir,
         mode,
         ai,
         host,
@@ -145,7 +188,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
       // (the rename still covers a remote host, whose run gets no --name).
       navigation.replace("Thread", {
         host,
-        label: chatLabel(name, cwd, res.session),
+        label: chatLabel(name, dir, res.session),
         path: res.path,
         starting: { session: res.session, message: msg },
       })
@@ -238,15 +281,73 @@ export default function NewChatScreen({ navigation, route }: Props) {
             {projects.length ? (
               <Dropdown
                 testIDPrefix="newchat-project"
-                value={typing ? "" : cwd}
-                options={[...projectOptions(projects), { v: BROWSE, label: "Browse folders…" }, { v: "", label: "Type a path…" }]}
+                value={cloning ? CLONE : typing ? "" : cwd}
+                options={[...projectOptions(projects), { v: BROWSE, label: "Browse folders…" }, { v: "", label: "Type a path…" },
+                  { v: CLONE, label: "Clone a GitHub repo…" }]}
                 onChange={(v) => {
                   if (v === BROWSE) { setBrowsing(true); return }
+                  setCloning(v === CLONE)
+                  if (v === CLONE) return
                   setCustomCwd(!v); if (v) setCwd(v)
                 }}
               />
+            ) : (
+              <TouchableOpacity testID="newchat-clone-toggle" hitSlop={8} onPress={() => setCloning((c) => !c)}>
+                <Text style={styles.ncAddText}>{cloning ? "Use a folder instead" : "Or clone a GitHub repo…"}</Text>
+              </TouchableOpacity>
+            )}
+            {cloning ? (
+              <View style={{ gap: 8, marginTop: 8 }}>
+                <TextInput
+                  testID="newchat-repo"
+                  style={[styles.input, { fontSize: 14 }]}
+                  placeholder="owner/name or a GitHub link"
+                  placeholderTextColor={t.textMuted + "80"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={repo}
+                  onChangeText={(v) => {
+                    setRepo(v)
+                    // The chat is usually named after the repo; never overwrite a typed name.
+                    const was = parseRepo(repo).split("/")[1] ?? ""
+                    if (!title.trim() || title === was) setTitle(parseRepo(v).split("/")[1] ?? "")
+                  }}
+                />
+                <TextInput
+                  testID="newchat-branch"
+                  style={[styles.input, { fontSize: 14 }]}
+                  placeholder="New working branch (optional)"
+                  placeholderTextColor={t.textMuted + "80"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={branch}
+                  onChangeText={setBranch}
+                />
+                <TouchableOpacity testID="newchat-clone-parent" style={styles.rowCenter} onPress={() => setBrowsing(true)}>
+                  <Icon name="folder" size={16} color={t.accent} />
+                  <Text style={[styles.ncSmallHint, { marginLeft: 6, marginTop: 0 }]} numberOfLines={1}>
+                    Into {cloneParent}/{repoId.split("/")[1] || "…"}
+                  </Text>
+                </TouchableOpacity>
+                {needToken ? (
+                  <>
+                    <Text style={styles.ncSmallHint}>This machine has no GitHub token. Paste one with repo access; it is saved as GH_TOKEN on this machine.</Text>
+                    <TextInput
+                      testID="newchat-gh-token"
+                      style={[styles.input, { fontSize: 14 }]}
+                      placeholder="ghp_… or github_pat_…"
+                      placeholderTextColor={t.textMuted + "80"}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      secureTextEntry
+                      value={token}
+                      onChangeText={setToken}
+                    />
+                  </>
+                ) : null}
+              </View>
             ) : null}
-            {typing ? (
+            {!cloning && typing ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: projects.length ? 8 : 0 }}>
                 <TextInput
                   testID="newchat-cwd"
@@ -263,7 +364,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
                 </TouchableOpacity>
               </View>
             ) : null}
-            {!typing && cwd ? <Text style={styles.ncSmallHint} numberOfLines={1}>{cwd}</Text> : null}
+            {!cloning && !typing && cwd ? <Text style={styles.ncSmallHint} numberOfLines={1}>{cwd}</Text> : null}
             {projectsError ? <Text style={styles.ncSmallHint}>{projectsError} Browse or type a path instead.</Text> : null}
           </View>
           {divider}
@@ -283,8 +384,13 @@ export default function NewChatScreen({ navigation, route }: Props) {
           </TouchableOpacity>
           {aiErrorText ? <Text testID="newchat-ai-error" style={styles.sheetHint}>{aiErrorText}</Text> : null}
           {providerPickerOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for this chat" localOnly onSave={setAIConfig} onClose={() => setProviderPickerOpen(false)}/> : null}
-          <FolderPicker visible={browsing} host={host} start={cwd.trim() || "~"} onClose={() => setBrowsing(false)}
-            onPick={(path) => { setBrowsing(false); setCustomCwd(false); setCwd(path) }} />
+          <FolderPicker visible={browsing} host={host} start={cloning ? cloneParent : cwd.trim() || "~"} onClose={() => setBrowsing(false)}
+            onPick={(path) => {
+              setBrowsing(false)
+              // While cloning, the picked folder is where the clone lands.
+              if (cloning) { setCloneParent(path); return }
+              setCustomCwd(false); setCwd(path)
+            }} />
         </View>
 
         {/* Everything optional, collapsed until wanted; the summary says what is set. */}
@@ -375,7 +481,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
           {busy ? (
             <View style={styles.ncBusy}>
               <ActivityIndicator color={t.onAccent} size="small" />
-              <Text style={styles.ncBusyText}>Starting…</Text>
+              <Text testID="newchat-busy" style={styles.ncBusyText}>{cloneProgress || "Starting…"}</Text>
             </View>
           ) : (
             <Text style={styles.ncStartText}>Start chat</Text>

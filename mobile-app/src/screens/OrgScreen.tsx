@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react"
-import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, RefreshControl, ScrollView, Text, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type LearnedSkill, type OrgProject } from "../api/client"
+import { api, type LearnedSkill, type OrgProject, type ProjectPlugin } from "../api/client"
 import { setToken } from "../state/config"
 import Icon from "../components/Icon"
 import CreateSheet from "../components/CreateSheet"
@@ -42,11 +43,30 @@ export default function OrgScreen({ navigation }: Props) {
     } catch (err) {
       const ex = err as Error & { status?: number }
       if (ex.status === 401) { setToken(null); navigation.replace("Login"); return }
-      setError(ex.message)
+      setError(userError(ex, "projects"))
     } finally {
       setLoading(false)
     }
   }, [navigation])
+
+  // Apps sharing a project's folder (e.g. Sift). Turned on by the server's env,
+  // so one read per mount is enough; a failure just hides the buttons.
+  const [plugins, setPlugins] = useState<ProjectPlugin[]>([])
+  useEffect(() => { api.projectPlugins().then((r) => setPlugins(r.plugins || [])).catch(() => {}) }, [])
+  const [opening, setOpening] = useState("")
+  // Each open mints a one-time sign-in; the phone hands it to the browser.
+  const openPlugin = async (pl: ProjectPlugin, p: OrgProject) => {
+    if (opening) return
+    setOpening(`${pl.id}:${p.id}`)
+    try {
+      const r = await api.projectPluginOpen({ id: pl.id, host: p.host || "local", cwd: p.cwd })
+      await Linking.openURL(r.url)
+    } catch (e) {
+      Alert.alert(`Couldn't open ${pl.label}`, userError(e, pl.label, "open"))
+    } finally {
+      setOpening("")
+    }
+  }
 
   useEffect(() => {
     load()
@@ -139,6 +159,20 @@ export default function OrgScreen({ navigation }: Props) {
                   <Text style={styles.orgMapText}>Code map</Text>
                 </TouchableOpacity>
               ) : null}
+              {(p.host === "local" || !p.host) && p.cwd ? plugins.map((pl) => (
+                <TouchableOpacity
+                  key={pl.id}
+                  testID={`org-project-plugin-${pl.id}-${p.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${p.name} in ${pl.label}`}
+                  disabled={!!opening}
+                  onPress={() => openPlugin(pl, p)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.orgMapBtn}
+                >
+                  {opening === `${pl.id}:${p.id}` ? <ActivityIndicator size="small" /> : <Text style={styles.orgMapText}>Open in {pl.label}</Text>}
+                </TouchableOpacity>
+              )) : null}
             </Row>
           </TouchableOpacity>
         )) : <Text style={styles.emptyItalic}>No projects yet.</Text>}

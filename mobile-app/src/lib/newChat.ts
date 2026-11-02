@@ -61,3 +61,42 @@ export function startBlocker(o: { title: string; message: string; aiReady: boole
   if (!o.message.trim()) return "Write the first message to start"
   return ""
 }
+
+// "owner/name" from what an owner pastes: the short form, a github.com page
+// URL or an ssh remote. "" when it isn't one — the server only takes owner/name.
+export function parseRepo(input: string): string {
+  const s = input.trim().replace(/\/+$/, "").replace(/\.git$/, "")
+  const m = s.match(/^(?:https?:\/\/(?:www\.)?github\.com\/|git@github\.com:)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/)
+  return m ? m[1] : ""
+}
+
+export type CloneStatus = { running: boolean; phase?: string; percent?: number; dir?: string; error?: string }
+
+// Poll a started clone until it ends; resolves to the cloned folder. A few
+// failed polls in a row are a dropped connection, not a failed clone — only a
+// streak (or the job's own error) ends it.
+export async function waitForClone(
+  poll: () => Promise<CloneStatus>,
+  onProgress: (text: string) => void,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  maxMisses = 5,
+): Promise<string> {
+  let misses = 0
+  for (;;) {
+    await sleep(700)
+    let st: CloneStatus
+    try {
+      st = await poll()
+      misses = 0
+    } catch (e) {
+      if (++misses >= maxMisses) throw e
+      continue
+    }
+    if (st.error) throw new Error(st.error)
+    if (!st.running) {
+      if (!st.dir) throw new Error("The clone finished without a folder")
+      return st.dir
+    }
+    onProgress(`${st.phase || "Cloning"}${st.percent ? ` ${st.percent}%` : ""}`)
+  }
+}

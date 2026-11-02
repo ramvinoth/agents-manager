@@ -1,24 +1,21 @@
 """viewer.browser — headless-Chrome/CDP control, the browser & terminal
 WebSocket engines, and MCP-CDP wiring."""
 import base64
-import fcntl
 import hashlib
 import json
 import os
 import posixpath
-import pty
 import re
 import shlex
-import shutil
-import signal
 import socket
 import struct
 import subprocess
-import termios
+import sys
 import threading
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
+from viewer import ptyproc
 from viewer.remote import (
     SSH, remote_run_python,
 )
@@ -377,7 +374,7 @@ def browser_tab_action(hid, action, tab_id=None, url=None):
 
 
 # Facts needed to decide: stream now / launch / install / explain what's missing.
-BROWSER_PROBE_SCRIPT = r"""
+BROWSER_PROBE_SCRIPT = (Path(__file__).with_name("chromefind.py").read_text() + r"""
 import json, os, glob, shutil, subprocess, platform
 def run(cmd, t=8):
     try:
@@ -386,15 +383,7 @@ def run(cmd, t=8):
     except Exception as e:
         return -1, str(e)
 r = {"os": platform.system()}
-cands = [w for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
-         if (w := shutil.which(n))]
-for pat in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium", "/snap/bin/chromium"):
-    if os.path.exists(pat): cands.append(pat)
-for root in ("~/.cache/ms-playwright", "~/Library/Caches/ms-playwright"):
-    cands += sorted(glob.glob(os.path.expanduser(root + "/chromium-*/chrome-linux/chrome")))
-    cands += sorted(glob.glob(os.path.expanduser(root + "/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium")))
-r["binary"] = cands[0] if cands else None
+r["binary"] = find_chrome()
 # Pick a node that modern tooling can actually run (>=18): the PATH node can be
 # ancient (seen: /usr/local/bin/node v17 while nvm has v20+) and @playwright/mcp
 # crashes on it. Prefer the newest version that qualifies.
@@ -423,40 +412,36 @@ r["display"] = (sorted(os.path.basename(s)[1:] for s in glob.glob("/tmp/.X11-uni
 r["xvfb"] = shutil.which("Xvfb")
 r["pkg_mgr"] = next((m for m in ("apt-get", "dnf", "yum", "apk", "pacman", "zypper") if shutil.which(m)), None)
 print(json.dumps(r))
-"""
+""")
 
 
 def browser_probe(hid):
     if hid != "local":
         txt = remote_run_python(hid, BROWSER_PROBE_SCRIPT)
-        return json.loads(txt.strip().splitlines()[-1])
-    import platform as _pf
-    import glob as _glob
-    r = {"os": _pf.system()}
-    cands = [w for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
-             if (w := shutil.which(n))]
-    for root in ("~/.cache/ms-playwright",):
-        cands += sorted(_glob.glob(os.path.expanduser(root + "/chromium-*/chrome-linux/chrome")))
-    r["binary"] = cands[0] if cands else None
-    r["node"] = shutil.which("node")
-    try:
-        st = os.statvfs(os.path.expanduser("~"))
-        r["free_gb"] = round(st.f_bavail * st.f_frsize / 1e9, 1)
-    except Exception:
-        r["free_gb"] = None
-    r["passwordless_sudo"] = subprocess.run("sudo -n true", shell=True, capture_output=True).returncode == 0
-    r["missing_libs"] = []
-    disp = sorted(os.path.basename(s)[1:] for s in _glob.glob("/tmp/.X11-unix/X*"))
-    r["display"] = disp[0] if disp else None
-    r["xvfb"] = shutil.which("Xvfb")
-    r["pkg_mgr"] = next((m for m in ("apt-get", "dnf", "yum", "apk", "pacman", "zypper") if shutil.which(m)), None)
-    return r
+    else:
+        txt = subprocess.run([sys.executable, "-c", BROWSER_PROBE_SCRIPT], capture_output=True,
+                             text=True, timeout=60).stdout
+    return json.loads(txt.strip().splitlines()[-1])
+
+
+# The managed browser is launched, stopped and installed with POSIX shell
+# lines (nohup, pkill, Xvfb), on SSH hosts and on this machine alike.
+NO_LOCAL_SHELL = ("The live browser needs a macOS or Linux host — this server runs on Windows. "
+                  "Run it on a Linux host (or in WSL) and add that as a host.")
+
+
+def _no_local_shell(hid):
+    """NO_LOCAL_SHELL when hid is this machine and it is Windows, else None."""
+    return NO_LOCAL_SHELL if hid == "local" and os.name == "nt" else None
 
 
 def browser_status(hid):
     """Everything the panel needs: running?, or what to do about it, with the
     exact reason for anything that blocks streaming."""
     st = {"running": False, "reasons": [], "action": None}
+    if _no_local_shell(hid):
+        st["reasons"].append(NO_LOCAL_SHELL)
+        return st
     running_ua = ""
     try:
         v = cdp_http(hid, "/json/version")
@@ -560,6 +545,8 @@ def ensure_xvfb(hid, display):
 
 
 def browser_start(hid, headless=None):
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_status(hid)
     if st.get("running"):
         return {"started": True, "already": True}
@@ -606,6 +593,8 @@ def browser_start(hid, headless=None):
 
 
 def browser_stop(hid):
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     browser_conn_drop(hid)
     kill = f"pkill -f {shlex.quote(BROWSER_PROFILE)} 2>/dev/null; true"
     if hid == "local":
@@ -621,6 +610,8 @@ def browser_stop(hid):
 def browser_install(hid):
     """User-space Chromium via Playwright — no sudo. Slow (hundreds of MB), so
     the HTTP request stays open while it runs; the UI shows a spinner."""
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_probe(hid)
     if not st.get("node"):
         return {"error": "node not found on the host (checked PATH and ~/.nvm) — install node first."}
@@ -647,6 +638,8 @@ def browser_install(hid):
 def browser_install_xvfb(hid):
     """Install Xvfb (a system package, needs sudo) so a display-less Linux host
     can run a real HEADED browser instead of the Google-blocked headless one."""
+    if _no_local_shell(hid):
+        return {"error": NO_LOCAL_SHELL}
     st = browser_probe(hid)
     if not st.get("pkg_mgr"):
         return {"error": "No supported package manager (apt/dnf/apk/pacman/zypper) found — "
@@ -931,7 +924,7 @@ def dispatch_input_fast(cdp, events):
 # ===== Live terminal (PTY over a WebSocket) =====
 #
 # A real interactive shell per host, streamed to xterm.js in the browser.
-# Local uses pty.fork()+shell (same primitive as the login flow); remote uses
+# Local uses viewer.ptyproc + the login shell (same seam as the login flow); remote uses
 # paramiko invoke_shell() over the pooled SSH connection. The transport is a
 # WebSocket the plain HTTP server upgrades in-place — server→client frames are
 # raw PTY output (binary), client→server frames are JSON control (input/resize).
@@ -979,8 +972,9 @@ class WSServer:
         out, self.buf = self.buf[:n], self.buf[n:]
         return out
 
-    def recv(self):
-        """Return (opcode, data) for the next data/close frame; handles ping."""
+    def recv(self, max_payload=None):
+        """Return (opcode, data) for the next data/close frame; handles ping.
+        A frame larger than `max_payload` raises OSError before it is read."""
         while True:
             b1, b2 = self._take(2)
             _fin, opcode = b1 & 0x80, b1 & 0x0F
@@ -989,10 +983,14 @@ class WSServer:
                 ln = struct.unpack("!H", self._take(2))[0]
             elif ln == 127:
                 ln = struct.unpack("!Q", self._take(8))[0]
+            if max_payload is not None and ln > max_payload:
+                raise OSError(f"websocket frame of {ln} bytes exceeds {max_payload}")
             mask = self._take(4) if masked else b"\x00\x00\x00\x00"
             payload = self._take(ln)
-            if masked:
-                payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
+            if masked and ln:
+                # XOR as one big integer: ~100x faster than a per-byte loop.
+                key = (mask * (ln // 4 + 1))[:ln]
+                payload = (int.from_bytes(payload, "big") ^ int.from_bytes(key, "big")).to_bytes(ln, "big")
             if opcode == 0x9:                       # ping -> pong
                 self._send(0xA, payload)
                 continue
@@ -1046,30 +1044,21 @@ class TerminalSession:
                 self.chan = c["client"].invoke_shell(term="xterm-256color", width=cols, height=rows)
             self.chan.settimeout(None)
         else:
-            self.pid, self.fd = pty.fork()
-            if self.pid == 0:
-                os.environ["TERM"] = "xterm-256color"
-                try:  # per-host env vars (e.g. GH_TOKEN) — set in the child, never echoed
-                    from viewer.hostenv import host_env
-                    os.environ.update(host_env("local"))
-                except Exception:
-                    pass
-                shell = os.environ.get("SHELL") or "/bin/bash"
-                try:
-                    os.execvp(shell, [shell, "-l"])
-                except Exception:
-                    try:
-                        os.execvp("/bin/sh", ["/bin/sh"])
-                    finally:
-                        os._exit(127)  # never fall back into a second copy of the server
-            self.resize(cols, rows)
+            env = {**os.environ, "TERM": "xterm-256color"}
+            try:  # per-host env vars (e.g. GH_TOKEN) — given to the child, never echoed
+                from viewer.hostenv import host_env
+                env.update(host_env("local"))
+            except Exception:
+                pass
+            argv, fallback = ptyproc.login_shell(env)
+            self.proc = ptyproc.spawn(argv, cols, rows, env=env, fallback=fallback)
 
     def read(self):
         """Blocking read of terminal output; b'' on EOF."""
         try:
             if self.remote:
                 return self.chan.recv(65536)
-            return os.read(self.fd, 65536)
+            return self.proc.read(65536)
         except OSError:
             return b""
 
@@ -1080,7 +1069,7 @@ class TerminalSession:
             if self.remote:
                 self.chan.send(data)
             else:
-                os.write(self.fd, data)
+                self.proc.write(data)
         except OSError:
             pass
 
@@ -1090,7 +1079,7 @@ class TerminalSession:
             if self.remote:
                 self.chan.resize_pty(width=cols, height=rows)
             else:
-                fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                self.proc.resize(cols, rows)
         except OSError:
             pass
 
@@ -1099,9 +1088,9 @@ class TerminalSession:
             if self.remote:
                 self.chan.close()
             else:
-                os.close(self.fd)
-                os.kill(self.pid, signal.SIGKILL)
-                os.waitpid(self.pid, 0)
+                self.proc.close()
+                self.proc.kill()
+                self.proc.wait()
         except OSError:
             pass
 

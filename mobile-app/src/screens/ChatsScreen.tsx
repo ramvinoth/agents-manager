@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, FlatList, RefreshControl, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
@@ -17,6 +18,8 @@ import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
 import { useHost } from "../lib/useHost"
+import { LIST_FALLBACK_MS, serialize, startLiveRefresh } from "../lib/liveEvents"
+import { liveEvents } from "../api/events"
 import { isTransportError, userError } from "../lib/errors"
 import { offerUndo } from "../lib/undo"
 import { useMenuButton } from "../components/SideMenu"
@@ -43,6 +46,9 @@ function shortProject(p: string): string {
   const parts = p.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : p
 }
+
+/** Stream events after which the chat list may differ. */
+const LIST_EVENTS = new Set(["list-changed", "turn-start", "turn-end", "resync"])
 
 // Home screen — a WhatsApp-style list where each "chat" is an agent session.
 // Tapping one opens the thread (ThreadScreen). The ☰ drawer holds the agent
@@ -114,7 +120,7 @@ export default function ChatsScreen({ navigation }: Props) {
   // its scheduled jobs, notes and inbox messages are erased for good. After the
   // confirm the rows leave the list at once and the server delete still waits
   // out an Undo window (lib/undo.ts) — a second net for a mis-tap. `deleting`
-  // keeps the 4s poll from bringing them back meanwhile.
+  // keeps a list refresh from bringing them back meanwhile.
   const deleting = useRef(new Set<string>())
   // A swipe that starts on a row is not a tap on it (one finger, one guard).
   const rowTap = useTapGuard()
@@ -262,34 +268,37 @@ export default function ChatsScreen({ navigation }: Props) {
   const lastSig = useRef("")
   const fresh = useRef(false) // a live read landed; a late cache read must not overwrite it
 
+  // Resolves true when the list changed (the live refresh backs off otherwise).
   const load = useCallback(
-    async (silent = false) => {
+    async (silent = false): Promise<boolean> => {
       if (!silent) setError("")
       try {
         const s = (await api.sessions(host)).filter((x) => !deleting.current.has(x.path))
         s.sort((a, b) => activity(b) - activity(a))
         fresh.current = true
         setFromCache(false)
-        // The 4s poll mostly returns the same list: skip the re-render and the
-        // cache write unless something changed, so scrolling stays smooth.
+        // A background refresh mostly returns the same list: skip the re-render
+        // and the cache write unless something changed, so scrolling stays smooth.
         const sig = JSON.stringify(s)
-        if (sig === lastSig.current) return
+        if (sig === lastSig.current) return false
         lastSig.current = sig
         setSessions(s)
         offlineCache.saveChats(activeServerId(), host, s)
+        return true
       } catch (e) {
         const err = e as Error & { status?: number }
         if (err.status === 401) {
           await setToken(null)
           navigation.replace("Login")
-          return
+          return false
         }
         // Unreachable: the offline banner says so and the saved list stays on
         // screen — a red error on top would only repeat it.
-        if (isTransportError(err)) return
-        // Silent background polls must never surface a transient error banner or
-        // wipe the list — only a user-initiated load reports failures.
+        if (isTransportError(err)) return false
+        // Silent background refreshes must never surface a transient error banner
+        // or wipe the list — only a user-initiated load reports failures.
         if (!silent) setError(userError(err, "your chats"))
+        return false
       } finally {
         if (!silent) setLoading(false)
       }
@@ -297,17 +306,30 @@ export default function ChatsScreen({ navigation }: Props) {
     [host, navigation]
   )
 
-  // Keep the list LIVE while it's the focused screen: poll quietly in the
-  // background so new/updated chats settle into place continuously, instead of
-  // the whole list re-sorting in one jarring jump the instant you navigate back
-  // (which made muscle-memory "tap the top row" hit the wrong chat). On focus we
-  // do ONE silent refresh (no spinner, no list wipe) and start the poll; on blur
-  // we stop it. FlatList reconciles by `path` key, so reordered rows move
-  // smoothly rather than the list rebuilding.
+  // A burst of events (several runs ending together) is one refetch, never overlapping.
+  const refreshList = useMemo(() => serialize(() => load(true)), [load])
+
+  // Keep the list LIVE while it's the focused screen, so new/updated chats
+  // settle into place continuously instead of the whole list re-sorting in one
+  // jarring jump the instant you navigate back (which made muscle-memory "tap
+  // the top row" hit the wrong chat). The server's live-events stream says when
+  // the list moved; while it is down (an older server, a dropped socket) a quiet
+  // poll backs off 4s -> 10s -> 30s. On focus we do ONE silent refresh (no
+  // spinner, no list wipe); on blur we stop. FlatList reconciles by `path` key,
+  // so reordered rows move smoothly rather than the list rebuilding.
   useFocusEffect(
     useCallback(() => {
-      load(true) // silent refresh on return — no spinner, no visible reload
-      const id = setInterval(() => load(true), 4000)
+      refreshList() // silent refresh on return — no spinner, no visible reload
+      const stopLive = startLiveRefresh({
+        stream: liveEvents(),
+        refresh: refreshList,
+        fallbackMs: LIST_FALLBACK_MS,
+        // Another host's chat files are not watched, only its runs: refresh it more often.
+        liveMs: host === "local" ? 60000 : 10000,
+        onEvent: (ev) => {
+          if (LIST_EVENTS.has(ev.type)) refreshList()
+        },
+      })
       // The master switch is editable from Profile / Company; re-read it on focus
       // so the pinned Manager row appears/disappears in step with the server.
       let alive = true
@@ -316,9 +338,9 @@ export default function ChatsScreen({ navigation }: Props) {
         .catch(() => alive && setAutomationOn(false))
       return () => {
         alive = false
-        clearInterval(id)
+        stopLive()
       }
-    }, [load])
+    }, [refreshList, host])
   )
   useEffect(() => {
     // Paint the saved list at once (cold start, or offline), then read live.

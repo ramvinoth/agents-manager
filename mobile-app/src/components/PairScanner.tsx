@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react"
-import { Linking, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native"
+import { Linking, Modal, StyleSheet, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { CameraView, useCameraPermissions } from "expo-camera"
 import { parsePairLink } from "../lib/pairLink"
 import { useStyles } from "../lib/styles"

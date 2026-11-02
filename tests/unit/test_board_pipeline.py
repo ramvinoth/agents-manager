@@ -216,6 +216,13 @@ class FakeBoard:
     def card_last_move(self, card_id, seconds):
         return None  # this fake keeps no audit history — the recency guard is a no-op
 
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        if self.card and self.card.get("id") == card_id:
+            self.card = dict(self.card, ask_since=ask_since, ask_expires_at=ask_expires_at)
+
+    def card_comment_list(self, card_id):
+        return [c for c in self.comments if c["card_id"] == card_id]
+
     def card_comment_add(self, card_id, author, body):
         row = {"id": len(self.comments) + 1, "card_id": card_id,
                "author": author, "body": body}
@@ -321,6 +328,73 @@ def test_agent_comment_on_a_foreign_card_wakes_and_pushes(board):
     assert "new comment by session:bob" in event
     assert board.pushes == [("Card 42 · Fix login", "session:bob: needs your call",
                              {"card": 42})]
+
+
+def test_agent_reply_on_an_unbound_card_still_pushes_the_owner(board):
+    """An in-app feedback card has no session; an agent answering it must still
+    reach the owner (card 130) — there is simply nobody to wake."""
+    board.db.card = dict(BOARD_CARD, session_id="", title="Feedback · Profile: slow")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "Fixed in the next build",
+                                          "author": "session:bob"}, "session:bob"),
+                    "owner", "ic", acting_session="sess-2")
+    assert board.wakes == [] and board.db.attention == []
+    assert board.pushes == [("Card 42 · Feedback · Profile: slow",
+                             "session:bob: Fixed in the next build", {"card": 42})]
+
+
+FEEDBACK_CARD = dict(BOARD_CARD, session_id="", title="Feedback · Profile: slow",
+                     created_by="intake:ch_feedback")
+
+
+def _door(board, session_id):
+    """Give the fake board the intake door the feedback card came through."""
+    door = {"id": "ch_feedback", "name": "In-app feedback", "session_id": session_id}
+    board.db.intake_get = lambda cid: dict(door) if cid == door["id"] else None
+    updates = []
+
+    def _update(card_id, **fields):
+        updates.append((card_id, fields))
+        board.db.card = dict(board.db.card, **fields)
+        return dict(board.db.card)
+
+    board.db.card_update = _update
+    return updates
+
+
+def test_reply_on_a_feedback_card_wakes_the_session_its_door_now_has(board):
+    """Card 271: a feedback note filed while its door woke nobody; the owner
+    has since pointed the door at a chat. Their reply hands the card to that
+    session and wakes it, instead of waking nobody forever."""
+    board.db.card = dict(FEEDBACK_CARD)
+    updates = _door(board, "sess-feedback")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "still slow?"}), "owner", "")
+    assert updates == [(42, {"session_id": "sess-feedback"})]
+    assert len(board.wakes) == 1
+    card, event, origin = board.wakes[0]
+    assert card["session_id"] == "sess-feedback" and origin == "user"
+    assert "still slow?" in event
+
+
+def test_reply_on_a_feedback_card_whose_door_wakes_nobody_wakes_nobody(board):
+    board.db.card = dict(FEEDBACK_CARD)
+    updates = _door(board, "")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "still slow?"}), "owner", "")
+    assert updates == [] and board.wakes == []
+
+
+def test_only_a_reply_adopts_a_feedback_card(board):
+    """A move is board tidying: it must not bind the card behind the owner's back."""
+    board.db.card = dict(FEEDBACK_CARD)
+    updates = _door(board, "sess-feedback")
+    actions.execute(_it("card_move", {"card_id": 42, "column_id": 12}), "owner", "")
+    assert updates == [] and board.wakes == []
+
+
+def test_a_card_typed_on_the_board_is_never_adopted_by_a_door(board):
+    board.db.card = dict(BOARD_CARD, session_id="", created_by="user:ram")
+    updates = _door(board, "sess-feedback")
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "hi"}), "owner", "")
+    assert updates == [] and board.wakes == []
 
 
 def test_human_comment_wakes_without_push(board):

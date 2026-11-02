@@ -8,7 +8,7 @@
 # Every step is a no-op when already done, so it is safe to re-run.
 #
 #   Linux : apt + `sudo -u postgres` DB + systemd unit (agents-viewer.service)
-#   macOS : Homebrew + `brew services` DB + launchd agent (com.agents.viewer)
+#   macOS : Homebrew (node, Postgres) + Manager's own Python + launchd agent (com.agents.viewer)
 #
 # The steps themselves live in deploy/lib.sh so the `agents` update path reuses
 # them verbatim; this file just sequences them. See lib.sh for the env knobs.

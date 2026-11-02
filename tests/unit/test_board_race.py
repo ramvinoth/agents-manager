@@ -67,6 +67,9 @@ class FakeRaceBoard:
         self.card["column_id"] = column_id
         return dict(self.card)
 
+    def card_ask_set(self, card_id, ask_since, ask_expires_at):
+        pass  # the ask ledger — covered in test_asks
+
     def audit_append(self, *a):
         pass
 

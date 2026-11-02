@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react"
-import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, PanelRightOpen, Archive, RotateCcw } from "lucide-react"
+import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, Presentation, Archive, RotateCcw } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -171,18 +171,13 @@ function ResumeStep({ note }: { note: string }) {
 
 /** A successful canvas_show reads as what it did — "opened a canvas" — and reopens it. */
 function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
-  const openCanvas = useStore((s) => s.openCanvas)
   const title = String((block.input as { title?: unknown } | null)?.title ?? "")
+  // Shown docs live as tiles on the project canvas (sidebar → project → Canvas), not in the chat.
   return (
-    <button
-      type="button"
-      onClick={() => openCanvas(title)}
-      className="flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground"
-      data-track="canvas chip"
-    >
-      <PanelRightOpen className="size-3.5 shrink-0" />
-      <span className="truncate">Canvas: {title}</span>
-    </button>
+    <span className="flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+      <Presentation className="size-3.5 shrink-0" />
+      <span className="truncate">Shown on the project canvas: {title}</span>
+    </span>
   )
 }
 

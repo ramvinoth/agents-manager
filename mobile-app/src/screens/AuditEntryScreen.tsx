@@ -1,5 +1,6 @@
 import React from "react"
-import { Pressable, ScrollView, Text, View } from "react-native"
+import { ScrollView, Text, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

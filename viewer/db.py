@@ -1,7 +1,8 @@
 """viewer.db — Postgres store for accounts, login sessions, and per-user prefs.
 
 Connects with psycopg2 to DATABASE_URL (default: the local `dbname=viewer` over
-the unix socket, peer auth). A ThreadedConnectionPool serves the HTTP worker
+the unix socket with peer auth; on Windows, which has neither, over TCP to
+localhost:5432). A ThreadedConnectionPool serves the HTTP worker
 threads — Postgres forks a backend per connection, so per-op connecting would be
 wasteful. The per-request session lookup is cached briefly so auth doesn't hit
 the DB on every API call.
@@ -30,7 +31,17 @@ from viewer import orglogic
 # it here is cycle-free. init_db() stamps config.VERSION into app_meta on every boot.
 from viewer import config
 
-DATABASE_URL = os.environ.get("DATABASE_URL") or "dbname=viewer"
+
+def default_dsn():
+    """The database to use when DATABASE_URL is unset: the local `viewer` DB.
+    POSIX reaches it over the unix socket (peer auth); Windows Postgres has no
+    unix socket, so there it is TCP on the standard port."""
+    if os.name == "nt":
+        return "dbname=viewer host=localhost port=5432"
+    return "dbname=viewer"
+
+
+DATABASE_URL = os.environ.get("DATABASE_URL") or default_dsn()
 SESSION_COOKIE = "viewer_session"
 SESSION_TTL = 30 * 86400          # 30 days
 _PBKDF2_ROUNDS = 200_000
@@ -183,8 +194,11 @@ def init_db():
             );
             -- Turns in flight, so a server restart or a run that dies mid-turn
             -- pauses them instead of dropping them: boot resumes every row left
-            -- behind, and the run finalizer resumes its own (viewer/resume.py). Written when a run starts, kept in step
-            -- with its message queue, deleted when the run ends.
+            -- behind, and the run finalizer resumes its own (viewer/resume.py).
+            -- Written when a run of any harness starts, kept in step with its
+            -- message queue, deleted when the run ends. `agent` is the harness
+            -- (claude, custom, codex, copilot, pi); `ref` is what that harness
+            -- needs to resume beyond the session id (e.g. Codex's own id).
             CREATE TABLE IF NOT EXISTS inflight_runs (
               session_id TEXT PRIMARY KEY,
               host       TEXT NOT NULL DEFAULT 'local',
@@ -204,6 +218,8 @@ def init_db():
               host           TEXT NOT NULL DEFAULT 'local',
               created_at     DOUBLE PRECISION NOT NULL
             );
+            ALTER TABLE inflight_runs ADD COLUMN IF NOT EXISTS agent TEXT NOT NULL DEFAULT 'claude';
+            ALTER TABLE inflight_runs ADD COLUMN IF NOT EXISTS ref JSONB NOT NULL DEFAULT '{}';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT 'local';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
             ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
@@ -304,22 +320,44 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
             CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
-            -- Canvases: the on-demand visual pane a session opens to SHOW its
-            -- work (a diagram, a walkthrough, a small HTML app) when a picture
-            -- beats prose. One row per (session, title) — re-showing a title
-            -- replaces it and bumps `version`. Session output like the
-            -- transcript (not org state), so it is not audited; a deleted
-            -- session takes its canvases with it (routes/sessions).
-            CREATE TABLE IF NOT EXISTS canvases (
+            -- The shared project canvas (Excalidraw): one board per project
+            -- (or per session for a session scratchpad). Elements are stored
+            -- one row each, keyed by the element's own id, so concurrent edits
+            -- to different shapes never conflict and a write is an upsert of
+            -- the changed rows only (viewer/canvas_room flushes them in
+            -- batches). `version`/`version_nonce` mirror the element's own
+            -- conflict clock (viewer/canvas_reconcile). No live trigger: the
+            -- canvas has its own socket, and a stroke must not wake every board.
+            CREATE TABLE IF NOT EXISTS canvas_boards (
               id         SERIAL PRIMARY KEY,
-              session_id TEXT NOT NULL,
-              title      TEXT NOT NULL,
-              kind       TEXT NOT NULL,
-              content    TEXT NOT NULL DEFAULT '',
-              version    INTEGER NOT NULL DEFAULT 1,
+              owner_kind TEXT NOT NULL,
+              owner_id   TEXT NOT NULL,
+              title      TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL,
               updated_at DOUBLE PRECISION NOT NULL,
-              UNIQUE (session_id, title)
+              UNIQUE (owner_kind, owner_id)
+            );
+            CREATE TABLE IF NOT EXISTS canvas_elements (
+              canvas_id     INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+              element_id    TEXT NOT NULL,
+              version       INTEGER NOT NULL,
+              version_nonce BIGINT NOT NULL,
+              is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
+              data          JSONB NOT NULL,
+              updated_by    TEXT NOT NULL DEFAULT '',
+              updated_at    DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (canvas_id, element_id)
+            );
+            -- Images pasted onto a canvas: content-addressed by Excalidraw's
+            -- own file id (a hash of the bytes), so a re-upload is a no-op.
+            CREATE TABLE IF NOT EXISTS canvas_files (
+              canvas_id  INTEGER NOT NULL REFERENCES canvas_boards(id) ON DELETE CASCADE,
+              file_id    TEXT NOT NULL,
+              mime       TEXT NOT NULL,
+              bytes      BYTEA NOT NULL,
+              created_by TEXT NOT NULL DEFAULT '',
+              created_at DOUBLE PRECISION NOT NULL,
+              PRIMARY KEY (canvas_id, file_id)
             );
             -- A note's discussion (the message board): Reddit-style threaded
             -- replies under any note — how agents and the owner talk ABOUT a
@@ -519,6 +557,12 @@ def init_db():
             -- news to it, and waking it on them made it comment "nothing new",
             -- which bumped updated_at, which woke it again next sweep.
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS attention_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- The card's open ask (viewer.asks, card 235): when an agent raised
+            -- it in Review/Needs-info (0 = no open ask) and its optional
+            -- deadline (0 = none). Past the deadline the queue drops it and
+            -- the scheduler tick tells the asking session.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_expires_at DOUBLE PRECISION NOT NULL DEFAULT 0;
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -636,7 +680,7 @@ def init_db():
             INSERT INTO settings (key, value) VALUES ('system_preamble',
               to_jsonb($preamble$You are one agent session inside the Manager system — a self-hostable multi-agent orchestration layer running on this machine (the "viewer"). It sees every chat session with roles and RBAC, can orchestrate other agent sessions, schedules recurring work, and distills reusable skills. You are not a lone assistant; you are a node in that system and can observe and steer it.
 
-Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.
+Your tools (mcp__viewer__*): observe — session_list/detail/read/summary/seen, chat_status, host_list, audit_tail, docs_list/read; org — project_list, board_list, card_list, card (one card + its thread), card_comments, card_create/move/update/comment, card_deps/dep_add/dep_remove, task_done; notes — note_list, note, note_create/update/delete, note_comments/note_comment/note_vote (the discussion thread under every note: where sessions and the owner debate knowledge — reply only to add something new, vote to agree); loops — loop_list/create/update/delete, loop_control_get/set; approvals — approval_list; skills — skill_list/read/propose; trust — session_mode_set, session_level_set; inbox — inbox_list, inbox_send; canvas — canvas_show, canvas_read/patch/snapshot.
 
 Authority: your power is the weaker of the human owner's role and this session's level: Own work (key ic: its own cards, notes, messages) < Workspace (lead: also projects, loops, columns) < Organization (manager: also org-wide settings). A session's level comes from the agent it was started from (Agents tab) or the owner's per-chat setting; with neither it runs at Own work, the least authority. To the owner say Own work/Workspace/Organization, never the key ic. You can always observe the whole system; asking for something above your level queues it for the owner's approval (give a reason) instead of failing.
 
@@ -722,16 +766,23 @@ You run as `claude -p` (print mode), not the interactive CLI: no terminal watche
             -- fresh seed already names the tools but still needs the section.
             UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
                 $o$inbox — inbox_list, inbox_send.$o$,
-                $n$inbox — inbox_list, inbox_send; canvas — canvas_show/list/read/delete.$n$))
+                $n$inbox — inbox_list, inbox_send; canvas — canvas_show, canvas_read/patch/snapshot.$n$))
               WHERE key = 'system_preamble'
                 AND position('canvas_show' in value #>> '{}') = 0;
             UPDATE settings SET value = to_jsonb((value #>> '{}') || $n$
 
 ## Canvas (show, don't tell — only when a picture wins)
-canvas_show opens a visual pane beside the chat on the owner's screen: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update it at milestones, and say in chat what changed.$n$)
+Every project has one shared canvas the owner and agents draw on live. canvas_show places a doc tile on it: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update the tile in place at milestones, and say in chat what changed. canvas_read gives the canvas as meaning (frames, arrows, card/note tiles, ink groups); canvas_snapshot looks at ink or a region as a picture; canvas_patch draws — the owner can undo your whole patch.$n$)
               WHERE key = 'system_preamble'
                 AND position('## Canvas (' in value #>> '{}') = 0
                 AND position('## Work discipline' in value #>> '{}') > 0;
+            -- Canvas merge: the pane became the shared project canvas. Rewrite
+            -- installs still describing the pane; no-op once updated.
+            UPDATE settings SET value = to_jsonb(replace(replace(value #>> '{}',
+                $o$canvas — canvas_show/list/read/delete.$o$, $n$canvas — canvas_show, canvas_read/patch/snapshot.$n$),
+                $o$canvas_show opens a visual pane beside the chat on the owner's screen: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update it at milestones, and say in chat what changed.$o$, $n$Every project has one shared canvas the owner and agents draw on live. canvas_show places a doc tile on it: mermaid for a flow or architecture, markdown for a plan or comparison you will keep revising, slides for a walkthrough, html for a small interactive mock. Use it only when a picture beats prose — never for a simple answer. Reuse the title to update the tile in place at milestones, and say in chat what changed. canvas_read gives the canvas as meaning (frames, arrows, card/note tiles, ink groups); canvas_snapshot looks at ink or a region as a picture; canvas_patch draws — the owner can undo your whole patch.$n$))
+              WHERE key = 'system_preamble'
+                AND position('canvas_show/list/read/delete' in value #>> '{}') > 0;
             -- session_analysis retired (it spawned a stray `claude -p` chat).
             UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
                 $o$session_list/detail/read/summary/analysis/seen$o$, $n$session_list/detail/read/summary/seen$n$))
@@ -800,6 +851,7 @@ canvas_show opens a visual pane beside the chat on the owner's screen: mermaid f
             );
             """
         )
+    _install_live_triggers()
     _seed_agent_templates()
     migrate_legacy_files()
     # The decision pipeline is a board SHAPE, like the four defaults above:
@@ -1134,17 +1186,19 @@ def pending_question_delete(session_id):
 # (and the durable pending question/plan that references them) stay authorized
 # across a restart. Cleared when the run's job is reaped.
 
-def inflight_run_start(session_id, host, cwd, mode, model, started):
+def inflight_run_start(session_id, host, cwd, mode, model, started, agent="claude", ref=None):
     """Record a turn as in flight. `resumes` is kept across upserts: it counts
     automatic restart-resumes and only resets when a run ends normally (row
     deleted), so a turn that keeps killing the server cannot resume forever."""
     with _db() as cur:
         cur.execute(
-            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at) "
-            "VALUES(%s,%s,%s,%s,%s,'[]',%s) ON CONFLICT (session_id) DO UPDATE SET "
+            "INSERT INTO inflight_runs(session_id, host, cwd, mode, model, queue, started_at, agent, ref) "
+            "VALUES(%s,%s,%s,%s,%s,'[]',%s,%s,%s) ON CONFLICT (session_id) DO UPDATE SET "
             "host = EXCLUDED.host, cwd = EXCLUDED.cwd, mode = EXCLUDED.mode, "
-            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at",
-            (session_id, host or "local", cwd or "", mode or "", model or "", started))
+            "model = EXCLUDED.model, queue = '[]', started_at = EXCLUDED.started_at, "
+            "agent = EXCLUDED.agent, ref = EXCLUDED.ref",
+            (session_id, host or "local", cwd or "", mode or "", model or "", started,
+             agent or "claude", json.dumps(ref or {})))
 
 
 def inflight_run_queue(session_id, queue):
@@ -1509,6 +1563,26 @@ def board_column_create(project_id, name, position=0):
         return dict(cur.fetchone())
 
 
+def board_column_ensure(project_id, name, position=-1):
+    """The project's column called `name` (case-insensitive), created at
+    `position` when the board has none. Idempotent: the name is the contract,
+    so a column the owner moved is found, never duplicated. The advisory lock
+    makes find-or-create one step: two posts at once cannot both create it."""
+    name = name.strip()
+    with _db() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"board_column:{project_id}:{name.lower()}",))
+        cur.execute("SELECT * FROM board_columns WHERE project_id = %s "
+                    "AND lower(trim(name)) = lower(%s) ORDER BY id LIMIT 1",
+                    (project_id, name))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("INSERT INTO board_columns(project_id, name, position) "
+                        "VALUES(%s,%s,%s) RETURNING *", (project_id, name, position))
+            row = cur.fetchone()
+    return dict(row)
+
+
 def board_column_update(column_id, **fields):
     allowed = {k: v for k, v in fields.items() if k in ("name", "position") and v is not None}
     if not allowed:
@@ -1749,60 +1823,93 @@ def notes_delete_for_session(session_id):
         return [r["id"] for r in cur.fetchall()]
 
 
-# Canvases (the on-demand visual pane) ----------------------------------------
+# The retired per-session canvas pane (migrated at boot, then dropped) ------
 
-def canvas_upsert(session_id, title, kind, content, max_per_session):
-    """Create or replace one canvas by title. Returns the row, or None when the
-    session already holds `max_per_session` canvases and this title is new.
-    The count check and insert share one transaction, under a per-session
-    advisory lock so two concurrent shows cannot both slip under the cap."""
-    now = _now()
+def legacy_canvases():
+    """Rows of the retired `canvases` table, or None once it is gone."""
     with _db() as cur:
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("canvas:" + session_id,))
-        cur.execute("SELECT 1 FROM canvases WHERE session_id = %s AND title = %s",
-                    (session_id, title))
-        if not cur.fetchone():
-            cur.execute("SELECT count(*) AS n FROM canvases WHERE session_id = %s", (session_id,))
-            if cur.fetchone()["n"] >= max_per_session:
-                return None
-        cur.execute(
-            "INSERT INTO canvases (session_id, title, kind, content, created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (session_id, title) DO UPDATE SET kind = EXCLUDED.kind, "
-            "content = EXCLUDED.content, version = canvases.version + 1, "
-            "updated_at = EXCLUDED.updated_at RETURNING *",
-            (session_id, title, kind, content, now, now))
-        return dict(cur.fetchone())
-
-
-def canvas_list(session_id):
-    """A session's canvases (metadata, no content), most recently updated first."""
-    with _db() as cur:
-        cur.execute("SELECT id, session_id, title, kind, version, created_at, updated_at, "
-                    "length(content) AS size FROM canvases WHERE session_id = %s "
-                    "ORDER BY updated_at DESC",
-                    (session_id,))
+        cur.execute("SELECT to_regclass('canvases') AS t")
+        if cur.fetchone()["t"] is None:
+            return None
+        cur.execute("SELECT session_id, title, kind, content FROM canvases ORDER BY updated_at")
         return [dict(r) for r in cur.fetchall()]
 
 
-def canvas_get(session_id, title):
+def legacy_canvases_drop():
     with _db() as cur:
-        cur.execute("SELECT * FROM canvases WHERE session_id = %s AND title = %s",
-                    (session_id, title))
+        cur.execute("DROP TABLE IF EXISTS canvases")
+
+
+# The shared canvas (Excalidraw boards) --------------------------------------
+
+def canvas_board_for(owner_kind, owner_id, title=""):
+    """The board a project (or session) owns, created on first use."""
+    now = _now()
+    with _db() as cur:
+        cur.execute(
+            "INSERT INTO canvas_boards (owner_kind, owner_id, title, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (owner_kind, owner_id) "
+            "DO UPDATE SET owner_kind = EXCLUDED.owner_kind RETURNING *",
+            (owner_kind, str(owner_id), title, now, now))
+        return dict(cur.fetchone())
+
+
+def canvas_board_get(canvas_id):
+    with _db() as cur:
+        cur.execute("SELECT * FROM canvas_boards WHERE id = %s", (int(canvas_id),))
         row = cur.fetchone()
     return dict(row) if row else None
 
 
-def canvas_delete(session_id, title):
+def canvas_elements_load(canvas_id):
+    """Every stored element (tombstones included — peers need them to converge)."""
     with _db() as cur:
-        cur.execute("DELETE FROM canvases WHERE session_id = %s AND title = %s RETURNING id",
-                    (session_id, title))
-        return cur.fetchone() is not None
+        cur.execute("SELECT data FROM canvas_elements WHERE canvas_id = %s", (int(canvas_id),))
+        return [r["data"] for r in cur.fetchall()]
 
 
-def canvas_delete_for_session(session_id):
+def canvas_elements_upsert(canvas_id, elements, actor=""):
+    """Batch-write elements. The WHERE guard keeps a stale flush from
+    overwriting a newer row (same rule as canvas_reconcile.wins)."""
+    if not elements:
+        return
+    from psycopg2.extras import Json, execute_batch
+    now = _now()
+    rows = [(int(canvas_id), e["id"], int(e.get("version") or 0), int(e.get("versionNonce") or 0),
+             bool(e.get("isDeleted")), Json(e), actor, now) for e in elements]
     with _db() as cur:
-        cur.execute("DELETE FROM canvases WHERE session_id = %s", (session_id,))
+        execute_batch(cur,
+            "INSERT INTO canvas_elements AS c (canvas_id, element_id, version, version_nonce, "
+            "is_deleted, data, updated_by, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (canvas_id, element_id) DO UPDATE SET version = EXCLUDED.version, "
+            "version_nonce = EXCLUDED.version_nonce, is_deleted = EXCLUDED.is_deleted, "
+            "data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at "
+            "WHERE EXCLUDED.version > c.version OR (EXCLUDED.version = c.version "
+            "AND EXCLUDED.version_nonce < c.version_nonce)", rows, page_size=500)
+        cur.execute("UPDATE canvas_boards SET updated_at = %s WHERE id = %s", (now, int(canvas_id)))
+
+
+def canvas_tombstones_gc(older_than_s):
+    """Drop deleted elements nobody has touched for `older_than_s` seconds."""
+    with _db() as cur:
+        cur.execute("DELETE FROM canvas_elements WHERE is_deleted AND updated_at < %s",
+                    (_now() - older_than_s,))
+        return cur.rowcount
+
+
+def canvas_file_put(canvas_id, file_id, mime, data, actor=""):
+    with _db() as cur:
+        cur.execute("INSERT INTO canvas_files (canvas_id, file_id, mime, bytes, created_by, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                    (int(canvas_id), file_id, mime, data, actor, _now()))
+
+
+def canvas_file_get(canvas_id, file_id):
+    with _db() as cur:
+        cur.execute("SELECT mime, bytes FROM canvas_files WHERE canvas_id = %s AND file_id = %s",
+                    (int(canvas_id), file_id))
+        row = cur.fetchone()
+    return (row["mime"], bytes(row["bytes"])) if row else None
 
 
 # Note discussions (the message board under every note) ----------------------
@@ -2092,12 +2199,37 @@ def cards_awaiting_owner():
     with _db() as cur:
         cur.execute(
             "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
-            "bc.name AS column_name, "
+            "c.ask_expires_at, bc.name AS column_name, "
             "coalesce((SELECT max(created_at) FROM card_comments cc "
-            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since "
+            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since, "
+            "(SELECT body FROM card_comments cc WHERE cc.card_id = c.id "
+            "   AND left(cc.author, 8) = 'session:' "
+            "   ORDER BY created_at DESC, id DESC LIMIT 1) AS ask "
             "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
             "WHERE lower(bc.name) IN ('review', 'needs-info') "
             "ORDER BY waiting_since, c.id")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def card_ask_set(card_id, ask_since, ask_expires_at):
+    """Record the card's open ask (viewer.asks decides the values)."""
+    with _db() as cur:
+        cur.execute("UPDATE cards SET ask_since = %s, ask_expires_at = %s WHERE id = %s",
+                    (ask_since, ask_expires_at, card_id))
+
+
+def cards_asks_expired(now):
+    """Cards still parked in Review/Needs-info whose open ask's deadline has
+    passed and whose session has not been told yet (ask_since > 0) — the
+    expiry sweep's work list. Each row: card fields + column_name."""
+    with _db() as cur:
+        cur.execute(
+            "SELECT c.*, bc.name AS column_name FROM cards c "
+            "JOIN board_columns bc ON bc.id = c.column_id "
+            "WHERE c.ask_since > 0 AND c.ask_expires_at > 0 "
+            "AND c.ask_expires_at <= %s "
+            "AND lower(bc.name) IN ('review', 'needs-info') "
+            "ORDER BY c.ask_expires_at, c.id", (now,))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -2343,6 +2475,53 @@ _BUILTIN_TEMPLATES = [
      "system_prompt": "You are the owner's security analyst. You watch their accounts, this machine and their code for threats, and you explain each finding so someone with no security background can decide in one tap.\n\nOn your first run: create a 'Security log' note with a baseline (accounts visible to you, listening ports and what owns them, firewall and disk-encryption state, pending updates, secrets committed to repositories you can read) and one board card 'Security: decisions for the owner' for anything that needs their call.\n\nRules:\n- Read-only by default. Never change firewall rules, kill processes, rotate keys, edit configs or touch shared infrastructure without the owner's explicit yes for that exact change.\n- Attribute before alerting: a new sign-in or open port may be the owner's own doing; check before raising it.\n- Rank findings HIGH / MEDIUM / LOW by real-world exploitability, not by scanner noise. Say what an attacker could actually do.\n- Never paste secrets, tokens, passwords or personal data into cards, comments or notes. Name where they live instead.\n- Label every claim VERIFIED (you saw the evidence) or HYPOTHESIS.\n- macOS system tools live in /usr/sbin and /usr/libexec; call them by full path.\n- Never spend money without the owner's approval of the exact vendor and amount.\n- Ask one question at a time, answerable yes/no, with the risk, the fix and its side effects stated.",
      "goal": "Catch account, device and code threats early and get each one fixed with a single owner decision."},
 ]
+
+
+# Tables whose writes the live hub (viewer/live.py) relays. Each row change
+# NOTIFYs `agents_events` with its keys only — {table, id, op, project_id};
+# clients refetch through the ordinary GET routes, so no row content (and no
+# authorization decision) ever rides the channel. project_id NULL = org-wide.
+LIVE_TABLES = ("cards", "card_comments", "card_deps", "notes", "note_comments",
+               "inbox_messages", "pending_questions", "pending_plans", "approvals")
+
+
+def _install_live_triggers():
+    """Idempotent: CREATE OR REPLACE the notify function and one AFTER trigger
+    per LIVE_TABLES entry. The function swallows its own errors — a broken
+    notification must never fail the write that caused it."""
+    with _db() as cur:
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION agents_notify() RETURNS trigger AS $$
+            DECLARE r record; pid integer; rid text;
+            BEGIN
+              BEGIN
+                IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF;
+                pid := NULL;
+                IF TG_TABLE_NAME IN ('pending_questions', 'pending_plans') THEN
+                  rid := r.session_id;
+                ELSE
+                  rid := r.id::text;
+                END IF;
+                IF TG_TABLE_NAME IN ('cards', 'notes', 'inbox_messages') THEN
+                  pid := r.project_id;
+                ELSIF TG_TABLE_NAME IN ('card_comments', 'card_deps') THEN
+                  SELECT project_id INTO pid FROM cards WHERE id = r.card_id;
+                ELSIF TG_TABLE_NAME = 'note_comments' THEN
+                  SELECT project_id INTO pid FROM notes WHERE id = r.note_id;
+                END IF;
+                PERFORM pg_notify('agents_events', json_build_object(
+                  'table', TG_TABLE_NAME, 'id', rid, 'op', TG_OP,
+                  'project_id', pid)::text);
+              EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'agents_notify %: %', TG_TABLE_NAME, SQLERRM;
+              END;
+              RETURN NULL;
+            END $$ LANGUAGE plpgsql;
+        """)
+        for t in LIVE_TABLES:
+            cur.execute(f"CREATE OR REPLACE TRIGGER agents_notify_{t} "
+                        f"AFTER INSERT OR UPDATE OR DELETE ON {t} "
+                        f"FOR EACH ROW EXECUTE FUNCTION agents_notify()")
 
 
 def _seed_agent_templates():

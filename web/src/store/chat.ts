@@ -1,6 +1,8 @@
 /** Driving a run: send, queue, steer, interrupt, approvals/questions/plans, fork and restore. */
 import { api } from "../lib/api"
 import type { Slice, ChatStatus, PermApproval, RestoreMode } from "./types"
+import type { RedAsk } from "../lib/types"
+import { resolveRed } from "../lib/redApproval"
 import { sessionIdOf } from "./helpers"
 
 /** The composer's permission mode until the owner picks another (Claude's id). */
@@ -15,6 +17,8 @@ export interface ChatSlice {
   chatStatus: ChatStatus | null
   queue: string[]
   pendingApprovals: PermApproval[]
+  /** Open org (Red) approvals this session raised — shown inline in its chat (card 223). */
+  pendingRed: RedAsk[]
   stash: string[]
   permMode: string
   model: string
@@ -24,6 +28,8 @@ export interface ChatSlice {
   sendChat: (msg: string) => Promise<string | undefined>
   interruptRun: () => Promise<void>
   decidePermission: (id: string, decision: "allow" | "deny") => Promise<void>
+  /** Approve/deny one of pendingRed; throws the server's words (the chip shows them). */
+  decideRed: (id: string, decision: "approved" | "denied") => Promise<void>
   answerQuestion: (picks: string[], note?: string) => Promise<void>
   decidePlan: (decision: "approve" | "deny", feedback?: string) => Promise<void>
   clearPendingDraft: () => void
@@ -42,6 +48,7 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
     chatStatus: null,
     queue: [],
     pendingApprovals: [],
+    pendingRed: [],
     stash: JSON.parse(localStorage.getItem("stash") || "[]") as string[],
     permMode: localStorage.getItem(PERM_MODE_KEY) || DEFAULT_PERM_MODE,
     model: localStorage.getItem("model") || "",
@@ -91,6 +98,12 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
       } catch {
         /* the run will time out and deny if this never lands */
       }
+    },
+    // Decide an org approval from its asking chat — the same resolve the
+    // cockpit and Inbox use, so deciding here clears the Inbox row too.
+    decideRed: async (id, decision) => {
+      await resolveRed(id, decision)
+      set({ pendingRed: get().pendingRed.filter((r) => r.id !== id) })
     },
     // Answer a parked AskUserQuestion. This must hit the dedicated endpoint (which
     // unblocks the waiting call or resumes the session), NOT sendChat — a normal

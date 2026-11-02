@@ -10,8 +10,7 @@ import { normModel } from "../lib/model"
 import { isTransportError } from "../lib/errors"
 import { reachability } from "../lib/reachability"
 import type { AIConfig, AISelection, ConnectionDraft, KeyAction, ModelDiscovery } from "../lib/aiSelection"
-import type { Canvas, CanvasMeta } from "../lib/canvas"
-import type { NewChatJob } from "../lib/newChat"
+import type { CloneStatus, NewChatJob } from "../lib/newChat"
 import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
@@ -31,29 +30,12 @@ export type ChatResult = { session: string }
 /** The call brain's conversation memory (OpenAI-style messages). Opaque to the
  *  app: stored between turns and sent back verbatim. */
 export type CallHistory = Array<Record<string, unknown>>
-/** The Nemotron GPU service's /health, passed through by the viewer as-is (see
- *  viewer.nemotron.status / deploy/voicechat_service.py `health`). Every field
- *  but `enabled` is the SERVER's own claim about itself — the phone must never
- *  hardcode a backend name/model or infer capabilities from anywhere else.
- *  `tools`/`duplex` are always false for this backend today; the UI must never
- *  promise delegation or true two-way audio regardless of `model`/`backend`. */
-export type NemotronStatus = {
-  enabled: boolean
-  installed: boolean
-  ready: boolean
-  busy: boolean
-  backend?: string
-  model?: string
-  input?: { format: string; rate: number; channels: number; max_seconds: number }
-  output?: { format: string; rate: number; channels: number }
-  tools?: boolean
-  duplex?: boolean
-  error?: string
-}
-/** GET /api/call/engine — the server's decision about which path a call runs on
- *  (viewer.callbrain.choose_engine). `model` is the server's own name for the
- *  brain; `error` means the brain is not configured and a call cannot start. */
-export type CallEngine = { engine: "brain" | "nemotron"; model?: string; error?: string }
+import type { CallAnswer } from "../lib/callSegments"
+export type { CallAnswer }
+/** GET /api/call/engine (viewer.callbrain.engine). `model` is the server's own
+ *  name for the call brain; `error` means no brain is configured and a call
+ *  cannot start. */
+export type CallEngine = { engine: "brain"; model?: string; error?: string }
 export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
@@ -132,14 +114,6 @@ export type SessionSummary = {
   endTime?: string
   cwd?: string
 }
-export type AgentInfo = {
-  id: string
-  label: string
-  vendor?: string
-  installed: boolean
-  loggedIn?: boolean
-  docs?: string
-}
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass"
 export type PermApproval = { id: string; tool_name: string; input: unknown }
 /** GET /api/session-meta: stored per-chat settings plus Trust (saved permission
@@ -212,7 +186,18 @@ export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
+/** An app sharing a project's folder (viewer/project_plugins.py), e.g. Sift. */
+export type ProjectPlugin = { id: string; label: string; icon: string; description: string }
 export type BoardColumn = { id: number; name: string; position: number }
+/** A door from the outside onto a board (viewer/intake.py): a POST to `path`
+ *  with the token becomes a card there and wakes `session_id`. */
+export type IntakeChannel = {
+  id: string; name: string; project_id: number; session_id: string; app_feedback: boolean
+  created_by: string; created_at: number; last_used: number; received: number; path: string
+  /** Only on create / new token, never on a list: shown once. */
+  token?: string
+}
+type IntakeReply = IntakeChannel | Queued | { error: string }
 /** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
  *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
 export type MapNode = {
@@ -255,12 +240,19 @@ export type OpenDecision = {
   /** kind "card": the board card parked in Review/Needs-info for the owner. */
   card?: number
   column?: string
+  /** kind "card": the card's ONE open ask — its asking session's newest
+   *  comment ("" when it only moved the card) — and its deadline in epoch
+   *  seconds (0 = none; the server drops the item once it passes). */
+  ask?: string
+  expires_at?: number
   /** The item's inbox row (0 when none was delivered) — the handle a snooze
    *  takes. The queue already omits items whose snooze is live. */
   inbox_id: number
   snoozed_until: number
 }
 export type Card = { id: number; title: string; body: string; column_id: number | null; project_id: number | null; session_id: string | null; position: number; created_by: string; created_at: number; updated_at: number; comment_count?: number }
+// A card this one waits on (GET /api/org/card `dependencies`): done = its blocker reached a Done column.
+export type CardDep = { id: number; title: string; column_name: string; done: boolean }
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type CardFilter = { session?: string; project?: number }
@@ -345,7 +337,13 @@ export type ChatStatus = {
   pending_question?: PendingQuestion | null
   /** A proposed plan (ExitPlanMode) awaiting Approve/Deny. */
   pending_plan?: PendingPlan | null
+  /** Org (Red) approvals THIS session raised, still open — decided inline in
+   *  its chat (card 223). Older servers omit it. */
+  pending_red?: RedAsk[]
 }
+/** What an org approval shows a cold reader: shaped like a "red" queue item. */
+export type RedAsk = Pick<OpenDecision, "id" | "summary" | "reason" | "risk">
+
 export type Session = {
   id: string
   title?: string
@@ -512,6 +510,22 @@ export const api = {
     ),
   // Distinct working directories seen across sessions — the cwd suggestions.
   // Server returns [{cwd, modified}], newest first.
+  // Clone owner/name into <dir>/<name> in the background; poll the job.
+  gitClone: (body: { repo: string; dir: string; branch?: string; host: string }) =>
+    req<{ job: string }>("POST", "/api/git/clone", body),
+  gitCloneStatus: (job: string) =>
+    req<CloneStatus>("GET", `/api/git/clone/status?id=${encodeURIComponent(job)}`),
+  // Per-host environment variables (e.g. GH_TOKEN): names are listed, a value
+  // is fetched only when the user reveals it.
+  env: (host: string) =>
+    req<{ keys: string[] }>("GET", `/api/env?host=${encodeURIComponent(host)}`),
+  envValue: (host: string, key: string) =>
+    req<{ key: string; value: string }>(
+      "GET", `/api/env/value?host=${encodeURIComponent(host)}&key=${encodeURIComponent(key)}`),
+  envSet: (host: string, key: string, value: string) =>
+    req<{ saved: boolean; keys: string[] }>("POST", "/api/env/set", { host, key, value }),
+  envUnset: (host: string, key: string) =>
+    req<{ unset: boolean; keys: string[] }>("POST", "/api/env/unset", { host, key }),
   projects: (host: string) =>
     req<Project[]>(
       "GET",
@@ -535,8 +549,12 @@ export const api = {
   // brain's ask_agents/check_agents/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
+  // The brain answers with {reply} (text, for TTS) or, on LFM3-Audio, {audio, next}:
+  // stream callAudio(audio), then post callNext(next) — stop:true on a barge-in.
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
-    req<{ reply: string; history: CallHistory; tools: string[] }>("POST", "/api/call/turn", body),
+    req<CallAnswer>("POST", "/api/call/turn", body),
+  callNext: (body: { path: string; next: string; stop?: boolean }) =>
+    req<CallAnswer>("POST", "/api/call/next", body),
   // The server derives the session id from `path` (via sid_from_path, which also
   // accepts a bare id). Send `path` to match — sending `session` is ignored and
   // yields "Session and message required".
@@ -636,13 +654,15 @@ export const api = {
   // `session` (the session rel path) lets the server add the session's attached
   // agent-template plugin skills — they run via --plugin-dir but live outside the
   // scanned skill roots, so without the session they'd be invisible here.
-  capabilities: (host: string, cwd?: string, session?: string) =>
+  // `agent` (codex | copilot) reads that harness's own config instead of Claude's.
+  capabilities: (host: string, cwd?: string, session?: string, agent?: string) =>
     req<Capabilities>(
       "GET",
       `/api/capabilities?${new URLSearchParams({
         ...(host && host !== "local" ? { host } : {}),
         ...(cwd ? { cwd } : {}),
         ...(session ? { session } : {}),
+        ...(agent && agent !== "claude" ? { agent } : {}),
       }).toString()}`
     ),
   skill: (host: string, path: string) =>
@@ -706,13 +726,6 @@ export const api = {
     req<{ saved: boolean }>("POST", "/api/agent-templates/extra", body),
   agentTemplateDelete: (id: number) => req<{ deleted: boolean }>("POST", "/api/agent-templates/delete", { id }),
 
-  // ---- agents available on a host ----
-  agents: (host: string) =>
-    req<{ agents: AgentInfo[] }>(
-      "GET",
-      `/api/agents${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
-    ),
-
   // ---- filesystem browser (local / SSH host / cloud drive) ----
   // Every call is scoped by `scope` — {host} for an SSH host, {drive} for a
   // cloud drive, {} for this machine — built by lib/location.ts#fsScope so the
@@ -738,6 +751,15 @@ export const api = {
   // adapter trashes it vendor-side).
   fsDelete: (scope: FsScope, body: { path: string }) =>
     req<{ deleted?: string; error?: string }>("POST", "/api/fs/delete", { ...body, ...scope }),
+
+  // Rename in place; `name` is a single segment (409 if it already exists).
+  fsRename: (scope: FsScope, body: { path: string; name: string }) =>
+    req<{ renamed?: string; error?: string }>("POST", "/api/fs/rename", { ...body, ...scope }),
+
+  // Zip `names` (entries of folder `path`) into one archive beside them; the
+  // server picks a free "<name>.zip" / "Archive.zip" and returns its path.
+  fsCompress: (scope: FsScope, body: { path: string; names: string[] }) =>
+    req<{ created?: string; error?: string }>("POST", "/api/fs/compress", { ...body, ...scope }),
 
   // Upload a local file into `dir` as one multipart part; the server parses
   // the body into (filename, bytes) — see _p_fs_upload. Returns the server's
@@ -831,23 +853,14 @@ export const api = {
   // long reply); through the relay it is fetched into `dest` first.
   voiceTts: (text: string, dest: string) =>
     serverMedia(`/api/voice/tts/stream?text=${encodeURIComponent(text)}`, dest),
+  // One segment the call brain is speaking (LFM3-Audio), same delivery as voiceTts.
+  callAudio: (path: string, id: string, dest: string) =>
+    serverMedia(`/api/call/audio?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, dest),
   // Call listening socket. The app streams endpointed utterances (binary
   // frames); the server transcribes each on the GPU box and pushes back
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
   // signal, so there is no per-turn wake word.
   voiceSocket: () => serverSocket("/api/voice/ws?mode=call"),
-
-  // ---- Nemotron voicechat (call audio, turn-based) ----
-  // GET /api/voice/nemotron/status -> the GPU service's /health passed through
-  // (see viewer.nemotron.status). Always 200 in the normal/disabled case; only a
-  // configured-but-broken backend returns 502 with `error` set. `ready:false`
-  // while idle is EXPECTED (the model loads per call). Consulted only AFTER
-  // callEngine chose "nemotron" — it never decides the engine.
-  nemotronStatus: () => req<NemotronStatus>("GET", "/api/voice/nemotron/status"),
-  // The one Nemotron call socket for a session. `kind:"ready"` arrives once
-  // the model loaded for this call — never send audio before it. Binary
-  // replies precede their turn_end frame.
-  nemotronSocket: (path: string) => serverSocket(`/api/voice/nemotron/ws?path=${encodeURIComponent(path)}`),
 
   // Barge-in wake-guard socket: a lightweight keyword-spotting stream that runs
   // WHILE the assistant is speaking. The server uses a cheap KWS pass (not full
@@ -888,6 +901,17 @@ export const api = {
   },
 
   // ---- org / Kanban (the "empire") ----
+  projectPlugins: () => req<{ plugins: ProjectPlugin[] }>("GET", "/api/project-plugins"),
+  /** A one-time signed-in URL opening the plugin at this folder's project (human only). */
+  projectPluginOpen: (body: { id: string; host: string; cwd: string }) =>
+    req<{ url: string }>("POST", "/api/project-plugins/open", body),
+  intakeList: () => req<{ channels: IntakeChannel[] }>("GET", "/api/org/intake"),
+  intakeCreate: (body: { name: string; project_id: number; for_session?: string; app_feedback?: boolean }) =>
+    req<IntakeReply>("POST", "/api/org/intake", body),
+  intakeUpdate: (body: { id: string; name?: string; for_session?: string; app_feedback?: boolean }) =>
+    req<IntakeReply>("POST", "/api/org/intake/update", body),
+  intakeRotate: (id: string) => req<IntakeReply>("POST", "/api/org/intake/rotate", { id }),
+  intakeDelete: (id: string) => req<{ deleted?: boolean; error?: string } | Queued>("POST", "/api/org/intake/delete", { id }),
   orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
   orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
     req<OrgProject>("POST", "/api/org/projects", body),
@@ -900,6 +924,13 @@ export const api = {
     const q = p.toString()
     return req<{ columns: BoardColumn[] }>("GET", `/api/org/board${q ? "?" + q : ""}`)
   },
+  // The board's SHAPE (Workspace level): cards in a deleted column survive, unplaced.
+  orgCreateColumn: (body: { project_id: number; name: string; position?: number }) =>
+    req<BoardColumn>("POST", "/api/org/columns", body),
+  orgUpdateColumn: (body: { id: number; name?: string; position?: number }) =>
+    req<BoardColumn>("POST", "/api/org/columns/update", body),
+  orgDeleteColumn: (id: number) =>
+    req<{ deleted?: boolean }>("POST", "/api/org/columns/delete", { id }),
   // Scope is a project, or a session whose bound project the server resolves.
   orgMap: (scope: { project?: number; session?: string }, level: MapLevel, path = "") => {
     const p = new URLSearchParams({ level, path })
@@ -933,7 +964,13 @@ export const api = {
   // else its session's bound one; the server resolves, so an empty list means
   // the card is on no board yet and the detail screen offers to attach it).
   orgCard: (id: number) =>
-    req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[] }>("GET", `/api/org/card?id=${id}`),
+    req<{ card: Card; comments: CardComment[]; columns?: BoardColumn[]; dependencies?: CardDep[] }>("GET", `/api/org/card?id=${id}`),
+  // Dependency edges are green (orglogic): the card cannot move forward until
+  // `depends_on` reaches Done; the card's session is woken either way.
+  orgAddCardDep: (body: { card_id: number; depends_on: number }) =>
+    req<{ exists?: boolean }>("POST", "/api/org/card_dep_add", body),
+  orgRemoveCardDep: (body: { card_id: number; depends_on: number }) =>
+    req<{ removed?: boolean }>("POST", "/api/org/card_dep_remove", body),
   orgAddCardComment: (body: { card_id: number; body: string }) =>
     req<CardComment>("POST", "/api/org/card_comment", body),
   // ---- notes (the knowledge ledger; scoped like cards) ----
@@ -953,13 +990,6 @@ export const api = {
     return req<{ notes: Note[] }>("GET", `/api/org/notes${q ? "?" + q : ""}`)
   },
   orgNote: (id: number) => req<{ note: Note }>("GET", `/api/org/note?id=${id}`),
-  // Canvases: what an agent showed in a session (viewer/routes/canvas.py).
-  canvasList: (session: string) =>
-    req<{ canvases: CanvasMeta[] }>("GET", `/api/canvas?session=${encodeURIComponent(session)}`),
-  canvasRead: (session: string, title: string) =>
-    req<Canvas>("GET", `/api/canvas?session=${encodeURIComponent(session)}&title=${encodeURIComponent(title)}`),
-  canvasDelete: (session: string, title: string) =>
-    req<{ deleted: boolean }>("POST", "/api/canvas/delete", { session, title }),
   orgCreateNote: (body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) =>
     req<Note>("POST", "/api/org/notes", body),
   orgUpdateNote: (body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) =>

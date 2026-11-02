@@ -11,7 +11,7 @@ The signature covers the exact manifest bytes, so nothing is re-serialized
 before verifying. The manifest carries: version, sha (git commit), bundle_sha256,
 bundle_size, published_at.
 
-CLI (stdlib + pynacl; runs under the release venv or /usr/bin/python3):
+CLI (stdlib + pynacl; runs under the server venv):
     release_manifest.py keygen  <secret-key-path>             → prints public key (b64)
     release_manifest.py sign    <secret-key-path> <ver> <sha> <bundle>   → latest.json on stdout
     release_manifest.py verify  <public-key-b64> [current-ver] < latest.json

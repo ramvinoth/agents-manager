@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { Alert, Text, TouchableOpacity, View } from "react-native"
+import { Alert, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import {

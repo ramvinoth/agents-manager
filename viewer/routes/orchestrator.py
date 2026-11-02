@@ -135,7 +135,12 @@ class OrchestratorMixin:
         for c in cards:  # the badge + its dependency state (dual control: the
             c["comment_count"] = counts.get(c["id"], 0)    # same rows the agents
             c["dependencies"] = deps.get(c["id"], [])      # read via MCP)
-        self.send_json({"cards": orglogic.order_column(cards)})
+        cards = orglogic.order_column(cards)
+        if (req.query.get("view") or [""])[0] == "ledger":
+            names = db.board_column_names({c["column_id"] for c in cards})
+            done = (req.query.get("include_done") or [""])[0] in ("1", "true", "True")
+            self.send_json(orglogic.ledger_view(cards, names, include_done=done)); return
+        self.send_json({"cards": cards})
 
     def _p_org_cards(self, req):
         body = self.read_body() or {}
@@ -411,6 +416,7 @@ class OrchestratorMixin:
         self._org_send(req, "card_comment",
                        {"card_id": body.get("card_id"),
                         "body": body.get("body", ""),
+                        "expires_at": body.get("expires_at"),
                         "author": req.principal["actor"]})
 
     def _p_org_card_dep_add(self, req):

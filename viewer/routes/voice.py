@@ -10,24 +10,25 @@ All are normal /api routes, so the standard session gate authenticates them.
                         windows (binary WAV frames); the GPU box transcribes each
                         and a JSON text frame comes back ({"type":"utterance"} or,
                         for barge-in wakeguard, {"type":"wake"}). See _g_voice_ws.
-  GET  /api/call/engine -> {engine: "brain"|"nemotron", model?, error?}. Which
-                        engine the phone places a call on: the server's decision
-                        (viewer.callbrain.choose_engine), never the phone's.
-  POST /api/call/turn   body = {path, text, history?}  -> {reply, history, tools}.
+  GET  /api/call/engine -> {engine: "brain", model?, error?}. The call brain's
+                        model name, or why no brain is configured
+                        (viewer.callbrain.engine).
+  POST /api/call/turn   body = {path, text, history?}  -> {reply, history, tools}
+                        or, on LFM3-Audio, {audio, next, history, tools}.
                         One exchange with the fast call brain (viewer.callbrain).
+  GET  /api/call/audio?path=..&id=..  -> live audio/aac of one spoken segment
+                        (proxied from the LFM3 service's /audio/<id>).
+  POST /api/call/next   body = {path, next, stop?}  -> {said, history, tools}
+                        (+ {audio, next} or {reply} when the answer goes on). The
+                        phone posts it when a segment finished playing or, with
+                        stop, when the owner barged in (callbrain.lfm3_next).
 
-  GET  /api/voice/nemotron/status         -> the Nemotron GPU service's /health,
-                        passed through (see viewer.nemotron). A SEPARATE backend
-                        from the sherpa-onnx voice above — turn-based, one call
-                        at a time, no STT/TTS fallback.
-  GET  /api/voice/nemotron/ws?path=<sess> -> WebSocket. See _g_voice_nemotron_ws.
 """
 import json
-import socket
 import urllib.request
 
-from viewer import nemotron, voice, wsclient
-from viewer.config import SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
+from viewer import voice
+from viewer.config import LFM3_SERVICE_URL, SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
 from viewer.speakable import speakable
 
 
@@ -50,9 +51,9 @@ class VoiceMixin:
         if not text or full_path is None:
             self.send_json({"error": "Session and text required"}, status=400)
             return
+        turn = callbrain.lfm3_turn if LFM3_SERVICE_URL else callbrain.call_turn
         try:
-            result = callbrain.call_turn(full_path.stem, req.principal, text,
-                                         body.get("history") or [])
+            result = turn(full_path.stem, req.principal, text, body.get("history") or [])
         except RuntimeError as e:
             self.send_json({"error": str(e)}, status=409)
             return
@@ -61,27 +62,34 @@ class VoiceMixin:
             return
         self.send_json(result)
 
-    def _g_voice_tts_stream(self, req):
-        """Proxy a LIVE AAC stream from the speech service to the client, chunk
-        by chunk, so a streaming player starts almost immediately. text comes in
-        the query string (a GET, so react-native-track-player can play the URL
-        with an Authorization header)."""
-        text = (req.query.get("text") or [""])[0].strip()
-        if not text:
-            self.send_json({"error": "empty text"}, status=400)
+    def _p_call_next(self, req):
+        from viewer import callbrain
+        body = self.read_body() or {}
+        full_path = self.resolve_session_quiet(body.get("path", ""))
+        if full_path is None or not body.get("next"):
+            self.send_json({"error": "Session and next required"}, status=400)
             return
-        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
-        text = speakable(text) or text
-        base = TTS_STREAM_URL or SPEECH_SERVICE_URL
-        if not base:
-            self.send_json({"error": "voice disabled"}, status=502)
-            return
-        url = base.rstrip("/") + "/synthesize_stream_aac"
-        body = json.dumps({"text": text}).encode("utf-8")
-        upstream = urllib.request.Request(url, data=body, method="POST",
-                                          headers={"Content-Type": "application/json"})
         try:
-            resp = urllib.request.urlopen(upstream, timeout=SPEECH_TIMEOUT)
+            self.send_json(callbrain.lfm3_next(full_path.stem, str(body["next"]),
+                                               stop=bool(body.get("stop"))))
+        except LookupError as e:
+            self.send_json({"error": str(e)}, status=404)
+
+    def _g_call_audio(self, req):
+        """Stream one spoken segment. Only a segment pending for THIS session is
+        served, so an id alone never reaches another chat's audio."""
+        from viewer import callbrain
+        full_path = self.resolve_session_quiet((req.query.get("path") or [""])[0])
+        seg = (req.query.get("id") or [""])[0]
+        if full_path is None or not callbrain.owns_segment(full_path.stem, seg):
+            self.send_json({"error": "unknown call segment"}, status=404)
+            return
+        self._proxy_aac(urllib.request.Request(
+            LFM3_SERVICE_URL.rstrip("/") + f"/audio/{seg}"), timeout=callbrain.LFM3_TIMEOUT)
+
+    def _proxy_aac(self, upstream, timeout):
+        try:
+            resp = urllib.request.urlopen(upstream, timeout=timeout)
         except Exception as e:
             self.send_json({"error": f"speech service unreachable: {e}"}, status=502)
             return
@@ -104,6 +112,27 @@ class VoiceMixin:
                 resp.close()
             except Exception:
                 pass
+
+    def _g_voice_tts_stream(self, req):
+        """Proxy a LIVE AAC stream from the speech service to the client, chunk
+        by chunk, so a streaming player starts almost immediately. text comes in
+        the query string (a GET, so react-native-track-player can play the URL
+        with an Authorization header)."""
+        text = (req.query.get("text") or [""])[0].strip()
+        if not text:
+            self.send_json({"error": "empty text"}, status=400)
+            return
+        # Strip markdown so the stream doesn't voice "asterisk asterisk" etc.
+        text = speakable(text) or text
+        base = TTS_STREAM_URL or SPEECH_SERVICE_URL
+        if not base:
+            self.send_json({"error": "voice disabled"}, status=502)
+            return
+        url = base.rstrip("/") + "/synthesize_stream_aac"
+        body = json.dumps({"text": text}).encode("utf-8")
+        self._proxy_aac(urllib.request.Request(url, data=body, method="POST",
+                                               headers={"Content-Type": "application/json"}),
+                        timeout=SPEECH_TIMEOUT)
 
     def _g_voice_ws(self, req):
         """The call's listening WebSocket. The app streams short audio windows as
@@ -181,157 +210,4 @@ class VoiceMixin:
             pass
         finally:
             print(f"[voice.ws] closed after {n_win} windows", flush=True)
-            ws.close()
-
-    def _g_voice_nemotron_status(self, req):
-        """GET /api/voice/nemotron/status -> the Nemotron service's /health,
-        passed through as-is (see viewer.nemotron.status). Never raises past
-        this point: a disabled or unreachable backend is a normal 200 body
-        ({"enabled": false, ...} or an error string), not a 5xx surprise for
-        a client that's just polling to decide whether to show the feature."""
-        try:
-            self.send_json(nemotron.status())
-        except nemotron.NemotronError as e:
-            self.send_json({"enabled": True, "installed": False, "ready": False,
-                            "busy": False, "error": str(e)}, status=502)
-
-    def _g_voice_nemotron_ws(self, req):
-        """WebSocket for one Nemotron turn-based call.
-
-            client -> (binary) one complete utterance, raw as recorded (m4a or
-                                any ffmpeg-readable container) — the viewer
-                                converts it, the phone never has to.
-            server -> (text)   sanitized JSON `kind` events straight from the
-                                service (ready / error / turn_end / ...);
-                                `tool_call` is never forwarded — it fails the
-                                turn closed instead (see viewer.nemotron).
-            server -> (binary) for a turn_end, the reply WAV, sent BEFORE that
-                                turn_end's JSON text frame — matching the
-                                service's own wire order exactly, so the app
-                                can rely on "binary, then its turn_end".
-
-        Only a human at the UI may open this (never an autonomous MCP agent
-        session) — placing a live call is a phone/UI action, not something an
-        agent should be able to trigger on a caller's behalf. That is real
-        per-caller authorization on top of resolve_session_quiet's path
-        traversal/existence check (there is no separate session-ownership ACL
-        anywhere else in the codebase to reuse — see /api/call/turn — so this
-        route adds its own rather than pretending one exists elsewhere).
-
-        One call at a time, viewer-side and service-side both: a second
-        concurrent caller gets a clean {"kind":"error","message":"busy"} and
-        the socket is closed — never left half-upgraded, never silently
-        dropped to the old STT/TTS pipeline."""
-        from viewer.browser import WSServer
-        if req.principal is None or req.principal.get("kind") != "app":
-            self.send_json({"error": "voice calls require an interactive session"}, status=403)
-            return
-        full_path = self.resolve_session_quiet((req.query.get("path") or [""])[0])
-        if full_path is None:
-            self.send_json({"error": "unknown session"}, status=404)
-            return
-        if not nemotron.enabled():
-            self.send_json({"error": "Nemotron voicechat is not configured"}, status=502)
-            return
-        got_slot = nemotron.try_acquire_slot()
-        ws = WSServer.upgrade(self)
-        if not ws:
-            if got_slot:
-                nemotron.release_slot()
-            return
-        if not got_slot:
-            try:
-                ws.send_text(json.dumps({"kind": "error", "message": "busy"}))
-            except Exception:
-                pass
-            ws.close()
-            return
-        upstream = None
-        try:
-            try:
-                upstream = nemotron.open_upstream()
-            except nemotron.NemotronError as e:
-                ws.send_text(json.dumps({"kind": "error", "message": str(e)}))
-                return
-
-            def _relay_until(stop_kinds):
-                """Forward upstream frames to the client until an event of one
-                of `stop_kinds` (or error) has been sent. Returns that event,
-                or None if the upstream went away."""
-                while True:
-                    try:
-                        up_op, up_payload = upstream.recv()
-                    except (wsclient.WSError, OSError):
-                        return None
-                    if up_op == 0x2:               # binary reply audio first,
-                        ws.send_bytes(up_payload)   # exactly as the service sent it
-                        continue
-                    if up_op != 0x1:
-                        continue
-                    try:
-                        event = json.loads(up_payload.decode("utf-8", "replace"))
-                    except Exception:
-                        event = {"kind": "error", "message": "malformed upstream event"}
-                    if isinstance(event, dict) and event.get("kind") == "tool_call":
-                        # Defense in depth: the service itself already refuses to
-                        # dispatch a tool_call (deploy/voicechat_service.py raises
-                        # and turns it into its own {"kind":"error"} before this
-                        # code ever sees it) — but never trust a single layer,
-                        # so a tool_call reaching here (a future service bug, a
-                        # rogue upstream) fails the turn closed too, never forwarded
-                        # or acted on.
-                        event = {"kind": "error", "message": "tool calls are not supported"}
-                    event = nemotron.sanitize_event(event)
-                    ws.send_text(json.dumps(event))
-                    if event.get("kind") in stop_kinds or event.get("kind") == "error":
-                        return event
-
-            # The model loads per call: the phone must see `ready` BEFORE it is
-            # allowed to send audio, so relay upstream first and only then start
-            # reading the client. Reading the client first would deadlock a
-            # correct client that waits for ready.
-            first = _relay_until(("ready",))
-            if first is None or first.get("kind") != "ready":
-                return
-            while True:
-                op, payload = ws.recv()
-                if op == 0x8:  # client closed — an acceptable end-of-call,
-                    break      # no graceful {"cmd":"close"} handshake required
-                if op != 0x2 or not payload:
-                    continue   # only complete-utterance binary frames matter
-
-                def _client_gone():
-                    # Non-blocking peek at the client socket: a closed/reset
-                    # connection reads as EOF (b"") or ECONNRESET here, without
-                    # consuming any real frame data a later ws.recv() would
-                    # need (MSG_PEEK), so this is safe to poll mid-conversion.
-                    sock = getattr(ws, "sock", None)
-                    if sock is None:
-                        return False
-                    try:
-                        return sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b""
-                    except BlockingIOError:
-                        return False
-                    except OSError:
-                        return True
-
-                try:
-                    wav = nemotron.convert_to_wav16k(bytes(payload), cancel=_client_gone)
-                except nemotron.NemotronError as e:
-                    ws.send_text(json.dumps({"kind": "error", "message": str(e)}))
-                    continue
-                try:
-                    upstream.send_bytes(wav)
-                except Exception:
-                    break
-                if _relay_until(("turn_end",)) is None:
-                    break
-        except Exception as e:
-            # A dropped client mid-frame lands here too; log rather than hide
-            # it — a silent teardown is what let a broken loop look "fine".
-            print(f"[voice.nemotron] call ended: {e!r}", flush=True)
-        finally:
-            nemotron.release_slot()
-            if upstream is not None:
-                upstream.close()
             ws.close()

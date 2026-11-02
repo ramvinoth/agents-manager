@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Bot, Loader2, ArrowDown, Upload } from "lucide-react"
+import { useLive } from "./components/useLive"
+import { DECISION_TABLES } from "./lib/live"
 import { GitSection } from "@/components/GitSection"
 import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
@@ -8,12 +10,14 @@ import { FileLinkProvider } from "@/components/FileLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { ToolsDialog } from "@/components/ToolsDialog"
+import { ChatRedApprovals } from "@/components/RedApproval"
 import { CanvasPane } from "@/components/CanvasPane"
-import { canvasDragWidth, latestShow, storedCanvasWidth } from "@/lib/canvas"
+import { canvasDragWidth, storedCanvasWidth } from "@/lib/canvas"
 import { anchorFor, findKey, type FoundCall } from "@/lib/decisionAnchors"
 import { api } from "@/lib/api"
 import type { OpenDecision } from "@/lib/types"
 import { AgentLoginDialog } from "@/components/AgentLoginDialog"
+import { PairPhoneDialog } from "@/components/lazyDialogs"
 import { SearchBar } from "@/components/SearchBar"
 import { LoginPanel } from "@/components/LoginPanel"
 import { AuthGate } from "@/components/AuthGate"
@@ -62,9 +66,7 @@ function App() {
   const lhsOpen = useStore((s) => s.lhsOpen)
   const droppedFile = useStore((s) => s.droppedFile)
   const canvasOpen = useStore((s) => s.canvasOpen)
-  const loadCanvases = useStore((s) => s.loadCanvases)
   const resetCanvases = useStore((s) => s.resetCanvases)
-  const canvasShown = useStore((s) => s.canvasShown)
   const closeCanvas = useStore((s) => s.closeCanvas)
   // The owner's chosen canvas width (wide screens), kept across reloads; null = default layout.
   const [canvasW, setCanvasW] = useState(() => storedCanvasWidth(localStorage.getItem(CANVAS_W_KEY)))
@@ -76,6 +78,15 @@ function App() {
   const mainRef = useRef<HTMLDivElement>(null)
   const loadDroppedFile = useStore((s) => s.loadDroppedFile)
   const [dragging, setDragging] = useState(false)
+  // /?pair=1 (the desktop app's "Pair a phone…") opens the QR dialog once signed in;
+  // the param is dropped at once so a reload or a shared link does not reopen it.
+  const [pairFromLink, setPairFromLink] = useState(() => {
+    const q = new URLSearchParams(window.location.search)
+    if (q.get("pair") !== "1") return false
+    q.delete("pair")
+    window.history.replaceState(null, "", window.location.pathname + (q.size ? `?${q}` : "") + window.location.hash)
+    return true
+  })
   const follow = useRef(true)
   const prependAnchor = useRef<number | null>(null)
   const [showJump, setShowJump] = useState(false)
@@ -104,32 +115,18 @@ function App() {
     setShowJump(false)
   }, [currentSessionPath])
 
-  // Canvas: each session has its own. The show already in the transcript when a
-  // session loads is history (the pane stays shut); only a NEW show opens it.
-  // Tracking just the latest show means older history paging in never fires one.
-  const lastShow = useRef<string | null | undefined>(undefined)
-  useEffect(() => {
-    lastShow.current = undefined
-    resetCanvases()
-    if (currentSessionPath) loadCanvases()
-  }, [currentSessionPath, resetCanvases, loadCanvases])
-  // What this chat is waiting on the owner for: checked on open and every 30s,
-  // so a question raised (or answered elsewhere) shows without a reload.
+  // The "Needs you" pane belongs to one session: a switch starts it fresh.
+  useEffect(() => { resetCanvases() }, [currentSessionPath, resetCanvases])
+  // What this chat is waiting on the owner for: checked on open, again the
+  // moment a decision source changes (live events), and every 60s as the
+  // fallback when the live socket is down.
   useEffect(() => {
     if (!currentSessionPath) return
     loadNeeds()
-    const t = window.setInterval(() => document.visibilityState === "visible" && loadNeeds(), 30_000)
+    const t = window.setInterval(() => document.visibilityState === "visible" && loadNeeds(), 60_000)
     return () => window.clearInterval(t)
   }, [currentSessionPath, loadNeeds])
-  useEffect(() => {
-    if (loading) return
-    const show = latestShow(turns)
-    if (lastShow.current === undefined) lastShow.current = show?.id ?? null
-    else if (show && show.id !== lastShow.current) {
-      lastShow.current = show.id
-      canvasShown(show.title)
-    }
-  }, [turns, loading, canvasShown])
+  useLive(DECISION_TABLES, null, () => { if (currentSessionPath) loadNeeds() })
 
   useEffect(() => {
     const el = scrollRef.current
@@ -433,6 +430,7 @@ function App() {
             <LoginPanel />
           ) : (
             <>
+              <ChatRedApprovals />
               <PermissionPrompt />
               <Composer />
             </>
@@ -473,6 +471,7 @@ function App() {
         </Suspense>
       )}
       <AgentLoginDialog />
+      {pairFromLink && !needsAuth && <PairPhoneDialog onClose={() => setPairFromLink(false)} />}
     </div>
   )
 }

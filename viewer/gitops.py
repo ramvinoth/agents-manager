@@ -283,8 +283,9 @@ def _scrub(text, token):
     return (text or "").replace(token, "***").strip()[-500:]
 
 
-# One shell round-trip: every field on a GIT| line so remote pty noise (\r,
-# login-shell banners) can't break parsing. Exit 3 = not a dir.
+# A remote host's status in one shell round-trip: every field on a GIT| line
+# so remote pty noise (\r, login-shell banners) can't break parsing.
+# Exit 3/4 = not a dir / not a repo.
 #
 # TWO DIRECTIONS, NOT ONE. `git rev-parse` only ever looks UPWARD, which covers
 # a session started inside a repo or any subdirectory of one. It does not cover
@@ -333,26 +334,55 @@ _DISCOVER_SH = (
 )
 
 
-def _run_sh(hid, script, timeout=15):
-    """Run a shell snippet locally or on a remote host. Returns (rc, stdout)."""
-    if not hid or hid == "local":
-        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                           timeout=timeout)
-        return p.returncode, p.stdout
+def _local_status_fields(cwd, timeout=15):
+    """The _STATUS_SH fields for a directory on THIS machine, read by running
+    git directly — no shell, so it works where there is no bash (Windows).
+    None when it is not a directory, not a repo, or git is missing."""
+    d = os.path.expanduser((cwd or "").strip())
+    if not d or not os.path.isdir(d):
+        return None
+    deadline = time.time() + timeout
+
+    def git(*args):
+        p = subprocess.run(["git", *args], cwd=d, capture_output=True, text=True,
+                           timeout=max(1.0, deadline - time.time()))
+        return p.returncode, p.stdout.strip()
+    try:
+        if git("rev-parse", "--is-inside-work-tree")[0] != 0:
+            return None
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")[1]
+        root = git("rev-parse", "--show-toplevel")[1]
+        remote = git("remote", "get-url", "origin")[1]
+        dirty = str(len(git("status", "--porcelain")[1].splitlines()))
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        behind = git("rev-list", "--count", "HEAD..@{u}")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (branch, dirty, ahead[1] if ahead[0] == 0 else "-",
+            behind[1] if behind[0] == 0 else "-", remote, root)
+
+
+def _remote_status_fields(hid, cwd):
+    """The _STATUS_SH fields for a directory on an SSH host, or None."""
     from viewer.remote import remote_run_shell
-    return remote_run_shell(hid, script, timeout=timeout + 5)
-
-
-def _parse_status(rc, out):
-    """The GIT| line → a status dict, or None when there isn't a usable one."""
+    rc, out = remote_run_shell(hid, _STATUS_SH.format(cwd=_q_path(cwd)), timeout=20)
     line = next((ln.strip() for ln in out.replace("\r", "").splitlines()
                  if ln.strip().startswith("GIT|")), "")
-    if rc != 0 or not line:
-        return None
     parts = line.split("|")
-    if len(parts) < 7:
+    if rc != 0 or len(parts) < 7:
         return None
-    _, branch, dirty, ahead, behind, remote, root = parts[:7]
+    return tuple(parts[1:7])
+
+
+def _status(hid, cwd):
+    """The status dict for one directory on the host, or None when it is not a repo."""
+    if not hid or hid == "local":
+        fields = _local_status_fields(cwd)
+    else:
+        fields = _remote_status_fields(hid, cwd)
+    if not fields:
+        return None
+    branch, dirty, ahead, behind, remote, root = fields
     m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", remote)
     name = m.group(1) if m else (root.rstrip("/").rsplit("/", 1)[-1] if root else "")
     return {"repo": True, "branch": branch, "name": name, "remote": remote, "root": root,
@@ -370,7 +400,17 @@ def _discover_child_repo(hid, cwd):
     wrong repo is worse than no bar: the Sync button would commit, push and
     rebase somewhere the user never chose. Ambiguity resolves to silence.
     """
-    rc, out = _run_sh(hid, _DISCOVER_SH.format(cwd=_q_path(cwd)))
+    script = _DISCOVER_SH.format(cwd=_q_path(cwd))
+    try:
+        if not hid or hid == "local":
+            p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=15)
+            rc, out = p.returncode, p.stdout
+        else:
+            from viewer.remote import remote_run_shell
+            rc, out = remote_run_shell(hid, script, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        # No bash on this machine (Windows): no discovery, same as no candidate.
+        return None
     if rc != 0:
         return None
     cands = [ln.strip()[5:] for ln in out.replace("\r", "").splitlines()
@@ -382,7 +422,7 @@ def _discover_child_repo(hid, cwd):
 
 
 def repo_status(hid, cwd):
-    """{"repo": bool, name, branch, dirty, ahead, behind, root, ...} for a
+    """{"repo": bool, name, branch, dirty, ahead, behind, remote, root, ...} for a
     working directory on the host. ahead/behind are None with no upstream.
 
     Looks upward first (cwd is inside a repo), then one level down (the repo is
@@ -391,8 +431,7 @@ def repo_status(hid, cwd):
     callers can tell the two apart — anything that runs git commands must use
     that path rather than the session cwd.
     """
-    rc, out = _run_sh(hid, _STATUS_SH.format(cwd=_q_path(cwd)))
-    st = _parse_status(rc, out)
+    st = _status(hid, cwd)
     if st:
         return st
 
@@ -403,9 +442,8 @@ def repo_status(hid, cwd):
     # Resolve the child to an absolute path first: the discovery output is
     # relative to cwd ("./sase-gms"), and every consumer of "root"/"cwd" needs
     # something that stands on its own.
-    child_abs = child if child.startswith("/") else f"{cwd.rstrip('/')}/{child.lstrip('./')}"
-    rc, out = _run_sh(hid, _STATUS_SH.format(cwd=_q_path(child_abs)))
-    st = _parse_status(rc, out)
+    child_abs = child if child.startswith("/") else f"{cwd.rstrip('/')}/{child.removeprefix('./')}"
+    st = _status(hid, child_abs)
     if not st:
         return {"repo": False}
     st["discovered"] = True

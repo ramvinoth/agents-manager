@@ -45,13 +45,16 @@ function harness(params: any = { session: "A", project: 7 }) {
   const api = Object.fromEntries(["orgBoard", "orgCards", "openDecisions", "orgMoveCard", "orgCreateCard"].map(name => [name, (filter: any) => { const call = { name, filter, ...deferred() }; calls.push(call); return call.promise }]))
   const modules: Record<string, any> = {
     react: { ...react, default: react },
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...Object.fromEntries(["ActivityIndicator", "Pressable", "RefreshControl", "ScrollView", "Text", "TextInput", "TouchableOpacity", "View"].map(x => [x, x])), Alert: { alert: (...args: any[]) => alerts.push(args) } },
     "react-native-gesture-handler": {}, "react-native-reanimated": {},
     "../api/client": { api }, "../lib/board": board, "../lib/decisions": { fmtWaiting: (x: number) => `${Math.max(0, x)}s` },
     "../state/config": { setToken: (value: any) => { token = value } },
     "../components/Icon": { default: "Icon" }, "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/errors": errors, "../lib/haptics": { tap() {}, success() {}, warning() {} },
-    "../lib/actionSheet": { showActions() {} },
+    "../lib/actionSheet": { showActions() {} }, "../components/CreateSheet": { default: "CreateSheet" },
   }
   // The real cockpit host (its scope guard is under test here too), loaded
   // through the same transpile with the same stubs.

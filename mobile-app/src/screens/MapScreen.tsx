@@ -7,7 +7,8 @@
  * minutes are highlighted (amber in the diagram), re-read every few seconds while the screen is focused.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native"
+import { ActivityIndicator, ScrollView, Text, View } from "react-native"
+import { Pressable } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"

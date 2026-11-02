@@ -6,7 +6,9 @@
  * Dismisses on backdrop tap, swipe-right, or toggling the icon again.
  */
 import React, { useEffect, useRef, useState } from "react"
-import { Animated, Dimensions, PanResponder, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native"
+import { Animated, Dimensions, PanResponder, StyleSheet, Text, View } from "react-native"
+import { Pressable, TouchableOpacity, useSeen } from "./Tracked"
+import { recordSwipe } from "../lib/usageReporter"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../lib/useTheme"
 import CapabilitiesPanel from "./CapabilitiesPanel"
@@ -21,10 +23,12 @@ interface Props {
   cwd?: string
   /** Session rel path — surfaces this session's attached plugin skills. */
   session?: string
+  /** The session's harness (claude | codex | copilot); plugins load on Claude only. */
+  agent?: string
   onClose: () => void
 }
 
-export default function CapabilitiesDrawer({ visible, host, cwd, session, onClose }: Props) {
+export default function CapabilitiesDrawer({ visible, host, cwd, session, agent, onClose }: Props) {
   const t = useTheme()
   const insets = useSafeAreaInsets()
 
@@ -57,6 +61,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, onClos
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx > DRAWER_W * 0.3 || g.vx > 0.5) {
+          recordSwipe("swipe-close-capabilities")
           onClose()
         } else {
           Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }).start()
@@ -64,6 +69,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, onClos
       },
     })
   ).current
+  useSeen("swipe-close-capabilities", undefined, visible)
 
   if (!rendered) return null
 
@@ -102,7 +108,7 @@ export default function CapabilitiesDrawer({ visible, host, cwd, session, onClos
           </TouchableOpacity>
         </View>
 
-        <CapabilitiesPanel host={host} cwd={cwd} session={session} active={visible} testPrefix="drawer" />
+        <CapabilitiesPanel host={host} cwd={cwd} session={session} agent={agent} active={visible} testPrefix="drawer" />
       </Animated.View>
     </View>
   )

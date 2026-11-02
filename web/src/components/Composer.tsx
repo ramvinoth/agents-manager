@@ -16,7 +16,7 @@ import { useStore, useAgentLabel } from "@/store"
 import { DEFAULT_PERM_MODE } from "@/store/chat"
 import { api } from "@/lib/api"
 import { applyMention, hashTerm, type HashTerm } from "@/lib/fileMention"
-import { userHistory, onFirstLine, onLastLine, stepHistory, searchHistory } from "@/lib/composerHistory"
+import { userHistory, walksHistory, stepHistory, searchHistory } from "@/lib/composerHistory"
 
 // Model + permission options are per-agent. Claude uses --permission-mode +
 // its model aliases; Copilot maps to native --mode (interactive/plan/autopilot)
@@ -358,15 +358,15 @@ export function Composer() {
     })
   }
 
-  // Up on the first line / Down on the last walks this chat's messages. Up lands
-  // the caret at the start so the next Up keeps going even through a long message.
+  // Up in an empty composer walks this chat's messages (walksHistory has the rules);
+  // a typed draft keeps its arrow keys for the caret. Up lands the caret at the start
+  // so the next Up keeps going even through a long message.
   function historyKey(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
     const el = e.currentTarget
     const up = e.key === "ArrowUp"
-    if (el.selectionStart !== el.selectionEnd) return false
-    if (up ? !onFirstLine(text, el.selectionStart) : !onLastLine(text, el.selectionEnd)) return false
+    if (e.nativeEvent.isComposing || el.selectionStart !== el.selectionEnd) return false
+    if (!walksHistory(text, el.selectionStart, recalled, up)) return false
     const at = recalled ? recall!.at : null
-    if (!up && at === null) return false
     const next = stepHistory(history.length, at, up ? -1 : 1)
     if (up && next === null) return false
     const draft = recalled ? recall!.draft : text
@@ -592,7 +592,7 @@ export function Composer() {
                 ? "Load a session to chat"
                 : chatRunning
                 ? "Steer the current turn, or queue for the next…"
-                : `Message ${agentLabel}…  (/ commands, # files, ↑ history, Enter to send)`
+                : `Message ${agentLabel}…  (/ commands, # files, ↑ history when empty, Enter to send)`
             }
             disabled={disabled}
             className="max-h-52 min-h-14 resize-none border-0 shadow-none focus-visible:ring-0"

@@ -19,6 +19,9 @@ function harness() {
   }
   const modules:Record<string,any> = {
     react:{...react,default:react},
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native":Object.fromEntries(["ActivityIndicator","ScrollView","Switch","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x])),
     "../api/client":{api:{sessionMeta:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
     "../state/config":{composerPrefs:()=>({mode:"bypassPermissions"}),setComposerPrefs:(v:any)=>deviceWrites.push(v),notifyEveryReply:()=>false},

@@ -20,26 +20,48 @@ and writes the audit trail; it is the only place that does.
 import sys
 import time
 
-from viewer import db, notelinks, orglogic
+from viewer import asks, db, notelinks, orglogic
 
 
-def _card_create(a):
+def _card_create(a, *, by_agent=False):
     # A card is born in a LANE, not just on a board: with no column named, the
     # board's first column (Todo in the seeded pipeline). The route already
     # refuses a card with no board; a null column here would make the card
     # exist in no lane and render on no board view (the other end of fc89546's
     # rule). Every create path (HTTP, MCP, orchestrator intent, approval) runs
     # through this one handler, so the default lives here, not in N clients.
+    # Born in a column is the same act as moved into it: an agent cannot create
+    # into a judgement column, and creating into Review/Needs-info opens the ask
+    # exactly as _card_move would (else the owner is never asked).
     column_id = a.get("column_id")
-    if not column_id and a.get("project_id"):
+    cols = []
+    if a.get("project_id"):
         try:
             cols = db.board_columns_list(int(a["project_id"]))
         except (TypeError, ValueError):
             cols = []
+    if not column_id and cols:
         column_id = orglogic.project_columns(cols)["todo"]
-    return db.card_create(a.get("title", ""), a.get("body", ""), column_id,
+    name = next((c.get("name") for c in cols if str(c.get("id")) == str(column_id)), "")
+    if by_agent and str(name).lower() in _JUDGEMENT_COLUMNS:
+        return {"error": (f"{name} is the owner's judgement — create the card in "
+                          "Review and comment your proposal.")}
+    now = time.time()
+    into_decision = asks.is_decision_column(name)
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (into_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent creating its "
+                         "card in Review or Needs-info"}
+    card = db.card_create(a.get("title", ""), a.get("body", ""), column_id,
                           a.get("project_id"), a.get("session"),
                           a.get("position", 1.0), a.get("created_by", ""))
+    if not (into_decision and by_agent and card and card.get("id")):
+        return card
+    since, exp = asks.after_move(True, True, expires, now)
+    db.card_ask_set(card["id"], since, exp)
+    return dict(card, ask_since=since, ask_expires_at=exp)
 
 
 def _card_update(a):
@@ -64,7 +86,16 @@ def _card_update(a):
             fields["column_id"] = next((c["id"] for c in cols
                                         if str(c.get("name", "")).lower() == name),
                                        cols[0]["id"])
-    return db.card_update(a.get("card_id"), **fields) or {"error": "not found"}
+    before = db.card_get(a.get("card_id")) if "column_id" in fields else None
+    updated = db.card_update(a.get("card_id"), **fields)
+    if not updated:
+        return {"error": "not found"}
+    if before and before.get("column_id") != updated.get("column_id"):
+        # A column change here is a move without card_move's ask rules: it
+        # ends whatever ask was open, deadline included (viewer.asks) — else
+        # an expired deadline would keep the card out of the queue forever.
+        db.card_ask_set(updated["id"], 0, 0)
+    return updated
 
 
 # Columns whose NAME (case-insensitive) marks the owner's judgement. An agent
@@ -116,8 +147,22 @@ def _card_move(a, *, by_agent=False):
                 return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
                                   "a different writer just acted. I won't overwrite a fresh "
                                   "move; comment on the card and let the owner decide.")}
-    return db.card_move(card["id"], a.get("column_id"),
-                        a.get("position", 1.0)) or {"error": "not found"}
+    now = time.time()
+    into_decision = asks.is_decision_column(target.get("name"))
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (into_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent moving its "
+                         "card into Review or Needs-info"}
+    moved = db.card_move(card["id"], a.get("column_id"), a.get("position", 1.0))
+    if not moved:
+        return {"error": "not found"}
+    # The column is the ask's source of truth: moving in opens one, any other
+    # move ends whatever was open (viewer.asks).
+    since, exp = asks.after_move(into_decision, by_agent, expires, now)
+    db.card_ask_set(card["id"], since, exp)
+    return dict(moved, ask_since=since, ask_expires_at=exp)
 
 
 def _card_delete(a):
@@ -259,8 +304,11 @@ def _task_done(a, *, by_agent=False):
                 return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
                                   "a different writer just acted. I won't overwrite a fresh "
                                   "move; comment on the card and let the owner decide.")}
-    return db.card_move(a.get("card_id"), done_id,
-                        a.get("position", 1.0)) or {"error": "not found"}
+    moved = db.card_move(a.get("card_id"), done_id, a.get("position", 1.0))
+    if not moved:
+        return {"error": "not found"}
+    db.card_ask_set(moved["id"], 0, 0)   # a finished card asks nothing (viewer.asks)
+    return moved
 
 
 def _inbox_send(a):
@@ -286,18 +334,42 @@ def _inbox_send(a):
     return row or {"error": "send failed"}
 
 
-def _card_comment(a):
+def _card_comment(a, *, by_agent=False):
     """Post a comment on a card's discussion thread (db.card_comments).
     The author is stamped by the route from the resolved principal — never
     trusted from the body — so a forged author cannot talk in someone else's
-    voice on the board."""
+    voice on the board.
+
+    On a card in Review/Needs-info the comment is part of the card's ONE ask
+    (viewer.asks): an agent's comment words or raises it — optionally with an
+    `expires_at` deadline — and a human's answers it. An agent raising a
+    second ask while the first is still open gets `warning` back, telling it
+    to split the new one onto its own card."""
     card = db.card_get(a.get("card_id"))
     if not card:
         return {"error": "not found"}
     body = (a.get("body") or "").strip()
     if not body:
         return {"error": "empty comment"}
-    return db.card_comment_add(card["id"], a.get("author", ""), body)
+    now = time.time()
+    cols = db.board_columns_list(card["project_id"]) if card.get("project_id") else []
+    col = next((c for c in cols if c.get("id") == card.get("column_id")), None)
+    in_decision = asks.is_decision_column((col or {}).get("name"))
+    expires, err = asks.parse_expiry(a.get("expires_at"), now)
+    if err:
+        return {"error": err}
+    if expires is not None and not (in_decision and by_agent):
+        return {"error": "expires_at only applies to an ask: an agent's comment on "
+                         "a card in Review or Needs-info"}
+    state = (card.get("ask_since") or 0, card.get("ask_expires_at") or 0)
+    worded = by_agent and in_decision and asks.has_open_ask_text(
+        db.card_comment_list(card["id"]), state[0])
+    row = db.card_comment_add(card["id"], a.get("author", ""), body)
+    new_state, second = asks.after_comment(state, by_agent, in_decision, worded,
+                                           expires, now)
+    if new_state != (float(state[0]), float(state[1])):
+        db.card_ask_set(card["id"], *new_state)
+    return dict(row, warning=asks.SPLIT_WARNING) if second else row
 
 
 def _card_dep_add(a):
@@ -816,23 +888,17 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # purpose — a card with no bound session (owner-created) still parks in
         # those columns and still needs the delivery. Never raises.
         _card_inbox_delivery(card, action, args, bool(session_level))
-        if not card or not card.get("id") or not card.get("session_id"):
+        if not card or not card.get("id"):
             return
         agent = bool(session_level)
-        own = agent and card.get("session_id") == (acting_session or "")
-        # The card's column, resolved once for the move-event text.
-        col = None
-        if action == "card_move" and card.get("project_id"):
-            cols = db.board_columns_list(card["project_id"])
-            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
-        # The sweep's ledger: a foreign event marks the card as having news for
-        # its session; the session's own write means it has read the board.
-        db.card_mark_attention(card["id"], by_own_session=own)
         if action == "card_comment":
             body = (args.get("body") or "").strip()
             excerpt = body[:200] + ("…" if len(body) > 200 else "")
         else:
             excerpt = ""
+        # The push is for the owner, so it fires whether or not the card is
+        # bound to a session: an agent answering an unbound card (an in-app
+        # feedback note, a card the owner typed) must still reach them.
         if agent and action == "card_comment":
             from viewer import push
             # The owner reads this cold, possibly hours later: the title must
@@ -843,6 +909,28 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
             push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
                             f"{actor}: {excerpt}"[:300],
                             data={"card": card["id"]})
+        if not card.get("session_id") and action == "card_comment":
+            # A reply on a card that came through a door bound since (the
+            # owner answering an old feedback note): the door's session owns
+            # it now, so the card is handed to it and the reply wakes it.
+            # Only a reply adopts — a move or edit is board tidying, and an
+            # unbinding must not be undone behind the owner's back.
+            cid = intake.channel_id_of(card)
+            sid = intake.door_session(card, db.intake_get(cid) if cid else None)
+            if sid:
+                card = db.card_update(card["id"], session_id=sid) or dict(card, session_id=sid)
+        if not card.get("session_id"):
+            # Nobody to wake: the board shows the card as "No agent assigned".
+            return
+        own = agent and card.get("session_id") == (acting_session or "")
+        # The card's column, resolved once for the move-event text.
+        col = None
+        if action == "card_move" and card.get("project_id"):
+            cols = db.board_columns_list(card["project_id"])
+            col = next((c for c in cols if c["id"] == card.get("column_id")), None)
+        # The sweep's ledger: a foreign event marks the card as having news for
+        # its session; the session's own write means it has read the board.
+        db.card_mark_attention(card["id"], by_own_session=own)
         if own:
             # The session closing its own card has read it: a wake still queued
             # from an earlier event would only resume it on finished work.
@@ -957,12 +1045,15 @@ def execute(it, human_role, session_level, acting_session=""):
             and not orglogic.self_approves(human_role, session_level)):
         return _queue_for_owner(it, acting_session, "queued:red",
                                 need_reason=bool(session_level))
-    if action in ("card_move", "task_done"):
+    if action in ("card_create", "card_move", "task_done", "card_comment"):
         # The two handlers that resolve their target column at RUN time — which
         # is exactly where they can clobber a human's live move — get the
         # actor's class so their race guards can tell an agent apart from the
-        # owner. (An agent-queued intent later approved by a human re-runs with
-        # no session level and takes the human path, as intended.)
+        # owner; card_comment needs it to tell an agent's ask from the owner's
+        # answer (viewer.asks). (An agent-queued intent later approved by a
+        # human re-runs with no session level and takes the human path, as
+        # intended.) card_create needs it for the same ask/judgement rules as
+        # card_move: a card born in Review is an agent's ask.
         payload = handler(args, by_agent=bool(session_level))
     else:
         payload = handler(args)

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react"
-import { AppState, Text, TouchableOpacity, View } from "react-native"
+import { AppState, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { undoQueue, type UndoAction } from "../lib/undo"
 import { useStyles } from "../lib/styles"

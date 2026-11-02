@@ -18,11 +18,12 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 
+from viewer.agents import agent_env
 from viewer.config import CHAT_JOBS, CHAT_LOCK, CHAT_TIMEOUT
 from viewer.adapters import _uuid, resolve_agent_session
-from viewer.engine import codex_session_meta, frontmatter_description
+from viewer.engine import codex_session_meta, end_oneshot_inflight, frontmatter_description, record_inflight
 from viewer.login import codex_bin
-from viewer import toml
+from viewer import procctl, toml
 
 CODEX_HOME = Path.home() / ".codex"
 CODEX_SESSIONS = CODEX_HOME / "sessions"
@@ -222,15 +223,15 @@ def start_codex_new(message, cwd, model=""):
     the rollout it writes, register a chat job for status polling, and return
     (session_id, rel_path). Returns None if the rollout never appears."""
     before = set(CODEX_SESSIONS.rglob("rollout-*.jsonl")) if CODEX_SESSIONS.is_dir() else set()
-    env = dict(os.environ)
-    env["PATH"] = f"{Path.home()}/.local/bin:/usr/local/bin:/usr/bin:" + env.get("PATH", "")
+    env = agent_env()
     cmd = [codex_bin(), "exec", "--skip-git-repo-check"]
     if model and re.fullmatch(r"[A-Za-z0-9._-]+", model):
         cmd += ["-m", model]
     cmd += [message]
     try:
         proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                **procctl.interruptible_kwargs())
     except Exception:
         return None
 
@@ -248,8 +249,8 @@ def start_codex_new(message, cwd, model=""):
     if not new:
         # Discovery failed — don't leak the running `codex exec` child (its PIPE
         # buffers would fill and wedge it). Kill and reap before returning.
+        procctl.kill(proc)
         try:
-            proc.kill()
             proc.communicate(timeout=5)
         except Exception:
             pass
@@ -262,6 +263,7 @@ def start_codex_new(message, cwd, model=""):
            "cwd": cwd, "interrupted": False, "host": "local", "agent": "codex"}
     with CHAT_LOCK:
         CHAT_JOBS[session_id] = job
+    record_inflight(session_id, job, {"codex_id": codex_session_meta(new)[0]})
 
     def finalize():
         try:
@@ -278,6 +280,7 @@ def start_codex_new(message, cwd, model=""):
             with CHAT_LOCK:
                 job["running"] = False
                 job["finished"] = time.time()
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=finalize, daemon=True).start()
     return session_id, str(new.relative_to(CODEX_SESSIONS))

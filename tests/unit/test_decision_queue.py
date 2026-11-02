@@ -205,7 +205,7 @@ class TestRoute:
         d.pop("waiting_s")  # the route uses the real clock
         assert d == {"kind": "card", "session": "sc", "host": "local",
                      "label": "Worker", "summary": "#53 Phone calls",
-                     "card": 53, "column": "Review",
+                     "card": 53, "column": "Review", "ask": "", "expires_at": 0.0,
                      "inbox_id": 0, "snoozed_until": 0}
 
     def test_a_snoozed_item_is_held_back_until_it_lapses(self, monkeypatch):
@@ -285,3 +285,64 @@ def test_red_approval_with_malformed_detail_costs_only_words():
 def test_red_approvals_sort_with_the_rest_by_wait():
     q = decisions.open_decisions([_q("a", NOW - 10)], [], [], {}, NOW, [], [_red(1, NOW - 100)])
     assert [d["kind"] for d in q["decisions"]] == ["red", "question"]
+
+
+# ---- a session's own Red approvals, inline in its chat (card 223) -------------
+
+def test_session_red_keeps_only_that_sessions_asks_shaped_like_the_queue():
+    rows = [_red(1, NOW - 100, session="s-ask"), _red(2, NOW - 10, session="other"),
+            {"id": 3, "created_at": NOW, "detail": "not a dict"}]
+    mine = decisions.session_red(rows, "s-ask", NOW)
+    assert [d["id"] for d in mine] == ["1"]
+    assert mine == decisions.open_decisions([], [], [], {}, NOW, [], rows[:1])["decisions"]
+
+
+def test_session_red_with_no_session_lists_nothing():
+    # Never the unnamed (owner-raised / pre-naming) rows, whose session is "".
+    rows = [{"id": 9, "created_at": NOW, "detail": {"action": "restart_now"}}]
+    assert decisions.session_red(rows, "", NOW) == []
+    assert decisions.session_red(None, "s-ask", NOW) == []
+
+
+class TestChatStatusRed:
+    """chat/status carries the chat's open org approvals whether or not a run
+    is live — the approval outlives the turn that raised it."""
+
+    SID = "s-ask"
+
+    def _status(self, monkeypatch, red, job=None):
+        import viewer.db as vdb
+        import viewer.inbox as vi
+        import viewer.questions as q
+        import viewer.routes.chat as vchat
+        monkeypatch.setattr(vdb, "approval_list_open", red if callable(red) else (lambda: list(red)))
+        monkeypatch.setattr(vi, "red_subject", lambda intent: "")
+        monkeypatch.setattr(q, "get_open", lambda s: None)
+        monkeypatch.setattr(q, "get_open_plan", lambda s: None)
+        monkeypatch.setattr(vchat, "pending_approvals_public", lambda s: [])
+        monkeypatch.setattr(vchat, "CHAT_JOBS", {self.SID: job} if job else {})
+        h = _Handler()
+        h._g_chat_status(type("R", (), {"query": {"id": [self.SID]}})())
+        return h.sent[0]
+
+    def _ap(self, id, session):
+        return {"id": id, "created_at": NOW, "created_by": "session:Manager",
+                "summary": "session:Manager: card_delete",
+                "detail": {"action": "card_delete", "args": {"reason": "dup"}, "session": session}}
+
+    def test_idle_chat_lists_only_its_own(self, monkeypatch):
+        d = self._status(monkeypatch, [self._ap(5, self.SID), self._ap(6, "someone-else")])
+        assert d["idle"] is True
+        assert [r["id"] for r in d["pending_red"]] == ["5"]
+        assert d["pending_red"][0]["kind"] == "red" and d["pending_red"][0]["reason"] == "dup"
+
+    def test_running_chat_lists_them_too(self, monkeypatch):
+        job = {"running": True, "returncode": None, "stderr": "", "started": NOW}
+        d = self._status(monkeypatch, [self._ap(5, self.SID)], job=job)
+        assert d["running"] is True and [r["id"] for r in d["pending_red"]] == ["5"]
+
+    def test_an_unreadable_approvals_table_never_breaks_status(self, monkeypatch):
+        def boom():
+            raise RuntimeError("db down")
+        d = self._status(monkeypatch, boom)
+        assert d["pending_red"] == [] and d["idle"] is True

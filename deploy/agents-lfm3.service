@@ -1,0 +1,16 @@
+[Unit]
+Description=Manager LFM3-Audio call voice (GPU 1)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/agents-lfm3
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=CUDA_VISIBLE_DEVICES=1
+Environment=AGENTS_LFM3_PORT=8098
+ExecStart=%h/lfm3-exp/venv/bin/python %h/agents-lfm3/lfm3_service.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -58,11 +58,31 @@ class TestPermissionDeniedHint:
         from viewer import engine
         monkeypatch.setattr(engine.sys, "platform", "darwin")
         monkeypatch.setattr(engine.sys, "executable", "/opt/py/bin/python3")
+        monkeypatch.setattr(engine, "_responsible_app", lambda: None)
         msg = engine._permission_denied_hint(Path.home() / "Downloads")
         assert "~/Downloads" in msg and "Privacy & Security" in msg
         # the actionable fact is WHICH binary needs the grant — it must name the
         # live interpreter path, not a hardcoded product name the list can't show.
         assert "/opt/py/bin/python3" in msg
+
+    def test_tcc_folder_names_the_wrapping_app(self, monkeypatch):
+        from pathlib import Path
+        from viewer import engine
+        monkeypatch.setattr(engine.sys, "platform", "darwin")
+        monkeypatch.setattr(engine, "_responsible_app",
+                            lambda: ("Agents", "/Applications/Agents.app"))
+        msg = engine._permission_denied_hint(Path.home() / "Desktop")
+        # under the launcher the grant is charged to the app, not the interpreter
+        assert "“Agents”" in msg and "/Applications/Agents.app" in msg
+        assert "Python" not in msg
+
+    def test_responsible_app_reads_the_parent_bundle(self, monkeypatch):
+        from viewer import engine
+        class R: stdout = "/Users/x/Applications/Agents.app/Contents/MacOS/Agents\n"
+        monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: R)
+        assert engine._responsible_app() == ("Agents", "/Users/x/Applications/Agents.app")
+        R.stdout = "/bin/zsh\n"
+        assert engine._responsible_app() is None
 
     def test_other_paths_stay_plain(self, monkeypatch):
         from pathlib import Path

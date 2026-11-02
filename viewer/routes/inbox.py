@@ -17,6 +17,7 @@ Reads derive state, never store it: a decision row is open only while its
 durable source is open (inbox.attach_state against the live sources, the same
 ones /api/decisions/open reads). Snoozed rows resurface when the snooze lapses.
 """
+import sys
 import time
 
 from viewer import audit, db, decisions, inbox
@@ -35,6 +36,23 @@ def red_row(approval):
                 subject=inbox.red_subject(intent),
                 risk=inbox.red_risk(intent),
                 reason=inbox.red_reason(intent))
+
+
+def session_red_items(session_id):
+    """Open org approvals this one session raised, worded for a cold reader —
+    the asking chat's inline Approve/Deny (card 223). Deciding one goes
+    through the same /api/org/approvals/resolve as the queue."""
+    if not session_id:
+        return []
+    try:
+        mine = [red_row(r) for r in db.approval_list_open()
+                if decisions.red_session(r) == session_id]  # word only this chat's
+    except Exception as e:
+        # The chat status this rides on must still answer (a live run polls
+        # it); the Inbox and the board still carry the approval.
+        print(f"[chat] open approvals for {session_id} unreadable: {e}", file=sys.stderr)
+        return []
+    return decisions.session_red(mine, session_id, time.time())
 
 
 def open_decisions_items():
@@ -91,7 +109,7 @@ class InboxMixin:
             session = p["session"]  # an agent reads its own mailbox only
         project = (q.get("project") or [None])[0]
         kind = (q.get("kind") or [None])[0]
-        unread_only = (q.get("unread_only") or [None])[0] not in (None, "")
+        unread_only = (q.get("unread_only") or [""])[0].lower() not in ("", "0", "false")
         archived = (q.get("archived") or [None])[0] not in (None, "")
         pid = int(project) if project else None
         items = open_decisions_items()
@@ -102,8 +120,15 @@ class InboxMixin:
             # not the full list it would throw away.
             self.send_json({"unread": unread})
             return
-        rows = db.inbox_list(session_id=session, project_id=pid,
-                             kind=kind, unread_only=unread_only, archived=archived)
+        # An agent reads its inbox on every wake: newest 20 by default, not the
+        # whole history (hundreds of rows → hundreds of KB of context per read).
+        default_limit = 20 if p["kind"] == "mcp" else 200
+        try:
+            limit = max(1, min(200, int((q.get("limit") or [default_limit])[0])))
+        except ValueError:
+            limit = default_limit
+        rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
+                             unread_only=unread_only, archived=archived, limit=limit)
         messages = inbox.attach_state(rows, items)
         out = {"messages": messages, "unread": unread}
         if p["kind"] == "app":

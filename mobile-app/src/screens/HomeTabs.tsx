@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
-import { Animated, Text, View, useWindowDimensions } from "react-native"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Animated, AppState, Text, View, useWindowDimensions } from "react-native"
 import { Gesture, GestureDetector } from "react-native-gesture-handler"
 import { createMaterialTopTabNavigator } from "@react-navigation/material-top-tabs"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -13,6 +13,10 @@ import Icon, { type IconName } from "../components/Icon"
 import { api } from "../api/client"
 import { useTheme } from "../lib/useTheme"
 import { menuDragProgress, menuSettlesOpen } from "../lib/gestures"
+import { recordSwipe } from "../lib/usageReporter"
+import { useSeen } from "../components/Tracked"
+import { useDecisionCockpit } from "../components/useDecisionCockpit"
+import { shouldAutoOpenDeck } from "../lib/decisionDeck"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -31,6 +35,18 @@ const TAB_ICON: Record<keyof HomeTabParamList, { on: IconName; off: IconName }> 
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">
 
+/** The Chats page and its menu swipe. Its own component so the swipe counts as
+ *  on screen only while Chats is the page in front (its tab's navigation),
+ *  not on Inbox or Profile where it does nothing. */
+function ChatsPage({ gesture, navigation }: { gesture: ReturnType<typeof Gesture.Pan>; navigation: Props["navigation"] }) {
+  useSeen("swipe-menu", undefined, true)
+  return (
+    <GestureDetector gesture={gesture}>
+      <View style={{ flex: 1 }}><ChatsScreen navigation={navigation} /></View>
+    </GestureDetector>
+  )
+}
+
 /**
  * WhatsApp-style bottom tab bar with left/right swipe between tabs. Built on
  * material-top-tabs with `tabBarPosition: "bottom"` so we get the swipe pager
@@ -46,6 +62,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Home">
  */
 export default function HomeTabs({ navigation }: Props) {
   const t = useTheme()
+  useSeen("swipe-tab", undefined, true)
   const insets = useSafeAreaInsets()
 
   // The Inbox badge: how many messages/decisions wait on this reader. It has to
@@ -61,17 +78,51 @@ export default function HomeTabs({ navigation }: Props) {
   const panelWRef = useRef(panelW)
   panelWRef.current = panelW
   const alive = useRef(true)
+  const pollUnread = useCallback(() => {
+    api.inboxUnread()
+      .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
+      .catch(() => {})
+  }, [])
   useEffect(() => {
     alive.current = true
-    const poll = () => {
-      api.inboxUnread()
-        .then((r) => { if (alive.current) setInboxUnread(r.unread || 0) })
+    pollUnread()
+    const id = setInterval(pollUnread, 15000)
+    return () => { alive.current = false; clearInterval(id) }
+  }, [pollUnread])
+
+  // Opening the app with decisions waiting goes straight to the decision deck
+  // — on launch, and on coming back after a real absence. A notification tap
+  // that already took the owner to a card or chat wins: by the time the queue
+  // has loaded, Home is no longer the focused screen, so the deck stays shut.
+  const deck = useDecisionCockpit(navigation, { onResolved: pollUnread })
+  const deckOpen = useRef(false)
+  deckOpen.current = deck.element !== null
+  // open() is rebuilt every render (its guard is an inline default); reach it
+  // through a ref so the launch read runs once, not on every render.
+  const openDeck = useRef(deck.open)
+  openDeck.current = deck.open
+  useEffect(() => {
+    const tryOpen = (awayMs: number | null) => {
+      api.openDecisions()
+        .then((r) => {
+          if (!alive.current) return
+          const decisions = r.decisions || []
+          if (shouldAutoOpenDeck({ count: decisions.length, deepLinkPending: !navigation.isFocused(), deckOpen: deckOpen.current, awayMs })) openDeck.current(decisions, 0)
+        })
         .catch(() => {})
     }
-    poll()
-    const id = setInterval(poll, 15000)
-    return () => { alive.current = false; clearInterval(id) }
-  }, [])
+    tryOpen(null)
+    let leftAt: number | null = null
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background") leftAt = Date.now()
+      else if (state === "active" && leftAt !== null) {
+        const away = Date.now() - leftAt
+        leftAt = null
+        tryOpen(away)
+      }
+    })
+    return () => sub.remove()
+  }, [navigation])
 
   // Chats is the leftmost page: a rightward drag there has no page to reach, so
   // it pulls out the side menu, which follows the finger and settles open or
@@ -85,7 +136,11 @@ export default function HomeTabs({ navigation }: Props) {
     .failOffsetY([-12, 12])
     .onStart(() => setMenuDragging(true))
     .onUpdate((e) => menuProgress.setValue(menuDragProgress(e.translationX, panelWRef.current)))
-    .onEnd((e) => setMenuOpen(menuSettlesOpen({ dx: e.translationX, dy: e.translationY, vx: e.velocityX })))
+    .onEnd((e) => {
+      const open = menuSettlesOpen({ dx: e.translationX, dy: e.translationY, vx: e.velocityX })
+      if (open) recordSwipe("swipe-menu")
+      setMenuOpen(open)
+    })
     // Ended or cancelled, the drag is over; the menu settles from where it is.
     .onFinalize(() => setMenuDragging(false)), [menuProgress])
 
@@ -93,6 +148,9 @@ export default function HomeTabs({ navigation }: Props) {
     <SideMenuProvider value={() => setMenuOpen(true)}>
     <Tab.Navigator
       tabBarPosition="bottom"
+      // A swipe between pages is a control like a tab tap; count it so the
+      // usage report can tell whether anyone pages by gesture.
+      screenListeners={{ swipeEnd: () => recordSwipe("swipe-tab") }}
       screenOptions={({ route }) => ({
         swipeEnabled: true,
         // A stable handle for tests and a clean VoiceOver name: the icon+label
@@ -155,15 +213,12 @@ export default function HomeTabs({ navigation }: Props) {
         },
       })}
     >
-      <Tab.Screen name="Chats">{() => (
-        <GestureDetector gesture={menuSwipe}>
-          <View style={{ flex: 1 }}><ChatsScreen navigation={navigation} /></View>
-        </GestureDetector>
-      )}</Tab.Screen>
+      <Tab.Screen name="Chats">{() => <ChatsPage gesture={menuSwipe} navigation={navigation} />}</Tab.Screen>
       <Tab.Screen name="Inbox">{() => <InboxScreen navigation={navigation} isTab />}</Tab.Screen>
       <Tab.Screen name="Profile">{() => <ProfileScreen navigation={navigation} />}</Tab.Screen>
     </Tab.Navigator>
     <SideMenu visible={menuOpen} dragging={menuDragging} progress={menuProgress} onClose={() => setMenuOpen(false)} navigation={navigation} />
+    {deck.element}
     </SideMenuProvider>
   )
 }

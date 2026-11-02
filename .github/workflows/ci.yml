@@ -1,7 +1,8 @@
 # The gates every change must pass before it reaches a customer box. Mirrors
 # what runs locally: hermetic Python unit tests (no DB, no network — enforced
 # by tests/unit/conftest.py), web lint/typecheck/tests/build, mobile
-# typecheck/tests. Linux + macOS because deploy/lib.sh installs on both.
+# typecheck/tests. Linux + macOS because deploy/lib.sh installs on both;
+# Windows for the native (no WSL) backend.
 name: CI
 on:
   push:
@@ -19,15 +20,38 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python: ["3.9", "3.12"]   # 3.9 = macOS /usr/bin/python3 the LaunchAgent runs
+        python: ["3.9", "3.12"]   # 3.9 = oldest distro python3 a Linux box may have
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install pytest psycopg2-binary tomli_w
+      - run: python -m pip install pytest -r deploy/requirements.txt
       - run: python -m pytest -q tests/unit
+
+  # Native Windows (no WSL). UNPROVEN: added 2026-10-30 without a GitHub run.
+  # The gate is what Windows must already pass — every viewer module imports
+  # and the pseudo-terminal seam works on ConPTY. The full suite still assumes
+  # POSIX in places (bash, ":"-joined PATH, /usr/bin), so it reports without
+  # failing the build until those are ported.
+  backend-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest -r deploy/requirements.txt
+      - name: Imports + pty seam (gate)
+        run: python -m pytest -q tests/unit/test_imports_without_posix.py tests/unit/test_ptyproc.py tests/unit/test_login_missing_cli.py tests/unit/test_no_shadowed_module_imports.py
+      - name: Full unit suite (report only)
+        continue-on-error: true
+        run: python -m pytest -q tests/unit
 
   web:
     runs-on: ubuntu-latest

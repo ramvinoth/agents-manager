@@ -1,7 +1,6 @@
 """viewer.wsclient — the one outbound (client-role) WebSocket implementation.
 
-Used by viewer.nemotron (GPU voice service) and viewer.relay (the encrypted
-phone relay). Client-role means every outgoing frame is masked (RFC 6455 5.1);
+Used by viewer.relay (the encrypted phone relay). Client-role means every outgoing frame is masked (RFC 6455 5.1);
 viewer.browser.WSServer is the server-role side and CDP's WSConn is a
 text-only client sized for that one call site.
 

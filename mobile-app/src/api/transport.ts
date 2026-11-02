@@ -11,7 +11,7 @@ import { fromBase64, toBase64 } from "../lib/bytes"
 import type { AppSocket } from "../lib/deferredSocket"
 import type { WireSocket } from "../lib/relayTransport"
 import { directUrl } from "../lib/servers"
-import { ServerTransport, type DirectIO, type FilePart, type MediaSource, type Reply } from "../lib/serverTransport"
+import { ServerTransport, type DirectIO, type FilePart, type MediaSource, type RawReply, type Reply } from "../lib/serverTransport"
 import { activeServer, token } from "../state/config"
 
 /** RN's WebSocket takes a 3rd `options` arg carrying handshake headers (so the
@@ -22,6 +22,12 @@ const HeaderedWebSocket = WebSocket as unknown as {
 
 const direct: DirectIO = {
   fetch: (url, init) => fetch(url, init),
+  async exchange(url, init) {
+    const res = await fetch(url, init)
+    const headers: Record<string, string> = {}
+    res.headers.forEach((value: string, name: string) => (headers[name.toLowerCase()] = value))
+    return { status: res.status, headers, body: new Uint8Array(await res.arrayBuffer()) }
+  },
   upload(url, headers, file) {
     const form = new FormData()
     // @ts-expect-error RN FormData accepts the {uri,name,type} file shape and
@@ -71,6 +77,11 @@ export function authHeaders(): Record<string, string> {
 /** An authenticated request to the active server. */
 export function serverFetch(method: string, path: string, headers: Record<string, string> = {}, body?: string): Promise<Reply> {
   return transport().fetch(method, path, { ...authHeaders(), ...headers }, body)
+}
+
+/** A request answered whole as bytes with its headers (see ServerTransport.exchange). */
+export function serverExchange(method: string, path: string, headers: Record<string, string>, body?: Uint8Array): Promise<RawReply> {
+  return transport().exchange(method, path, { ...headers, ...authHeaders() }, body)
 }
 
 /** Upload one local file as a multipart part named `field`. */

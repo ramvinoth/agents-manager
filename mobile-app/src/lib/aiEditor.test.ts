@@ -22,6 +22,9 @@ function harness(localOnly = false) {
   }
   const modules: Record<string, any> = {
     react: {...react,default:react},
+    // Screens press through components/Tracked (counted taps); here it is the plain element.
+    "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
+    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": {...Object.fromEntries(["ActivityIndicator","FlatList","Modal","SafeAreaView","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x]))},
     "../api/client":{api:{aiConfig:async()=>config,providerModels:()=>{const d=deferred();discoveries.push(d);return d.promise},aiSave:(...args:any[])=>{const d=deferred();saves.push({args,...d});return d.promise}}},
     "../lib/aiSelection":selection,"../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},

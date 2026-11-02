@@ -1,0 +1,28 @@
+# Distinct id: the server's launchd agent is com.agents.viewer; this is the app that installs/opens it.
+appId: com.suhai.agents.desktop
+productName: Manager
+directories:
+  output: dist
+files:
+  - main.js
+  - preload.js
+  - install.html
+  - src/**
+  - "!src/**/*.test.js"
+# The server snapshot made by scripts/stage-server.sh; first run copies it out and runs deploy/install.sh.
+extraResources:
+  - from: build/server
+    to: server
+mac:
+  target:
+    - target: dmg
+      arch: universal   # one download for Intel and Apple Silicon
+  category: public.app-category.productivity
+  # Signs with the keychain's "Developer ID Application" identity. Without one,
+  # electron-builder falls back to an Apple Development identity: that build runs
+  # only on this team's registered Macs, so never hand it to a customer.
+  hardenedRuntime: true
+  notarize: true   # needs APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER (an App Store Connect API key)
+linux:
+  target: AppImage
+  category: Utility

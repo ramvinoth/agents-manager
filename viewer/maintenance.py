@@ -38,7 +38,8 @@ from viewer import config, db
 WINDOW_MINUTE = 50
 QUIET_CAP = 600          # seconds to wait for running turns to finish
 QUIET_POLL = 15
-PREFLIGHT_TIMEOUT = 45   # seconds for the spare to answer GET /
+PREFLIGHT_TIMEOUT = 180  # seconds for the spare to answer GET / (a crash fails at once;
+                         # a loaded machine can take minutes to serve the first page)
 _PENDING_KEY = "maintenance_pending"     # the restart in flight, across the exit
 _LAST_KEY = "maintenance_last_window"    # hour already handled (survives the exit)
 
@@ -115,7 +116,7 @@ def restart_now(actor):
 
 
 def preflight():
-    """Boot the code on disk on a spare loopback port. Returns (ok, log tail)."""
+    """Boot the code on disk on a spare loopback port. Returns (ok, why + log tail)."""
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -125,21 +126,30 @@ def preflight():
                                 cwd=str(config.STATIC_DIR), env=env, stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)
         ok = False
+        exit_code = None
         try:
             deadline = time.time() + PREFLIGHT_TIMEOUT
             while time.time() < deadline and proc.poll() is None:
                 try:
-                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as r:
                         ok = r.status == 200
                         break
                 except Exception:
                     time.sleep(1)
+            exit_code = proc.poll()
         finally:
             proc.kill()
             proc.wait(timeout=10)
         log.seek(0)
         tail = log.read().decode(errors="replace")[-1500:]
-    return ok, ("spare answered GET / 200" if ok else (tail.strip() or "spare never answered"))
+    if ok:
+        return ok, "spare answered GET / 200"
+    if exit_code is None:
+        why = (f"spare was still running but did not answer GET / within {PREFLIGHT_TIMEOUT}s "
+               f"(load average {os.getloadavg()[0]:.0f} on {os.cpu_count()} cores)")
+    else:
+        why = f"spare exited with code {exit_code} before answering"
+    return ok, f"{why}\n{tail.strip()}"
 
 
 def run_window(trigger, quiet_cap=QUIET_CAP, check=None, leave=None, sleep=time.sleep):
@@ -196,7 +206,14 @@ def _abort(ids, reqs, record, outcome, why):
 def finish_after_boot(sleep=time.sleep, health=None):
     """On a real (non-preflight) boot: close the restart the previous process
     started. Writes the one audit entry and wakes the requesters."""
-    record = db.setting_get(_PENDING_KEY)
+    for attempt in range(24):   # after a reboot Postgres can still be starting: wait up to ~2 min
+        try:
+            record = db.setting_get(_PENDING_KEY)
+            break
+        except Exception:
+            if attempt == 23:
+                raise
+            sleep(5)
     if record:
         db.setting_set(_PENDING_KEY, None)
     else:

@@ -1,4 +1,4 @@
-import { userHistory, onFirstLine, onLastLine, stepHistory, searchHistory } from "./composerHistory.ts"
+import { userHistory, walksHistory, onFirstLine, onLastLine, stepHistory, searchHistory } from "./composerHistory.ts"
 import type { Turn } from "./types.ts"
 
 let pass = 0, fail = 0
@@ -16,6 +16,17 @@ eq("user messages only, oldest first, repeats and blanks dropped", hist, ["build
 
 eq("first line", [onFirstLine("ab\ncd", 2), onFirstLine("ab\ncd", 3)], [true, false])
 eq("last line", [onLastLine("ab\ncd", 3), onLastLine("ab\ncd", 2)], [true, false])
+
+eq("up in an empty composer recalls", walksHistory("", 0, false, true), true)
+eq("up in a whitespace-only composer recalls", walksHistory("  \n", 0, false, true), true)
+eq("up in a typed draft moves the caret", walksHistory("fix the bug", 4, false, true), false)
+eq("up at the start of a typed draft still moves the caret", walksHistory("fix the bug", 0, false, true), false)
+eq("down in a typed draft moves the caret", walksHistory("fix the bug", 11, false, false), false)
+eq("down in an empty composer does nothing", walksHistory("", 0, false, false), false)
+eq("browsing: up on the first line goes older", walksHistory("a\nb", 1, true, true), true)
+eq("browsing: up below the first line moves the caret", walksHistory("a\nb", 3, true, true), false)
+eq("browsing: down on the last line goes newer", walksHistory("a\nb", 3, true, false), true)
+eq("browsing: down above the last line moves the caret", walksHistory("a\nb", 0, true, false), false)
 
 eq("up from the draft recalls the newest", stepHistory(3, null, -1), 2)
 eq("up walks older", stepHistory(3, 2, -1), 1)

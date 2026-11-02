@@ -32,7 +32,7 @@ from urllib.parse import urlparse, parse_qs
 # Below this a JSON body isn't worth the compress/decompress round trip.
 GZIP_MIN_BYTES = 1024
 
-from viewer import db, orglogic, setupcode
+from viewer import db, events, orglogic, setupcode
 from viewer.remote import tailnet_ipv4
 from viewer.config import (
     CLAUDE_DIR, DEFAULT_SESSION, PORT, UI_DIR, VIEWER_NO_AUTH, VIEWER_PREFLIGHT, claude_bin,
@@ -77,14 +77,15 @@ from viewer.routes.project_plugins import ProjectPluginsMixin
 from viewer.routes.marketplace import MarketplaceMixin
 from viewer.routes.usage import UsageMixin
 from viewer.routes.intake import IntakeMixin
-from viewer.routes.canvas import CanvasMixin
+from viewer.routes.live import LiveMixin
+from viewer.routes.canvas_board import CanvasBoardMixin
 
 
 class SessionViewerHandler(
     SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
-    IntakeMixin, ProjectPluginsMixin, CanvasMixin,
+    IntakeMixin, ProjectPluginsMixin, LiveMixin, CanvasBoardMixin,
     http.server.SimpleHTTPRequestHandler,
 ):
 
@@ -258,6 +259,8 @@ class SessionViewerHandler(
         name = self.POST_ROUTES.get(req.path)
         if name:
             getattr(self, name)(req)
+            if req.path in self.LIST_MUTATIONS:
+                events.publish_list_changed()
             return
         for prefix, pname in self.POST_PREFIX:
             if req.path.startswith(prefix):
@@ -404,12 +407,18 @@ class SessionViewerHandler(
         "/api/gmail/read": "_g_gmail_read",
         "/api/calendar/events": "_g_calendar_events",
         "/api/terminal/ws": "_g_terminal_ws",
+        "/api/events/ws": "_g_events_ws",
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
-        "/api/voice/nemotron/status": "_g_voice_nemotron_status",
+        "/api/live/ws": "_g_live_ws",
+        "/api/canvas/board": "_g_canvas_board",
+        "/api/canvas/file": "_g_canvas_file",
+        "/api/canvas/ws": "_g_canvas_ws",
+        "/api/canvas/agent/read": "_g_canvas_agent_read",
+        "/api/canvas/agent/snapshot": "_g_canvas_agent_snapshot",
         "/api/call/engine": "_g_call_engine",
-        "/api/voice/nemotron/ws": "_g_voice_nemotron_ws",
+        "/api/call/audio": "_g_call_audio",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",
         "/api/desktop": "_g_desktop",
@@ -458,7 +467,6 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
-        "/api/canvas": "_g_canvas",
         "/api/usage/report": "_g_usage_report",
         "/api/org/intake": "_g_org_intake",
     }
@@ -522,6 +530,7 @@ class SessionViewerHandler(
         "/api/chat/question/answer": "_p_chat_question_answer",
         "/api/chat/plan/decide": "_p_chat_plan_decide",
         "/api/call/turn": "_p_call_turn",
+        "/api/call/next": "_p_call_next",
         "/api/skill/save": "_p_skill_save",
         "/api/skill/delete": "_p_skill_delete",
         "/api/mcp/save": "_p_mcp_save",
@@ -586,7 +595,9 @@ class SessionViewerHandler(
         "/api/org/skills/propose": "_p_org_skills_propose",
         "/api/inbox/send": "_p_inbox_send",
         "/api/canvas/show": "_p_canvas_show",
-        "/api/canvas/delete": "_p_canvas_delete",
+        "/api/canvas/file": "_p_canvas_file",
+        "/api/canvas/agent/patch": "_p_canvas_agent_patch",
+        "/api/canvas/revert": "_p_canvas_revert",
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
         "/api/org/intake": "_p_org_intake",
@@ -600,6 +611,13 @@ class SessionViewerHandler(
         ("/api/browser/", "_p_browser"),
         ("/api/intake/", "_p_intake"),
     ]
+    # POSTs that change what the chat list shows: once one is handled, every
+    # live-events subscriber is told to refetch the list (viewer.events).
+    LIST_MUTATIONS = frozenset({
+        "/api/session/fork", "/api/session/restore", "/api/session/backup-restore",
+        "/api/session/delete", "/api/session/rename", "/api/session/seen",
+        "/api/session-meta",
+    })
 
 
 class PooledHTTPServer(http.server.ThreadingHTTPServer):
@@ -615,8 +633,8 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
     than queueing unboundedly."""
 
     daemon_threads = True
-    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws",
-                b"/api/voice/nemotron/ws")
+    WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws", b"/api/live/ws",
+                b"/api/canvas/ws", b"/api/events/ws")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 
@@ -745,6 +763,13 @@ def main():
                 print(f"  ⚠ closed {abandoned} loop run(s) left 'running' by the previous server process")
         except Exception as e:
             print(f"  ⚠ job_runs reconciliation failed: {e}")
+        try:
+            from viewer.routes.canvas_board import migrate_legacy_canvases
+            moved = migrate_legacy_canvases()
+            if moved:
+                print(f"  Moved {moved} shown doc(s) from the retired canvas pane onto project canvases")
+        except Exception as e:
+            print(f"  ⚠ canvas pane migration failed (retried next boot): {e}")
         try:
             swept = run_settings_sweep_orphans(run_settings_paths_in_use())
             if swept:

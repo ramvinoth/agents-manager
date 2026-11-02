@@ -11,15 +11,16 @@ import {
   ScrollView,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native"
+import { TouchableOpacity, useSeen } from "../components/Tracked"
+import { recordSwipe } from "../lib/usageReporter"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type PendingPlan, type PendingQuestion, type PermApproval, type SlashCommand } from "../api/client"
+import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk, type SlashCommand } from "../api/client"
 import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { applyMention, hashTerm } from "../lib/fileMention"
@@ -42,13 +43,16 @@ import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
 import QuestionCard from "../components/QuestionCard"
 import PlanCard from "../components/PlanCard"
+import RedApprovalCard from "../components/RedApprovalCard"
+import { resolveRed, withoutRed, type RedResolution } from "../lib/redApproval"
 import { ItemView, PinnedBanner, WorkingBubble } from "../components/ThreadItems"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
-import { takeReply, withReply } from "../lib/canvas"
+import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
+import { liveEvents } from "../api/events"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -79,8 +83,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [fromCache, setFromCache] = useState(false)
   const { online } = useReachability()
   // Back online while showing the saved copy → swap in the live transcript.
-  // (An idle thread has no poll of its own; any request anywhere — the Chats
-  // list, the inbox badge — flips `online`.) Declared before reload, so read
+  // (An idle thread has no refresh loop of its own; any request anywhere — the
+  // Chats list, the inbox badge — flips `online`.) Declared before reload, so read
   // through a ref.
   const reloadRef = useRef<() => unknown>(() => {})
   useEffect(() => {
@@ -95,6 +99,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [pending, setPending] = useState<PermApproval[]>([])
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null)
+  // Org (Red) approvals this session raised — decided inline (card 223).
+  // Stamped with the session they were read for: a reused Thread route must
+  // never show the previous chat's asks as this one's.
+  const [redFor, setRedFor] = useState<{ sid: string; asks: RedAsk[] }>({ sid: "", asks: [] })
+  const [redBusy, setRedBusy] = useState("")
+  const [redError, setRedError] = useState<{ id: string; text: string } | null>(null)
   const [queued, setQueued] = useState(0)
   // A reused Thread route may still hold the last chat's state. Existing chats
   // derive identity from the route; new-chat responses belong to one lifetime,
@@ -111,6 +121,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const sessionId = path
     ? (path.split("/").pop() || "").replace(/\.jsonl$/, "").trim()
     : createdSession?.lifetime === routeLifetime ? createdSession.id : ""
+  const pendingRed = sessionId && redFor.sid.trim() === sessionId ? redFor.asks : []
   const setSessionId = useCallback((id: string) => {
     if (isCurrentThread()) setCreatedSession({ lifetime: routeLifetime, id: id.trim() })
   }, [routeLifetime, isCurrentThread])
@@ -160,15 +171,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const openMap = useCallback(() => {
     if (sessionId) navigation.navigate("Map", { session: sessionId, title: label })
   }, [navigation, sessionId, label])
-  const openCanvas = useCallback((initial?: string) => {
-    if (sessionId) navigation.navigate("Canvas", { session: sessionId, title: label, initial })
+  const openCanvas = useCallback(() => {
+    if (sessionId) navigation.navigate("Canvas", { session: sessionId, title: label })
   }, [navigation, sessionId, label])
-  // A Reply tapped on the Canvas screen lands in this chat's composer, after
-  // whatever the owner had already typed.
-  useFocusEffect(useCallback(() => {
-    const reply = sessionId ? takeReply(sessionId) : ""
-    if (reply) setInput((d) => withReply(d, reply))
-  }, [sessionId]))
   const openInbox = useCallback(() => {
     if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
     else navigation.navigate("Inbox")
@@ -195,10 +200,14 @@ export default function ThreadScreen({ route, navigation }: Props) {
     },
     onPanResponderRelease: (_event, g) => {
       if (!boardSwipeCancelled.current && boardSwipeState.current.enabled
-        && completesBoardSwipe(g)) boardSwipeState.current.openBoard()
+        && completesBoardSwipe(g)) {
+        recordSwipe("swipe-board")
+        boardSwipeState.current.openBoard()
+      }
     },
     onPanResponderTerminate: () => { boardSwipeCancelled.current = true },
   })).current
+  useSeen("swipe-board", undefined, true)
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
   // WhatsApp-style floating day header: the date of the topmost visible message,
@@ -290,7 +299,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // devices — this is what makes the keyboard land flush against the composer.
   const headerHeight = useHeaderHeight()
   const listRef = useRef<FlatList<ListItem>>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // stop() for the live run's refresh loop (startPoll), null when none runs.
+  const pollRef = useRef<(() => void) | null>(null)
   const localId = useRef(0)
   // Optimistic user bubbles (fresh send + steer) that the server transcript may
   // not have caught up to yet. reload() keeps re-appending these until the server
@@ -441,6 +451,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           .then((s) => {
             setPendingQuestion(s.pending_question || null)
             setPendingPlan(s.pending_plan || null)
+            setRedFor({ sid, asks: s.pending_red || [] })
             if (s.running && !pollRef.current) {
               setBusy(true)
               startPoll(sid)
@@ -454,9 +465,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   )
 
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
+    return () => pollRef.current?.()
   }, [])
 
   // A chat opened the moment it was started (`starting`): its transcript isn't
@@ -555,7 +564,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
                 // A map needs the session's project; an unsent chat has none yet.
-                ...(sessionId ? [{ text: "Map", onPress: openMap }, { text: "Canvas", onPress: () => openCanvas() }] : []),
+                ...(sessionId ? [{ text: "Map", onPress: openMap }, { text: "Canvas", onPress: openCanvas }] : []),
               ])
             }} />
         </View>
@@ -642,25 +651,37 @@ export default function ThreadScreen({ route, navigation }: Props) {
     setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === id)))
   }
 
+  /** Follow a live run until it ends. The server's live-events stream says
+   *  when this run's transcript grew (fetch just the new bytes) or its state
+   *  moved (status + transcript); while the stream is down — another host's
+   *  chat, an older server, a dropped socket — it polls, backing off
+   *  1.5s -> 4s -> 10s while nothing changes. */
   function startPoll(sid: string) {
     if (!isCurrentThread()) return
-    if (pollRef.current) clearInterval(pollRef.current)
-    let ticks = 0
-    let inFlight = false // guard: a slow status+reload must not overlap the next tick
-    pollRef.current = setInterval(async () => {
-      if (inFlight) return // previous tick still awaiting — skip so setItems can't race
-      inFlight = true
-      ticks++
+    pollRef.current?.()
+    let done = false
+    let lastStatus = ""
+    // Serialized: a slow status+read never overlaps the next, so setItems can't race.
+    const pollOnce = serialize(async () => {
+      const before = loadedRef.current
+      await poll()
+      return loadedRef.current !== before
+    })
+    const tick = serialize(async () => {
+      if (done) return false
       try {
         const s = await api.chatStatus(sid)
+        if (done) return false
         setPending(s.pending_approvals || [])
         setPendingQuestion(s.pending_question || null)
         setPendingPlan(s.pending_plan || null)
+        setRedFor({ sid, asks: s.pending_red || [] })
         setQueued(s.queue?.length || 0)
         setQueueList(s.queue || [])
-        if (!s.running || ticks > 400) {
-          if (pollRef.current) clearInterval(pollRef.current)
-          pollRef.current = null
+        if (!s.running) {
+          done = true
+          stop()
+          if (pollRef.current === stop) pollRef.current = null
           await poll() // final response replaces the "working" bubble
           // The run ended. It may have ended WAITING on you — a per-tool approval
           // or a parked AskUserQuestion (pending_question). Either way the server
@@ -668,17 +689,37 @@ export default function ThreadScreen({ route, navigation }: Props) {
           // the card(s) render. An unanswered prompt is not "done".
           setActivity("")
           setBusy(false)
-          return
+          return true
         }
+        const sig = JSON.stringify([s.queue, s.pending_approvals, s.pending_question, s.pending_plan, s.turns])
+        const statusMoved = sig !== lastStatus
+        lastStatus = sig
         // Still running → stream the new steps in. poll() fetches only bytes
         // appended since the last read, so it's cheap enough to run every tick.
-        await poll()
+        return (await pollOnce()) || statusMoved
       } catch {
-        /* keep polling through transient errors */
-      } finally {
-        inFlight = false
+        return false // transient; the next tick retries
       }
-    }, 1500)
+    })
+    const stopLive = startLiveRefresh({
+      // The server reports this transcript's growth wherever it lives; another
+      // host's chat counts as live only once the server says it can see it.
+      stream: liveEvents(),
+      watch: { session: sid, host, agent, path: path || "", needsAck: host !== "local" },
+      refresh: tick,
+      fallbackMs: THREAD_FALLBACK_MS,
+      liveMs: 15000,
+      onEvent: (ev) => {
+        if (ev.type !== "resync" && ("session" in ev ? ev.session : "") !== sid) return
+        if (ev.type === "transcript-changed") pollOnce()
+        else if (ev.type !== "list-changed") tick()
+      },
+    })
+    const stop = () => {
+      done = true
+      stopLive()
+    }
+    pollRef.current = stop
   }
 
   /**
@@ -757,10 +798,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
       // Recover the UI immediately rather than waiting on the next poll tick —
       // if the server run is wedged, the poll might never report !running, which
       // would otherwise leave the user stuck in the "busy" state forever.
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
+      pollRef.current?.()
+      pollRef.current = null
       setBusy(false)
       setActivity("")
       setQueued(0)
@@ -953,6 +992,19 @@ export default function ThreadScreen({ route, navigation }: Props) {
       .chatPlanDecide({ session: path || sessionId, decision, feedback })
       .then(() => startPoll((path?.split("/").pop() || "").replace(/\.jsonl$/, "") || sessionId))
       .catch((e) => setError(userError(e, "your decision", "send")))
+  }
+
+  /** Approve or deny an org (Red) approval this session raised — the same
+   *  resolve the Inbox and the cockpit use, so the Inbox row clears too. The
+   *  server tells the asking session the outcome. */
+  function decidePendingRed(id: string | undefined, resolution: RedResolution) {
+    if (redBusy || !id) return
+    setRedBusy(id)
+    setRedError(null)
+    resolveRed(api.orgResolveApproval, id, resolution)
+      .then(() => setRedFor((r) => ({ ...r, asks: withoutRed(r.asks, id) })))
+      .catch((e) => setRedError({ id, text: userError(e, "this approval", "decide") }))
+      .finally(() => setRedBusy(""))
   }
 
   if (loading) {
@@ -1198,7 +1250,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           so a TALL card (e.g. a multi-question AskUserQuestion) can't push its
           Approve/Submit buttons off-screen — the user must always be able to reach
           them. Capped at ~55% of the screen; the composer stays visible below. */}
-      {(pendingPlan || pendingQuestion || pending.length) ? (
+      {(pendingPlan || pendingQuestion || pending.length || pendingRed.length) ? (
         <ScrollView
           style={{ maxHeight: Dimensions.get("window").height * 0.55 }}
           keyboardShouldPersistTaps="handled"
@@ -1221,6 +1273,16 @@ export default function ThreadScreen({ route, navigation }: Props) {
               <QuestionCard input={pendingQuestion.questions} onAnswer={answerPendingQuestion} />
             </View>
           ) : null}
+
+          {/* Org (Red) approvals this session asked for (a delete, a mode
+              change, a restart): decided here instead of a trip to the Inbox. */}
+          {pendingRed.map((ask) => (
+            <View key={ask.id} style={{ marginHorizontal: 12, marginBottom: 8 }}>
+              <RedApprovalCard testID={`chat-red-${ask.id}`} ask={ask} headline={`Needs your OK: ${ask.summary}`}
+                busy={redBusy === ask.id} error={redError && redError.id === ask.id ? redError.text : ""}
+                onDecide={(resolution) => decidePendingRed(ask.id, resolution)} />
+            </View>
+          ))}
 
           {/* Per-call tool approvals (Allow/Deny). Questions are the card above. */}
           {pending.map((p) => (
@@ -1403,6 +1465,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         host={host}
         cwd={cwd}
         session={path}
+        agent={agent}
         onClose={() => setCapDrawerOpen(false)}
       />
     </>

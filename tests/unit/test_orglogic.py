@@ -442,3 +442,38 @@ def test_session_project_when_no_explicit():
 def test_nothing_gives_none():
     assert orglogic.resolve_board_project(None, None) is None
     assert orglogic.resolve_board_project("", "") is None
+
+
+# ── ledger_view (the agents' card_list) ───────────────────────────────────────
+
+_COLS = {1: "Todo", 2: "Done", 3: "Review"}
+_LEDGER = [
+    {"id": 1, "column_id": 1, "body": "short"},
+    {"id": 2, "column_id": 2, "body": "finished"},
+    {"id": 3, "column_id": 3, "body": "x" * 1000},
+    {"id": 4, "column_id": 99, "body": None},  # column deleted since
+]
+
+
+def test_ledger_hides_done_and_counts_it():
+    v = orglogic.ledger_view(_LEDGER, _COLS)
+    assert [c["id"] for c in v["cards"]] == [1, 3, 4]
+    assert v["done_hidden"] == 1
+
+
+def test_ledger_include_done():
+    v = orglogic.ledger_view(_LEDGER, _COLS, include_done=True)
+    assert [c["id"] for c in v["cards"]] == [1, 2, 3, 4]
+    assert v["done_hidden"] == 0
+
+
+def test_ledger_names_column_and_trims_body():
+    by = {c["id"]: c for c in orglogic.ledger_view(_LEDGER, _COLS)["cards"]}
+    assert by[1]["column"] == "Todo" and by[1]["body"] == "short"
+    assert len(by[3]["body"]) == orglogic.LEDGER_BODY_CHARS + 1 and by[3]["body"].endswith("…")
+    assert by[4]["column"] == "" and by[4]["body"] == ""
+
+
+def test_ledger_done_is_case_insensitive():
+    v = orglogic.ledger_view([{"id": 5, "column_id": 7, "body": ""}], {7: "DONE"})
+    assert v == {"cards": [], "done_hidden": 1}

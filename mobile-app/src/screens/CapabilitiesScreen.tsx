@@ -21,6 +21,7 @@ export default function CapabilitiesScreen({ route, navigation }: Props) {
   const host = route.params?.host || currentHost()
   const cwd = route.params?.cwd
   const session = route.params?.session
+  const agent = route.params?.agent
   const scopeTitle = route.params?.title
   useEffect(() => {
     if (scopeTitle) navigation.setOptions({ title: `${scopeTitle} · Skills & tools` })
@@ -32,7 +33,7 @@ export default function CapabilitiesScreen({ route, navigation }: Props) {
 
   return (
     <View style={styles.page}>
-      <CapabilitiesPanel host={host} cwd={cwd} session={session} active={focused} testPrefix="cap" />
+      <CapabilitiesPanel host={host} cwd={cwd} session={session} agent={agent} active={focused} testPrefix="cap" />
     </View>
   )
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput, View } from "react-native"
+import { TouchableOpacity } from "../components/Tracked"
 import * as Clipboard from "expo-clipboard"
 import { api, type IntegrationConnection, type IntegrationProvider, type IntegrationService, type IntegrationsView, type LocalDisk, type ServiceState, type SetupStep } from "../api/client"
 import { useNavigation } from "@react-navigation/native"
@@ -12,6 +13,8 @@ import { offerUndo } from "../lib/undo"
 import { useTheme } from "../lib/useTheme"
 import Icon, { type IconName } from "../components/Icon"
 import { useStyles } from "../lib/styles"
+import EnvSection from "../components/EnvSection"
+import IntakeSection from "../components/IntakeSection"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 type TokenDraft = { provider: string; connection?: string; token: string; fields: Record<string, string> }
@@ -410,6 +413,8 @@ export default function IntegrationsScreen() {
       })}
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
+      <EnvSection />
+      <IntakeSection />
 
     </ScrollView>
   )

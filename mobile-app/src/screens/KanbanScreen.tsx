@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, Text, TextInput, View } from "react-native"
+import { Pressable, TouchableOpacity } from "../components/Tracked"
 import { Gesture, GestureDetector, ScrollView as GHScrollView } from "react-native-gesture-handler"
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
@@ -15,6 +16,7 @@ import { useStyles } from "../lib/styles"
 import { userError } from "../lib/errors"
 import { tap } from "../lib/haptics"
 import { showActions } from "../lib/actionSheet"
+import CreateSheet from "../components/CreateSheet"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Kanban">
 
@@ -212,6 +214,37 @@ export default function KanbanScreen({ route, navigation }: Props) {
     ])
   }, [projectId, cards.length, route.params?.title, navigation])
 
+  // Column management is project-scoped: /api/org/columns needs a project_id, and
+  // a chat's own board shares its project's columns. Same contract as the web
+  // dialog — a deleted column's cards stay on the board, under Unsorted.
+  const [colSheet, setColSheet] = useState<{ column?: BoardColumn } | null>(null)
+  const columnFailed = useCallback((e: unknown, verb: string) => {
+    if ((e as { status?: number })?.status === 401) { setToken(null); navigation.replace("Login"); return }
+    if (isCurrent()) setSnapshot(cur => ({ ...cur, error: userError(e, "the column", verb) }))
+  }, [navigation, isCurrent])
+  const saveColumn = useCallback(async ({ name }: Record<string, string>) => {
+    if (projectId === undefined || !colSheet) return
+    const column = colSheet.column
+    try {
+      if (column) await api.orgUpdateColumn({ id: column.id, name })
+      // Append after the last column; positions can have gaps, so not columns.length.
+      else await api.orgCreateColumn({ project_id: projectId, name, position: Math.max(-1, ...columns.map(c => c.position)) + 1 })
+      if (isCurrent()) load()
+    } catch (e) { columnFailed(e, column ? "rename" : "create") }
+  }, [projectId, colSheet, columns, isCurrent, load, columnFailed])
+  const deleteColumn = useCallback((column: BoardColumn) => {
+    const count = cards.filter(c => c.column_id === column.id).length
+    Alert.alert(
+      `Delete the column “${column.name}”?`,
+      count ? `Its ${count} card${count === 1 ? "" : "s"} stay on the board, under Unsorted.` : "It has no cards.",
+      [{ text: "Cancel", style: "cancel" }, {
+        text: "Delete", style: "destructive", onPress: async () => {
+          try { await api.orgDeleteColumn(column.id); if (isCurrent()) load() } catch (e) { columnFailed(e, "delete") }
+        },
+      }],
+    )
+  }, [cards, isCurrent, load, columnFailed])
+
   // Open the cockpit at the tapped item over the queue as it stands now.
   const openCockpit = useCallback((index: number) => cockpit.open(decisions, index), [cockpit.open, decisions])
 
@@ -278,7 +311,10 @@ export default function KanbanScreen({ route, navigation }: Props) {
         {projectId !== undefined ? (
           // A destructive action never sits bare beside search: it lives behind the board's menu.
           <Pressable
-            onPress={() => showActions(route.params?.title || "Board", [{ text: "Delete board…", destructive: true, onPress: deleteBoard }])}
+            onPress={() => showActions(route.params?.title || "Board", [
+              { text: "Add column…", onPress: () => setColSheet({}) },
+              { text: "Delete board…", destructive: true, onPress: deleteBoard },
+            ])}
             hitSlop={8}
             testID="kanban-board-menu"
             accessibilityLabel="Board actions"
@@ -307,9 +343,23 @@ export default function KanbanScreen({ route, navigation }: Props) {
             style={[st.kbColumn, { width: COL_W, maxHeight: viewportH ? viewportH - 20 : undefined }]}
           >
             <View style={st.kbColumnHead}>
-              <Text style={st.kbColumnName}>
+              <Text style={[st.kbColumnName, { flex: 1 }]} numberOfLines={1}>
                 {column.name} <Text style={st.kbColumnCount}>{colCards.length}</Text>
               </Text>
+              {projectId !== undefined && column.id > 0 ? (
+                <TouchableOpacity
+                  testID={`kanban-column-menu-${column.id}`}
+                  accessibilityLabel={`${column.name} column actions`}
+                  onPress={() => showActions(column.name, [
+                    { text: "Rename…", onPress: () => setColSheet({ column }) },
+                    { text: "Delete column…", destructive: true, onPress: () => deleteColumn(column) },
+                  ])}
+                  hitSlop={8}
+                  style={{ marginRight: 10 }}
+                >
+                  <Icon name="more" size={16} color={t.textMuted} />
+                </TouchableOpacity>
+              ) : null}
               {column.id > 0 ? (
                 <TouchableOpacity testID={`kanban-add-${column.id}`} onPress={() => { if (isCurrent()) { scope.draft = { column: column.id, title: "" }; redrawDraft(n => n + 1) } }} hitSlop={8}>
                   <Icon name="add" size={18} color={t.accent} />
@@ -357,6 +407,15 @@ export default function KanbanScreen({ route, navigation }: Props) {
         ))}
       </ScrollView>
       {cockpit.element}
+      <CreateSheet
+        visible={colSheet !== null}
+        title={colSheet?.column ? "Rename column" : "New column"}
+        submitLabel={colSheet?.column ? "Save" : "Add"}
+        fields={[{ key: "name", label: "Name", placeholder: "e.g. QA", required: true }]}
+        initial={colSheet?.column ? { name: colSheet.column.name } : undefined}
+        onSubmit={saveColumn}
+        onClose={() => setColSheet(null)}
+      />
     </View>
   )
 }

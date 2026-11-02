@@ -23,6 +23,10 @@ describe("Native inbox — conversations, bubbles, decisions, composer", functio
     if (await shown("login-username")) {
       await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await tap("login-submit")
     }
+    // An open decision opens the deck by itself on launch, over the chats list;
+    // close it to reach the Inbox.
+    await $("~decision-cockpit").waitForDisplayed({ timeout: 20000 })
+    await tap("cockpit-close")
     await $("~chats-list").waitForDisplayed()
     await tap("tab-Inbox")
     await $("~inbox-list").waitForDisplayed()

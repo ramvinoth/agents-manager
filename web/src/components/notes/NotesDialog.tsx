@@ -35,14 +35,21 @@ const SAVE_DEBOUNCE_MS = 700
  * it), list backlinks under the open note, filter by tag, draw the graph, and
  * export the whole project as a vault.
  */
-export function NotesDialog({ host, cwd, name, onClose }: { host: string; cwd: string; name: string; onClose: () => void }) {
+export function NotesDialog({ host, cwd, name, initialNote, onClose }: {
+  host: string
+  cwd: string
+  name: string
+  /** A note to open at once (a canvas link to it). */
+  initialNote?: number
+  onClose: () => void
+}) {
   const [project, setProject] = useState<OrgProject | null>(null)
   const [notes, setNotes] = useState<Note[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState("")
   const [archived, setArchived] = useState(false)
   const [q, setQ] = useState("")
-  const [openId, setOpenId] = useState<number | null>(null)
+  const [openId, setOpenId] = useState<number | null>(initialNote ?? null)
   const [graph, setGraph] = useState<NoteGraph | null>(null)
   const [tags, setTags] = useState<string[]>([])
   const [showGraph, setShowGraph] = useState(false)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Plus, MoreHorizontal, Info } from "lucide-react"
+import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Shapes, Plus, MoreHorizontal, Info } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,8 +17,9 @@ import { useStore } from "@/store"
 import { api } from "@/lib/api"
 import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "@/lib/types"
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
+import type { CanvasRef } from "@/lib/canvasRef"
 import { projectLabels, projectParents, projectTree, type TreeNode } from "@/lib/projectTree"
-import { KanbanDialog, NotesDialog, MapDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
+import { KanbanDialog, NotesDialog, MapDialog, CanvasDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
 export function SessionList() {
@@ -37,6 +38,9 @@ export function SessionList() {
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
   const [mapFor, setMapFor] = useState<Group | null>(null)
+  const [canvasFor, setCanvasFor] = useState<Group | null>(null)
+  // What a canvas tile asked to open inside the dialog it opens (a card, note or file).
+  const [openAt, setOpenAt] = useState<{ card?: number; note?: number; path?: string }>({})
   const projectPlugins = useProjectPlugins()
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string; cwd: string } | null>(null)
@@ -164,6 +168,7 @@ export function SessionList() {
           onNotes={() => setNotesFor(g)}
           onInbox={() => setInboxFor(g)}
           onMap={() => setMapFor(g)}
+          onCanvas={() => setCanvasFor(g)}
           onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
         />
       </div>
@@ -204,6 +209,18 @@ export function SessionList() {
       )}
     </div>
   )
+  }
+
+  // A canvas tile's link opens the same dialog its rail row does, over the canvas.
+  function openRef(g: Group, ref: CanvasRef) {
+    if (ref.kind === "card") { setOpenAt({ card: Number(ref.id) }); setTasksFor(g) }
+    else if (ref.kind === "note") { setOpenAt({ note: Number(ref.id) }); setNotesFor(g) }
+    else if (ref.kind === "code") { setOpenAt({ path: ref.id }); setMapFor(g) }
+    else if (ref.kind === "inbox") setInboxFor(g)
+    else {
+      const sift = projectPlugins.find((p) => p.id === "sift")
+      if (sift) setPluginFor({ plugin: sift, group: g })
+    }
   }
 
   return (
@@ -247,7 +264,8 @@ export function SessionList() {
           host={currentHost}
           cwd={tasksFor.project || tasksFor.dir}
           name={projectName(tasksFor.project || tasksFor.dir)}
-          onClose={() => setTasksFor(null)}
+          initialCard={openAt.card}
+          onClose={() => { setTasksFor(null); setOpenAt({}) }}
         />
       )}
       {notesFor && (
@@ -255,7 +273,8 @@ export function SessionList() {
           host={currentHost}
           cwd={notesFor.project || notesFor.dir}
           name={projectName(notesFor.project || notesFor.dir)}
-          onClose={() => setNotesFor(null)}
+          initialNote={openAt.note}
+          onClose={() => { setNotesFor(null); setOpenAt({}) }}
         />
       )}
       {inboxFor && (
@@ -271,7 +290,17 @@ export function SessionList() {
           host={currentHost}
           cwd={mapFor.project || mapFor.dir}
           name={projectName(mapFor.project || mapFor.dir)}
-          onClose={() => setMapFor(null)}
+          initialPath={openAt.path}
+          onClose={() => { setMapFor(null); setOpenAt({}) }}
+        />
+      )}
+      {canvasFor && (
+        <CanvasDialog
+          host={currentHost}
+          cwd={canvasFor.project || canvasFor.dir}
+          name={projectName(canvasFor.project || canvasFor.dir)}
+          onClose={() => setCanvasFor(null)}
+          onOpenRef={(ref) => openRef(canvasFor, ref)}
         />
       )}
       {pluginFor && (
@@ -312,6 +341,7 @@ function ProjectMenu({
   onNotes,
   onInbox,
   onMap,
+  onCanvas,
   onPlugin,
 }: {
   name: string
@@ -323,6 +353,7 @@ function ProjectMenu({
   onNotes: () => void
   onInbox: () => void
   onMap: () => void
+  onCanvas: () => void
   onPlugin: (p: ProjectPlugin) => void
 }) {
   return (
@@ -355,6 +386,9 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onMap}>
           <Network className="size-3.5" /> Map
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onCanvas}>
+          <Shapes className="size-3.5" /> Canvas
         </DropdownMenuItem>
         {/* Project plugins only open this computer's folders (the caller passes none otherwise). */}
         {plugins.length > 0 && <DropdownMenuSeparator />}

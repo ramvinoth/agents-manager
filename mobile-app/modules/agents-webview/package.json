@@ -1,0 +1,7 @@
+{
+  "name": "agents-webview",
+  "version": "0.1.0",
+  "description": "A WKWebView whose agents:// page requests are answered by the app, so a page can ride the app's transport (direct or relay).",
+  "main": "src/index.ts",
+  "private": true
+}

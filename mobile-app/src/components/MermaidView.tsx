@@ -19,7 +19,8 @@
  * diagram text can't break out of the template or inject script.
  */
 import React, { useMemo, useRef, useState } from "react"
-import { Modal, Pressable, Text, View } from "react-native"
+import { Modal, Text, View } from "react-native"
+import { Pressable } from "./Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { WebView } from "react-native-webview"
 import * as Clipboard from "expo-clipboard"

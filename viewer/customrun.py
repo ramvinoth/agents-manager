@@ -203,6 +203,8 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="",
                "model": preset.get("model", ""), "cwd": cwd, "interrupted": False,
                "host": "local", "agent": "custom", "provider": preset_id}
         CHAT_JOBS[session_id] = job
+    from viewer.engine import end_oneshot_inflight, record_inflight
+    record_inflight(session_id, job)
 
     def run():
         err = ""
@@ -278,6 +280,7 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="",
                                data={"session": session_id, "host": host})
             except Exception:
                 pass
+            end_oneshot_inflight(session_id, job)
 
     threading.Thread(target=run, daemon=True).start()
     return True

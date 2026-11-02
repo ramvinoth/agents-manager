@@ -3,7 +3,7 @@ control protocol, and real HTTP/WebSocket round trips through the mux onto a
 throwaway loopback server. Hermetic: no relay, no DB, no network beyond
 127.0.0.1.
 
-Run with:  /usr/bin/python3 -m pytest tests/unit/test_relay.py -v
+Run with:  .venv/bin/python -m pytest tests/unit/test_relay.py -v
 """
 import base64
 import http.server

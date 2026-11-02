@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Alert, Linking, Text, TouchableOpacity, View } from "react-native"
+import { ActivityIndicator, Alert, Linking, Text, View } from "react-native"
+import { TouchableOpacity } from "./Tracked"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Drive } from "../api/client"

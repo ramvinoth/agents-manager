@@ -57,7 +57,7 @@ export type RootStackParamList = {
   Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
   Call: { label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
-  Capabilities: { host?: string; cwd?: string; session?: string; title?: string } | undefined
+  Capabilities: { host?: string; cwd?: string; session?: string; agent?: string; title?: string } | undefined
   Providers: undefined
   Integrations: undefined
   Calendar: undefined
@@ -65,7 +65,7 @@ export type RootStackParamList = {
   CardDetail: { id: number }
   Notes: { session?: string; project?: number; title?: string; tag?: string } | undefined
   Map: { project?: number; session?: string; title: string }
-  Canvas: { session: string; title: string; initial?: string }
+  Canvas: { session: string; title: string }
   Files: undefined
   Agents: undefined
   /** Create (no template) or edit one of the caller's own agents. */

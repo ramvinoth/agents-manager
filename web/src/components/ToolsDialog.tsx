@@ -32,6 +32,7 @@ import { Markdown } from "@/components/Markdown"
 import { stripFrontmatter } from "@/lib/markdown"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
+import { chatPluginsApply, pluginScopeNote, type PluginScope } from "@/lib/chatPlugins"
 import type { ToolsTab } from "@/store/layout"
 import type { MarketKind } from "@/lib/marketplace"
 import type { McpServer, Plugin, Skill } from "@/lib/types"
@@ -40,11 +41,15 @@ import { McpPanel } from "@/components/McpPanel"
 
 /** "This chat" scope (and per-chat plugins) exist only for an open Claude chat on
  *  this machine: the engine passes them as --plugin-dir on local Claude runs only. */
-function useChatScope() {
+function usePluginScope(): PluginScope {
   const session = useStore((s) => s.currentSessionPath)
-  const local = useStore((s) => s.currentHost) === "local"
-  const claude = useStore((s) => s.currentAgent) === "claude"
-  return !!session && local && claude
+  const host = useStore((s) => s.currentHost)
+  const agent = useStore((s) => s.currentAgent)
+  return { host, agent, session }
+}
+
+function useChatScope() {
+  return chatPluginsApply(usePluginScope())
 }
 
 const NEW_SKILL =
@@ -355,7 +360,9 @@ function McpEditor({ server, mode: initial, onClose }: { server: McpServer | nul
 function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: number; name: string } }) {
   const session = useStore((s) => s.currentSessionPath)
   const loadCapabilities = useStore((s) => s.loadCapabilities)
-  const chatScope = useChatScope()
+  const scope = usePluginScope()
+  const chatScope = chatPluginsApply(scope)
+  const note = pluginScopeNote(scope)
   const [busy, setBusy] = useState("")
   const [err, setErr] = useState("")
 
@@ -392,11 +399,7 @@ function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: numbe
   return (
     <div className="h-full overflow-y-auto">
       <div className="space-y-1 px-2 pb-4">
-        {!chatScope && (
-          <p className="px-1 pb-1 text-xs text-muted-foreground">
-            Plugins apply to Claude chats on this Mac. Open one to add or remove them.
-          </p>
-        )}
+        {note && <p data-testid="plugins-note" className="px-1 pb-1 text-xs text-muted-foreground">{note}</p>}
         {err && <p className="px-1 text-xs text-destructive">{err}</p>}
         {chatScope && agent && (
           <div className="flex items-center gap-2 rounded-md bg-muted/40 p-2 text-xs text-muted-foreground">
@@ -431,7 +434,7 @@ function PluginList({ plugins, agent }: { plugins: Plugin[]; agent?: { id: numbe
             {p.description && <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.description}</div>}
           </div>
         ))}
-        {!plugins.length && <p className="px-1 text-xs text-muted-foreground">No plugins.</p>}
+        {!plugins.length && !note && <p className="px-1 text-xs text-muted-foreground">No plugins.</p>}
       </div>
     </div>
   )
@@ -446,7 +449,6 @@ export function ToolsDialog() {
   const closeTools = useStore((s) => s.closeTools)
   const caps = useStore((s) => s.caps)
   const capsLoading = useStore((s) => s.capsLoading)
-  const currentAgent = useStore((s) => s.currentAgent)
   const [skillOpen, setSkillOpen] = useState<Open<Skill> | null>(null)
   const [mcpOpen, setMcpOpen] = useState<Open<McpServer> | null>(null)
   const [market, setMarket] = useState<MarketKind | null>(null)
@@ -456,8 +458,6 @@ export function ToolsDialog() {
   const local = useStore((s) => s.currentHost) === "local"
   const chatScope = useChatScope()
   if (!tab) return null
-  // Plugins exist only for Claude chats; another agent's chat falls back to Skills.
-  const shown = tab === "plugins" && currentAgent !== "claude" ? "skills" : tab
 
   return (
     <Dialog open onOpenChange={(o) => !o && closeTools()}>
@@ -465,11 +465,12 @@ export function ToolsDialog() {
         <DialogHeader className="sr-only">
           <DialogTitle>Skills, MCP servers and plugins</DialogTitle>
         </DialogHeader>
-          <Tabs value={shown} onValueChange={(t) => openTools(t as ToolsTab)} className="flex min-h-0 flex-1 flex-col gap-0 pt-2">
+          <Tabs value={tab} onValueChange={(t) => openTools(t as ToolsTab)} className="flex min-h-0 flex-1 flex-col gap-0 pt-2">
             <TabsList className="m-2 mr-12">
               <TabsTrigger value="skills">Skills</TabsTrigger>
               <TabsTrigger value="mcp">MCP</TabsTrigger>
-              {currentAgent === "claude" && <TabsTrigger value="plugins">Plugins</TabsTrigger>}
+              {/* Always offered: for a chat plugins don't reach (remote, Codex, Copilot) the tab says why. */}
+              <TabsTrigger value="plugins">Plugins</TabsTrigger>
             </TabsList>
 
             <TabsContent value="skills" className="min-h-0 flex-1">

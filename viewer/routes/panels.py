@@ -4,7 +4,7 @@ import threading
 import traceback
 from urllib.parse import urlencode
 
-from viewer import config, db
+from viewer import config, db, events
 from viewer.browser import (
     browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws, serve_terminal_ws,
 )
@@ -130,4 +130,12 @@ class PanelsMixin:
         key = (req.query.get("key") or [""])[0]
         init = (req.query.get("init") or [""])[0]
         serve_terminal_ws(self, req.host, cols, rows, key, init)
+
+    def _g_events_ws(self, req):
+        # A person's client only (cookie or Bearer); an agent session's MCP
+        # credential has its own tools and no screen to refresh.
+        if (req.principal or {}).get("kind") != "app":
+            self.send_error(403, "Forbidden")
+            return
+        events.serve_ws(self)
 

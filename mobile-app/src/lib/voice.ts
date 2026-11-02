@@ -83,10 +83,9 @@ export type Utterance = { buf: ArrayBuffer | null; silent: boolean }
  * The endpoint decision is the pure `endpoint.ts` helper fed by expo-av metering
  * frames; timing uses the frame's own `s.durationMillis` (monotonic, no Date).
  *
- * Shared by both call engines: the STT listen loop below streams each window to
- * /api/voice/ws, and the Nemotron loop (useAssistantTurn) sends it as one turn.
+ * The STT listen loop below streams each window to /api/voice/ws.
  */
-export async function recordUtterance(): Promise<Utterance> {
+async function recordUtterance(): Promise<Utterance> {
   let state: EndpointState = { heardSpeech: false, lastLoudMs: -1 }
   let stopReason: "endpoint" | "max" | "no-speech" | null = null
   const rec = (await audioSession.record(METERED_OPTIONS)) as Audio.Recording
@@ -226,19 +225,22 @@ export async function stopListening(): Promise<void> {
  */
 export async function speak(text: string): Promise<void> {
   if (!text.trim()) return
+  await playMedia((dest) => api.voiceTts(text, dest))
+}
+
+/** Play one segment the call brain is speaking itself (LFM3-Audio). */
+export async function playCallAudio(path: string, id: string): Promise<void> {
+  await playMedia((dest) => api.callAudio(path, id, dest))
+}
+
+async function playMedia(fetchSrc: (dest: string) => ReturnType<typeof api.voiceTts>): Promise<void> {
   const dest = `${FileSystem.cacheDirectory}tts-${Date.now()}-${Math.random().toString(36).slice(2)}.aac`
-  const src = await api.voiceTts(text, dest)
+  const src = await fetchSrc(dest)
   try {
     await audioSession.play(src.url, src.headers)
   } finally {
     if (src.file) FileSystem.deleteAsync(src.url, { idempotent: true }).catch(() => {})
   }
-}
-
-/** Play an already-persisted reply file (a Nemotron turn's WAV) to completion
- *  through the session owner — same exclusivity with recording as `speak`. */
-export async function playFile(uri: string): Promise<void> {
-  await audioSession.play(uri, {})
 }
 
 /** Stop any in-progress TTS playback (barge-in / new turn). */
