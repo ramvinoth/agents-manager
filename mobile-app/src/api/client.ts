@@ -195,6 +195,15 @@ export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
 export type BoardColumn = { id: number; name: string; position: number }
+/** A door from the outside onto a board (viewer/intake.py): a POST to `path`
+ *  with the token becomes a card there and wakes `session_id`. */
+export type IntakeChannel = {
+  id: string; name: string; project_id: number; session_id: string; app_feedback: boolean
+  created_by: string; created_at: number; last_used: number; received: number; path: string
+  /** Only on create / new token, never on a list: shown once. */
+  token?: string
+}
+type IntakeReply = IntakeChannel | Queued | { error: string }
 /** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
  *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
 export type MapNode = {
@@ -897,6 +906,13 @@ export const api = {
   },
 
   // ---- org / Kanban (the "empire") ----
+  intakeList: () => req<{ channels: IntakeChannel[] }>("GET", "/api/org/intake"),
+  intakeCreate: (body: { name: string; project_id: number; for_session?: string; app_feedback?: boolean }) =>
+    req<IntakeReply>("POST", "/api/org/intake", body),
+  intakeUpdate: (body: { id: string; name?: string; for_session?: string; app_feedback?: boolean }) =>
+    req<IntakeReply>("POST", "/api/org/intake/update", body),
+  intakeRotate: (id: string) => req<IntakeReply>("POST", "/api/org/intake/rotate", { id }),
+  intakeDelete: (id: string) => req<{ deleted?: boolean; error?: string } | Queued>("POST", "/api/org/intake/delete", { id }),
   orgProjects: () => req<{ projects: OrgProject[] }>("GET", "/api/org/projects"),
   orgCreateProject: (body: { name: string; description?: string; host?: string; cwd?: string }) =>
     req<OrgProject>("POST", "/api/org/projects", body),

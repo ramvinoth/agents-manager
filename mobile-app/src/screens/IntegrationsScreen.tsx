@@ -13,6 +13,7 @@ import { offerUndo } from "../lib/undo"
 import { useTheme } from "../lib/useTheme"
 import Icon, { type IconName } from "../components/Icon"
 import { useStyles } from "../lib/styles"
+import IntakeSection from "../components/IntakeSection"
 
 type Draft = { provider: string; client_id: string; client_secret: string }
 type TokenDraft = { provider: string; connection?: string; token: string; fields: Record<string, string> }
@@ -408,6 +409,7 @@ export default function IntegrationsScreen() {
       })}
 
       <LocalDiskSection local={view.local} busy={busy === "local"} disabled={!!busy} onSave={setLocal} />
+      <IntakeSection />
 
     </ScrollView>
   )
