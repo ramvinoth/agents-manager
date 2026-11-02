@@ -523,9 +523,17 @@ export const api = {
     req<{ job: string }>("POST", "/api/git/clone", body),
   gitCloneStatus: (job: string) =>
     req<CloneStatus>("GET", `/api/git/clone/status?id=${encodeURIComponent(job)}`),
-  // One environment variable on a host (e.g. GH_TOKEN for clones).
+  // Per-host environment variables (e.g. GH_TOKEN): names are listed, a value
+  // is fetched only when the user reveals it.
+  env: (host: string) =>
+    req<{ keys: string[] }>("GET", `/api/env?host=${encodeURIComponent(host)}`),
+  envValue: (host: string, key: string) =>
+    req<{ key: string; value: string }>(
+      "GET", `/api/env/value?host=${encodeURIComponent(host)}&key=${encodeURIComponent(key)}`),
   envSet: (host: string, key: string, value: string) =>
-    req<{ saved: boolean }>("POST", "/api/env/set", { host, key, value }),
+    req<{ saved: boolean; keys: string[] }>("POST", "/api/env/set", { host, key, value }),
+  envUnset: (host: string, key: string) =>
+    req<{ unset: boolean; keys: string[] }>("POST", "/api/env/unset", { host, key }),
   projects: (host: string) =>
     req<Project[]>(
       "GET",
