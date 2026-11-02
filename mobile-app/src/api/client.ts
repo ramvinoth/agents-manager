@@ -114,14 +114,6 @@ export type SessionSummary = {
   endTime?: string
   cwd?: string
 }
-export type AgentInfo = {
-  id: string
-  label: string
-  vendor?: string
-  installed: boolean
-  loggedIn?: boolean
-  docs?: string
-}
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass"
 export type PermApproval = { id: string; tool_name: string; input: unknown }
 /** GET /api/session-meta: stored per-chat settings plus Trust (saved permission
@@ -733,13 +725,6 @@ export const api = {
   agentTemplateExtra: (body: { id: number; kind: "skill" | "mcp"; name: string; content?: string; config?: Record<string, unknown>; from_path?: string; delete?: boolean }) =>
     req<{ saved: boolean }>("POST", "/api/agent-templates/extra", body),
   agentTemplateDelete: (id: number) => req<{ deleted: boolean }>("POST", "/api/agent-templates/delete", { id }),
-
-  // ---- agents available on a host ----
-  agents: (host: string) =>
-    req<{ agents: AgentInfo[] }>(
-      "GET",
-      `/api/agents${host && host !== "local" ? `?host=${encodeURIComponent(host)}` : ""}`
-    ),
 
   // ---- filesystem browser (local / SSH host / cloud drive) ----
   // Every call is scoped by `scope` — {host} for an SSH host, {drive} for a
