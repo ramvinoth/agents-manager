@@ -1250,28 +1250,6 @@ function buildStyles(t: Theme) {
     canvasChip: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: t.chipBg, marginTop: 6, maxWidth: "100%" },
     canvasChipText: { color: t.accent, fontSize: 13, fontWeight: "600", flexShrink: 1 },
 
-    // MapScreen (map) — code-map breadcrumbs, states and the node list.
-    mapContent: { padding: 12, gap: 12, paddingBottom: 40 },
-    mapCrumbs: { alignItems: "center", gap: 4 },
-    mapCrumb: { flexDirection: "row", alignItems: "center", gap: 4 },
-    mapCrumbBtn: { paddingVertical: 6, paddingHorizontal: 4, minHeight: 32, justifyContent: "center" },
-    mapCrumbText: { color: t.accent, fontWeight: "600", fontSize: 14 },
-    mapCrumbTextLast: { color: t.text },
-    mapErrorBox: { padding: 12, borderRadius: 10, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, gap: 8 },
-    mapBody: { color: t.text, fontSize: 14 },
-    mapLink: { color: t.accent, fontWeight: "600", fontSize: 14 },
-    mapLoading: { padding: 32, alignItems: "center", gap: 8 },
-    mapHint: { color: t.textMuted, fontSize: 13 },
-    mapInstall: { padding: 12, gap: 6 },
-    mapInstallTitle: { color: t.text, fontWeight: "600", fontSize: 15 },
-    mapCode: { color: t.codeText, backgroundColor: t.codeBg, padding: 8, borderRadius: 6, fontSize: 12 },
-    mapMeta: { color: t.textMuted, fontSize: 12 },
-    mapList: { borderRadius: 10, borderWidth: 1, borderColor: t.border, overflow: "hidden" },
-    mapRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, paddingHorizontal: 12, borderColor: t.border, backgroundColor: t.surface },
-    mapRowDivided: { borderTopWidth: 1 },
-    mapRowTouched: { backgroundColor: t.attentionBg },
-    mapDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.warning },
-
     // NoteThread (nt) — the nested discussion under a note.
     ntWrap: { marginTop: 24, borderTopWidth: 1, borderTopColor: t.border, paddingTop: 12, gap: 8 },
     ntHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -1377,8 +1355,8 @@ function buildStyles(t: Theme) {
     orgStepText: { color: t.textMuted, fontSize: 13, flex: 1, lineHeight: 18 },
     orgName: { color: t.text, fontWeight: "600" },
     orgDesc: { color: t.textMuted, fontSize: 12, marginTop: 2 },
-    orgMapBtn: { alignSelf: "flex-start", marginTop: 6 },
-    orgMapText: { color: t.accent, fontSize: 13, fontWeight: "600" },
+    orgLinkBtn: { alignSelf: "flex-start", marginTop: 6 },
+    orgLinkText: { color: t.accent, fontSize: 13, fontWeight: "600" },
     orgActivity: { minHeight: 44, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: t.border, marginBottom: 18, flexDirection: "row", alignItems: "center", gap: 12 },
     orgActivityHint: { color: t.textMuted, fontSize: 14, marginTop: 4 },
     orgSkill: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
@@ -1444,6 +1422,9 @@ function buildStyles(t: Theme) {
     agBadgeText: { fontSize: 10, fontWeight: "700", color: t.textMuted },
     agJobs: { flexDirection: "row", alignItems: "center", gap: 2 },
     agJobsText: { fontSize: 10, color: t.textMuted },
+    agErrorBox: { padding: 12, borderRadius: 10, backgroundColor: t.surface, borderWidth: 1, borderColor: t.border, gap: 8 },
+    agErrorText: { color: t.text, fontSize: 14 },
+    agRetry: { color: t.accent, fontWeight: "600", fontSize: 14 },
   })
   return s
 }

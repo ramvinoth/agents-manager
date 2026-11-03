@@ -168,9 +168,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
     if (sessionId) navigation.navigate("Notes", { session: sessionId, title: label })
     else navigation.navigate("Notes")
   }, [navigation, sessionId, label])
-  const openMap = useCallback(() => {
-    if (sessionId) navigation.navigate("Map", { session: sessionId, title: label })
-  }, [navigation, sessionId, label])
   const openCanvas = useCallback(() => {
     if (sessionId) navigation.navigate("Canvas", { session: sessionId, title: label })
   }, [navigation, sessionId, label])
@@ -564,13 +561,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
                 // A map needs the session's project; an unsent chat has none yet.
-                ...(sessionId ? [{ text: "Map", onPress: openMap }, { text: "Canvas", onPress: openCanvas }] : []),
+                ...(sessionId ? [{ text: "Canvas", onPress: openCanvas }] : []),
               ])
             }} />
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openMap, openCanvas, isCurrentThread])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openCanvas, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while

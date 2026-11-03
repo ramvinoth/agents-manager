@@ -11,8 +11,7 @@ The spec is the contract between product and engineering: precise behaviour, tes
 - `mcp__viewer__note_list`, find `PRD: <Feature>` (tag `#prd`, `#feature/<name>`). No PRD?
   Say so and offer `write-prd` first — a spec without a "why" drifts.
 - If a `Spec: <Feature>` note exists, update it; never fork a second spec.
-- If the project has a Map lens, `mcp__viewer__code_map` shows the modules this touches.
-  Name real paths; do not invent architecture.
+- Name the real paths this touches (grep the repo); do not invent architecture.
 
 ## 2. Write the note
 `mcp__viewer__note_create` with `title: "Spec: <Feature>"`:

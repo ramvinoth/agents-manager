@@ -5,7 +5,7 @@
 import type { NoteGraph } from "./noteLinks"
 import type { FoundCall } from "./decisionAnchors"
 import type { NoteExportFormat } from "./notes"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, MapLevel, MapView, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import type { KeyAction } from "./providerModels"
@@ -224,12 +224,6 @@ class ApiClient {
   /** A one-time signed-in URL opening a project plugin at this folder's project. */
   projectPluginOpen(body: { id: string; host: string; cwd: string }) {
     return this.postStrict<{ url: string }>("/api/project-plugins/open", body)
-  }
-  /** One level of the project's code Map (the Map lens). Throws the server's
-   *  sentence (remote project, not a code folder) for the dialog to show. */
-  orgMap(projectId: number, level: MapLevel, path = "") {
-    const p = new URLSearchParams({ project: String(projectId), level, path })
-    return this.getStrict<MapView>(`/api/org/map?${p}`)
   }
   /** A shared canvas (viewer/routes/canvas_board.py): the server's scene snapshot,
    *  by project, by canvas id, or by chat (that chat's board project). Live edits

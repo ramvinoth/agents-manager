@@ -164,9 +164,9 @@ export type AgentTemplate = {
   ai?: AISelection | null
   /** The scheduled jobs a chat started from this agent begins with. */
   jobs?: NewChatJob[]
-  /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
-   *  lens it turns on ("map"); both are read server-side from the template row. */
-  plugin?: string; lens?: string
+  /** Bundled role skills (viewer/agent_plugins/<plugin>), read server-side
+   *  from the template row. */
+  plugin?: string
   /** Harman authority a chat started from this role acts at on the board. */
   level?: HarmanLevel
   is_builtin: boolean; created_by: string; created_at: number
@@ -178,14 +178,14 @@ export type AgentTemplate = {
   editable?: boolean
 }
 /** What a person sets on an agent (viewer/db.TEMPLATE_FIELDS). */
-export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "lens" | "level"> & { ai: AISelection | null; plugins: string[] }
+export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "level"> & { ai: AISelection | null; plugins: string[] }
 /** GET /api/agent-templates/extras: the plugin catalog an agent picks from, and
  *  the skills and MCP servers saved on the agent itself (empty for a new one). */
 export type AgentExtras = { catalog: { name: string; description: string }[]; skills: Skill[]; mcp: McpServer[] }
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
-export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
+export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; missing?: boolean }
 /** An app sharing a project's folder (viewer/project_plugins.py), e.g. Sift. */
 export type ProjectPlugin = { id: string; label: string; icon: string; description: string }
 export type BoardColumn = { id: number; name: string; position: number }
@@ -198,20 +198,6 @@ export type IntakeChannel = {
   token?: string
 }
 type IntakeReply = IntakeChannel | Queued | { error: string }
-/** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
- *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
-export type MapNode = {
-  id: string; kind: "folder" | "file" | "class" | "function" | "method"; label: string
-  files: number; symbols: number; touched: boolean; line?: number
-}
-export type MapLevel = "project" | "folder" | "file"
-/** One level of a project's code as a graph; `available: false` means the
- *  server lacks the tree-sitter grammars (`install` says how to add them). */
-export type MapView =
-  | { available: false; level: MapLevel; path: string; install: string }
-  | { available: true; project: number; level: MapLevel; path: string; files: number; mermaid: string
-      nodes: MapNode[]; edges: { from: string; to: string; weight: number }[]
-      touched: Record<string, string>; truncated: boolean }
 /** One row of the cross-session decision queue (GET /api/decisions/open): a
  *  durable question, a durable plan, or a live tool approval. The queue is a
  *  READ of the existing sources — deciding an item uses the per-session
@@ -931,13 +917,6 @@ export const api = {
     req<BoardColumn>("POST", "/api/org/columns/update", body),
   orgDeleteColumn: (id: number) =>
     req<{ deleted?: boolean }>("POST", "/api/org/columns/delete", { id }),
-  // Scope is a project, or a session whose bound project the server resolves.
-  orgMap: (scope: { project?: number; session?: string }, level: MapLevel, path = "") => {
-    const p = new URLSearchParams({ level, path })
-    if (scope.project !== undefined) p.set("project", String(scope.project))
-    else if (scope.session) p.set("session", scope.session)
-    return req<MapView>("GET", `/api/org/map?${p}`)
-  },
   orgCards: (filter: CardFilter = {}) => {
     const p = new URLSearchParams()
     if (filter.session !== undefined) p.set("session", filter.session)

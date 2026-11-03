@@ -17,7 +17,6 @@ class TestFields(unittest.TestCase):
     def test_rejects(self):
         for body, needle in (({}, "Name"), ({"name": "x" * 81}, "under"),
                              ({"name": "a", "plugin": "../etc"}, "plugin"),
-                             ({"name": "a", "lens": "nope"}, "lens"),
                              ({"name": "a", "level": "god"}, "level"),
                              ({"name": "a", "category": "general"}, "category"),
                              ({"name": "a", "jobs": "daily"}, "list"),
@@ -66,7 +65,7 @@ class TestOwnership(unittest.TestCase):
 
     def test_copy(self):
         src = {"id": 1, "is_builtin": True, "name": "Coach", "description": "d", "category": "personal", "icon": "x",
-               "system_prompt": "sp", "goal": "g", "ai": None, "jobs": None, "plugin": "", "lens": "", "level": "ic"}
+               "system_prompt": "sp", "goal": "g", "ai": None, "jobs": None, "plugin": "", "level": "ic"}
         copy = at.copy_fields(src)
         self.assertEqual((copy["name"], copy["jobs"], copy["system_prompt"]), ("Coach copy", [], "sp"))
         self.assertEqual(set(copy), set(TEMPLATE_FIELDS))

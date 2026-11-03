@@ -67,22 +67,16 @@ def test_refs_resolve_and_flag_missing():
 def test_refs_of_every_kind_keep_their_id_type():
     els = [shape("i", 0, 0, link="harman://inbox/41"), shape("f", 0, 100, link="harman://sift/doc-7"),
            shape("c", 0, 200, link="harman://code/viewer/db.py"), shape("bad", 0, 300, link="harman://card/x1")]
-    out = cs.summarize(els, resolve=lambda k, i: None if k == "code" else str(i))
+    out = cs.summarize(els, resolve=lambda k, i: str(i))
     refs = {r["kind"]: r for r in out["refs"]}
     assert refs["inbox"]["id"] == 41 and refs["sift"]["id"] == "doc-7"
-    assert refs["code"]["id"] == "viewer/db.py" and refs["code"]["missing"]
+    assert "code" not in refs                     # the code kind was retired with the Map
     assert "card" not in refs                     # a non-numeric card id is not a ref
 
 
-def test_code_refs_resolve_inside_the_project_only(tmp_path):
+def test_sift_refs_name_themselves():
     from viewer.routes import canvas_board as cb
-    (tmp_path / "a.py").write_text("x")
-    r = cb.resolver({"host": None, "cwd": str(tmp_path)})
-    assert r("code", "a.py") == "a.py"
-    assert r("code", "missing.py") is None
-    assert r("code", "../../etc/passwd") is None
-    assert cb.resolver({"host": "box", "cwd": "/srv/x"})("code", "a.py") == "a.py"   # elsewhere: not judged
-    assert cb.resolver(None)("sift", "d1") == "d1"
+    assert cb.resolver()("sift", "d1") == "d1"
 
 
 def test_labels_texts_arrows_and_truncation(monkeypatch):

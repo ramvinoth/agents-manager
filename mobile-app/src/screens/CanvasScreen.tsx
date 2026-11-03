@@ -50,12 +50,11 @@ export default function CanvasScreen({ navigation, route }: Props) {
   useEffect(() => () => bridge.closeAll(), [bridge])
 
   // A tile's link opens the native screen it points at. The phone has no
-  // Sift reader and the Map can't jump to one file yet, so code opens the Map.
+  // Sift reader, so a sift link does nothing here.
   const openRef = (ref: OpenRef) => {
     if (ref.kind === "card") navigation.navigate("CardDetail", { id: ref.id })
     else if (ref.kind === "note") navigation.navigate("NoteEditor", { id: ref.id })
     else if (ref.kind === "inbox") navigation.navigate("Inbox", { session, title })
-    else if (ref.kind === "code") navigation.navigate("Map", { session, title })
   }
 
   const View_ = HarmanWebView.View

@@ -9,7 +9,7 @@ in place; Duplicate makes an editable personal copy.
 """
 from viewer import ai, orglogic
 from viewer.config import agent_plugin_dir
-from viewer.db import LENSES, TEMPLATE_FIELDS
+from viewer.db import TEMPLATE_FIELDS
 from viewer.loops import build_schedule
 
 NAME_MAX = 80
@@ -68,11 +68,9 @@ def fields_from(body):
         return None, "Name the agent"
     if len(name) > NAME_MAX:
         return None, f"Keep the name under {NAME_MAX} characters"
-    plugin, lens, level = text("plugin"), text("lens"), text("level") or "ic"
+    plugin, level = text("plugin"), text("level") or "ic"
     if plugin and not agent_plugin_dir(plugin):
         return None, f"Unknown plugin: {plugin}"
-    if lens and lens not in LENSES:
-        return None, f"Unknown lens: {lens}"
     if level not in orglogic.LEVELS:
         return None, f"Unknown level: {level}"
     category = text("category") or "personal"
@@ -86,7 +84,7 @@ def fields_from(body):
         return None, err
     fields = {"name": name, "description": text("description"), "category": category,
               "icon": text("icon") or "sparkle", "system_prompt": text("system_prompt"), "goal": text("goal"),
-              "ai": selection, "jobs": jobs, "plugin": plugin, "lens": lens, "level": level}
+              "ai": selection, "jobs": jobs, "plugin": plugin, "level": level}
     assert set(fields) == set(TEMPLATE_FIELDS)
     return fields, None
 

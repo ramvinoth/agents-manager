@@ -173,7 +173,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
         agent: "claude",
         systemPrompt: systemPrompt.trim() || undefined,
         goal: goal.trim() || undefined,
-        // The server reads the template's plugin (role skills) and lens from
+        // The server reads the template's plugin (role skills) from
         // its own row; a client can only name which template it started from.
         template: template?.id,
         jobs: sendJobs.length ? sendJobs : undefined,

@@ -173,10 +173,10 @@ export function parsePageMessage(raw: string): PageSocketMessage | null {
 }
 
 /** A tile the page asked to open — a harman://<kind>/<id> link on the canvas.
- *  Card and note ids are integers; inbox, code and sift ids are strings. */
+ *  Card and note ids are integers; inbox and sift ids are strings. */
 export type OpenRef =
   | { kind: "card" | "note"; id: number }
-  | { kind: "inbox" | "code" | "sift"; id: string }
+  | { kind: "inbox" | "sift"; id: string }
 
 export function parseOpenRef(raw: string): OpenRef | null {
   let o: Record<string, unknown>
@@ -189,7 +189,7 @@ export function parseOpenRef(raw: string): OpenRef | null {
   if (o.kind === "card" || o.kind === "note") {
     return /^[1-9]\d*$/.test(o.id) ? { kind: o.kind, id: Number(o.id) } : null
   }
-  if (o.kind === "inbox" || o.kind === "code" || o.kind === "sift") return { kind: o.kind, id: o.id }
+  if (o.kind === "inbox" || o.kind === "sift") return { kind: o.kind, id: o.id }
   return null
 }
 

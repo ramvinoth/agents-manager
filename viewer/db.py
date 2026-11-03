@@ -478,9 +478,10 @@ def init_db():
             -- {provider, model, convMode, effort}. NULL = the owner's AI defaults.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS ai JSONB;
             -- An agent = persona + an optional Claude Code plugin (a folder under
-            -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
+            -- viewer/agent_plugins, passed as --plugin-dir).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
-            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
+            -- Leftovers of the cancelled Map lens (agent lens, project lenses, code_index).
+            ALTER TABLE agent_templates DROP COLUMN IF EXISTS lens;
             -- The Harman authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
@@ -495,21 +496,8 @@ def init_db():
             -- account sees, edits or deletes it. NULL = shared with every account
             -- (the builtins, and agents made before agents had owners).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS owner_user_id INTEGER;
-            -- Lenses are views over a PROJECT (two engineer chats share one Map).
-            ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
-            -- Map lens cache: one row per parsed file; re-parsed only when its stamp
-            -- (mtime:size) changes. touched_* is the live "an agent just edited
-            -- this" mark, written by the engine on Write/Edit.
-            CREATE TABLE IF NOT EXISTS code_index (
-              project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-              path        TEXT NOT NULL,
-              stamp       TEXT NOT NULL DEFAULT '',
-              symbols     JSONB NOT NULL DEFAULT '[]',
-              imports     JSONB NOT NULL DEFAULT '[]',
-              touched_by  TEXT NOT NULL DEFAULT '',
-              touched_at  DOUBLE PRECISION NOT NULL DEFAULT 0,
-              PRIMARY KEY (project_id, path)
-            );
+            ALTER TABLE projects DROP COLUMN IF EXISTS lenses;
+            DROP TABLE IF EXISTS code_index;
             -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
             -- The JSON files used to be the second persistence layer; this closes
             -- that split so Postgres is the single source of truth (and the only
@@ -1453,78 +1441,6 @@ def project_card_count(project_id):
         return cur.fetchone()["n"]
 
 
-# Lenses: views over a project that an agent turns on (Software Engineer → the
-# code Map). A closed set — each needs its own server code and UI.
-LENSES = ("map",)
-
-
-def project_lens_enable(host, cwd, lens, name=""):
-    """Turn a lens on for the (host, cwd) project, creating the project if
-    needed. Idempotent; returns the project row."""
-    if lens not in LENSES:
-        raise ValueError(f"unknown lens: {lens}")
-    project = project_ensure(host, cwd, name)
-    with _db() as cur:
-        cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
-                    "WHERE id = %s AND NOT lenses ? %s RETURNING *",
-                    (lens, project["id"], lens))
-        row = cur.fetchone()
-    return dict(row) if row else project
-
-
-def project_lens_set(project_id, lens, on):
-    """The owner's switch for one lens on one project. Returns the new list."""
-    if lens not in LENSES:
-        raise ValueError(f"unknown lens: {lens}")
-    with _db() as cur:
-        if on:
-            cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
-                        "WHERE id = %s AND NOT lenses ? %s", (lens, project_id, lens))
-        else:
-            cur.execute("UPDATE projects SET lenses = lenses - %s WHERE id = %s",
-                        (lens, project_id))
-        cur.execute("SELECT lenses FROM projects WHERE id = %s", (project_id,))
-        row = cur.fetchone()
-    return row["lenses"] if row else None
-
-
-# Code index (the Map lens's parse cache) ----------------------------------------
-# One row per source file of a project with the map lens: its symbols and its
-# resolved in-repo imports, keyed by an mtime:size stamp so only changed files
-# re-parse. touched_by/at record the last agent session that wrote the file.
-
-def code_index_load(project_id):
-    """{path: row} for one project."""
-    with _db() as cur:
-        cur.execute("SELECT path, stamp, symbols, imports, touched_by, touched_at "
-                    "FROM code_index WHERE project_id = %s", (project_id,))
-        return {r["path"]: dict(r) for r in cur.fetchall()}
-
-
-def code_index_sync(project_id, upserts, live_paths):
-    """Write re-parsed files and drop rows for files that no longer exist.
-    upserts: [(path, stamp, symbols, imports)]. A touched mark survives."""
-    with _db() as cur:
-        for path, stamp, symbols, imports in upserts:
-            cur.execute(
-                "INSERT INTO code_index (project_id, path, stamp, symbols, imports) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
-                "SET stamp = EXCLUDED.stamp, symbols = EXCLUDED.symbols, imports = EXCLUDED.imports",
-                (project_id, path, stamp, Json(symbols), Json(imports)))
-        cur.execute("DELETE FROM code_index WHERE project_id = %s AND NOT (path = ANY(%s))",
-                    (project_id, list(live_paths)))
-
-
-def code_index_touch(project_id, path, session_id):
-    """An agent session just wrote `path`. Stamp '' forces a re-parse."""
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO code_index (project_id, path, touched_by, touched_at) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
-            "SET stamp = '', touched_by = EXCLUDED.touched_by, touched_at = EXCLUDED.touched_at",
-            (project_id, path, session_id or "", _now()))
-
-
 def _norm_cwd(host, cwd):
     """Canonical form of a directory used as a project key. On the local host we
     expand a leading ~ and strip a trailing slash so "~/x", "/home/u/x" and
@@ -2422,8 +2338,8 @@ _BUILTIN_TEMPLATES = [
     # Engineering
     {"name": "Software Engineer", "description": "Builds, reviews and designs code from the project's spec, and keeps the spec true.",
      "category": "engineering", "icon": "code",
-     "plugin": "software-engineer", "lens": "map",
-     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code through the project's code map; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
+     "plugin": "software-engineer",
+     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code it describes; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
      "goal": "Ship correct, maintainable code that matches the spec, with every design decision reasoned."},
     {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
      "category": "engineering", "icon": "bug",
@@ -2529,8 +2445,8 @@ def _seed_agent_templates():
     longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
     so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
     cols = ("description", "category", "icon", "system_prompt", "goal",
-            "jobs", "plugin", "lens", "level")
-    defaults = {"jobs": [], "plugin": "", "lens": "", "level": "ic"}
+            "jobs", "plugin", "level")
+    defaults = {"jobs": [], "plugin": "", "level": "ic"}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
             vals = [t.get(c, defaults.get(c)) for c in cols]
@@ -2566,7 +2482,7 @@ def agent_templates_list(user_id):
 
 # The fields an agent's owner edits; every write goes through these names only.
 TEMPLATE_FIELDS = ("name", "description", "category", "icon", "system_prompt", "goal",
-                   "ai", "jobs", "plugin", "lens", "level")
+                   "ai", "jobs", "plugin", "level")
 
 
 def _template_values(fields):

@@ -15,5 +15,5 @@ description: Before changing code for a feature or card, find and read its spec 
 4. The spec conflicts with what the code must do? Do not silently diverge — comment on
    the spec note (`mcp__viewer__note_comment`) with the conflict and the option you
    recommend, and ask before building the divergent version.
-5. Locate the code with `mcp__viewer__code_map` (see `navigate-with-map`) instead of
+5. Locate the code with a targeted grep for the names the spec uses instead of
    reading whole directories.

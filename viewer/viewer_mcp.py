@@ -71,7 +71,6 @@ _TOOLS = {
     "note_list":        ("GET", "/api/org/notes"),
     "note":             ("GET", "/api/org/note"),
     "note_graph":       ("GET", "/api/org/notes/graph"),
-    "code_map":         ("GET", "/api/org/map"),
     "note_comments":    ("GET", "/api/org/note_comments"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
@@ -151,7 +150,7 @@ _RAW = {"session_read", "fs_read"}
 _FIXED_ARGS = {"card_list": {"view": "ledger"}}
 
 _PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project",
-                    "note_graph": "project", "code_map": "project",
+                    "note_graph": "project",
                     "canvas_read": "project", "canvas_patch": "project", "canvas_snapshot": "project"}
 
 _HOST_ARG = {"type": "string",
@@ -295,11 +294,6 @@ _TOOL_LIST = [
     {"name": "note_graph", "description": "How notes connect. Notes link like an Obsidian vault: [[Title]], [[Title#Heading]], [[Title|shown text]], and tag themselves with #tag. Returns nodes, link edges (with the line each link sits on), ghosts (titles linked but not written yet), tag counts. Pass id for one note: its backlinks and outgoing links. Read this before writing so you link to what exists instead of duplicating it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}, "id": {"type": "integer", "description": "One note's backlinks + links."}}}},
-    {"name": "code_map", "description": "Your project's code as a graph (the Map lens), parsed live with tree-sitter. level=project: top folders and how they import each other; level=folder + path (e.g. viewer/routes): its files and sub-folders with import edges; level=file + path (e.g. viewer/db.py): its classes and functions with line numbers, what it imports and who imports it. `touched` lists files an agent wrote in the last 15 minutes. Read this before a cross-file change to find what depends on what you touch.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "project": {"type": "integer"},
-         "level": {"type": "string", "enum": ["project", "folder", "file"]},
-         "path": {"type": "string", "description": "Repo-relative folder or file; omit at project level."}}}},
     {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist | discussion (a topic you post for others to answer in its thread). Link related notes with [[Their Title]] and tag with #tag so the knowledge stays a connected graph. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"}, "kind": {"type": "string"},
@@ -453,11 +447,11 @@ _TOOL_LIST = [
          "content": {"type": "string", "description": "Markdown, mermaid source, a full HTML document, or slides (markdown with --- between slides)."},
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},
     {"name": "canvas_read",
-     "description": "Read your project's shared canvas (the Excalidraw board the owner and agents draw on together) as meaning, not geometry: counts, frames, workflows (a frame marked customData.kind=workflow, steps in arrow order), labelled shapes, free text, arrows (from → to), harman:// references with their titles (card/N, note/N, inbox/N a decision, sift/<doc> a Sift document, code/<path> a file in the project; missing=true when it is gone), and freehand ink as groups (group_id, bbox, stroke_count). Ink is handwriting or a sketch: to see one, call canvas_snapshot with its group_id. Each element carries createdBy.",
+     "description": "Read your project's shared canvas (the Excalidraw board the owner and agents draw on together) as meaning, not geometry: counts, frames, workflows (a frame marked customData.kind=workflow, steps in arrow order), labelled shapes, free text, arrows (from → to), harman:// references with their titles (card/N, note/N, inbox/N a decision, sift/<doc> a Sift document; missing=true when it is gone), and freehand ink as groups (group_id, bbox, stroke_count). Ink is handwriting or a sketch: to see one, call canvas_snapshot with its group_id. Each element carries createdBy.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},
     {"name": "canvas_patch",
-     "description": "Draw on the shared project canvas; every open browser sees it live and the owner can Undo your whole patch. ops (≤2000), each one of: {\"op\":\"add\",\"element\":{type: rectangle|diamond|ellipse|text|arrow|line|frame|embeddable (a web page tile; link required), x, y, width?, height?, label? (text inside a shape or on an arrow), text (for type text), fontSize?, from?/to? (element ids: an arrow bound between two shapes), points?, frame? (frame id to sit in), name? (frame title), link? (e.g. harman://card/12, harman://note/3, harman://inbox/41, harman://sift/<doc id>, harman://code/viewer/db.py — the owner opens it from the tile), customData?, strokeColor?, backgroundColor?, fillStyle?}}, {\"op\":\"update\",\"id\":..,\"set\":{x,y,width,height,angle,strokeColor,backgroundColor,fillStyle,strokeWidth,strokeStyle,roughness,opacity,text,name,link,locked,points,fontSize,customData}}, {\"op\":\"delete\",\"id\":..}. Returns results[i] per op ({ok, ids} or {ok:false, error}); one bad op never sinks the rest. At Own work level you change only what you drew. Read first so you place things where there is room.",
+     "description": "Draw on the shared project canvas; every open browser sees it live and the owner can Undo your whole patch. ops (≤2000), each one of: {\"op\":\"add\",\"element\":{type: rectangle|diamond|ellipse|text|arrow|line|frame|embeddable (a web page tile; link required), x, y, width?, height?, label? (text inside a shape or on an arrow), text (for type text), fontSize?, from?/to? (element ids: an arrow bound between two shapes), points?, frame? (frame id to sit in), name? (frame title), link? (e.g. harman://card/12, harman://note/3, harman://inbox/41, harman://sift/<doc id> — the owner opens it from the tile), customData?, strokeColor?, backgroundColor?, fillStyle?}}, {\"op\":\"update\",\"id\":..,\"set\":{x,y,width,height,angle,strokeColor,backgroundColor,fillStyle,strokeWidth,strokeStyle,roughness,opacity,text,name,link,locked,points,fontSize,customData}}, {\"op\":\"delete\",\"id\":..}. Returns results[i] per op ({ok, ids} or {ok:false, error}); one bad op never sinks the rest. At Own work level you change only what you drew. Read first so you place things where there is room.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["ops"], "properties": {
          "ops": {"type": "array", "items": {"type": "object"}},
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},

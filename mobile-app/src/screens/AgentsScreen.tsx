@@ -3,7 +3,7 @@
  * goals, and scheduled jobs. Replaces the old Projects tab.
  *
  * Templates come from the server (/api/agent-templates), the one source of
- * truth: a template carries its plugin (role skills) and lens, which a client
+ * truth: a template carries its plugin (role skills), which a client
  * copy could only drift from. A failed load says so, with Try again.
  *
  * Layout: compact category filter chips → SectionList grouped by category
@@ -158,10 +158,10 @@ export default function AgentsScreen({ navigation }: Props) {
         keyExtractor={(item) => String(item.id)}
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={error ? (
-          <View testID="agents-error" style={styles.mapErrorBox}>
-            <Text style={styles.mapBody}>{error}</Text>
+          <View testID="agents-error" style={styles.agErrorBox}>
+            <Text style={styles.agErrorText}>{error}</Text>
             <TouchableOpacity testID="agents-retry" onPress={() => load()} accessibilityRole="button">
-              <Text style={styles.mapLink}>Try again</Text>
+              <Text style={styles.agRetry}>Try again</Text>
             </TouchableOpacity>
           </View>
         ) : null}

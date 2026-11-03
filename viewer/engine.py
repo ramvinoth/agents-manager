@@ -36,7 +36,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import codemap, db, procctl, inference_health, orglogic, project_plugins, resume
+from viewer import db, procctl, inference_health, orglogic, project_plugins, resume
 from viewer import live as live_events  # `live` is a local name in several functions
 from viewer.sessions import compute_session_summary, last_cwd_in_file
 
@@ -1783,17 +1783,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  provider_env.get("ANTHROPIC_MODEL", ""),
                                  provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
-            # Map lens: when this project has it on, a file the agent writes
-            # lights up on the map while the agent works (code_index.touched).
-            map_project = None
-            if kanban_project and not remote:
-                try:
-                    proj = db.project_get(int(kanban_project))
-                    if proj and "map" in (proj.get("lenses") or []):
-                        map_project = proj
-                except Exception:
-                    pass
-
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
@@ -1812,12 +1801,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     continue
                 if watch_url:
                     job["model_wait"].update(ev, time.time())
-                if map_project:
-                    try:
-                        for rel in codemap.edited_paths(ev, map_project["cwd"]):
-                            db.code_index_touch(map_project["id"], rel, session_id)
-                    except Exception as e:  # a highlight, never a reason to fail a run
-                        print(f"[map] touch failed: {e}", flush=True)
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1

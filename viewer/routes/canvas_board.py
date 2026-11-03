@@ -22,7 +22,6 @@ resends whatever it has not had acked.
 """
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -157,13 +156,9 @@ def _rate_ok(actor, n):
         return True
 
 
-def resolver(project):
+def resolver():
     """How a canvas's harman:// tiles resolve: the object's current title, or
-    None when it is gone. Code paths resolve against the project's folder on
-    this machine (and are never marked gone when it lives elsewhere); a Sift id
-    has no cheap lookup, so it names itself."""
-    root = project.get("cwd") if project and project.get("host") in (None, "", "local") else ""
-    root = os.path.realpath(root) if root and os.path.isdir(root) else ""
+    None when it is gone. A Sift id has no cheap lookup, so it names itself."""
 
     def resolve(kind, rid):
         if kind == "card":
@@ -173,11 +168,6 @@ def resolver(project):
         if kind == "inbox":
             row = db.inbox_get(rid)
             return ((row.get("body") or "").strip().splitlines() or ["(empty message)"])[0][:80] if row else None
-        if kind == "code":
-            if not root:
-                return rid
-            full = os.path.realpath(os.path.join(root, rid))
-            return rid if full.startswith(root + os.sep) and os.path.isfile(full) else None
         return rid
     return resolve
 
@@ -324,9 +314,7 @@ class CanvasBoardMixin:
         cid = self._canvas_target(_q(req, "project"), _q(req, "canvas"))
         if cid is None:
             return
-        board = db.canvas_board_get(cid)
-        project = db.project_get(int(board["owner_id"])) if board.get("owner_kind") == "project" else None
-        out = canvas_summary.summarize(ROOMS.get(cid).snapshot()["elements"], resolver(project))
+        out = canvas_summary.summarize(ROOMS.get(cid).snapshot()["elements"], resolver())
         out["canvas"] = cid
         self.send_json(out)
 

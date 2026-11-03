@@ -1289,14 +1289,9 @@ def start_new_session(body):
         # (a remote run gets no --name, and the client's rename can fail).
         meta["title"] = title
     # Started from an agent template: its plugin rides on every Claude run
-    # (engine --plugin-dir) and its lens turns on for this project.
+    # (engine --plugin-dir).
     if template:
         meta.update(chatplugins.start_from_template(template, session_id))
-        if template.get("lens") and host == "local":
-            try:
-                db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))
-            except Exception as e:  # a lens is a view; never block the chat on it
-                print(f"[new-session] lens enable failed: {e}", flush=True)
     if selection is not None:
         meta.update(ai.meta_fields(selection), aiRevision=1)
     try:
