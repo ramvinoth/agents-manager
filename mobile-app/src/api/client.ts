@@ -451,8 +451,7 @@ export const api = {
     (await api.sessionReadPage(host, path, tail)).lines,
   // Like sessionRead but returns the paging envelope too: `start` is the byte
   // offset of the first returned line (0 ⇒ we've reached the top of the file, so
-  // there's no older history to load). Used by the thread to grow its window when
-  // the user scrolls up.
+  // there's no older history to load).
   sessionReadPage: async (
     host: string,
     path: string,
@@ -467,6 +466,14 @@ export const api = {
   // its whole tail window — bytes scale with new output, not transcript size.
   sessionReadFrom: async (host: string, path: string, from: number): Promise<SessionPage> => {
     const q = new URLSearchParams({ from: String(from) })
+    if (host && host !== "local") q.set("host", host)
+    return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
+  },
+  // Older history: the `lines` records that end at byte offset `before` (the
+  // loaded window's `start`). The server caps a tail read at 5000 lines, so the
+  // thread pages upward with this instead of growing its tail window.
+  sessionReadBefore: async (host: string, path: string, before: number, lines = 400): Promise<SessionPage> => {
+    const q = new URLSearchParams({ before: String(before), lines: String(lines) })
     if (host && host !== "local") q.set("host", host)
     return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
   },

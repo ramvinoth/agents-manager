@@ -8,6 +8,7 @@ import * as boardSwipe from "./gestures.ts"
 import * as errors from "./errors.ts"
 import { serialize } from "./liveEvents.ts"
 import * as redApproval from "./redApproval.ts"
+import * as transcriptWindow from "./transcriptWindow.ts"
 
 // Run the actual Thread component, not a copy of its identity expression. The
 // hook runner preserves state/memo deps and commits layout before passive effects,
@@ -105,7 +106,7 @@ function screen(initial: Route) {
     "../api/offlineCache": { offlineCache: { saveThread: async () => {}, loadThread: async () => null } },
     "../components/OfflineBanner": { default: "OfflineBanner" },
     "../lib/useReachability": { useReachability: () => ({ online: true, since: 0 }) },
-    "../lib/errors": errors, "../lib/redApproval": redApproval,
+    "../lib/errors": errors, "../lib/redApproval": redApproval, "../lib/transcriptWindow": transcriptWindow,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/gestures": boardSwipe,
     "../lib/usageReporter": { recordSwipe: () => {} },

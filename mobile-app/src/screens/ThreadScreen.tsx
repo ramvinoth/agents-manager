@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk, type SlashCommand } from "../api/client"
+import { EMPTY_WINDOW, hasOlder, prependOlder, type TranscriptWindow } from "../lib/transcriptWindow"
 import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
 import { matchCommands, slashTerm } from "../lib/slash"
 import { applyMention, hashTerm } from "../lib/fileMention"
@@ -58,6 +59,8 @@ type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
 // Sentinel appended to the list while a run is in flight (see WorkingBubble).
 const WORKING = { kind: "working" as const, id: "__working__" }
+// Transcript lines per read: the opening tail and each older page.
+const PAGE_LINES = 400
 type ListItem = ThreadItem | typeof WORKING
 
 // A WhatsApp-style thread for one agent session. Each agent exchange shows its
@@ -68,11 +71,10 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const { host, path, label, agent = "claude", starting } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
-  // How many trailing transcript lines to fetch. Grows when the user scrolls to
-  // the top of the (inverted) list to lazy-load older history. hasMoreRef tracks
-  // whether the server still has older lines beyond the current window.
-  const [windowLines, setWindowLines] = useState(400)
-  const hasMoreRef = useRef(true)
+  // Paging older history in from the top of the (inverted) list: "loading"
+  // shows a spinner there, "error" a tap-to-retry row (onEndReached won't refire
+  // until the content grows, so a failed page needs an explicit retry).
+  const [older, setOlder] = useState<"idle" | "loading" | "error">("idle")
   const loadingMoreRef = useRef(false)
   // Seed the composer from a persisted per-session draft so unsent text survives
   // navigating back and app restarts. Keyed by path (existing chats).
@@ -311,11 +313,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // `distanceFromBottom` (0 = pinned to newest) just drives that button.
   const distanceFromBottom = useRef(0)
 
-  // The transcript lines currently rendered and the byte offset they end at. A
-  // full reload() replaces both; poll() appends only what the file gained since
-  // `end`, so a running turn costs bytes proportional to its new output instead
-  // of re-downloading the whole tail window every tick.
-  const loadedRef = useRef<{ path?: string; lines: string[]; end: number }>({ lines: [], end: 0 })
+  // The transcript lines currently rendered and the byte range they cover. A
+  // full reload() replaces the window with the latest tail; poll() appends only
+  // what the file gained since `end`, so a running turn costs bytes proportional
+  // to its new output; loadMore() prepends the page before `start`.
+  const loadedRef = useRef<TranscriptWindow>(EMPTY_WINDOW)
 
   const reload = useCallback(async () => {
     if (!path) {
@@ -323,11 +325,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
       return [] as ReturnType<typeof groupThread>
     }
     try {
-      const page = await api.sessionReadPage(host, path, windowLines)
-      // start === 0 means the window reaches the top of the file → no older
-      // history to lazy-load. Otherwise scrolling up can grow the window.
-      hasMoreRef.current = page.start > 0
-      loadedRef.current = { path, lines: page.lines, end: page.end }
+      const page = await api.sessionReadPage(host, path, PAGE_LINES)
+      loadedRef.current = { path, lines: page.lines, start: page.start, end: page.end }
+      setOlder("idle")
       setFromCache(false)
       setError("")
       offlineCache.saveThread(activeServerId(), host, path, page.lines)
@@ -350,7 +350,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [host, path, windowLines])
+  }, [host, path])
   reloadRef.current = reload
 
   // Incremental refresh for the live-run poll. Falls back to a full reload when
@@ -364,7 +364,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (page.size < loaded.end) return reload()
       if (!page.lines.length) return // nothing new — skip the re-parse/re-render
       const lines = [...loaded.lines, ...page.lines]
-      loadedRef.current = { path, lines, end: page.end }
+      loadedRef.current = { ...loaded, lines, end: page.end }
       offlineCache.saveThread(activeServerId(), host, path, lines)
       return render(lines)
     } catch {
@@ -412,25 +412,42 @@ export default function ThreadScreen({ route, navigation }: Props) {
   }
 
   // Lazy-load older history when the user scrolls to the TOP of the (inverted)
-  // list. Grow the tail window and re-read; maintainVisibleContentPosition keeps
-  // the current rows anchored so the viewport doesn't jump. Guarded so a burst of
-  // onEndReached events triggers only one fetch, and only while more remains.
+  // list: prepend the page just before the window's first byte;
+  // maintainVisibleContentPosition keeps the current rows anchored. A page of
+  // only tool results can group into no new rows, and onEndReached refires only
+  // when the content grows, so keep paging (bounded) until a row appears.
   const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || !hasMoreRef.current || !path) return
+    if (loadingMoreRef.current || !path || !hasOlder(loadedRef.current, path)) return
     loadingMoreRef.current = true
-    setWindowLines((n) => n + 400)
-    // reload() re-runs via its windowLines dep; release the guard shortly after so
-    // the next scroll-to-top can page again.
-    setTimeout(() => {
+    setOlder("loading")
+    try {
+      const rows = (lines: string[]) => groupThread(parseTranscript(lines)).length
+      const before = rows(loadedRef.current.lines)
+      let grew = false
+      for (let i = 0; i < 5 && !grew && hasOlder(loadedRef.current, path); i++) {
+        const page = await api.sessionReadBefore(host, path, loadedRef.current.start, PAGE_LINES)
+        const next = prependOlder(loadedRef.current, path, page)
+        if (!next) return // a reload replaced the window meanwhile
+        loadedRef.current = next
+        grew = rows(next.lines) > before
+      }
+      render(loadedRef.current.lines)
+    } catch {
+      render(loadedRef.current.lines) // keep any pages that did arrive
+      setOlder("error")
+    } finally {
       loadingMoreRef.current = false
-    }, 600)
-  }, [path])
+      setOlder((o) => (o === "loading" ? "idle" : o))
+    }
+  }, [host, path])
 
   useFocusEffect(
     useCallback(() => {
       // Switching sessions: don't carry optimistic bubbles from a prior thread.
       pendingSteers.current = []
-      reload()
+      // Same chat as before (back from a sub-screen): catch up incrementally and
+      // keep any history already paged in. Otherwise load the latest tail.
+      poll()
       // Hydrate pinned message uuids from server session meta (survives reinstall).
       if (path) {
         api
@@ -1150,6 +1167,16 @@ export default function ThreadScreen({ route, navigation }: Props) {
           setTimeout(() => listRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.3 }), 120)
         }}
         contentContainerStyle={styles.threadContent}
+        // Rendered at the visual TOP of the inverted list, where older pages land.
+        ListFooterComponent={
+          older === "loading" ? (
+            <ActivityIndicator testID="thread-older-loading" style={{ padding: 12 }} />
+          ) : older === "error" ? (
+            <TouchableOpacity testID="thread-older-retry" onPress={loadMore} style={{ padding: 12 }}>
+              <Text style={[styles.hint, { textAlign: "center" }]}>Couldn't load older messages. Tap to retry.</Text>
+            </TouchableOpacity>
+          ) : null
+        }
         ListEmptyComponent={
           <Text style={[styles.hint, { padding: 16, textAlign: "center" }]}>
             {error || (fromCache || online ? "No messages yet — say something below." : "This chat isn't saved on this phone yet. It loads when you're back online.")}
