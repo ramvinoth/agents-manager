@@ -330,3 +330,38 @@ class TestInboxRouteLimit:
         mcp = {"kind": "mcp", "session": "s1"}
         assert self._run(monkeypatch, mcp, {"unread_only": ["False"]})["unread_only"] is False
         assert self._run(monkeypatch, mcp, {"unread_only": ["True"]})["unread_only"] is True
+
+
+# ---- resolve_session: what an agent writes after "session:" ----------------
+
+A = "57496095-2c6d-4852-a42c-baa661d57f48"
+B = "57496095-ffff-4000-8000-000000000000"
+C = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
+
+
+def _sessions(tmp_path, monkeypatch, titles):
+    from viewer import config, engine
+    d = tmp_path / "-proj"
+    d.mkdir()
+    for sid in titles:
+        (d / f"{sid}.jsonl").write_text("")
+    monkeypatch.setattr(config, "CLAUDE_DIR", tmp_path)
+    monkeypatch.setattr(engine, "CHAT_JOBS", {})
+    monkeypatch.setattr(engine, "_session_title", lambda sid: (titles.get(sid, ""), ""))
+
+
+def test_resolve_full_id_prefix_and_title(tmp_path, monkeypatch):
+    _sessions(tmp_path, monkeypatch, {A: "Liquid Text Clone", B: "", C: "Harman"})
+    assert inbox.resolve_session(A) == (A, None)
+    assert inbox.resolve_session("65cf166a") == (C, None)
+    assert inbox.resolve_session("liquid text clone") == (A, None)
+
+
+def test_resolve_refuses_unknown_ambiguous_and_short(tmp_path, monkeypatch):
+    _sessions(tmp_path, monkeypatch, {A: "Twin", B: "Twin", C: ""})
+    for ref in ("RSI", "57496", "57496095", "Twin", "", "dbd49b66-"):
+        sid, err = inbox.resolve_session(ref)
+        assert sid is None and err, ref
+    assert "2 sessions" in inbox.resolve_session("57496095")[1]   # ambiguous prefix
+    assert "2 sessions" in inbox.resolve_session("Twin")[1]       # ambiguous title
+    assert inbox.resolve_session("57496")[1].startswith("no session")  # too short to guess

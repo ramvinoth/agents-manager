@@ -347,6 +347,36 @@ def last_session_comment(card_id):
     return None
 
 
+def resolve_session(ref):
+    """The full session id an agent means by `ref`, as (id, None), or
+    (None, error). Agents address peers the way they see them — a full id, the
+    8-char prefix every list shows, or the chat's title — and a row stored
+    under anything but the full id is a message nobody's mailbox holds and a
+    wake that resumes a session that doesn't exist. Resolution order: a live
+    run or local transcript with that exact id; a unique id prefix; a unique
+    exact (case-insensitive) title."""
+    from viewer import engine
+    from viewer.config import CLAUDE_DIR, transcript_path
+    ref = str(ref or "").strip()
+    if not ref:
+        return None, "no recipient session given"
+    with engine.CHAT_LOCK:
+        live = list(engine.CHAT_JOBS)
+    if ref in live or transcript_path(ref):
+        return ref, None
+    ids = set(live) | {p.stem for p in CLAUDE_DIR.glob("*/*.jsonl")}
+    hits = sorted(i for i in ids if i.startswith(ref)) if len(ref) >= 6 else []
+    if not hits:
+        want = ref.casefold()
+        hits = sorted(i for i in ids if engine._session_title(i)[0].strip().casefold() == want)
+    if len(hits) == 1:
+        return hits[0], None
+    if hits:
+        return None, (f"'{ref}' matches {len(hits)} sessions ({', '.join(h[:8] for h in hits)}); "
+                      "send to session:<full id> from session_list")
+    return None, f"no session '{ref}'; send to session:<full id> from session_list"
+
+
 def session_project(session_id):
     """The project a session's messages are born into (its board's project —
     the same binding cards get), or None."""

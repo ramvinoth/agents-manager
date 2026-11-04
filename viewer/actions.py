@@ -314,15 +314,17 @@ def _task_done(a, *, by_agent=False):
 def _inbox_send(a):
     """Send one free inbox message. The sender is the intent's stamped sender
     (the resolved principal — never the body); `to` is "user" (the owner) or
-    "session:<id>". The handler persists (inbox.deliver_message), then wakes
-    the recipient session or pushes the owner — all exception-safe, so this
-    Green action can never strand a decision it is carrying context for."""
+    "session:<ref>" (a full id, a unique id prefix or a title — resolved to the
+    full id, or refused). The handler persists (inbox.deliver_message), then
+    wakes the recipient session or pushes the owner — all exception-safe, so
+    this Green action can never strand a decision it is carrying context for."""
     from viewer import inbox
     to = str(a.get("to", ""))
     if to.startswith("session:"):
-        rtype, rid = "session", to.split(":", 1)[1]
-        if not rid:
-            return {"error": "bad recipient"}
+        rtype = "session"
+        rid, err = inbox.resolve_session(to.split(":", 1)[1])
+        if err:
+            return {"error": err}
     elif to == "user":
         rtype, rid = "user", ""
     else:

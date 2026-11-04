@@ -435,7 +435,7 @@ _TOOL_LIST = [
     {"name": "inbox_send",
      "description": "Send a message: to='user' reaches the owner (he gets a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "body"], "properties": {
-         "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session)."},
+         "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session: its full id from session_list, an id prefix, or its exact title; an unknown or ambiguous one is refused)."},
          "body": {"type": "string", "description": "The message — self-contained: the recipient has no context beyond this text."},
          "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
     # ── Canvas: the project's shared board, where a picture beats prose ─────
