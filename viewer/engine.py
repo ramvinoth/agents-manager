@@ -292,73 +292,84 @@ def loop_scheduler(launch):
     purge still run regardless — they free memory, expire session tokens and bound the
     audit table, and holding stale credentials open would be the opposite of safe.
     """
-    global _last_purge
+    # One failed pass must never end the thread: it is the only thing that fires
+    # loops AND opens the maintenance window, so its death is silent and total
+    # (2026-11-04: a Postgres restart made loops_due raise, the thread died, and
+    # nothing fired for ~26h while the server looked healthy). Log and go on.
     while True:
         time.sleep(5)
-        now = time.time()
-        with CHAT_LOCK:
-            # Reap from when the run FINISHED, not when it started — a long run
-            # otherwise loses its final status seconds after completing.
-            stale = [sid for sid, j in CHAT_JOBS.items()
-                     if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
-            for sid in stale:
-                CHAT_JOBS.pop(sid, None)
-                # The run is truly over — drop its persisted tokens too, so a
-                # stale credential can't authorize an MCP call after the session
-                # ends (preserves the "only live sessions" guarantee).
-                try:
-                    db.session_token_delete(sid)
-                except Exception:
-                    pass
-        # Retention: bound job-run history so it can never overflow. Runs on THIS
-        # thread (no second timer) and self-throttles to hourly. Caps come from the
-        # settings table so a SaaS-admin portal can tune them per plan without a
-        # deploy. Independent of the master switch — pruning old audit rows is
-        # housekeeping, not unattended WORK, and must keep the table bounded even
-        # while automation is paused.
-        if now - _last_purge >= _PURGE_INTERVAL:
-            _last_purge = now
+        try:
+            _scheduler_pass(launch, time.time())
+        except Exception:
+            traceback.print_exc()
+
+
+def _scheduler_pass(launch, now):
+    """One 5s tick of loop_scheduler (see its docstring)."""
+    global _last_purge
+    with CHAT_LOCK:
+        # Reap from when the run FINISHED, not when it started — a long run
+        # otherwise loses its final status seconds after completing.
+        stale = [sid for sid, j in CHAT_JOBS.items()
+                 if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
+        for sid in stale:
+            CHAT_JOBS.pop(sid, None)
+            # The run is truly over — drop its persisted tokens too, so a
+            # stale credential can't authorize an MCP call after the session
+            # ends (preserves the "only live sessions" guarantee).
             try:
-                rc = db.retention_config()
-                db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
-                db.ui_events_purge(rc["ui_events_days"])
-                db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
+                db.session_token_delete(sid)
             except Exception:
                 pass
-            # Credentials of runs this process never saw (they predate a restart)
-            # are outside the per-job reaper above; sweep them once they are far
-            # older than any run can live, so a dead session's token expires too.
-            try:
-                with CHAT_LOCK:
-                    live = list(CHAT_JOBS.keys())
-                db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
-            except Exception:
-                pass
-        fire_due_loops(launch, now)
-        # The hourly maintenance window (viewer.maintenance): applies queued
-        # restart requests at :50. Not gated by the master switch — agents only
-        # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+    # Retention: bound job-run history so it can never overflow. Runs on THIS
+    # thread (no second timer) and self-throttles to hourly. Caps come from the
+    # settings table so a SaaS-admin portal can tune them per plan without a
+    # deploy. Independent of the master switch — pruning old audit rows is
+    # housekeeping, not unattended WORK, and must keep the table bounded even
+    # while automation is paused.
+    if now - _last_purge >= _PURGE_INTERVAL:
+        _last_purge = now
         try:
-            from viewer import maintenance
-            maintenance.tick(now)
+            rc = db.retention_config()
+            db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
+            db.ui_events_purge(rc["ui_events_days"])
+            db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
         except Exception:
             pass
-        # The 30-minute board sweep — a safety net for event wakes the action
-        # path missed. Its wakes are harman-origin, so it only runs when the
-        # autonomous side may act (master switch ON and the loop mode licenses
-        # harman) — otherwise it would stamp the interval and drop the event
-        # the wakes could never fire. Idle board = zero cost either way.
+        # Credentials of runs this process never saw (they predate a restart)
+        # are outside the per-job reaper above; sweep them once they are far
+        # older than any run can live, so a dead session's token expires too.
         try:
-            from viewer import board_wake
-            from viewer.orchestrator import automation_enabled, loop_mode
-            autonomous = automation_enabled() and loop_mode() in ("harman", "both")
-            if autonomous:
-                board_wake.sweep()
-            # Expired asks are always recorded (the session's inbox is the
-            # durable record); only the resume is gated with the sweep.
-            board_wake.expire_asks(now, wake=autonomous)
+            with CHAT_LOCK:
+                live = list(CHAT_JOBS.keys())
+            db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
         except Exception:
             pass
+    fire_due_loops(launch, now)
+    # The hourly maintenance window (viewer.maintenance): applies queued
+    # restart requests at :50. Not gated by the master switch — agents only
+    # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+    try:
+        from viewer import maintenance
+        maintenance.tick(now)
+    except Exception:
+        pass
+    # The 30-minute board sweep — a safety net for event wakes the action
+    # path missed. Its wakes are harman-origin, so it only runs when the
+    # autonomous side may act (master switch ON and the loop mode licenses
+    # harman) — otherwise it would stamp the interval and drop the event
+    # the wakes could never fire. Idle board = zero cost either way.
+    try:
+        from viewer import board_wake
+        from viewer.orchestrator import automation_enabled, loop_mode
+        autonomous = automation_enabled() and loop_mode() in ("harman", "both")
+        if autonomous:
+            board_wake.sweep()
+        # Expired asks are always recorded (the session's inbox is the
+        # durable record); only the resume is gated with the sweep.
+        board_wake.expire_asks(now, wake=autonomous)
+    except Exception:
+        pass
 
 
 def frontmatter_description(path):
