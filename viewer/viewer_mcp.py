@@ -479,6 +479,7 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "prompt"], "properties": {
          "for_session": {"type": "string", "description": "Target session id to run the prompt in (your own only with `at`)."},
          "prompt": {"type": "string", "description": "The prompt to run (each time, or once for a one-shot)."},
+         "reason": {**_REASON_ARG, "description": _REASON_ARG["description"] + " Not needed for your own one-shot wake, which any session may set."},
          "cron": {"type": "string", "description": "5-field cron expression for a recurring schedule (wins over interval)."},
          "interval": {"type": "string", "description": "Recurring: e.g. 30s, 5m, 1h."},
          "at": {"type": "string", "description": "ONE-SHOT: fire once, then stop. A relative offset (30m, 2h, 1d) or an ISO time. Without an offset an ISO time is the SERVER's local time zone — when you mean a market or another zone, give the offset ('2026-09-17T09:25-04:00')."},

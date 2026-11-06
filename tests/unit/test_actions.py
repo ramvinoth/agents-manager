@@ -387,6 +387,27 @@ def test_loop_create_rejects_an_empty_prompt(fdb):
     assert fdb.loops == {}
 
 
+def test_an_ic_session_may_set_its_own_one_shot_wake(fdb):
+    """Every agent ends a turn by setting its next wake; at Own work that must run,
+    not bounce. The route picks loop_wake_self only for a proven own one-shot."""
+    resp, status = actions.execute(
+        actions.intent("loop_wake_self", {"session": "bob", "prompt": "go", "at": "30m"},
+                       "session:bob"), "owner", "ic")
+    assert status == 200 and resp["origin"] == "harman"
+    assert "queued" not in resp and fdb.loops[resp["created"]]["session"] == "bob"
+
+
+def test_an_ic_scheduling_another_session_queues_with_its_why(fdb):
+    args = {"session": "worker", "prompt": "go", "at": "30m"}
+    resp, status = actions.execute(actions.intent("loop_create", args, "session:bob"),
+                                   "owner", "ic")
+    assert status == 400 and fdb.outcomes == ["denied:no_reason"] and fdb.loops == {}
+    resp, status = actions.execute(
+        actions.intent("loop_create", dict(args, reason="worker missed its wake"), "session:bob"),
+        "owner", "ic")
+    assert resp.get("queued") and fdb.loops == {} and len(fdb.approvals) == 1
+
+
 def test_loop_update_refuses_a_user_origin_loop(fdb):
     """The agent path owns only the loops it authored. A human's own schedule
     (origin defaults to 'user') is off-limits even to a manager-level agent."""

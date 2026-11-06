@@ -281,6 +281,12 @@ def test_scheduling_loops_needs_lead_authority():
         assert orglogic.allowed(a, "manager") is True, a
 
 
+def test_an_own_one_shot_wake_is_ic():
+    # The turn-end wake every agent sets for itself only narrows (fires once).
+    assert orglogic.allowed("loop_wake_self", "ic") is True
+    assert orglogic.is_red("loop_wake_self") is False
+
+
 def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
     # Create/update stay green: a harman loop cannot FIRE until the owner licenses
     # its origin via the loop-control mode, so authoring one is not itself risky.

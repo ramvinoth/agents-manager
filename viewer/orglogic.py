@@ -280,6 +280,11 @@ _MIN_LEVEL = {
     # board-shaping authority, not an ic act on one's own
     # card. loop_delete is ALSO red → an agent's delete queues for the owner.
     "loop_create": "lead",
+    # ...except a session's ONE-SHOT wake for itself: the turn-end discipline every
+    # agent follows ("end a run by creating its next wake"). It only narrows (fires
+    # once, then retires), so it is ic. The route picks this action only after
+    # self_loop_change_allowed proved the create is the caller's own one-shot.
+    "loop_wake_self": "ic",
     # Starting a new worker session spends runs like a loop does, so the same
     # authority. Bypass mode is refused at the route (session_mode_set is the door).
     "session_create": "lead",

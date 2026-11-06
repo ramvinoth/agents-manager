@@ -624,14 +624,19 @@ class OrchestratorMixin:
         """
         body = self.read_body() or {}
         target = (body.get("for_session") or "").strip()
-        if self._own_loop_change(req, target, "create", body) is None:
+        own = self._own_loop_change(req, target, "create", body)
+        if own is None:
             return
-        self._org_send(req, "loop_create", {
+        # A proven own one-shot is the ic action every agent may take; scheduling
+        # another session stays lead and, below it, queues for the owner with the
+        # caller's `reason`.
+        self._org_send(req, "loop_wake_self" if own else "loop_create", {
             "session": target, "path": body.get("path", ""),
             "prompt": body.get("prompt", ""), "cron": body.get("cron"),
             "interval": body.get("interval"), "at": body.get("at"),
             "model": body.get("model", ""),
-            "provider": body.get("provider", "")})
+            "provider": body.get("provider", ""),
+            "reason": body.get("reason") or ""})
 
     def _p_org_loops_update(self, req):
         """Edit a harman-origin loop. The rail resolves the loop's OWN session (not a
