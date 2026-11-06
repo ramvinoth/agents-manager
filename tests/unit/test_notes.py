@@ -237,3 +237,28 @@ def test_export_route_zips_an_obsidian_vault(fdb):
     z = zipfile.ZipFile(io.BytesIO(sent["data"]))
     assert z.namelist() == ["Harman Notes/A.md"]
     assert z.read("Harman Notes/A.md").decode().endswith("---\n[[B]]")
+
+
+def test_mcp_get_keeps_the_models_session_filter(monkeypatch):
+    """The caller's identity rides in headers; a model's `session` arg on a GET
+    tool is a filter and must reach the query string, not be overwritten."""
+    seen = {}
+
+    class _Resp:
+        headers = {"Content-Type": "application/json"}
+        def read(self): return b"[]"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"], seen["headers"] = req.full_url, dict(req.header_items())
+        return _Resp()
+
+    monkeypatch.setattr(viewer_mcp, "SESSION", "caller-sid")
+    monkeypatch.setattr(viewer_mcp.urllib.request, "urlopen", fake_urlopen)
+    viewer_mcp._call("loop_list", {"session": "target-sid"})
+    assert "session=target-sid" in seen["url"]
+    assert "caller-sid" not in seen["url"]
+    assert seen["headers"].get("X-viewer-session") == "caller-sid"
+    viewer_mcp._call("loop_list", {})
+    assert "session=" not in seen["url"]

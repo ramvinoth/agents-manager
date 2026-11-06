@@ -536,6 +536,10 @@ def _call(tool, args):
         return {"error": f"unknown tool {tool}"}
     method, path = spec
     payload = dict(args or {})
+    # A model's own `session` arg is a FILTER (loop_list, note_list, card_list),
+    # not the caller: the caller rides in headers. Keep it apart so the identity
+    # below cannot overwrite it.
+    filter_session = payload.pop("session", None)
     payload["session"] = SESSION
     payload["token"] = TOKEN
     payload.update(_FIXED_ARGS.get(tool, {}))
@@ -561,6 +565,8 @@ def _call(tool, args):
             from urllib.parse import urlencode
             q = {k: v for k, v in payload.items()
                  if k not in ("session", "token") and v is not None}
+            if filter_session:
+                q["session"] = filter_session
             if q:
                 url += "?" + urlencode(q)
             req = urllib.request.Request(url, method="GET", headers=auth)
