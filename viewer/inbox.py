@@ -495,7 +495,7 @@ def _who(sender_type, sender_id):
 
 
 def _wake_session(session_id, prompt):
-    """Wake a session with an incoming message: into its running turn's queue
+    """Wake a session with an incoming message: steered into its running turn
     when a run is live, else a fresh resumed turn on its original host.
     Best-effort — a failed wake means the message sits in its inbox, where
     the session's next run will list it (the inbox is the durable surface).
@@ -509,9 +509,15 @@ def _wake_session(session_id, prompt):
             job = engine.CHAT_JOBS.get(session_id)
             running = bool(job and job.get("running"))
             host = (job or {}).get("host", "local")
-        if running and engine.enqueue_chat(session_id, prompt):
-            how = "queued"
-            return
+        if running:
+            # Steer, don't queue: a queued message waits for the WHOLE turn to
+            # end, and a turn can run for an hour (a long build, a wait on a
+            # background task), so the peer's "wait" or the owner's question
+            # sat unseen. Steering lands it at the run's next tool boundary;
+            # steer_chat itself falls back to the queue once stdin is closing.
+            how = engine.steer_chat(session_id, prompt) or "failed"
+            if how != "failed":
+                return
         cwd = "~"
         if host != "local":
             from viewer import remote

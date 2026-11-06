@@ -246,6 +246,29 @@ def test_deliver_returns_before_a_slow_wake(monkeypatch):
     assert woke.wait(5)               # and the wake still happens
 
 
+# ── _wake_session: a live run gets the message mid-turn, not at turn end ──
+
+def test_wake_steers_into_a_running_turn(monkeypatch):
+    from viewer import engine
+    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    steered, started = [], []
+    monkeypatch.setattr(engine, "steer_chat", lambda sid, t: steered.append(t) or "steered")
+    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    inbox._wake_session("s1", "[inbox] wait")
+    assert steered == ["[inbox] wait"] and not started
+
+
+def test_wake_resumes_when_the_run_ended_before_the_steer(monkeypatch):
+    from viewer import engine
+    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    started = []
+    monkeypatch.setattr(engine, "steer_chat", lambda sid, t: None)   # run just finished
+    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    monkeypatch.setattr("viewer.config.transcript_path", lambda sid: None)
+    inbox._wake_session("s1", "[inbox] wait")
+    assert len(started) == 1        # never dropped: a fresh resumed turn carries it
+
+
 # ---- org Red approvals -------------------------------------------------------
 
 def test_red_is_a_decision_kind_keyed_by_approval_id():
