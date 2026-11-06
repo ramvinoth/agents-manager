@@ -485,7 +485,10 @@ def test_event_body_sends_only_what_was_given():
     assert W.event_body({"title": "T"}) == {"summary": "T"}
     b = W.event_body({"start": "2026-10-06", "end": "2026-10-07", "all_day": True, "attendees": ["a@x", ""]})
     assert b == {"start": {"date": "2026-10-06"}, "end": {"date": "2026-10-07"}, "attendees": [{"email": "a@x"}]}
-    assert W.event_body({"start": "2026-10-06T09:00:00"})["start"] == {"dateTime": "2026-10-06T09:00:00+00:00"}
+    # No offset = the owner's local 9 AM (this server's zone), never 9 AM UTC.
+    import datetime
+    assert W.event_body({"start": "2026-10-06T09:00:00"})["start"] == {
+        "dateTime": datetime.datetime(2026, 10, 6, 9).astimezone().isoformat()}
     with pytest.raises(Exception):
         W.event_body({"start": "next tuesday"})
 

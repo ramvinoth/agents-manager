@@ -1510,6 +1510,21 @@ def _perm_push_body(tool_name, tinput, host):
     return body
 
 
+def owner_time_line(now=None, localtime_path="/etc/localtime"):
+    """The owner's time zone, said once per run, so an agent writes every time
+    it shows them in THEIR zone (this server's) and never in UTC. Zone only, no
+    clock: a fixed line keeps the prompt cacheable; `date` gives the time. Pure."""
+    now = (now or datetime.now()).astimezone()
+    real = os.path.realpath(localtime_path)
+    iana = os.environ.get("TZ") or (real.split("zoneinfo/", 1)[1] if "zoneinfo/" in real else "")
+    off = now.strftime("%z")
+    zone = f"{iana} ({now.tzname()}, UTC{off[:3]}:{off[3:]})" if iana else f"{now.tzname()} (UTC{off[:3]}:{off[3:]})"
+    return (f"Time: the owner's time zone is {zone}. Write every time you show the owner "
+            f"in it (e.g. 9:16 PM {now.tzname()}), never in UTC. Tool timestamps are UTC/epoch "
+            "unless they carry an offset or a *_local twin; convert them. A loop_create `at` "
+            "or calendar time without an offset is read in this zone. Run `date` for the time now.")
+
+
 def _integrations_summary():
     """What this run may use right now (accounts, services, operations, local
     folders), so an agent knows its integrations natively. Built per run from
@@ -1649,6 +1664,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     preamble = db.setting_get("system_preamble", "") or ""
     if preamble.strip():
         extra.append(preamble)
+    extra.append(owner_time_line())
     summary = _integrations_summary()
     if summary:
         extra.append(summary)

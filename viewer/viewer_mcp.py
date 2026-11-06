@@ -30,6 +30,7 @@ the session + token + viewer base passed in the environment.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -528,6 +529,31 @@ def _send(msg):
     sys.stdout.flush()
 
 
+_TIME_KEYS = ("at", "ts", "next_window", "next_run", "last_run", "created", "updated", "modified")
+
+
+def with_local_times(obj):
+    """Give every epoch timestamp a `<key>_local` twin in the owner's zone (this
+    machine's), e.g. "2026-11-05 9:16 PM PST", so an agent quotes the owner's
+    clock instead of converting epoch to UTC in its head. Pure; the epoch stays."""
+    if isinstance(obj, list):
+        return [with_local_times(v) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    out = {}
+    for k, v in obj.items():
+        out[k] = with_local_times(v)
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and (k in _TIME_KEYS or k.endswith("_at") or k.endswith("_ts"))
+                and f"{k}_local" not in obj):
+            sec = v / 1000 if 1e12 <= v < 1e13 else v
+            if 1e9 <= sec < 1e10:
+                t = time.localtime(sec)
+                out[f"{k}_local"] = time.strftime("%Y-%m-%d ", t) + \
+                    time.strftime("%I:%M %p %Z", t).lstrip("0")
+    return out
+
+
 def _call(tool, args):
     """Proxy a tool call to the viewer. Returns the server's JSON — already the
     policy verdict (allowed / queued / denied), never a local decision."""
@@ -595,7 +621,7 @@ def _call(tool, args):
         # verbatim — a JSON file read would otherwise be parsed and reshaped.
         return {"text": body.decode(errors="replace")}
     try:
-        return json.loads(body)
+        return with_local_times(json.loads(body))
     except ValueError:
         return {"text": body.decode(errors="replace")}
 

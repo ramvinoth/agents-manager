@@ -172,14 +172,15 @@ class Gmail(_GoogleAPI):
 
 
 def _rfc3339(value, default):
-    """An ISO date/datetime → RFC 3339 with an offset (naive → UTC). Pure."""
+    """An ISO date/datetime → RFC 3339 with an offset. A naive time is the owner's
+    local time (this server's zone), never UTC: "9:00" means 9 AM where they are."""
     if not value:
         return default.isoformat()
     try:
         d = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         raise DriveError("Dates must be ISO 8601, e.g. 2026-10-05 or 2026-10-05T09:00:00-07:00", 400)
-    return (d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)).isoformat()
+    return (d if d.tzinfo else d.astimezone()).isoformat()
 
 
 def event_time(value, all_day):

@@ -1,5 +1,6 @@
 """Tests for viewer.workspace — Gmail/Calendar clients over the shared _http
 seam (no network). A fake Google answers the exact URLs the clients build."""
+import datetime
 import base64
 import email
 import json
@@ -99,7 +100,8 @@ def test_draft_requires_fields(google):
 
 def test_calendar_events_flatten(google):
     r = _acct(workspace.Calendar).events("2026-10-06", "2026-10-08")
-    assert r["from"] == "2026-10-06T00:00:00+00:00"
+    # A bare date is the owner's local midnight (this server's zone), not UTC.
+    assert r["from"] == datetime.datetime.fromisoformat("2026-10-06").astimezone().isoformat()
     assert [e["title"] for e in r["events"]] == ["Standup", "(no title)"]
     assert r["events"][1]["all_day"] is True and r["events"][0]["attendees"] == ["b@x"]
     assert pytest.raises(DriveError, _acct(workspace.Calendar).events, "next tuesday").value.status == 400
