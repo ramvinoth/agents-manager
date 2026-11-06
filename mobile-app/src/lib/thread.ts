@@ -43,7 +43,24 @@ export type CompactBlock = { kind: "compact"; text: string }
 // The server resumed a turn a restart (or a stopped process) cut off. Its resume
 // prompt is a step of the reply it continues, not something the user said.
 export type ResumeBlock = { kind: "resume"; text: string }
-export type Block = TextBlock | ToolBlock | CompactBlock | ResumeBlock
+// A message that reached the agent mid-turn (the owner's steer, or an inbox message
+// from another session). The agent read it inside this reply, so it is a step of it.
+export type SteerBlock = { kind: "steer"; text: string; from?: string }
+export type Block = TextBlock | ToolBlock | CompactBlock | ResumeBlock | SteerBlock
+
+// How viewer/inbox.py heads a message it steers into a running turn.
+const INBOX_MARK = /^\[inbox\] From ([^\n:]+):\n/
+
+// A mid-turn steer the CLI recorded as a queued_command attachment, or null.
+function steerOf(msg: any): { text: string; from?: string } | null {
+  const a = msg.type === "attachment" ? msg.attachment : null
+  if (a?.type !== "queued_command" || a.commandMode !== "prompt") return null
+  const p = a.prompt
+  const raw = typeof p === "string" ? p : Array.isArray(p) ? p.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n") : ""
+  if (!raw.trim()) return null
+  const m = raw.match(INBOX_MARK)
+  return m ? { text: raw.slice(m[0].length), from: m[1].trim() } : { text: raw }
+}
 
 // How viewer/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together).
 const RESUME_MARK = "Your last turn was cut off mid-way"
@@ -237,12 +254,17 @@ export function parseTranscript(input: string[] | string): Turn[] {
   const id = () => "m" + ++n
 
   for (const msg of objs) {
-    if (SKIP_TYPES.has(msg.type)) continue
+    const steer = steerOf(msg)
+    if (!steer && SKIP_TYPES.has(msg.type)) continue
     if (msg.uuid) {
       if (seen.has(msg.uuid)) continue
       seen.add(msg.uuid)
     }
     if (msg.isMeta) continue
+    if (steer) {
+      turns.push({ role: "assistant", id: id(), blocks: [{ kind: "steer", ...steer }], ts: msg.timestamp, uuid: msg.uuid })
+      continue
+    }
     // A compaction writes a "Conversation compacted" boundary, then its summary as
     // a user record. Drop the boundary; fold the summary into the reply as a step,
     // so a long run still reads as one message and one answer.

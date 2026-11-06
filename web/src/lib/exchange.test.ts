@@ -61,6 +61,27 @@ eq("the summary is not counted as a user message", sp.stats.userMessages, 1)
 const arr = new SessionParser().ingest(JSON.stringify({ type: "user", uuid: "9", isCompactSummary: true, message: { content: [{ type: "text", text: "s" }] } }))?.turn
 eq("array-content summary", arr?.type === "assistant" && arr.blocks[0], { type: "compact", summary: "s" })
 
+// --- a message steered in mid-turn folds into the reply as a step (records as Claude Code writes them) ---
+const qp = new SessionParser()
+const qr = (o: object) => qp.ingest(JSON.stringify(o))?.turn
+const queued = (uuid: string, prompt: unknown, commandMode = "prompt") =>
+  qr({ type: "attachment", uuid, attachment: { type: "queued_command", prompt, commandMode } })
+const steered = groupExchanges([
+  qr({ type: "user", uuid: "1", message: { role: "user", content: "build it" } }),
+  qr({ type: "assistant", uuid: "2", message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: {} }] } }),
+  queued("3", [{ type: "text", text: "also add tests" }]),
+  queued("4", "[inbox] From session Watchdog:\nyour wake is missing"),
+  queued("5", "<task-notification>…</task-notification>", "task-notification"),
+  qr({ type: "queue-operation", operation: "remove", reason: "absorbed_mid_turn" }),
+  qr({ type: "assistant", uuid: "6", message: { content: [{ type: "text", text: "done" }] } }),
+].filter((t): t is Turn => !!t))
+eq("a steer stays inside the reply", steered.map((x) => x.type), ["user", "exchange"])
+const sx = steered[1] as Exchange
+eq("owner and inbox steers are steps; task notifications stay hidden", sx.steps.map((b) => b.type), ["tool_use", "steer", "steer"])
+eq("the owner's steer keeps its text", sx.steps[1], { type: "steer", text: "also add tests" })
+eq("an inbox steer names its sender", sx.steps[2], { type: "steer", text: "your wake is missing", from: "session Watchdog" })
+eq("a steer is not counted as a user message", qp.stats.userMessages, 1)
+
 // --- the server's auto-resume folds into the reply it continues ---
 const rp = new SessionParser()
 const rr = (o: object) => rp.ingest(JSON.stringify(o))?.turn

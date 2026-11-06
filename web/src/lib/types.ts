@@ -78,7 +78,14 @@ export interface ResumeBlock {
   type: "resume"
   note: string
 }
-export type Block = TextBlock | ToolUseBlock | CompactBlock | ResumeBlock
+/** A message that reached the agent while it worked (the owner's steer, or an
+ *  inbox message from `from`): a step of the reply, read at its next tool call. */
+export interface SteerBlock {
+  type: "steer"
+  text: string
+  from?: string
+}
+export type Block = TextBlock | ToolUseBlock | CompactBlock | ResumeBlock | SteerBlock
 
 export interface ImagePart {
   mime: string
