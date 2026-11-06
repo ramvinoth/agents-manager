@@ -14,6 +14,7 @@ import { api } from "./src/api/client"
 import { hasServer, loadConfig, token } from "./src/state/config"
 import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
 import { registerForPush, onNotificationTap } from "./src/lib/notify"
+import { notificationTarget } from "./src/lib/notificationRoute"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
@@ -49,11 +50,12 @@ import TerminalScreen from "./src/screens/TerminalScreen"
 export type RootStackParamList = {
   Server: { mode?: "initial" | "add" } | undefined
   Login: undefined
-  Home: undefined
+  // A decision push opens the deck on that item (HomeTabs consumes and clears these).
+  Home: { decision?: string; ref?: string; session?: string } | undefined
   NewChat: { template?: import("./src/api/client").AgentTemplate; cwd?: string } | undefined
   // `starting`: a chat that was just started and whose transcript isn't written
   // yet — the thread opens at once and resolves it (see ThreadScreen).
-  Thread: { host: string; label: string; path?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
+  Thread: { host: string; label: string; path?: string; session?: string; jumpTo?: string; agent?: string; starting?: StartingChat }
   Call: { label: string; path?: string }
   SessionProfile: { host: string; label: string; path?: string; sessionId: string; agent?: string }
   Capabilities: { host?: string; cwd?: string; session?: string; agent?: string; title?: string } | undefined
@@ -89,56 +91,42 @@ export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 // is still initializing. So we buffer the most-recent target and flush it once the
 // tree is ready (see flushPendingNav, called from NavigationContainer.onReady and
 // after a warm tap). Bailing on !isReady() was why the tap only foregrounded the app.
-let pendingNav: Record<string, unknown> | null = null
 
-// Resolve a push payload to a screen: `{card}` (a board card the owner was asked
-// about) opens that card; `{note}` opens the note; `{screen: "Integrations"}` (an
-// account whose sign-in expired) opens Integrations; `{session, host}` (a chat
-// turn) opens the Thread. Thread
-// navigates by `path` (unique; id is not), so the session is looked up on its
-// host. Best-effort — a stale id or offline host just no-ops rather than throwing.
-async function navToTarget(data: Record<string, unknown>): Promise<void> {
-  const card = Number(data.card)
-  if (Number.isInteger(card) && card > 0) {
-    navigationRef.navigate("CardDetail", { id: card })
-    return
-  }
-  const note = Number(data.note)
-  if (Number.isInteger(note) && note > 0) {
-    navigationRef.navigate("NoteEditor", { id: note })
-    return
-  }
-  if (data.screen === "Integrations") {
-    navigationRef.navigate("Integrations")
-    return
-  }
-  const session = typeof data.session === "string" ? data.session : ""
-  const host = typeof data.host === "string" ? data.host : "local"
-  if (!session) return
-  try {
-    const sessions = await api.sessions(host)
-    const match = sessions.find((s) => s.id === session)
-    if (!match) return
-    const label = match.title || match.id.slice(0, 8)
-    navigationRef.navigate("Thread", { host, label, path: match.path })
-  } catch {
-    /* tap routing is best-effort */
+type PushTap = { data: Record<string, unknown>; title: string }
+let pendingTap: PushTap | null = null
+
+// Resolve a push to a screen (lib/notificationRoute) and go there in the same
+// frame: no network read stands between the tap and the screen, so the Home
+// deck never opens first and swaps underneath. Screens load their own data.
+function navToTarget({ data, title }: PushTap): void {
+  const target = notificationTarget(data, title)
+  if (!target) return
+  switch (target.to) {
+    case "card": return navigationRef.navigate("CardDetail", { id: target.id })
+    case "note": return navigationRef.navigate("NoteEditor", { id: target.id })
+    case "integrations": return navigationRef.navigate("Integrations")
+    case "decision":
+      return navigationRef.navigate("Home", { decision: target.kind, ref: target.ref, session: target.session })
+    case "inbox": return navigationRef.navigate("Inbox", { session: target.session, title: title.split(" · ")[0] || undefined })
+    case "thread":
+      return navigationRef.navigate("Thread", {
+        host: target.host, label: target.title || "Chat", session: target.session,
+      })
   }
 }
 
 // Handle a tap: if the tree is ready, navigate now; otherwise stash it so
 // flushPendingNav can complete the jump once the container mounts.
-function openFromNotification(data: Record<string, unknown>): void {
-  if (!data.card && !data.note && !data.screen && !data.session) return
-  if (navigationRef.isReady()) void navToTarget(data)
-  else pendingNav = data
+function openFromNotification(data: Record<string, unknown>, title: string): void {
+  if (navigationRef.isReady()) navToTarget({ data, title })
+  else pendingTap = { data, title }
 }
 
 // Drain any tap that arrived before navigation was ready (cold start).
 function flushPendingNav(): void {
-  const data = pendingNav
-  pendingNav = null
-  if (data && navigationRef.isReady()) void navToTarget(data)
+  const tap = pendingTap
+  pendingTap = null
+  if (tap && navigationRef.isReady()) navToTarget(tap)
 }
 
 // A scanned pairing QR (`agents://pair?...`, see lib/pairLink) arrives as a URL
@@ -209,7 +197,7 @@ export default function App() {
 
   // Route notification taps to the chat they belong to (foreground/background AND
   // cold start). Set up once; teardown on unmount.
-  useEffect(() => onNotificationTap((data) => openFromNotification(data)), [])
+  useEffect(() => onNotificationTap(openFromNotification), [])
 
   useEffect(() => {
     if (!ready) return

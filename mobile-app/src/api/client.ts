@@ -497,7 +497,7 @@ export const api = {
   }) => req<{ started: boolean; session: string; path?: string; jobs?: string[] }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
   // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
   resolve: (id: string, host?: string) =>
-    req<{ found: boolean; path?: string; running?: boolean; error?: string }>(
+    req<{ found: boolean; path?: string; running?: boolean; title?: string; error?: string }>(
       "GET",
       `/api/resolve?id=${encodeURIComponent(id)}${host && host !== "local" ? `&host=${encodeURIComponent(host)}` : ""}`
     ),

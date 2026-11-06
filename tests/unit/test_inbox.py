@@ -246,6 +246,32 @@ def test_deliver_returns_before_a_slow_wake(monkeypatch):
     assert woke.wait(5)               # and the wake still happens
 
 
+# ── pushes: one per item, carrying what the tap needs to land on it ─────────
+
+def _capture_pushes(monkeypatch):
+    sent = []
+    monkeypatch.setattr(inbox.db, "inbox_create", lambda *a, **k: {"id": 7})
+    monkeypatch.setattr(inbox.db, "audit_append", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "session_project", lambda sid: None)
+    monkeypatch.setattr(inbox, "_label", lambda sid: "Builder")
+    monkeypatch.setattr(inbox, "_wake_session", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "_push_owner", lambda t, b, d: sent.append((t, d)))
+    return sent
+
+
+def test_decision_push_names_the_item_it_opens(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_decision("s1", "approval", 42, "Approve Bash?")
+    assert sent == [("Builder · approval",
+                     {"session": "s1", "decision": "approval", "ref": "42"})]
+
+
+def test_session_message_push_opens_its_mailbox(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_message("session", "s1", "user", "", "done")
+    assert sent == [("Builder · inbox", {"inbox": 7, "session": "s1"})]
+
+
 # ── _wake_session: a live run gets the message mid-turn, not at turn end ──
 
 def test_wake_steers_into_a_running_turn(monkeypatch):

@@ -68,7 +68,7 @@ type ListItem = ThreadItem | typeof WORKING
 // then tap a step to see its result). Composer: send / steer / queue, a
 // permission-mode + model dropdown, and in-thread Allow/Deny cards.
 export default function ThreadScreen({ route, navigation }: Props) {
-  const { host, path, label, agent = "claude", starting } = route.params
+  const { host, path, label, agent = "claude", starting, session } = route.params
   const [items, setItems] = useState<ThreadItem[]>([])
   const [loading, setLoading] = useState(true)
   // Paging older history in from the top of the (inverted) list: "loading"
@@ -321,7 +321,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   const reload = useCallback(async () => {
     if (!path) {
-      setLoading(false)
+      // Opened by session id alone (a push tap): the effect below resolves the
+      // path and keeps the spinner up until it does.
+      if (!session) setLoading(false)
       return [] as ReturnType<typeof groupThread>
     }
     try {
@@ -506,6 +508,26 @@ export default function ThreadScreen({ route, navigation }: Props) {
         navigation.setParams({ path: found, starting: undefined })
       })
   }, [path, starting?.session]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opened by session id alone (a push tap navigates at once, without first
+  // looking the chat up): resolve the transcript path here, under the spinner,
+  // then adopt it like any chat opened from the list.
+  useEffect(() => {
+    if (path || starting || !session) return
+    setSessionId(session)
+    let title: string | undefined
+    const lookup = () => api.resolve(session, host).then((r) => ((title = r.title), r))
+    resolveSessionPath(lookup, { maxTries: 10 })
+      .then((found) => {
+        if (!isCurrentThread()) return
+        if (!found) {
+          setLoading(false)
+          setError("This chat isn't on this server any more.")
+          return
+        }
+        navigation.setParams({ path: found, label: title || label, session: undefined })
+      })
+  }, [path, session]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist the composer draft per session so it survives going back / app
   // close. Debounced so we don't hit SecureStore on every keystroke. Keyed by

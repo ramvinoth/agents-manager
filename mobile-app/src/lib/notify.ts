@@ -129,7 +129,7 @@ export async function unregisterPush(send: (token: string) => Promise<unknown>):
  * on a build without the native module it simply does nothing. Returns an
  * unsubscribe fn.
  */
-export function onNotificationTap(handler: (data: Record<string, unknown>) => void): () => void {
+export function onNotificationTap(handler: (data: Record<string, unknown>, title: string) => void): () => void {
   let sub: { remove?: () => void } | null = null
   let cancelled = false
   ;(async () => {
@@ -140,16 +140,17 @@ export function onNotificationTap(handler: (data: Record<string, unknown>) => vo
       // returns it PERSISTENTLY, so a remount would re-fire it and re-navigate —
       // dedupe by the notification id so each cold tap is handled at most once.
       const last = await N.getLastNotificationResponseAsync?.()
-      const coldData = last?.notification?.request?.content?.data
+      const coldContent = last?.notification?.request?.content
+      const coldData = coldContent?.data
       const coldId = last?.notification?.request?.identifier
       if (coldData && coldId && coldId !== _lastColdId) {
         _lastColdId = coldId
-        handler(coldData)
+        handler(coldData, coldContent?.title ?? "")
       }
       // Warm taps while running/backgrounded.
       sub = N.addNotificationResponseReceivedListener((resp: any) => {
-        const data = resp?.notification?.request?.content?.data
-        if (data) handler(data)
+        const content = resp?.notification?.request?.content
+        if (content?.data) handler(content.data, content.title ?? "")
       })
     } catch {
       /* tap routing is best-effort */

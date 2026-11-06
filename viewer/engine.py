@@ -1192,14 +1192,6 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         entry = next((e for e in pend if e["id"] == pid), None)
         if entry:
             entry["revision"] = revision
-    # Background push so the user knows a question is waiting (works app-closed).
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   "Your agent has a question for you.",
-                   data={"session": session_id, "host": host, "question": True})
-    except Exception:
-        pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -1239,13 +1231,6 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
         host = job.get("host", "local")
     try:
         questions.record_plan(session_id, {"tool_use_id": tool_use_id, "plan": plan_md}, host)
-    except Exception:
-        pass
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   "Your agent has a plan to review.",
-                   data={"session": session_id, "host": host, "plan": True})
     except Exception:
         pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
@@ -1315,16 +1300,9 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
              "created": time.time()})
         cwd = job.get("cwd", "")
         host = job.get("host", "local")
-    # Background push: the run is now blocked waiting on the user (best-effort).
     live_events.publish("tool_approvals", pid, "INSERT")
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   _perm_push_body(tool_name, tinput, host),
-                   data={"session": session_id, "host": host, "approval": pid})
-    except Exception:
-        pass
-    # Mirror into the owner's inbox: the live registry above stays the one
+    # Mirror into the owner's inbox (and the owner's one push for this ask,
+    # sent by deliver_decision): the live registry above stays the one
     # source of truth (it disappears on restart — so does this row's open
     # state); the inbox row carries the cold-reader context and a reply
     # path. Exception-safe: never fail the permission request on delivery.

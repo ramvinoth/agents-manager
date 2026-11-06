@@ -420,7 +420,9 @@ def deliver_decision(session_id, kind, ref_id, body, push_title=None):
         who = label or "An agent session"
         _push_owner(push_title or f"{who} · {kind}",
                     body.replace("\n", " ")[:180],
-                    {"session": str(session_id)})
+                    # kind + ref let the tap open the deck ON this item.
+                    {"session": str(session_id), "decision": kind,
+                     "ref": str(ref_id or "")})
         try:
             db.audit_append(f"session:{session_id}", "inbox_deliver",
                             {"kind": kind, "ref": ref_id or ""}, "delivered")
@@ -476,8 +478,10 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
                         body.replace("\n", " ")[:180],
                         {"session": str(recipient_id)})
         elif sender_type == "session":
+            # The tap opens this session's mailbox, where the message is.
             _push_owner(f"{_label(sender_id)} · inbox",
-                        body.replace("\n", " ")[:180], {})
+                        body.replace("\n", " ")[:180],
+                        {"inbox": row.get("id"), "session": str(sender_id)})
         db.audit_append(_who(sender_type, sender_id), "inbox_send",
                         {"to": f"{recipient_type}:{recipient_id}",
                          "in_reply_to": int(in_reply_to or 0)}, "sent")
