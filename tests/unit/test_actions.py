@@ -397,6 +397,17 @@ def test_an_ic_session_may_set_its_own_one_shot_wake(fdb):
     assert "queued" not in resp and fdb.loops[resp["created"]]["session"] == "bob"
 
 
+def test_an_ic_session_may_pause_its_own_loop_without_a_reason(fdb):
+    """Card 330: an own pause ran as lead-only loop_update, so at Own work it queued
+    and demanded a reason. The route now picks loop_pause_self for a proven pause."""
+    fdb.loops["L"] = {"id": "L", "session": "bob", "origin": "user", "enabled": True}
+    resp, status = actions.execute(
+        actions.intent("loop_pause_self", {"id": "L", "enabled": False, "own_pause": True},
+                       "session:bob"), "owner", "ic")
+    assert status == 200 and resp == {"updated": "L", "enabled": False}
+    assert fdb.loops["L"]["enabled"] is False and not fdb.approvals
+
+
 def test_an_ic_scheduling_another_session_queues_with_its_why(fdb):
     args = {"session": "worker", "prompt": "go", "at": "30m"}
     resp, status = actions.execute(actions.intent("loop_create", args, "session:bob"),

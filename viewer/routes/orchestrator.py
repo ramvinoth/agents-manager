@@ -653,7 +653,11 @@ class OrchestratorMixin:
         if own is None:
             return
         if own:
-            body = {"id": body["id"], "enabled": False, "own_pause": True}
+            # A proven own pause is the ic action every agent may take (card 330: as
+            # lead-only loop_update it queued for the owner and demanded a reason).
+            self._org_send(req, "loop_pause_self",
+                           {"id": body["id"], "enabled": False, "own_pause": True})
+            return
         self._org_send(req, "loop_update", body)
 
     def _p_org_loops_delete(self, req):

@@ -784,6 +784,7 @@ ACTIONS = {
     "session_create": _session_create,
     "loop_create": _loop_create,
     "loop_wake_self": _loop_create,
+    "loop_pause_self": _loop_update,
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,
     "loop_mode_set": _loop_mode_set,

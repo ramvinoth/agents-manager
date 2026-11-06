@@ -112,6 +112,7 @@ _ACTIONS = {
     "session_create": ("Start a new session", None),
     "loop_create": ("Create scheduled work", None),
     "loop_wake_self": ("Set own wake", None),
+    "loop_pause_self": ("Pause own scheduled work", None),
     "loop_update": ("Update scheduled work", None),
     "loop_delete": ("Delete scheduled work", None),
     "loop_mode_set": ("Change loop firing mode", None),

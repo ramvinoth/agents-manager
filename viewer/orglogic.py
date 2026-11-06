@@ -285,6 +285,10 @@ _MIN_LEVEL = {
     # once, then retires), so it is ic. The route picks this action only after
     # self_loop_change_allowed proved the create is the caller's own one-shot.
     "loop_wake_self": "ic",
+    # ...and pausing one of its OWN loops: it only narrows what runs unattended, so
+    # it is ic too. The route picks this only after self_loop_change_allowed proved
+    # the update is a bare pause (resuming stays the owner's).
+    "loop_pause_self": "ic",
     # Starting a new worker session spends runs like a loop does, so the same
     # authority. Bypass mode is refused at the route (session_mode_set is the door).
     "session_create": "lead",
@@ -444,6 +448,9 @@ def mutates_own_session(acting_session, target_session):
 # Transport fields every agent request carries, never part of what it asks to change:
 # the MCP client (viewer_mcp._call) stamps `session` and `token` into every body.
 _TRANSPORT_KEYS = {"id", "session", "token"}
+# Fields that explain a request but change nothing: a pause that also says why is
+# still only a pause (the MCP asks agents for a `reason` on gated calls).
+_NOT_A_CHANGE = _TRANSPORT_KEYS | {"reason"}
 
 
 def self_loop_change_allowed(op, args):
@@ -465,7 +472,7 @@ def self_loop_change_allowed(op, args):
             and not str(args.get("cron") or "").strip() \
             and not str(args.get("interval") or "").strip()
     if op == "update":
-        changed = {k for k, v in args.items() if k not in _TRANSPORT_KEYS and v is not None}
+        changed = {k for k, v in args.items() if k not in _NOT_A_CHANGE and v is not None}
         return changed == {"enabled"} and args.get("enabled") is False
     return False
 

@@ -285,6 +285,8 @@ def test_an_own_one_shot_wake_is_ic():
     # The turn-end wake every agent sets for itself only narrows (fires once).
     assert orglogic.allowed("loop_wake_self", "ic") is True
     assert orglogic.is_red("loop_wake_self") is False
+    assert orglogic.allowed("loop_pause_self", "ic") is True
+    assert orglogic.is_red("loop_pause_self") is False
 
 
 def test_creating_or_editing_a_loop_is_green_but_deleting_is_red():
@@ -360,6 +362,11 @@ def test_a_session_may_pause_its_own_loop_but_never_resume_or_retune_it():
     assert orglogic.self_loop_change_allowed(
         "update", {"id": "L", "enabled": False, "prompt": None, "cron": None})
     assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": True})
+    # A pause that also says why is still only a pause (card 330).
+    assert orglogic.self_loop_change_allowed(
+        "update", {"id": "L", "enabled": False, "reason": "card done"})
+    assert not orglogic.self_loop_change_allowed(
+        "update", {"id": "L", "enabled": True, "reason": "resume"})
     # A falsy non-bool is not a pause the caller meant.
     assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": 0})
     # Pausing while also changing anything else is a retune, not a pause.
