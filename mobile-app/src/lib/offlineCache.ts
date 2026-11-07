@@ -89,6 +89,9 @@ export class OfflineCache {
   }
 
   private async get<T>(key: string): Promise<T | null> {
+    // Saved this run: answer from memory, no disk read on the way to first paint.
+    const mem = this.written.get(key)
+    if (mem !== undefined) return JSON.parse(mem) as T
     const idx = await this.loadIndex()
     const e = idx.entries[key]
     if (!e) return null

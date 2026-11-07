@@ -54,6 +54,7 @@ import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
 import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
 import { liveEvents } from "../api/events"
+import { openThreadPage } from "../api/threadOpen"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
@@ -326,8 +327,21 @@ export default function ThreadScreen({ route, navigation }: Props) {
       if (!session) setLoading(false)
       return [] as ReturnType<typeof groupThread>
     }
+    // First open: a short shared read (the Chats row already started it on
+    // press-in), and the saved copy paints at once while it is in flight.
+    const first = loadedRef.current.path !== path
+    let landed = false
+    if (first) {
+      offlineCache.loadThread(activeServerId(), host, path).then((saved) => {
+        if (saved && !landed && loadedRef.current.path !== path) {
+          render(saved)
+          setLoading(false)
+        }
+      })
+    }
     try {
-      const page = await api.sessionReadPage(host, path, PAGE_LINES)
+      const page = first ? await openThreadPage(host, path) : await api.sessionReadPage(host, path, PAGE_LINES)
+      landed = true
       loadedRef.current = { path, lines: page.lines, start: page.start, end: page.end }
       setOlder("idle")
       setFromCache(false)
@@ -335,6 +349,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
       offlineCache.saveThread(activeServerId(), host, path, page.lines)
       return render(page.lines)
     } catch (e) {
+      landed = true
       // Unreachable: show the saved copy (if any) under the offline banner,
       // instead of an error in place of the conversation.
       if (isTransportError(e)) {

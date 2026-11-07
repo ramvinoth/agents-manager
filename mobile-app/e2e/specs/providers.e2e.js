@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture, PROVIDER } = require("../thread-board-fixture")
-const shown = id => $("~" + id).isDisplayed()
+const { signIn } = require("../signin")
 
 async function tap(id) { await reveal(id); await $("~" + id).click() }
 // Bounded native swipes until the control is in the upper 70% (clear of keyboard and tab bar).
@@ -26,14 +26,7 @@ describe("Providers — one connection, a context window per model", function ()
   before(async () => {
     assert.equal(process.env.E2E_BUNDLE_ID, "com.suhai.agents.e2e", "Never run against a production bundle")
     fixture = await startFixture({ ai: true })
-    await browser.waitUntil(async () => await shown("server-url") || await shown("login-username") || await shown("chats-list"), { timeout: 30000 })
-    if (await shown("server-url")) {
-      await $("~server-url").setValue(fixture.url); await $("~server-connect").click()
-      await browser.waitUntil(async () => await shown("login-username") || await shown("chats-list"))
-    }
-    if (await shown("login-username")) {
-      await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await $("~login-submit").click()
-    }
+    await signIn(fixture)
     await $("~chats-list").waitForDisplayed()
   })
   after(async () => { await fixture?.close() })

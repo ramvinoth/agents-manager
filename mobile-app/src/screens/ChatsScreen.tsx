@@ -26,6 +26,7 @@ import { useMenuButton } from "../components/SideMenu"
 import { useTapGuard } from "../lib/useTapGuard"
 import { useScreenHeader } from "../lib/useScreenHeader"
 import { useStyles } from "../lib/styles"
+import { prefetchThread } from "../api/threadOpen"
 
 // Chats lives inside the bottom-tab navigator, which itself is nested in the
 // root stack — so navigation can still push Thread/NewChat on the parent stack.
@@ -497,7 +498,11 @@ export default function ChatsScreen({ navigation }: Props) {
                 // element; the content column and the button are exposed separately.
                 accessible={false}
                 style={[styles.chatRow, { borderBottomColor: t.border }]}
-                onPressIn={rowTap.onPressIn}
+                onPressIn={(e) => {
+                  rowTap.onPressIn(e)
+                  // The finger is down: start the read so it lands with the push.
+                  if (!selecting) prefetchThread(host, item.path)
+                }}
                 onPress={rowTap.tap(() => {
                   if (selecting) {
                     toggleSelected(item.path)
