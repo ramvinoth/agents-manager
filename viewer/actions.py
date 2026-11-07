@@ -162,7 +162,8 @@ def _card_move(a, *, by_agent=False):
     # move ends whatever was open (viewer.asks).
     since, exp = asks.after_move(into_decision, by_agent, expires, now)
     db.card_ask_set(card["id"], since, exp)
-    return dict(moved, ask_since=since, ask_expires_at=exp)
+    out = dict(moved, ask_since=since, ask_expires_at=exp)
+    return _with_queue_warning(out, card["id"]) if into_decision and by_agent else out
 
 
 def _card_delete(a):
@@ -371,7 +372,20 @@ def _card_comment(a, *, by_agent=False):
                                            expires, now)
     if new_state != (float(state[0]), float(state[1])):
         db.card_ask_set(card["id"], *new_state)
-    return dict(row, warning=asks.SPLIT_WARNING) if second else row
+    row = dict(row, warning=asks.SPLIT_WARNING) if second else row
+    return _with_queue_warning(row, card["id"]) if by_agent and in_decision else row
+
+
+def _with_queue_warning(result, card_id):
+    """Tell the agent when its ask landed behind the owner's full queue
+    (viewer.queue): it is held, silent, and the agent should decide what it
+    can itself. Joined to any warning already there."""
+    from viewer import queue
+    full = queue.full_warning("card", str(card_id))
+    if not full:
+        return result
+    prior = result.get("warning")
+    return dict(result, warning=f"{prior} {full}" if prior else full)
 
 
 def _card_dep_add(a):
@@ -828,6 +842,15 @@ _BOARD_ACTIONS = ("card_create", "card_move", "card_update", "card_comment",
                   "card_dep_add", "card_dep_remove", "task_done")
 
 
+def _in_decision_column(card):
+    """Is the card parked where the owner's call is needed (Review/Needs-info)?"""
+    if not card or not card.get("project_id"):
+        return False
+    cols = db.board_columns_list(card["project_id"])
+    col = next((c for c in cols if c["id"] == card.get("column_id")), None)
+    return asks.is_decision_column((col or {}).get("name"))
+
+
 def _card_inbox_delivery(card, action, args, agent):
     """Surface a card parked in a decision column (Review/Needs-info) in the
     owner's inbox. The card's COLUMN stays the one source of truth — the inbox
@@ -840,9 +863,7 @@ def _card_inbox_delivery(card, action, args, agent):
     if not agent or action not in ("card_move", "card_comment") or not card:
         return
     try:
-        cols = db.board_columns_list(card["project_id"]) if card.get("project_id") else []
-        col = next((c for c in cols if c["id"] == card.get("column_id")), None)
-        if (col or {}).get("name", "").lower() not in ("review", "needs-info"):
+        if not _in_decision_column(card):
             return
         from viewer import inbox
         comment = ((args.get("body") or "").strip()
@@ -903,7 +924,10 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # The push is for the owner, so it fires whether or not the card is
         # bound to a session: an agent answering an unbound card (an in-app
         # feedback note, a card the owner typed) must still reach them.
-        if agent and action == "card_comment":
+        # A comment on a card waiting for the owner is the ask itself: the
+        # inbox delivery above pushes it (or holds it behind a full queue),
+        # so a second push here would double it.
+        if agent and action == "card_comment" and not _in_decision_column(card):
             from viewer import push
             # The owner reads this cold, possibly hours later: the title must
             # identify the card by number AND name, and the payload must carry

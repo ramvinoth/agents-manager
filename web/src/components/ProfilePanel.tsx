@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react"
-import { ChevronRight, History, Plug, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
+import { ChevronRight, History, Inbox, Minus, Plug, Plus, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { useStore } from "@/store"
 import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
 import { agentScheduleHint, loopModeFor, scheduleFlags, scheduleSummary } from "@/lib/schedules"
-import type { LoopMode } from "@/lib/types"
+import type { DecisionCap, LoopMode } from "@/lib/types"
 import { AISelectionDialog, AuditDialog, PairPhoneDialog, IntegrationsDialog } from "@/components/lazyDialogs"
 
 function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
@@ -55,6 +55,29 @@ export function ProfilePanel() {
       alive = false
     }
   }, [currentHost])
+
+  // The owner's attention cap: how many decisions are in front of them at
+  // once. The server owns it (viewer.queue); the rest wait, silent.
+  const [cap, setCap] = useState<DecisionCap | null>(null)
+  const [capErr, setCapErr] = useState("")
+  useEffect(() => {
+    let alive = true
+    api.decisionCap().then((c) => alive && setCap(c)).catch(() => alive && setCapErr("Can't reach the server — size unknown."))
+    return () => {
+      alive = false
+    }
+  }, [])
+  async function stepCap(by: number) {
+    if (!cap) return
+    const next = Math.min(cap.max, Math.max(1, cap.cap + by))
+    if (next === cap.cap) return
+    try {
+      setCap(await api.setDecisionCap(next))
+      setCapErr("")
+    } catch (e: any) {
+      setCapErr(e?.message || "Couldn't change it.")
+    }
+  }
 
   const [autoBusy, setAutoBusy] = useState(false)
   const [autoErr, setAutoErr] = useState("")
@@ -131,6 +154,29 @@ export function ProfilePanel() {
               disabled={!autoKnown || autoBusy}
               onClick={toggleAutomation}
             />
+          </div>
+        </section>
+
+        <section className="py-4">
+          <SectionHeader icon={Inbox} title="Decisions" />
+          <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">Decisions in front of you at once</div>
+              <div className={cn("text-[11px]", capErr ? "text-destructive" : "text-muted-foreground")}>
+                {capErr || "Agents' other asks wait quietly, with no push, until you clear one. Agents are told to decide what they can themselves."}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button className="rounded p-1 text-muted-foreground hover:bg-accent disabled:opacity-40" title="Fewer"
+                disabled={!cap || cap.cap <= 1} onClick={() => stepCap(-1)}>
+                <Minus className="size-3.5" />
+              </button>
+              <span className="w-5 text-center text-sm font-medium tabular-nums" data-testid="decision-cap">{cap ? cap.cap : "…"}</span>
+              <button className="rounded p-1 text-muted-foreground hover:bg-accent disabled:opacity-40" title="More"
+                disabled={!cap || cap.cap >= cap.max} onClick={() => stepCap(1)}>
+                <Plus className="size-3.5" />
+              </button>
+            </div>
           </div>
         </section>
 

@@ -466,6 +466,7 @@ class SessionViewerHandler(
         "/api/org/docs": "_g_org_docs",
         "/api/org/docs/read": "_g_org_docs_read",
         "/api/inbox": "_g_inbox",
+        "/api/inbox/cap": "_g_inbox_cap",
         "/api/usage/report": "_g_usage_report",
         "/api/org/intake": "_g_org_intake",
     }
@@ -598,6 +599,7 @@ class SessionViewerHandler(
         "/api/canvas/revert": "_p_canvas_revert",
         "/api/inbox/read": "_p_inbox_read",
         "/api/inbox/snooze": "_p_inbox_snooze",
+        "/api/inbox/cap": "_p_inbox_cap",
         "/api/org/intake": "_p_org_intake",
         "/api/org/maintenance/request": "_p_org_maintenance_request",
         "/api/org/maintenance/now": "_p_org_maintenance_now",

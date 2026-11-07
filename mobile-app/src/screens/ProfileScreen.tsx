@@ -5,7 +5,7 @@ import Constants from "expo-constants"
 import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, isQueued, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
+import { api, isQueued, type DecisionCap, type HarmanConfig, type LoopControl, type LoopMode, type Provider } from "../api/client"
 import { displayAddress } from "../lib/servers"
 import {
   activeServer,
@@ -73,6 +73,20 @@ export default function ProfileScreen({ navigation }: Props) {
   const [loop, setLoop] = useState<LoopControl | null>(null)
   const [loopBusy, setLoopBusy] = useState(false)
   const [loopErr, setLoopErr] = useState("")
+  // The owner's attention cap (server-owned, viewer.queue).
+  const [cap, setCap] = useState<DecisionCap | null>(null)
+  const [capErr, setCapErr] = useState("")
+  const stepCap = async (by: number) => {
+    if (!cap) return
+    const next = Math.min(cap.max, Math.max(1, cap.cap + by))
+    if (next === cap.cap) return
+    try {
+      setCap(await api.setDecisionCap(next))
+      setCapErr("")
+    } catch (e) {
+      setCapErr(userError(e, "the decision queue size"))
+    }
+  }
   // The global system-awareness preamble prepended to every session's system
   // prompt. `preamble` is the server's value (null while unknown, same reasoning
   // as harman/loop above); `draft` is the local edit buffer so typing doesn't
@@ -154,6 +168,9 @@ export default function ProfileScreen({ navigation }: Props) {
       api.orgLoopControl()
         .then((l) => alive && setLoop(l))
         .catch(() => alive && setLoop(null))
+      api.decisionCap()
+        .then((c) => alive && setCap(c))
+        .catch(() => alive && setCap(null))
       api.orgSystemPreamble()
         .then((p) => alive && setPreamble(p.preamble))
         .catch(() => alive && setPreamble(null))
@@ -348,6 +365,21 @@ export default function ProfileScreen({ navigation }: Props) {
           />
         </SettingRow>
         {loopErr ? <Text style={[styles.ssRowHint, { paddingHorizontal: 18, marginTop: 8, maxWidth: undefined, color: t.danger }]}>{loopErr}</Text> : null}
+        <SettingRow
+          label="Decisions in front of you"
+          hint={capErr || (cap ? "Other asks wait quietly, no push, until you clear one." : "Can't reach the server — size unknown.")}
+          danger={!!capErr}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <TouchableOpacity testID="decision-cap-less" disabled={!isOwner || !cap || cap.cap <= 1} onPress={() => void stepCap(-1)}>
+              <Text style={[styles.segText, { fontSize: 20, opacity: !isOwner || !cap || cap.cap <= 1 ? 0.3 : 1 }]}>−</Text>
+            </TouchableOpacity>
+            <Text testID="decision-cap" style={[styles.segText, { minWidth: 18, textAlign: "center" }]}>{cap ? cap.cap : "…"}</Text>
+            <TouchableOpacity testID="decision-cap-more" disabled={!isOwner || !cap || cap.cap >= cap.max} onPress={() => void stepCap(1)}>
+              <Text style={[styles.segText, { fontSize: 20, opacity: !isOwner || !cap || cap.cap >= cap.max ? 0.3 : 1 }]}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </SettingRow>
       </Card>
 
       <Card icon="sparkle" title="AI for new chats">

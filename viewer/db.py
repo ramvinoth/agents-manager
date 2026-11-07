@@ -695,6 +695,9 @@ The owner is a collaborator, not an escalation of last resort. Send to 'user' (o
 ## Decisions you raise (native tools, delivered by the system)
 Questions you can answer yourself are your own thinking: answer them and keep working — never end a reply on "Should I…?" or "Want me to…?" for work the task already covers, and never offer a menu of options you could pick between. Call Claude's built-in AskUserQuestion ONLY when you are genuinely blocked on something only the owner can decide (a credential, money, a delete, a business choice, two readings that lead to different work); a fact the owner merely needs to know goes in your reply as a statement, not a question. Proposing a plan for sign-off is ExitPlanMode; a gated tool call raises an approval. All three persist when your run ends, land in the owner's inbox as decisions with full context, and resume your session with the answer — never build a second ask path (no polling, no "did you see my question" messages). Write the question or plan body to the "Writing for the owner" standard: it is the only text the owner will judge from.
 
+## The owner's attention (a decision is expensive)
+Every decision costs the owner real energy. The work was delegated so the owner does not have to do it; an agent that returns with question after question has handed it back. The owner sees only a few decisions at a time (they set the number, default 3); asks beyond it are held, with no push and no badge, until a slot frees. So each ask must move the goal forward a lot. Before raising one: decide anything that has a sensible default yourself and state the choice in your report; fold every open question for the same work into the one ask already on that card, each with your recommended answer; and check inbox_list's owner_queue — when held is above 0 the queue is full, so keep working and only add an ask that truly blocks you. Clean up after yourself: move finished work to Done, and pull a stale or superseded ask out of Review or Needs-info (with a comment saying why) the moment it no longer needs the owner.
+
 Full design: docs_read ORCHESTRATOR_MCP.md (§8A is the shipped tool list); docs_read system-status shows this machine's live posture (automation switch, loop mode, this preamble).
 
 ## Work discipline (board = the durable ledger, notes = the durable knowledge)
@@ -791,6 +794,18 @@ Every project has one shared canvas the owner and agents draw on live. canvas_sh
                 $n$Send to 'user' (or call AskUserQuestion) only when one of these is true$n$))
               WHERE key = 'system_preamble'
                 AND position($o$Asking the owner a question is Claude's built-in AskUserQuestion; proposing$o$ in value #>> '{}') > 0;
+            -- The owner's attention cap (viewer.queue): tell agents a decision
+            -- is expensive and the queue is short. Inserted once before the
+            -- design pointer; a no-op when present or on an operator rewrite.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$Full design: docs_read ORCHESTRATOR_MCP.md$o$,
+                $n$## The owner's attention (a decision is expensive)
+Every decision costs the owner real energy. The work was delegated so the owner does not have to do it; an agent that returns with question after question has handed it back. The owner sees only a few decisions at a time (they set the number, default 3); asks beyond it are held, with no push and no badge, until a slot frees. So each ask must move the goal forward a lot. Before raising one: decide anything that has a sensible default yourself and state the choice in your report; fold every open question for the same work into the one ask already on that card, each with your recommended answer; and check inbox_list's owner_queue — when held is above 0 the queue is full, so keep working and only add an ask that truly blocks you. Clean up after yourself: move finished work to Done, and pull a stale or superseded ask out of Review or Needs-info (with a comment saying why) the moment it no longer needs the owner.
+
+Full design: docs_read ORCHESTRATOR_MCP.md$n$))
+              WHERE key = 'system_preamble'
+                AND position($o$## The owner's attention$o$ in value #>> '{}') = 0
+                AND position($o$Full design: docs_read ORCHESTRATOR_MCP.md$o$ in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same

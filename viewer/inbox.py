@@ -114,36 +114,56 @@ def attach_snooze(items, ref_rows, now=None):
     return out
 
 
-def visible_queue(items):
-    """The queue a human is shown right now: every open item whose snooze is
-    not live. Snoozed items stay open in the source (attach_state still reads
-    them open) — they are deferred, not decided — so this is a view, applied
-    last, and only on the surfaces a human scans. With the count."""
-    shown = [it for it in items or [] if not it.get("snoozed_until")]
-    return {"count": len(shown), "decisions": shown}
+def visible_queue(items, cap=None):
+    """The queue a human is shown right now: open items whose snooze is not
+    live, the first `cap` of them (items arrive oldest first), with `held`:
+    how many more wait behind them. Snoozed and held items stay open in the
+    source (attach_state still reads them open); they are deferred, not
+    decided, so this is a view, applied last, on the surfaces a human scans.
+    `cap` None shows everything (viewer.queue owns the owner's cap)."""
+    open_ = [it for it in items or [] if not it.get("snoozed_until")]
+    shown = open_ if cap is None else open_[:cap]
+    return {"count": len(shown), "decisions": shown, "held": len(open_) - len(shown),
+            "cap": cap}
 
 
-def unread_count(rows, open_items, now=None):
+def _shown_refs(open_items, cap):
+    """The 'kind:ref' keys the owner is shown, or None when nothing is capped."""
+    if cap is None:
+        return None
+    return {decision_ref(i) for i in visible_queue(open_items, cap)["decisions"]}
+
+
+def unread_count(rows, open_items, now=None, cap=None):
     """The badge number: rows still waiting on the owner's eye — addressed to
     the owner, unread (a lapsed snooze counts) and, for decision kinds, still
-    open. The owner's own messages to sessions, session-to-session traffic,
-    and a question already answered or a card already moved out of Review are
+    open and in front of them (a held decision is silent until it surfaces).
+    The owner's own messages to sessions, session-to-session traffic, and a
+    question already answered or a card already moved out of Review are
     history, not a call to make, so none of them inflate the badge. Pure."""
+    shown = _shown_refs(open_items, cap)
     return sum(1 for r in attach_state(rows, open_items, now)
                if r.get("recipient_type") == "user"
-               and r["effective_status"] == "sent" and r["open"] is not False)
+               and r["effective_status"] == "sent" and r["open"] is not False
+               and (shown is None or (r.get("kind") or "message") not in DECISION_KINDS
+                    or f"{r.get('kind')}:{r.get('ref_id')}" in shown))
 
 
-def action_queue(rows, open_items, now=None):
+def action_queue(rows, open_items, now=None, cap=None):
     """The 'needs your action' view: decision-kind rows that are still open
     and not snoozed, oldest first (waiting time is the only order before a
-    human ranks anything — the same rule as the decision queue). With the
-    total count, for the '3 of 12' header."""
+    human ranks anything — the same rule as the decision queue), limited to
+    the ones the decision queue shows, so both surfaces show the same few.
+    With the count and how many are held, for the '1 of 3' header."""
     rows = attach_state(rows, open_items, now)
     now = time.time() if now is None else float(now)
+    shown = _shown_refs(open_items, cap)
     items = [r for r in rows if r.get("open") and not r["snoozed"]]
+    if shown is not None:
+        items = [r for r in items if f"{r.get('kind')}:{r.get('ref_id')}" in shown]
     items.sort(key=lambda r: (float(r.get("created_at") or now), int(r.get("id") or 0)))
-    return {"count": len(items), "items": items}
+    held = 0 if shown is None else visible_queue(open_items, cap)["held"]
+    return {"count": len(items), "items": items, "held": held}
 
 
 # ---- message bodies (cold-reader standard) ----------------------------------
@@ -418,14 +438,20 @@ def deliver_decision(session_id, kind, ref_id, body, push_title=None):
                         session_id=str(session_id),
                         project_id=session_project(session_id))
         who = label or "An agent session"
-        _push_owner(push_title or f"{who} · {kind}",
-                    body.replace("\n", " ")[:180],
-                    # kind + ref let the tap open the deck ON this item.
-                    {"session": str(session_id), "decision": kind,
-                     "ref": str(ref_id or "")})
+        from viewer import queue
+        # Only a decision in front of the owner pushes; one held behind a full
+        # queue stays silent until it surfaces (viewer.queue).
+        shown = queue.admits(kind, ref_id or "")
+        if shown:
+            _push_owner(push_title or f"{who} · {kind}",
+                        body.replace("\n", " ")[:180],
+                        # kind + ref let the tap open the deck ON this item.
+                        {"session": str(session_id), "decision": kind,
+                         "ref": str(ref_id or "")})
         try:
             db.audit_append(f"session:{session_id}", "inbox_deliver",
-                            {"kind": kind, "ref": ref_id or ""}, "delivered")
+                            {"kind": kind, "ref": ref_id or ""},
+                            "delivered" if shown else "held")
         except Exception:
             pass
     except Exception:

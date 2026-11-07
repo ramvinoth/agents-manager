@@ -306,6 +306,8 @@ export type HarmanConfig = { automation_enabled?: boolean }
  *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
  *  NOT start Harman's manager tick (that is `automation_enabled`). */
 export type LoopMode = "user" | "harman" | "both" | "none"
+/** The owner's attention cap (GET/POST /api/inbox/cap). */
+export type DecisionCap = { cap: number; default: number; max: number }
 export type LoopControl = { mode: LoopMode }
 /** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
  *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
@@ -996,7 +998,10 @@ export const api = {
   // plan + live tool approval, oldest first, with a total count. Read-only —
   // deciding an item goes through the per-session routes, which are race-safe.
   openDecisions: () =>
-    req<{ count: number; decisions: OpenDecision[] }>("GET", "/api/decisions/open"),
+    req<{ count: number; decisions: OpenDecision[]; held?: number; cap?: number }>("GET", "/api/decisions/open"),
+  // The owner's attention cap: decisions shown at once; the rest wait silently.
+  decisionCap: () => req<DecisionCap>("GET", "/api/inbox/cap"),
+  setDecisionCap: (cap: number) => req<DecisionCap>("POST", "/api/inbox/cap", { cap }),
   // ---- inbox (the channel). The owner (app principal) may filter freely and
   //  gets the action queue; an agent (mcp) is pinned to its own mailbox and
   //  gets no queue — the server decides, not the client. Deciding an open

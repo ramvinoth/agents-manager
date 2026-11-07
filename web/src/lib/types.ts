@@ -483,6 +483,9 @@ export interface InboxMessage {
   /** Added by GET /api/inbox: true while the snooze is still in effect. */
   snoozed?: boolean
 }
+/** The owner's attention cap (GET/POST /api/inbox/cap). */
+export type DecisionCap = { cap: number; default: number; max: number }
+
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 export type CardFilter = { session?: string; project?: number }
 /** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared

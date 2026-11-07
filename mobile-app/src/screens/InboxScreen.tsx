@@ -78,6 +78,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   // The visible decision queue (the board band's source) — what "Decide"
   // opens the cockpit over. A failed read degrades to "fall back to the chat".
   const [queue, setQueue] = useState<OpenDecision[]>([])
+  const [held, setHeld] = useState(0)
   const reads = useRef({ issued: 0, applied: 0 })
   const marked = useRef(new Set<number>())
 
@@ -92,7 +93,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       if (request < reads.current.applied) return
       reads.current.applied = request
       setMessages((cur) => withPending(r.messages || [], cur))
-      if (q) setQueue(q.decisions || [])
+      if (q) { setQueue(q.decisions || []); setHeld(q.held || 0) }
       setUnread(r.unread || 0)
       setError("")
     } catch (err) {
@@ -337,6 +338,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     <>
     <ConversationList
       queueCount={queue.length}
+      heldCount={held}
       onDecideAll={() => cockpit.open(queue, 0)}
       messages={messages}
       labels={labels}
@@ -360,9 +362,10 @@ export default function InboxScreen({ navigation, session, title, host, path, is
 /** The Inbox tab body: search, an "All / Needs you" switch, the conversation
  *  rows, and the "New message" chat picker. */
 function ConversationList({
-  queueCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, onRefresh, composeOpen, setComposeOpen, sessions,
+  queueCount, heldCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, onRefresh, composeOpen, setComposeOpen, sessions,
 }: {
   queueCount: number
+  heldCount: number
   onDecideAll: () => void
   messages: InboxMessage[]
   labels: Record<string, string>
@@ -427,6 +430,7 @@ function ConversationList({
             <Icon name="check" size={18} color={t.onAccent} />
             <Text style={[styles.ibDecideAllText, { flex: 1 }]}>
               {queueCount === 1 ? "1 decision waits on you" : `${queueCount} decisions wait on you`}
+              {heldCount > 0 ? ` · ${heldCount} more after these` : ""}
             </Text>
             <Text style={styles.ibDecideAllText}>Decide ›</Text>
           </TouchableOpacity>

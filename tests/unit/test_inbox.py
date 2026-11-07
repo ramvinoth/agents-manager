@@ -355,11 +355,12 @@ class TestInboxRouteLimit:
     def _run(self, monkeypatch, principal, query):
         from viewer.routes import inbox as ri
         calls = []
-        monkeypatch.setattr(ri, "open_decisions_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "open_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "cap", lambda: 3)
         monkeypatch.setattr(ri.db, "inbox_list", lambda **kw: calls.append(kw) or [])
-        monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items: 0)
+        monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items, cap=None: 0)
         monkeypatch.setattr(ri.inbox, "attach_state", lambda rows, items: rows)
-        monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i: {})
+        monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i, cap=None: {})
         h = ri.InboxMixin.__new__(ri.InboxMixin)
         h.send_json = lambda data, status=200: None
         req = type("R", (), {"principal": principal, "query": query})()

@@ -161,17 +161,18 @@ class TestRoute:
                inbox_rows=(), red=()):
         import viewer.db as vdb
         import viewer.questions as q
-        import viewer.routes.inbox as vinbox
+        import viewer.queue as vqueue
         monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
         monkeypatch.setattr(vdb, "approval_list_open", lambda: list(red))
         monkeypatch.setattr(vdb, "inbox_decision_refs", lambda: list(inbox_rows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
-        # The route (chat._g_decisions_open) delegates the gather to the inbox
-        # module's open_decisions_items — patch the source names where THAT
-        # module holds its references.
-        monkeypatch.setattr(vinbox, "pending_approvals_all_public", lambda: arows)
-        monkeypatch.setattr(vinbox, "_push_label",
+        # The route (chat._g_decisions_open) delegates the gather to
+        # viewer.queue.open_items — patch the source names where THAT module
+        # holds its references. The cap is the default (3) unless a test sets it.
+        monkeypatch.setattr(vqueue, "cap", lambda: vqueue.DEFAULT_CAP)
+        monkeypatch.setattr(vqueue, "pending_approvals_all_public", lambda: arows)
+        monkeypatch.setattr(vqueue, "_push_label",
                             labeler or (lambda sid, cwd="": ""))
 
     def test_lists_all_three_sources(self, monkeypatch):
@@ -233,7 +234,7 @@ class TestRoute:
         self._fakes(monkeypatch, [], [], [])
         h = _Handler()
         h._g_decisions_open(None)
-        assert h.sent == ({"count": 0, "decisions": []}, 200)
+        assert h.sent == ({"count": 0, "decisions": [], "held": 0, "cap": 3}, 200)
 
     def test_a_failing_label_lookup_degrades_to_empty_not_a_500(self, monkeypatch):
         def boom(sid, cwd=""):

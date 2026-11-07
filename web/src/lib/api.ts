@@ -5,7 +5,7 @@
 import type { NoteGraph } from "./noteLinks"
 import type { FoundCall } from "./decisionAnchors"
 import type { NoteExportFormat } from "./notes"
-import type { Provider, HarmanConfig, LoopControl, LoopMode, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, MarketInstalled, MarketPage, McpSignin } from "./types"
+import type { Provider, HarmanConfig, LoopControl, LoopMode, OrgProject, ProjectPlugin, BoardColumn, Card, CardComment, CardDep, CardFilter, Note, NoteComment, NoteCommentSort, NoteFilter, NoteKind, Queued, SessionDetail, SessionMeta, OpenDecision, Drive, IntakeChannel, IntegrationsView, InboxFilter, InboxMessage, DecisionCap, MarketInstalled, MarketPage, McpSignin } from "./types"
 import type { HarmanLevel, PermissionPolicy, TrustWrite } from "./trust"
 import type { AIConfig, AIScope, AISelection, ModelDiscovery } from "./aiSelection"
 import type { KeyAction } from "./providerModels"
@@ -174,8 +174,16 @@ class ApiClient {
     // instead of erroring on every board.
     return this.getRes("/api/decisions/open").then(async (r) => {
       if (!r.ok) throw Object.assign(new Error(`decisions queue unavailable (${r.status})`), { status: r.status })
-      return r.json() as Promise<{ count: number; decisions: OpenDecision[] }>
+      return r.json() as Promise<{ count: number; decisions: OpenDecision[]; held?: number; cap?: number }>
     })
+  }
+  /** How many decisions the owner sees at once (the attention cap; the rest
+   *  are held, silent, and surface as slots free). Owner-only write. */
+  decisionCap() {
+    return this.getJSON<DecisionCap>("/api/inbox/cap")
+  }
+  setDecisionCap(cap: number) {
+    return this.postJSON<DecisionCap>("/api/inbox/cap", { cap })
   }
 
   // ---- org / Kanban (project-scoped board) ----
@@ -331,7 +339,7 @@ class ApiClient {
     return this.getJSON<{
       messages: InboxMessage[]
       unread?: number
-      queue?: { count: number; items: InboxMessage[] }
+      queue?: { count: number; items: InboxMessage[]; held?: number }
     }>(`/api/inbox${q ? "?" + q : ""}`)
   }
   inboxRead(id: number) {

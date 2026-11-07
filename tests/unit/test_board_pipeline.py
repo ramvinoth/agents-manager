@@ -493,3 +493,34 @@ def test_own_session_closing_its_card_cancels_the_queued_wake(board, monkeypatch
     actions.execute(_it("task_done", {"card_id": 42}, "session:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert cancelled == [42, 42] and board.wakes == []
+
+
+def test_agent_ask_in_review_pushes_once_through_the_decision_queue(board, monkeypatch):
+    """A comment on a card waiting for the owner IS the ask: the inbox delivery
+    pushes it (or holds it behind a full queue), so the generic comment push
+    stays quiet — otherwise the owner got two pushes per ask."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append((kind, ref)))
+    monkeypatch.setattr(inbox, "format_card", lambda card, comment: comment)
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["column_id"] = 12                       # Review
+    resp, status = actions.execute(
+        _it("card_comment", {"card_id": 42, "body": "Ship it?"}, "session:bob"),
+        "owner", "ic", acting_session="sess-1")
+    assert status == 200 and "warning" not in resp
+    assert delivered == [("card", "42")]
+    assert board.pushes == []
+
+
+def test_agent_ask_behind_a_full_queue_is_told_so(board, monkeypatch):
+    from viewer import inbox, queue
+    monkeypatch.setattr(inbox, "deliver_decision", lambda *a: None)
+    monkeypatch.setattr(inbox, "format_card", lambda card, comment: comment)
+    monkeypatch.setattr(inbox, "last_session_comment", lambda cid: "")
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "QUEUE FULL")
+    resp, status = actions.execute(
+        _it("card_move", {"card_id": 42, "column_id": 12}, "session:bob"),
+        "owner", "ic", acting_session="sess-1")
+    assert status == 200 and resp["warning"] == "QUEUE FULL"
