@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor
 
@@ -551,6 +552,11 @@ def init_db():
             -- the scheduler tick tells the asking session.
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_since DOUBLE PRECISION NOT NULL DEFAULT 0;
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_expires_at DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- The sender's own id for the thing an intake card is about (viewer.intake
+            -- `key`: a membership, a CI run, an alert). A later post on the same
+            -- channel with the same key updates that card instead of opening another.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS intake_key TEXT NOT NULL DEFAULT '';
+            CREATE UNIQUE INDEX IF NOT EXISTS cards_intake_key ON cards(created_by, intake_key) WHERE intake_key <> '';
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -3214,14 +3220,35 @@ def intake_delete(cid):
         return cur.fetchone() is not None
 
 
+def intake_card(cid, key):
+    """The card channel `cid` opened for the sender's `key`, or None."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM cards WHERE created_by = %s AND intake_key = %s",
+                    (f"intake:{cid}", key))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_card_key(card_id, key):
+    """Tag a card with its sender's key. False when another card already holds
+    it (the unique index is the backstop; intake.deliver serialises keyed posts)."""
+    try:
+        with _db() as cur:
+            cur.execute("UPDATE cards SET intake_key = %s WHERE id = %s", (key, card_id))
+        return True
+    except psycopg2.errors.UniqueViolation:
+        return False
+
+
 def intake_touch(cid):
     """Record one delivery: bump the counter, stamp last_used. Returns the count
-    of cards this channel created in the last hour (the rate-limit input)."""
+    of cards and updates this channel posted in the last hour (the rate-limit input)."""
     with _db() as cur:
         cur.execute("UPDATE intake_channels SET received = received + 1, last_used = %s "
                     "WHERE id = %s", (_now(), cid))
-        cur.execute("SELECT count(*) AS n FROM cards WHERE created_by = %s AND created_at > %s",
-                    (f"intake:{cid}", _now() - 3600))
+        cur.execute("SELECT (SELECT count(*) FROM cards WHERE created_by = %(a)s AND created_at > %(t)s)"
+                    " + (SELECT count(*) FROM card_comments WHERE author = %(a)s AND created_at > %(t)s) AS n",
+                    {"a": f"intake:{cid}", "t": _now() - 3600})
         return cur.fetchone()["n"]
 
 

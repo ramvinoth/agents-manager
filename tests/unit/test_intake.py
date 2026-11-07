@@ -296,3 +296,99 @@ def test_feedback_delivery_failure_never_fails_the_post(monkeypatch):
         raise RuntimeError("db down")
     monkeypatch.setattr(intake, "feedback_channel", boom)
     assert _Usage()._feedback_to_board(P, [NOTE]) == []
+
+
+# -- keyed posts: one thing, one card ------------------------------------------
+class KeyedDB(FakeDB):
+    """FakeDB plus the card thread, enough for an update to run through actions."""
+
+    def __init__(self):
+        super().__init__()
+        self.comments, self.keys = [], {}
+
+    def card_get(self, card_id):
+        return next((c for c in self.cards if c["id"] == card_id), None)
+
+    def card_update(self, card_id, **fields):
+        card = self.card_get(card_id)
+        card.update(fields)
+        return card
+
+    def card_move(self, card_id, column_id, position=None):
+        return self.card_update(card_id, column_id=column_id)
+
+    def card_comment_add(self, card_id, author, body):
+        self.comments.append((card_id, author, body))
+        return {"id": len(self.comments), "card_id": card_id, "author": author, "body": body}
+
+    def __getattr__(self, name):          # board bookkeeping the handlers touch: no-ops
+        return lambda *a, **k: None
+
+
+@pytest.fixture
+def kdb(monkeypatch):
+    f = KeyedDB()
+    monkeypatch.setattr(actions, "db", f)
+    monkeypatch.setattr(db, "intake_touch", lambda cid: 1)
+    monkeypatch.setattr(db, "board_columns_list", f.board_columns_list)
+    monkeypatch.setattr(db, "card_get", f.card_get)
+    monkeypatch.setattr(db, "intake_card", lambda cid, key: next(
+        (f.card_get(i) for i, k in f.keys.items() if k == key), None))
+    monkeypatch.setattr(db, "intake_card_key", lambda card_id, key: f.keys.__setitem__(card_id, key) or True)
+    pushes = []
+    from viewer import push
+    monkeypatch.setattr(push, "notify_all", lambda title, body, data=None: pushes.append((title, body)))
+    f.pushes = pushes
+    return f
+
+
+UNBOUND = dict(CH, session_id="")
+
+
+def test_options_reads_key_and_done_strictly():
+    assert intake.options({"key": " mem_1 ", "done": True}) == ("mem_1", True)
+    assert intake.options({"key": {"x": 1}, "done": "true"}) == ("", False), "only a string key, only a real true"
+    assert intake.options("plain text") == ("", False)
+    title, body = intake.card_fields("C", {"title": "t", "key": "k", "done": True, "kind": "sale"}, "s")
+    assert '"key"' not in body and '"done"' not in body and '"kind"' in body
+
+
+def test_done_event_lands_in_done_tagged_and_pushes_when_no_session_reads_it(kdb):
+    resp, status = intake.deliver(UNBOUND, {"title": "Sale: Pro", "text": "x bought Pro", "key": "mem_1", "done": True}, "s")
+    assert status == 200 and kdb.cards[0]["column_id"] == 77
+    assert kdb.keys == {9: "mem_1"}
+    assert kdb.pushes == [("Card 9 · Sale: Pro", "x bought Pro")]
+
+
+def test_bound_door_does_not_push_its_session_reads_it(kdb):
+    intake.deliver(dict(CH, session_id="s1"), {"title": "t", "key": "k"}, "s")
+    assert kdb.pushes == []
+
+
+def test_owner_feedback_never_pushes_the_owner(kdb):
+    intake.deliver(UNBOUND, {"text": "bad"}, "user:ram", human_role="owner", session_level="", actor="user:ram")
+    assert kdb.pushes == []
+
+
+def test_same_key_updates_the_card_comments_and_files_it_done(kdb):
+    intake.deliver(UNBOUND, {"title": "Sale: Pro", "text": "bought", "key": "mem_1"}, "s")
+    assert kdb.cards[0]["column_id"] == 70
+    resp, status = intake.deliver(UNBOUND, {"title": "Sale: Pro (cancelled)", "text": "cancelled", "key": "mem_1", "done": True}, "s")
+    assert status == 200 and resp.get("updated") and len(kdb.cards) == 1
+    card = kdb.cards[0]
+    assert card["title"] == "Sale: Pro (cancelled)" and card["column_id"] == 77
+    assert kdb.comments == [(9, "intake:ch_abc", "cancelled")]
+
+
+def test_another_key_opens_another_card(kdb):
+    intake.deliver(UNBOUND, {"title": "a", "key": "mem_1"}, "s")
+    kdb.card_create = lambda *a, **k: (FakeDB.card_create(kdb, *a, **k) | {"id": 10})
+    intake.deliver(UNBOUND, {"title": "b", "key": "mem_2"}, "s")
+    assert len(kdb.cards) == 2
+
+
+def test_update_is_rate_limited_too(kdb, monkeypatch):
+    intake.deliver(UNBOUND, {"title": "a", "key": "mem_1"}, "s")
+    monkeypatch.setattr(db, "intake_touch", lambda cid: intake.RATE_PER_HOUR + 1)
+    resp, status = intake.deliver(UNBOUND, {"title": "b", "key": "mem_1"}, "s")
+    assert status == 429 and kdb.comments == []
