@@ -3067,24 +3067,6 @@ def drive_delete(did):
         return cur.fetchone() is not None
 
 
-def drive_set_status(did, status=None, hidden=None):
-    """Plugin lifecycle: pause/resume (`status`) and hide/show (`hidden`)
-    from the file UI. Either may be given; a paused or hidden drive is
-    refused by viewer.drives.adapter_for."""
-    sets, vals = [], []
-    if status is not None:
-        sets.append("status = %s")
-        vals.append(status)
-    if hidden is not None:
-        sets.append("hidden = %s")
-        vals.append(bool(hidden))
-    if not sets:
-        return
-    vals.append(did)
-    with _db() as cur:
-        cur.execute(f"UPDATE drives SET {', '.join(sets)} WHERE id = %s", vals)
-
-
 # Per-host env vars -----------------------------------------------------------
 
 def host_env_load(hid):
