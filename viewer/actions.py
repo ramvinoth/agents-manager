@@ -857,11 +857,13 @@ def _card_inbox_delivery(card, action, args, agent):
     owner's inbox. The card's COLUMN stays the one source of truth — the inbox
     row carries only its context (the card's own comment thread) so the owner
     can decide cold, and it derives open-at-read-time against the live card.
-    Fires on an agent's move INTO the column (including a self-move — that is
-    how a worker requests the call) and on an agent's comment while it sits
-    there. Exception-safe by contract; a lost delivery is a missed convenience,
+    Fires when an agent creates a card in the column, moves one INTO it
+    (including a self-move — that is how a worker requests the call), or
+    comments while it sits there. With no agent comment yet the question is
+    the card's own body, so the owner never gets a bare "the call is yours".
+    Exception-safe by contract; a lost delivery is a missed convenience,
     never a lost decision (the queue also lists it)."""
-    if not agent or action not in ("card_move", "card_comment") or not card:
+    if not agent or action not in ("card_create", "card_move", "card_comment") or not card:
         return
     try:
         column = _decision_column(card)
@@ -870,7 +872,8 @@ def _card_inbox_delivery(card, action, args, agent):
         from viewer import inbox
         comment = ((args.get("body") or "").strip()
                    if action == "card_comment"
-                   else (inbox.last_session_comment(card["id"]) or ""))
+                   else (inbox.last_session_comment(card["id"])
+                         or (card.get("body") or "").strip()))
         inbox.deliver_decision(card.get("session_id") or "", "card",
                                str(card["id"]),
                                inbox.format_card(dict(card, column_name=column), comment))

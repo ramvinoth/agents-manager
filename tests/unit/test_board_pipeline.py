@@ -528,6 +528,20 @@ def test_the_inbox_ask_names_the_column_the_card_is_really_in(board, monkeypatch
     assert delivered and delivered[0].startswith('Card 42 "Fix login" is in Needs-info')
 
 
+def test_an_ask_with_no_comment_yet_carries_the_cards_own_question(board, monkeypatch):
+    """An agent that writes its question in the card body and parks the card
+    used to send the owner a bare "the call is yours:" with nothing after it."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append(body))
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["body"] = "Should I ship the login fix tonight?"
+    actions.execute(_it("card_move", {"card_id": 42, "column_id": 12}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert delivered and delivered[0].endswith("Should I ship the login fix tonight?")
+
+
 def test_agent_ask_behind_a_full_queue_is_told_so(board, monkeypatch):
     from viewer import inbox, queue
     monkeypatch.setattr(inbox, "deliver_decision", lambda *a: None)
