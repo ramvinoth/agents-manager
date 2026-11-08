@@ -552,6 +552,16 @@ def init_db():
             -- the scheduler tick tells the asking session.
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_since DOUBLE PRECISION NOT NULL DEFAULT 0;
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_expires_at DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- When the card was parked in a decision column (0 = not parked): the
+            -- decision queue's wait clock. Comments never move it, so an agent
+            -- rewording its ask or answering the owner's follow-up keeps the
+            -- card's place instead of falling behind newer asks. Cards parked
+            -- before the column existed take their newest write once.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS queued_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            UPDATE cards c SET queued_since = coalesce((SELECT max(created_at) FROM card_comments cc
+                                                        WHERE cc.card_id = c.id), c.updated_at)
+              FROM board_columns bc WHERE bc.id = c.column_id AND c.queued_since = 0
+              AND lower(bc.name) IN ('review', 'needs-info');
             -- The sender's own id for the thing an intake card is about (viewer.intake
             -- `key`: a membership, a CI run, an alert). A later post on the same
             -- channel with the same key updates that card instead of opening another.
@@ -1585,15 +1595,27 @@ def board_columns_ensure(project_id):
 
 # Cards (the ONLY card store) -------------------------------------------------
 
+# The columns whose name says the owner's call is needed (viewer.asks owns the
+# rule; db keeps its own copy because asks is pure and cannot import db).
+_DECISION_COLUMNS = ("review", "needs-info")
+# SQL for "now if column %(col)s is a decision column, else 0": a card's
+# queued_since on entering that column.
+_QUEUED_ON_ENTRY = ("CASE WHEN (SELECT lower(name) FROM board_columns WHERE id = %(col)s) "
+                    "= ANY(%(dcols)s) THEN %(now)s ELSE 0 END")
+
+
 def card_create(title, body="", column_id=None, project_id=None,
                 session_id=None, position=1.0, created_by=""):
+    now = _now()
     with _db() as cur:
         cur.execute(
             "INSERT INTO cards(title, body, column_id, project_id, session_id, "
-            "position, created_by, created_at, updated_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (title, body, column_id, project_id, session_id, position,
-             created_by, _now(), _now()),
+            "position, created_by, created_at, updated_at, queued_since) "
+            "VALUES(%(title)s,%(body)s,%(col)s,%(project)s,%(session)s,%(pos)s,"
+            f"%(by)s,%(now)s,%(now)s,{_QUEUED_ON_ENTRY}) RETURNING *",
+            {"title": title, "body": body, "col": column_id, "project": project_id,
+             "session": session_id, "pos": position, "by": created_by, "now": now,
+             "dcols": list(_DECISION_COLUMNS)},
         )
         return dict(cur.fetchone())
 
@@ -1636,11 +1658,18 @@ def card_update(card_id, **fields):
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return card_get(card_id)
-    sets["updated_at"] = _now()
-    cols = ", ".join(f"{k} = %s" for k in sets)
+    now = _now()
+    sets["updated_at"] = now
+    cols = ", ".join(f"{k} = %({k})s" for k in sets)
+    if "column_id" in sets:
+        # Entering a column restarts the decision wait clock; staying put keeps
+        # it (the right-hand column_id is the OLD value in an UPDATE).
+        cols += (", queued_since = CASE WHEN column_id IS NOT DISTINCT FROM %(column_id)s "
+                 f"THEN queued_since ELSE {_QUEUED_ON_ENTRY} END")
     with _db() as cur:
-        cur.execute(f"UPDATE cards SET {cols} WHERE id = %s RETURNING *",
-                    (*sets.values(), card_id))
+        cur.execute(f"UPDATE cards SET {cols} WHERE id = %(card_id)s RETURNING *",
+                    dict(sets, card_id=card_id, col=sets.get("column_id"), now=now,
+                         dcols=list(_DECISION_COLUMNS)))
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -2138,23 +2167,23 @@ def card_mark_attention(card_id, by_own_session):
 
 def cards_awaiting_owner():
     """Open cards parked in a column whose NAME says the owner's call is needed
-    (Review, Needs-info), with the column name and the time of the last write
-    on the card (its newest comment, else its last update) — the moment the
-    wait began. The decision queue's fourth source: a card an agent left for
-    the owner is a decision exactly like a question or a plan, and it must
-    surface in the same one place, not depend on the owner scanning columns."""
+    (Review, Needs-info), with the column name and `waiting_since`: when the
+    card was parked there (queued_since). Comments do not move it, so a
+    reworded ask or a reply to the owner's follow-up keeps the card's place.
+    The decision queue's fourth source: a card an agent left for the owner is
+    a decision exactly like a question or a plan, and it must surface in the
+    same one place, not depend on the owner scanning columns."""
     with _db() as cur:
         cur.execute(
             "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
             "c.ask_expires_at, bc.name AS column_name, "
-            "coalesce((SELECT max(created_at) FROM card_comments cc "
-            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since, "
+            "coalesce(nullif(c.queued_since, 0), c.updated_at) AS waiting_since, "
             "(SELECT body FROM card_comments cc WHERE cc.card_id = c.id "
             "   AND left(cc.author, 8) = 'session:' "
             "   ORDER BY created_at DESC, id DESC LIMIT 1) AS ask "
             "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
-            "WHERE lower(bc.name) IN ('review', 'needs-info') "
-            "ORDER BY waiting_since, c.id")
+            "WHERE lower(bc.name) = ANY(%s) "
+            "ORDER BY waiting_since, c.id", (list(_DECISION_COLUMNS),))
         return [dict(r) for r in cur.fetchall()]
 
 
