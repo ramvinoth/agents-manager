@@ -1985,7 +1985,7 @@ def inbox_create(sender_type, sender_id, recipient_type, recipient_id, body,
 
 
 def inbox_list(session_id=None, project_id=None, kind=None,
-               unread_only=False, archived=False, limit=200):
+               unread_only=False, archived=False, limit=200, to_session=None):
     """The owner's inbox as a filtered VIEW. `session_id` narrows to one chat
     (its messages in both directions), `project_id` to a project, `kind` to one
     of INBOX_KINDS, `unread_only` to messages that need the owner's eye
@@ -1997,6 +1997,11 @@ def inbox_list(session_id=None, project_id=None, kind=None,
         clauses.append("project_id = %s"); params.append(project_id)
     if kind is not None and kind in INBOX_KINDS:
         clauses.append("kind = %s"); params.append(kind)
+    if to_session is not None:
+        # An agent's unread mail is what was sent TO it; its own asks to the
+        # owner are the owner's to read, not news to the agent.
+        clauses.append("recipient_type = 'session' AND recipient_id = %s")
+        params.append(str(to_session))
     if unread_only:
         clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
         params.append(_now())

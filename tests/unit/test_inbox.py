@@ -382,6 +382,12 @@ class TestInboxRouteLimit:
         assert self._run(monkeypatch, mcp, {"unread_only": ["False"]})["unread_only"] is False
         assert self._run(monkeypatch, mcp, {"unread_only": ["True"]})["unread_only"] is True
 
+    def test_agent_unread_is_only_mail_sent_to_it(self, monkeypatch):
+        mcp = {"kind": "mcp", "session": "s1"}
+        assert self._run(monkeypatch, mcp, {"unread_only": ["1"]})["to_session"] == "s1"
+        assert self._run(monkeypatch, mcp, {})["to_session"] is None
+        assert self._run(monkeypatch, {"kind": "app"}, {"unread_only": ["1"]})["to_session"] is None
+
 
 # ---- resolve_session: what an agent writes after "session:" ----------------
 

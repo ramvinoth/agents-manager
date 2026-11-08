@@ -59,7 +59,8 @@ class InboxMixin:
         except ValueError:
             limit = default_limit
         rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
-                             unread_only=unread_only, archived=archived, limit=limit)
+                             unread_only=unread_only, archived=archived, limit=limit,
+                             to_session=session if unread_only and p["kind"] == "mcp" else None)
         messages = inbox.attach_state(rows, items)
         if p["kind"] == "mcp":
             # Listing is the agent's read. This response still shows the rows
