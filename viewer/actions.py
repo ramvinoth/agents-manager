@@ -842,13 +842,14 @@ _BOARD_ACTIONS = ("card_create", "card_move", "card_update", "card_comment",
                   "card_dep_add", "card_dep_remove", "task_done")
 
 
-def _in_decision_column(card):
-    """Is the card parked where the owner's call is needed (Review/Needs-info)?"""
+def _decision_column(card):
+    """The name of the decision column (Review/Needs-info) the card is parked
+    in, or "" when it is not parked where the owner's call is needed."""
     if not card or not card.get("project_id"):
-        return False
+        return ""
     cols = db.board_columns_list(card["project_id"])
-    col = next((c for c in cols if c["id"] == card.get("column_id")), None)
-    return asks.is_decision_column((col or {}).get("name"))
+    name = next((c["name"] for c in cols if c["id"] == card.get("column_id")), "")
+    return name if asks.is_decision_column(name) else ""
 
 
 def _card_inbox_delivery(card, action, args, agent):
@@ -863,7 +864,8 @@ def _card_inbox_delivery(card, action, args, agent):
     if not agent or action not in ("card_move", "card_comment") or not card:
         return
     try:
-        if not _in_decision_column(card):
+        column = _decision_column(card)
+        if not column:
             return
         from viewer import inbox
         comment = ((args.get("body") or "").strip()
@@ -871,7 +873,7 @@ def _card_inbox_delivery(card, action, args, agent):
                    else (inbox.last_session_comment(card["id"]) or ""))
         inbox.deliver_decision(card.get("session_id") or "", "card",
                                str(card["id"]),
-                               inbox.format_card(card, comment))
+                               inbox.format_card(dict(card, column_name=column), comment))
     except Exception:
         pass
 
@@ -927,7 +929,7 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # A comment on a card waiting for the owner is the ask itself: the
         # inbox delivery above pushes it (or holds it behind a full queue),
         # so a second push here would double it.
-        if agent and action == "card_comment" and not _in_decision_column(card):
+        if agent and action == "card_comment" and not _decision_column(card):
             from viewer import push
             # The owner reads this cold, possibly hours later: the title must
             # identify the card by number AND name, and the payload must carry

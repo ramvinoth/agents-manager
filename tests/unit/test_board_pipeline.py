@@ -514,6 +514,20 @@ def test_agent_ask_in_review_pushes_once_through_the_decision_queue(board, monke
     assert board.pushes == []
 
 
+def test_the_inbox_ask_names_the_column_the_card_is_really_in(board, monkeypatch):
+    """The card row has only column_id; the delivered text used to fall back
+    to "Review" and told the owner a Needs-info card was in Review."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append(body))
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["column_id"] = 16                       # Needs-info
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "Which port?"}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert delivered and delivered[0].startswith('Card 42 "Fix login" is in Needs-info')
+
+
 def test_agent_ask_behind_a_full_queue_is_told_so(board, monkeypatch):
     from viewer import inbox, queue
     monkeypatch.setattr(inbox, "deliver_decision", lambda *a: None)
