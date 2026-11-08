@@ -81,7 +81,7 @@ def _db():
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _run_migrations(prev):
@@ -151,6 +151,16 @@ def _run_migrations(prev):
                   END IF;
                 END $$;
             """)
+    if prev < 5:
+        # Agents never marked their mail read before listing did it (inbox
+        # mark-read-on-list), so every session carried its whole history as
+        # unread and a wake could re-act on a week-old "go". That mail was
+        # delivered by the wake it came with; mark it read. The last day stays
+        # unread in case a session has not listed since.
+        with _db() as cur:
+            cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                        "WHERE recipient_type = 'session' AND status = 'sent' "
+                        "AND created_at < %s", (_now(), _now() - 86400))
 
 
 def init_db():

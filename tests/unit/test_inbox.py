@@ -388,6 +388,23 @@ class TestInboxRouteLimit:
         assert self._run(monkeypatch, mcp, {})["to_session"] is None
         assert self._run(monkeypatch, {"kind": "app"}, {"unread_only": ["1"]})["to_session"] is None
 
+    def test_agent_count_is_its_own_unread_mail(self, monkeypatch):
+        """The agent's `unread` is the mail sent to it, not the owner's badge."""
+        from viewer.routes import inbox as ri
+        sent = {}
+        rows = [{"id": 1, "recipient_type": "session", "recipient_id": "s1", "status": "sent"},
+                {"id": 2, "recipient_type": "user", "recipient_id": "", "status": "sent"}]
+        calls = []
+        monkeypatch.setattr(ri.queue, "open_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "cap", lambda: 3)
+        monkeypatch.setattr(ri.db, "inbox_list", lambda **kw: calls.append(kw) or rows)
+        monkeypatch.setattr(ri.inbox, "attach_state", lambda r, items: r)
+        monkeypatch.setattr(ri.db, "inbox_mark_read_many", lambda ids: None)
+        h = ri.InboxMixin.__new__(ri.InboxMixin)
+        h.send_json = lambda data, status=200: sent.update(data)
+        h._g_inbox(type("R", (), {"principal": {"kind": "mcp", "session": "s1"}, "query": {}})())
+        assert calls[0]["to_session"] == "s1" and sent["unread"] == 1
+
 
 # ---- resolve_session: what an agent writes after "session:" ----------------
 

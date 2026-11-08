@@ -43,9 +43,13 @@ class InboxMixin:
         pid = int(project) if project else None
         items = queue.open_items()
         cap = queue.cap()
-        unread = inbox.unread_count(
-            db.inbox_list(session_id=session, project_id=pid, kind=kind, unread_only=True), items,
-            cap=cap)
+        agent = p["kind"] == "mcp"
+        unread_rows = db.inbox_list(session_id=session, project_id=pid, kind=kind, unread_only=True,
+                                    to_session=session if agent else None)
+        # The owner's badge counts what waits on the owner; an agent's count is
+        # the mail sent to it that it has not listed yet.
+        unread = (len(inbox.unread_for_session(unread_rows, session)) if agent
+                  else inbox.unread_count(unread_rows, items, cap=cap))
         if (q.get("count_only") or [None])[0] not in (None, ""):
             # The tab badge polls this from every screen: the number only,
             # not the full list it would throw away.
@@ -60,9 +64,9 @@ class InboxMixin:
             limit = default_limit
         rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
                              unread_only=unread_only, archived=archived, limit=limit,
-                             to_session=session if unread_only and p["kind"] == "mcp" else None)
+                             to_session=session if unread_only and agent else None)
         messages = inbox.attach_state(rows, items)
-        if p["kind"] == "mcp":
+        if agent:
             # Listing is the agent's read. This response still shows the rows
             # as 'sent' (new to it); the next wake's unread_only skips them.
             db.inbox_mark_read_many(inbox.unread_for_session(rows, session))
