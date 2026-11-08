@@ -127,6 +127,16 @@ def visible_queue(items, cap=None):
             "cap": cap}
 
 
+def unread_for_session(rows, session_id):
+    """Ids of the rows addressed TO this session that it has not read yet. An
+    agent's own listing is its read: without this every wake re-listed
+    yesterday's messages as unread and the agent re-acted on them. Pure."""
+    return [r["id"] for r in rows
+            if r.get("recipient_type") == "session"
+            and str(r.get("recipient_id")) == str(session_id)
+            and (r.get("status") or "sent") == "sent"]
+
+
 def _shown_refs(open_items, cap):
     """The 'kind:ref' keys the owner is shown, or None when nothing is capped."""
     if cap is None:

@@ -361,6 +361,7 @@ class TestInboxRouteLimit:
         monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items, cap=None: 0)
         monkeypatch.setattr(ri.inbox, "attach_state", lambda rows, items: rows)
         monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i, cap=None: {})
+        monkeypatch.setattr(ri.db, "inbox_mark_read_many", lambda ids: None)
         h = ri.InboxMixin.__new__(ri.InboxMixin)
         h.send_json = lambda data, status=200: None
         req = type("R", (), {"principal": principal, "query": query})()
@@ -415,3 +416,17 @@ def test_resolve_refuses_unknown_ambiguous_and_short(tmp_path, monkeypatch):
     assert "2 sessions" in inbox.resolve_session("57496095")[1]   # ambiguous prefix
     assert "2 sessions" in inbox.resolve_session("Twin")[1]       # ambiguous title
     assert inbox.resolve_session("57496")[1].startswith("no session")  # too short to guess
+
+
+def test_an_agent_reads_only_the_mail_addressed_to_it():
+    """Listing marks the session's incoming mail read, never the asks it sent
+    the owner (those stay unread until the OWNER reads them) and never
+    another session's mail."""
+    rows = [
+        {"id": 1, "recipient_type": "session", "recipient_id": "s1", "status": "sent"},
+        {"id": 2, "recipient_type": "session", "recipient_id": "s1", "status": "read"},
+        {"id": 3, "recipient_type": "user", "recipient_id": "", "status": "sent"},
+        {"id": 4, "recipient_type": "session", "recipient_id": "s2", "status": "sent"},
+        {"id": 5, "recipient_type": "session", "recipient_id": "s1", "status": "snoozed"},
+    ]
+    assert inbox.unread_for_session(rows, "s1") == [1]

@@ -61,6 +61,10 @@ class InboxMixin:
         rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
                              unread_only=unread_only, archived=archived, limit=limit)
         messages = inbox.attach_state(rows, items)
+        if p["kind"] == "mcp":
+            # Listing is the agent's read. This response still shows the rows
+            # as 'sent' (new to it); the next wake's unread_only skips them.
+            db.inbox_mark_read_many(inbox.unread_for_session(rows, session))
         view = inbox.visible_queue(items, cap)
         # Agents read this before raising an ask: held > 0 means the owner's
         # queue is full and a new ask would wait unseen.
@@ -116,8 +120,8 @@ class InboxMixin:
                         "max": queue.MAX_CAP})
 
     def _p_inbox_read(self, req):
-        """Mark a message read. Owner surface only: a session's consumption
-        is the wake itself, not a status write."""
+        """Mark a message read. Owner surface only: a session marks its own
+        mail read by listing it (_g_inbox)."""
         if req.principal["kind"] != "app":
             self.send_json({"error": "not allowed"}, status=403)
             return

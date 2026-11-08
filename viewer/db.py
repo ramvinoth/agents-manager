@@ -2030,6 +2030,16 @@ def inbox_mark_read(message_id):
     return dict(row) if row else None
 
 
+def inbox_mark_read_many(ids):
+    """Mark these 'sent' rows read in one statement (an agent's listing)."""
+    if not ids:
+        return
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = ANY(%s) AND status = 'sent'",
+                    (_now(), [int(i) for i in ids]))
+
+
 def inbox_snooze(message_id, until):
     """Snooze a message out of the owner's sight until `until` (epoch). It
     resurfaces automatically when the clock passes `until` (inbox_list's
