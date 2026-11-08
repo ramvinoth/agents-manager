@@ -16,24 +16,6 @@ from __future__ import annotations
 
 # ── Views: one canonical card list → a filtered/ordered view ──────────────────
 
-def filter_cards(cards, *, session=None, project=None):
-    """Return the cards matching every provided filter (AND semantics). A None
-    filter is ignored. This is how a single board becomes a per-session /
-    per-project view without any duplicate card storage.
-
-    `cards` is a list of dict-like rows with keys session_id / project_id.
-    Filters compare by value; ids may be int or str — compared as-is (callers pass
-    matching types)."""
-    out = []
-    for c in cards:
-        if session is not None and c.get("session_id") != session:
-            continue
-        if project is not None and c.get("project_id") != project:
-            continue
-        out.append(c)
-    return out
-
-
 def order_column(cards):
     """Cards sorted by their fractional `position` ascending (missing position → 0.0).
     Stable: equal positions keep input order. Used to render one column top-to-bottom."""
@@ -67,28 +49,6 @@ def _pos(card):
         return float(card.get("position", 0.0) or 0.0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def next_position(cards_in_column, index):
-    """Fractional rank for a card being inserted at `index` within a column that is
-    ALREADY ordered by position. Returns a float strictly between its new neighbours
-    so a move never has to renumber the whole column (classic fractional indexing).
-
-    - Empty column → 1.0.
-    - index <= 0 (top)  → below the first card: first.position - 1.0.
-    - index >= len (bottom) → above the last: last.position + 1.0.
-    - middle → midpoint of the two straddling cards.
-    `index` is the target slot AMONG THE OTHER cards (the card being moved is assumed
-    not present in `cards_in_column`)."""
-    ordered = order_column(cards_in_column)
-    n = len(ordered)
-    if n == 0:
-        return 1.0
-    if index <= 0:
-        return _pos(ordered[0]) - 1.0
-    if index >= n:
-        return _pos(ordered[-1]) + 1.0
-    return (_pos(ordered[index - 1]) + _pos(ordered[index])) / 2.0
 
 
 # The claude CLI permission modes a session's runs may start in. One vocabulary,
