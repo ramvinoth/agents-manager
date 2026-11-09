@@ -184,6 +184,8 @@ CHAT_TIMEOUT = 3600               # seconds for one claude -p run (one-shot path
 # after this many seconds of NO output. Must exceed the longest legitimate
 # silent gap — a long-running tool call (build/test suite) emits nothing on the
 # stream until it returns — so keep this generous. Env-overridable for tuning.
+# Time spent waiting on the owner (a question, plan or permission hook) does not
+# count: those waits are bounded by QUESTION_TIMEOUT / PERM_TIMEOUT below.
 CHAT_IDLE_TIMEOUT = int(os.environ.get("VIEWER_CHAT_IDLE_TIMEOUT", "1800"))
 PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decision
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a

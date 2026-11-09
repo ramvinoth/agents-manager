@@ -428,7 +428,7 @@ def stream_user_message(proc, text):
 _STDOUT_EOF = object()
 
 
-def iter_stdout_until(proc, idle_timeout):
+def iter_stdout_until(proc, idle_timeout, paused=None, poll=30):
     """Yield stdout lines, killing the turn only after `idle_timeout` of SILENCE.
 
     `for line in proc.stdout` blocks in readline() until the child writes, so a
@@ -444,7 +444,13 @@ def iter_stdout_until(proc, idle_timeout):
 
     Note: a long-running tool call is silent on the stream until it returns, so
     `idle_timeout` must exceed the longest legitimate quiet gap (see
-    CHAT_IDLE_TIMEOUT)."""
+    CHAT_IDLE_TIMEOUT).
+
+    `paused()` true means the silence is the human's, not the child's: a
+    question, plan or permission hook is holding the CLI until the owner
+    answers. While paused the window does not run, and it re-arms in full once
+    the answer lands. Those hooks bound their own wait (QUESTION_TIMEOUT,
+    PERM_TIMEOUT), so a pause cannot park the turn forever."""
     q = queue.Queue()
 
     def _pump():
@@ -455,13 +461,20 @@ def iter_stdout_until(proc, idle_timeout):
             q.put(_STDOUT_EOF)
 
     threading.Thread(target=_pump, daemon=True).start()
+    last = time.monotonic()
     while True:
         try:
-            item = q.get(timeout=idle_timeout)
+            item = q.get(timeout=min(poll, idle_timeout))
         except queue.Empty:
-            raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+            now = time.monotonic()
+            if paused and paused():
+                last = now
+            elif now - last >= idle_timeout:
+                raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+            continue
         if item is _STDOUT_EOF:
             return
+        last = time.monotonic()
         yield item
 
 
@@ -1788,7 +1801,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  provider_env.get("ANTHROPIC_MODEL", ""),
                                  provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
-            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
+            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT,
+                                          paused=lambda: bool(job.get("pending_approvals"))):
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
                 # (the code + human sentence survive JSON escaping) so it works

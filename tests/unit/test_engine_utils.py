@@ -96,3 +96,22 @@ class TestPermissionDeniedHint:
         from viewer import engine
         monkeypatch.setattr(engine.sys, "platform", "linux")
         assert engine._permission_denied_hint(Path.home() / "Downloads") == "Permission denied"
+
+
+def test_idle_timeout_waits_while_owner_is_deciding():
+    import os, threading, time
+    import pytest
+    from viewer.engine import iter_stdout_until
+
+    r, w = os.pipe()
+
+    class Proc:
+        stdout = os.fdopen(r)
+
+    waiting = {"on": True}
+    threading.Timer(0.6, lambda: waiting.update(on=False)).start()
+    t0 = time.monotonic()
+    with pytest.raises(TimeoutError):
+        list(iter_stdout_until(Proc, 0.2, paused=lambda: waiting["on"], poll=0.05))
+    assert time.monotonic() - t0 >= 0.75  # held past 0.2s while paused, then a full window
+    os.close(w)
