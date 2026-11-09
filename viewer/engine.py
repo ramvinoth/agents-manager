@@ -621,7 +621,7 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
             if re.fullmatch(r"[A-Za-z0-9._/-]+", model or ""):
                 cmd += ["--model", model]
             cmd += ["--session", session_uuid, message]
-            proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+            proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     **procctl.interruptible_kwargs())
             with CHAT_LOCK:
@@ -722,7 +722,7 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
             else:
                 env = agent_env()
                 cmd[0] = codex_bin()
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
@@ -811,7 +811,7 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                 except Exception:
                     pass
                 cmd[0] = copilot_bin()
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
@@ -919,7 +919,7 @@ def start_copilot_new(message, cwd, host="local"):
     except Exception:
         pass
     try:
-        proc = subprocess.Popen([copilot_bin(), "-p", message, "--allow-all-tools"], cwd=cwd, env=env,
+        proc = subprocess.Popen([copilot_bin(), "-p", message, "--allow-all-tools"], cwd=procctl.local_cwd(cwd), env=env,
                                 text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 **procctl.interruptible_kwargs())
     except Exception:
@@ -1771,7 +1771,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
             with CHAT_LOCK:
