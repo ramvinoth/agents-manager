@@ -605,8 +605,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
         <View style={styles.headerIcons}>
           <HeaderButton testID="thread-call" label="Voice call" icon="phone" color={t.accent}
             onPress={() => navigation.navigate("Call", { label, path })} />
-          <HeaderButton testID="thread-tools" label="Skills and tools" icon="tool" color={capDrawerOpen ? t.text : t.accent}
-            onPress={() => setCapDrawerOpen((o) => !o)} />
           <HeaderButton testID="thread-more" label="More options" icon="more" color={t.accent} style={{ marginRight: 4 }}
             onPress={() => {
               showActions(label || "This chat", [
@@ -614,6 +612,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
                 { text: "Board", onPress: openBoard },
                 { text: "Notes", onPress: openNotes },
                 { text: "Inbox", onPress: openInbox },
+                { text: "Skills and tools", onPress: () => setCapDrawerOpen(true) },
                 // A map needs the session's project; an unsent chat has none yet.
                 ...(sessionId ? [{ text: "Canvas", onPress: openCanvas }] : []),
               ])
@@ -621,7 +620,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
         </View>
       ),
     })
-  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, capDrawerOpen, openBoard, openNotes, openInbox, openCanvas, isCurrentThread])
+  }, [navigation, label, busy, activity, host, path, sessionId, agent, t, openBoard, openNotes, openInbox, openCanvas, isCurrentThread])
 
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
