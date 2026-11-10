@@ -3,7 +3,7 @@
 import type { IconName } from "../components/Icon"
 
 /** Root-stack routes the menu may open — each takes no params. */
-export type MenuRoute = "Files" | "Notes" | "Calendar" | "Agents" | "Org" | "Integrations" | "Capabilities" | "Audit"
+export type MenuRoute = "Files" | "Notes" | "Calendar" | "Agents" | "Org" | "Integrations" | "Capabilities" | "Terminal" | "Audit"
 export type MenuItem = { route: MenuRoute; label: string; hint: string; icon: IconName }
 export type MenuSection = { title: string; items: MenuItem[] }
 
@@ -23,6 +23,7 @@ export const MENU_SECTIONS: MenuSection[] = [
     items: [
       { route: "Integrations", label: "Integrations", hint: "Accounts, folders and this machine — what agents may do", icon: "cloud" },
       { route: "Capabilities", label: "Skills & tools", hint: "Skills and MCP tools your agents have", icon: "tool" },
+      { route: "Terminal", label: "Terminal", hint: "A shell on this machine", icon: "terminal" },
     ],
   },
   {

@@ -77,7 +77,7 @@ export type RootStackParamList = {
   Audit: undefined
   AuditEntry: { entry: AuditEntry }
   HostEdit: { host?: HostConfig } | undefined
-  Terminal: { host: string; label: string }
+  Terminal: undefined
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
@@ -275,7 +275,7 @@ export default function App() {
             <Stack.Screen
               name="Terminal"
               component={TerminalScreen}
-              options={({ route }) => ({ title: `Terminal — ${route.params.label}` })}
+              options={{ title: "Terminal" }}
             />
           </Stack.Navigator>
         </NavigationContainer>

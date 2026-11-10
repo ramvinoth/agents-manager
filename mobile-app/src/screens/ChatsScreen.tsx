@@ -227,8 +227,6 @@ export default function ChatsScreen({ navigation }: Props) {
           headerLeft: menuButton,
           headerRight: () => (
             <View style={styles.headerIcons}>
-              <HeaderButton testID="chats-terminal" label="Open terminal" icon="terminal" size={21} color={t.accent}
-                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })} />
               <HeaderButton testID="new-chat-button" label="New chat" icon="add" size={24} color={t.accent} style={{ marginRight: 4 }}
                 onPress={() => navigation.navigate("NewChat")} />
             </View>
