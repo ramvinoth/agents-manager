@@ -183,6 +183,11 @@ _EVENT_PROPS = {
     "location": {"type": "string"}, "description": {"type": "string"},
     "attendees": {"type": "array", "items": {"type": "string"}, "description": "Guest emails (never notified)."}}
 
+_FULL_ARG = {"type": "boolean", "description": "Return everything uncut (results are compact by default)."}
+_PAGE_ARGS = {"limit": {"type": "integer", "description": "Rows per page."},
+              "offset": {"type": "integer", "description": "Skip this many rows (the result's `more` gives the next)."},
+              "full": _FULL_ARG}
+
 _TOOL_LIST = [
     # ── See everything ──────────────────────────────────────────────────────
     {"name": "session_list",
@@ -238,7 +243,7 @@ _TOOL_LIST = [
     {"name": "audit_tail",
      "description": "Recent audit entries: who did what, and whether it ran, queued or was denied.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "limit": {"type": "integer", "description": "How many entries (default 100)."}}}},
+         "limit": {"type": "integer", "description": "How many entries (default 10)."}, "full": _FULL_ARG}}},
     {"name": "usage_report",
      "description": "How the owner actually uses the Harman app (their own web and phone clients, recorded on this server only): hot controls (most used — taps, and on the phone long-presses and swipes, each also counted on its own — with times seen), dead controls (on screen 20+ times, never used — candidates to remove, merge or move; web and phone alike, kept apart by `client`), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Each feedback note is also a card in the Feedback column of the feedback channel's board (intake_list: the app_feedback one) — answer it there with card_comment and the owner gets your reply as a push. Read it before proposing UI changes; cite it on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
@@ -268,27 +273,28 @@ _TOOL_LIST = [
     {"name": "card_list", "description": "List the open cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries its column name, comment_count and a body preview (read one in full with card). Done cards are left out and counted in done_hidden; pass include_done=true to list them too. Optionally filtered by session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"},
-         "include_done": {"type": "boolean"}}}},
-    {"name": "card", "description": "Read one card in full with its comment thread. On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
+         "include_done": {"type": "boolean"}, **_PAGE_ARGS}}},
+    {"name": "card", "description": "Read one card in full with its newest comments (older ones: card_comments with offset). On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
-         "id": {"type": "integer"}}}},
-    {"name": "card_comments", "description": "Read a card's comment thread (who said what, in order).",
+         "id": {"type": "integer"}, "full": _FULL_ARG}}},
+    {"name": "card_comments", "description": "Read a card's comment thread (who said what, in order), a page at a time.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
-         "card_id": {"type": "integer"}}}},
+         "card_id": {"type": "integer"}, **_PAGE_ARGS}}},
     {"name": "card_deps", "description": "Read a card's dependency edges (card_deps): which other cards it cannot move forward until, each with its column and a done flag. The owner sees and edits the same rows in the UI (dual control) — if a dep is not done, say so in a card comment instead of stalling silently.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
     {"name": "loop_list",
      "description": "List scheduled loops — recurring prompts (cron/interval) and pending one-shots (kind='once'), optionally for one session. Start here to find a loop's id before updating or deleting it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string", "description": "Session id to filter by; omit for all."}}}},
+         "session": {"type": "string", "description": "Session id to filter by; omit for all."}, **_PAGE_ARGS}}},
     {"name": "loop_control_get",
      "description": "The current loop-firing mode (user/harman/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Notes (the knowledge ledger next to the board) ──────────────────────
     {"name": "note_list", "description": "List notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass session to see one chat's notes, archived=true for the shelf. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"}}}},
+         "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"},
+         **_PAGE_ARGS}}},
     {"name": "note", "description": "Read one note in full (markdown body).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
@@ -428,11 +434,12 @@ _TOOL_LIST = [
          "id": {"type": "string", "description": "Target session id from session_list."}}}},
     # ── Inbox: your message ledger (you ↔ owner, you ↔ peers) ───────────────
     {"name": "inbox_list",
-     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card | red — red is an approval you queued for a Red action) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Listing marks the messages addressed to you read, so unread_only=true shows only messages sent to you since your last read (your own asks to the owner are left out). The response also carries owner_queue {cap, shown, held}: the owner sees only `cap` decisions at a time; held > 0 means the queue is full and a new ask would wait unseen, so decide what you can yourself. Newest 20 by default; filter with kind, unread_only, limit.",
+     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card | red — red is an approval you queued for a Red action) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Listing marks the messages addressed to you read, so unread_only=true shows only messages sent to you since your last read (your own asks to the owner are left out). The response also carries owner_queue {cap, shown, held}: the owner sees only `cap` decisions at a time; held > 0 means the queue is full and a new ask would wait unseen, so decide what you can yourself. Newest 10 by default; filter with kind, unread_only, limit.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "kind": {"type": "string", "enum": ["message", "question", "plan", "approval", "card", "red"]},
          "unread_only": {"type": "boolean", "description": "Only what still needs reading."},
-         "limit": {"type": "integer", "description": "How many, newest first (default 20, max 200)."}}}},
+         "limit": {"type": "integer", "description": "How many, newest first (default 10, max 200)."},
+         "full": _FULL_ARG}}},
     {"name": "inbox_send",
      "description": "Send a message: to='user' reaches the owner (they get a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "body"], "properties": {
@@ -554,6 +561,86 @@ def with_local_times(obj):
     return out
 
 
+# ── Progressive disclosure ──────────────────────────────────────────────────
+# Every tool result lands in the calling agent's context window. A full card
+# thread or loop list ran to 40-70k characters and made Claude Code's
+# auto-compact thrash, so list-shaped results come back COMPACT by default:
+# a page of rows, long text cut to a preview, and a hint saying how to drill
+# down (offset, the one-item tool, or full=true). Shaping lives only here, in
+# the agent's adapter; the HTTP API the web and phone apps read is unchanged.
+_RESULT_CAP = 14000          # characters of JSON one tool result may take
+_PAGED = {                   # tool -> (list key or None for a bare list, default page size)
+    "card_list": ("cards", 15), "card_comments": ("comments", 20),
+    "loop_list": (None, 15), "note_list": ("notes", 30),
+}
+_PREVIEW = {                 # tool -> (text field cut in each row, characters kept, where the full text is)
+    "card_list": ("body", 120, "card id=<id>"),
+    "note_list": ("body", 200, "note id=<id>"),
+    "inbox_list": ("body", 240, "inbox_list full=true"),
+    "loop_list": ("prompt", 160, "loop_list full=true"),
+    "card_comments": ("body", 600, "card_comments full=true"),
+}
+_CARD_COMMENTS_SHOWN = 5     # the newest comments `card` shows inline
+_LOCAL_PAGING = set(_PAGED) | {"card"}   # tools whose limit/offset this adapter applies
+
+
+def _slim(row):
+    """A list row without its empty fields, and without an epoch whose `_local`
+    twin already says the same instant in the owner's clock."""
+    if not isinstance(row, dict):
+        return row
+    return {k: v for k, v in row.items()
+            if v not in (None, "", []) and f"{k}_local" not in row}
+
+
+def _cut(rows, field, keep, where):
+    out = []
+    for r in rows:
+        v = r.get(field) if isinstance(r, dict) else None
+        if isinstance(v, str) and len(v) > keep:
+            r = {**r, field: v[:keep] + f"… [{len(v)} chars; full text: {where}]"}
+        out.append(r)
+    return out
+
+
+def shape_result(tool, result, full=False, offset=0, limit=None):
+    """Make one tool result fit an agent's context: page list results, cut long
+    text to a preview, and cap the whole at _RESULT_CAP with a drill-down hint.
+    full=True returns the result untouched. Pure."""
+    if full or not isinstance(result, (dict, list)) or (isinstance(result, dict) and "error" in result):
+        return result
+    offset = max(0, int(offset or 0))
+    if tool == "card" and isinstance(result, dict) and isinstance(result.get("comments"), list):
+        comments = result["comments"]
+        if len(comments) > _CARD_COMMENTS_SHOWN:
+            result = {**result, "comments": comments[-_CARD_COMMENTS_SHOWN:],
+                      "comments_total": len(comments),
+                      "comments_hint": f"Showing the newest {_CARD_COMMENTS_SHOWN} of {len(comments)}. "
+                                       "Older ones: card_comments card_id=<id> offset=N."}
+        result = {**result, "comments": _cut(result["comments"], "body", 1500, "card_comments full=true")}
+    if tool in _PAGED:
+        key, size = _PAGED[tool]
+        rows = result if key is None else (result.get(key) if isinstance(result, dict) else None)
+        if isinstance(rows, list):
+            size = max(1, min(int(limit or size), 200))
+            page = [_slim(r) for r in rows[offset:offset + size]]
+            meta = {"total": len(rows), "offset": offset, "shown": len(page)}
+            if offset + size < len(rows):
+                meta["more"] = f"offset={offset + size}"
+            result = {"items": page, **meta} if key is None else {**result, key: page, **meta}
+    if tool in _PREVIEW:
+        field, keep, where = _PREVIEW[tool]
+        key = _PAGED.get(tool, ("messages" if tool == "inbox_list" else None, 0))[0] or "items"
+        if isinstance(result, dict) and isinstance(result.get(key), list):
+            result = {**result, key: _cut(result[key], field, keep, where)}
+    text = json.dumps(result)
+    if len(text) > _RESULT_CAP:
+        return {"_truncated": f"Result was {len(text)} characters; showing the first {_RESULT_CAP}. "
+                              "Narrow it (limit/offset, a filter, or the one-item tool), or pass full=true.",
+                "partial": text[:_RESULT_CAP]}
+    return result
+
+
 def _call(tool, args):
     """Proxy a tool call to the viewer. Returns the server's JSON — already the
     policy verdict (allowed / queued / denied), never a local decision."""
@@ -566,6 +653,12 @@ def _call(tool, args):
     # not the caller: the caller rides in headers. Keep it apart so the identity
     # below cannot overwrite it.
     filter_session = payload.pop("session", None)
+    # Disclosure args are this adapter's, not the server's: keep them off the URL.
+    full = bool(payload.pop("full", False))
+    offset = payload.pop("offset", 0) if tool in _LOCAL_PAGING else 0
+    limit = payload.pop("limit", None) if tool in _LOCAL_PAGING else None
+    if tool in ("audit_tail", "inbox_list"):
+        payload.setdefault("limit", 10)
     payload["session"] = SESSION
     payload["token"] = TOKEN
     payload.update(_FIXED_ARGS.get(tool, {}))
@@ -619,9 +712,14 @@ def _call(tool, args):
     if tool in _RAW:
         # The payload IS the file/transcript, so it must reach the model
         # verbatim — a JSON file read would otherwise be parsed and reshaped.
-        return {"text": body.decode(errors="replace")}
+        text = body.decode(errors="replace")
+        if not full and len(text) > 3 * _RESULT_CAP:
+            return {"_truncated": f"{len(text)} characters; showing the last {3 * _RESULT_CAP}. "
+                                  "Pass tail=N (session_read) or full=true.",
+                    "text": text[-3 * _RESULT_CAP:]}
+        return {"text": text}
     try:
-        return with_local_times(json.loads(body))
+        return shape_result(tool, with_local_times(json.loads(body)), full, offset, limit)
     except ValueError:
         return {"text": body.decode(errors="replace")}
 
