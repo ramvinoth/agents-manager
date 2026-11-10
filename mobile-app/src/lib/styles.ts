@@ -102,7 +102,7 @@ function buildStyles(t: Theme) {
     unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: t.accent },
     // Live-run dot: a run is in flight for this session (emerald, matches web).
     runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.success },
-    // WhatsApp-style filter chips + archived reveal row (Chats list header).
+    // Active-filter pill (Chats search) + archived reveal row (Chats list header).
     filterChip: {
       paddingHorizontal: 14,
       paddingVertical: 6,
@@ -1010,8 +1010,12 @@ function buildStyles(t: Theme) {
     },
     queueChipText: { flexShrink: 1, fontSize: 12, color: t.text },
     // Chat search
-    searchWrap: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: t.surface },
+    searchWrap: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: t.surface },
+    searchFilter: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: t.chipBg },
+    filterPillRow: { flexDirection: "row", paddingHorizontal: 12, paddingBottom: 8 },
+    filterPill: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "80%" },
     searchInput: {
+      flex: 1,
       height: 38,
       borderRadius: 19,
       paddingHorizontal: 14,

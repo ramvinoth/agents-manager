@@ -13,7 +13,8 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, orderChats } from "../lib/chatList"
+import { activity, chatProjects, filterLabel, projectName, visibleChats, type ChatFilter } from "../lib/chatList"
+import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
@@ -55,6 +56,7 @@ export default function ChatsScreen({ navigation }: Props) {
   const [error, setError] = useState("")
   const { host, label: hostLabel } = useHost()
   const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<ChatFilter>(null)
   const [showArchived, setShowArchived] = useState(false)
   const [actionFor, setActionFor] = useState<Session | null>(null)
   const [selecting, setSelecting] = useState(false)
@@ -71,14 +73,24 @@ export default function ChatsScreen({ navigation }: Props) {
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
-  // Search, then favorites first, newest message first (lib/chatList). The
-  // archive view shows only archived chats; the main view hides them.
-  const rows = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return orderChats(sessions.filter((s) =>
-      (showArchived ? s.archived : !s.archived) &&
-      (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q))))
-  }, [sessions, query, showArchived])
+  // Search + filter, then favorites first, newest message first (lib/chatList).
+  // The archive view shows only archived chats; the main view hides them.
+  const rows = useMemo(
+    () => visibleChats(sessions, { archived: showArchived, query, filter }),
+    [sessions, query, filter, showArchived])
+
+  // The search box's filter menu: Unread, Starred, or one project. One filter
+  // at a time; the active one shows as a pill under the box with a clear ✕.
+  function openFilter() {
+    const pick = (f: ChatFilter) => ({ text: filterLabel(f), onPress: () => setFilter(f) })
+    showActions("Show only", [
+      pick({ kind: "unread" }),
+      pick({ kind: "starred" }),
+      ...chatProjects(sessions.filter((s) => !!s.archived === showArchived)).slice(0, 12)
+        .map((p) => ({ text: `Project: ${projectName(p)}`, onPress: () => setFilter({ kind: "project", project: p }) })),
+      ...(filter ? [{ text: "Show all chats", onPress: () => setFilter(null) }] : []),
+    ])
+  }
 
   async function rename(s: Session, title: string) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, title } : x))) // optimistic; path is unique, id is not
@@ -357,7 +369,26 @@ export default function ChatsScreen({ navigation }: Props) {
                   autoCorrect={false}
                   clearButtonMode="while-editing"
                 />
+                <TouchableOpacity
+                  testID="chats-filter"
+                  accessibilityRole="button"
+                  accessibilityLabel={filter ? `Filter: ${filterLabel(filter)}` : "Filter chats"}
+                  hitSlop={8}
+                  style={styles.searchFilter}
+                  onPress={openFilter}
+                >
+                  <Icon name="filter" size={20} color={filter ? t.accent : t.textMuted} />
+                </TouchableOpacity>
               </View>
+              {filter ? (
+                <View style={styles.filterPillRow}>
+                  <TouchableOpacity testID="chats-filter-clear" accessibilityLabel={`Clear filter ${filterLabel(filter)}`}
+                    style={[styles.filterChip, styles.filterChipActive, styles.filterPill]} onPress={() => setFilter(null)}>
+                    <Text style={[styles.filterChipText, styles.filterChipTextActive]} numberOfLines={1}>{filterLabel(filter)}</Text>
+                    <Icon name="close" size={14} color={t.onAccent} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
               {/* Archived reveal row (main view) / back row (archive view). */}
               {showArchived ? (
                 <TouchableOpacity testID="archived-back" style={styles.archivedRow} onPress={() => setShowArchived(false)}>
@@ -401,7 +432,9 @@ export default function ChatsScreen({ navigation }: Props) {
           ListEmptyComponent={
             error ? null : (
               <Text style={[styles.hint, { padding: 16 }]}>
-                {online ? `No chats yet on ${hostLabel}.` : "No chats saved on this phone yet. They appear once the server is reachable."}
+                {filter || query.trim()
+                  ? `No chats match${filter ? ` the ${filterLabel(filter)} filter` : ""}${query.trim() ? ` "${query.trim()}"` : ""}.`
+                  : online ? `No chats yet on ${hostLabel}.` : "No chats saved on this phone yet. They appear once the server is reachable."}
               </Text>
             )
           }

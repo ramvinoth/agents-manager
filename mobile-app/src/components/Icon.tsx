@@ -39,6 +39,7 @@ export type IconName =
   | "calendar"
   | "help"
   | "search"
+  | "filter"
   | "user"
   | "sparkle"
   | "terminal"
@@ -115,6 +116,7 @@ const MAP: Record<IconName, keyof typeof Ionicons.glyphMap> = {
   calendar: "calendar-outline",
   help: "help-circle-outline",
   search: "search",
+  filter: "options-outline",
   user: "person-outline",
   sparkle: "sparkles-outline",
   terminal: "terminal-outline",

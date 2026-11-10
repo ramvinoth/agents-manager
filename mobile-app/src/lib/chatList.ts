@@ -11,3 +11,35 @@ export const activity = (s: Session) => s.last_message ?? s.modified ?? 0
 export function orderChats(chats: Session[]): Session[] {
   return [...chats].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || activity(b) - activity(a))
 }
+
+/** The Chats search box's filter: one at a time, like a chat app's filter menu. */
+export type ChatFilter = { kind: "unread" } | { kind: "starred" } | { kind: "project"; project: string } | null
+
+/** A project's display name: the last folder of its path. */
+export function projectName(p: string): string {
+  const parts = p.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : p
+}
+
+export function filterLabel(f: ChatFilter): string {
+  if (!f) return ""
+  return f.kind === "unread" ? "Unread" : f.kind === "starred" ? "Starred" : projectName(f.project)
+}
+
+/** The projects the filter menu offers: those with chats, the most recently active first. */
+export function chatProjects(chats: Session[]): string[] {
+  const seen = new Set<string>()
+  for (const s of [...chats].sort((a, b) => activity(b) - activity(a))) if (s.project) seen.add(s.project)
+  return [...seen]
+}
+
+/** What the Chats list shows: the archive or the main view, matching the search
+ *  (title or project) and the filter, favorites first, then newest. */
+export function visibleChats(chats: Session[], opts: { archived: boolean; query: string; filter: ChatFilter }): Session[] {
+  const q = opts.query.trim().toLowerCase()
+  const f = opts.filter
+  return orderChats(chats.filter((s) =>
+    !!s.archived === opts.archived &&
+    (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)) &&
+    (!f || (f.kind === "unread" ? !!s.unread : f.kind === "starred" ? !!s.favorite : s.project === f.project))))
+}
