@@ -19,9 +19,27 @@ export class Reachability {
   }
 
   /** Record one request's outcome; listeners hear only real transitions. */
+  /** First transport failure of the current streak (null = last call succeeded). */
+  private failingSince: number | null = null
+
+  /** One failure is not an outage: iOS aborts in-flight fetches when the app is
+   *  suspended, and a single network blip flashed the banner. Go offline only on a
+   *  second failure with no success in between; `since` is the first failure. */
   report(reached: boolean, now = Date.now()): void {
-    if (reached === this.state.online) return
-    this.state = { online: reached, since: now }
+    if (reached) {
+      this.failingSince = null
+      if (!this.state.online) this.set({ online: true, since: now })
+      return
+    }
+    if (this.failingSince === null) {
+      this.failingSince = now
+      return
+    }
+    if (this.state.online) this.set({ online: false, since: this.failingSince })
+  }
+
+  private set(next: ReachState): void {
+    this.state = next
     this.listeners.forEach((fn) => fn(this.state))
   }
 
