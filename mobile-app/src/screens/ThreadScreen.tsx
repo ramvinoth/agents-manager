@@ -52,6 +52,8 @@ import HeaderButton from "../components/HeaderButton"
 import { useStyles } from "../lib/styles"
 import { resolveSessionPath } from "../lib/session"
 import { showActions } from "../lib/actionSheet"
+import { speak, stopSpeaking } from "../lib/voice"
+import { splitThinking } from "../lib/thinking"
 import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
 import { liveEvents } from "../api/events"
 import { openThreadPage } from "../api/threadOpen"
@@ -135,6 +137,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [queueList, setQueueList] = useState<string[]>([])
   const [msgAction, setMsgAction] = useState<MsgTarget | null>(null)
+  const [reading, setReading] = useState(false)
   // Pinned message uuids (persisted in session meta) + which one the banner shows.
   const [pinned, setPinned] = useState<string[]>([])
   // The session's folder, from the same meta read: scopes the drawer's project skills/tools.
@@ -1503,6 +1506,20 @@ export default function ThreadScreen({ route, navigation }: Props) {
         onPin={() => {
           if (msgAction?.uuid) togglePin(msgAction.uuid)
           setMsgAction(null)
+        }}
+        reading={reading}
+        onReadAloud={() => {
+          const text = msgAction ? splitThinking(msgAction.text).body : "" // never read a <think> block aloud
+          setMsgAction(null)
+          if (reading) {
+            stopSpeaking().finally(() => setReading(false))
+            return
+          }
+          if (!text) return
+          setReading(true)
+          speak(text) // resolves when playback finishes or is stopped
+            .catch((e) => setError(userError(e, "the message", "read aloud")))
+            .finally(() => setReading(false))
         }}
       />
     </KeyboardAvoidingView>

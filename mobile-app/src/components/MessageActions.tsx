@@ -11,7 +11,8 @@ export type MsgTarget = { uuid?: string; text: string; isUser: boolean }
 /**
  * Long-press actions on a message. Copy and Reply apply to any message; Fork and
  * Revert need a transcript uuid, so they only appear for real (non-optimistic)
- * messages. Revert is destructive and confirmed by the caller.
+ * messages. Revert is destructive and confirmed by the caller. Read aloud is for
+ * the agent's replies; while one is playing the row stops it instead.
  */
 export default function MessageActions({
   target,
@@ -22,6 +23,8 @@ export default function MessageActions({
   onRevert,
   pinned,
   onPin,
+  reading,
+  onReadAloud,
 }: {
   target: MsgTarget | null
   onClose: () => void
@@ -31,6 +34,8 @@ export default function MessageActions({
   onRevert: () => void
   pinned?: boolean
   onPin: () => void
+  reading: boolean
+  onReadAloud: () => void
 }) {
   const styles = useStyles()
   const t = useTheme()
@@ -52,6 +57,12 @@ export default function MessageActions({
         <Icon name="copy" size={18} color={t.text} />
         <Text style={styles.actionText}>Copy text</Text>
       </TouchableOpacity>
+      {!target.isUser && (target.text || reading) ? (
+        <TouchableOpacity testID="msg-read-aloud" style={row} onPress={onReadAloud}>
+          <Icon name="volume" size={18} color={t.text} />
+          <Text style={styles.actionText}>{reading ? "Stop reading" : "Read aloud"}</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {canCut ? (
         <>

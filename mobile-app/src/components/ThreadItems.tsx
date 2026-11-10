@@ -1,7 +1,7 @@
 /**
  * The thread's message rows: a user bubble, an agent exchange (final answer with
  * its tool steps and any plans folded underneath), the in-flight placeholder,
- * and the per-step / read-aloud pieces those compose from. Pure presentation —
+ * and the per-step pieces those compose from. Pure presentation —
  * every fact comes in as props from ThreadScreen, which owns the list, the
  * polling and the composer.
  */
@@ -11,7 +11,6 @@ import { Pressable, TouchableOpacity } from "./Tracked"
 import { extractImages, fmtClock, resultToText, type Block, type ImagePart, type ThreadItem, type ToolBlock } from "../lib/thread"
 import { splitThinking } from "../lib/thinking"
 import { useTheme } from "../lib/useTheme"
-import { speak, stopSpeaking } from "../lib/voice"
 import SwipeToReply from "./SwipeToReply"
 import PlanCard from "./PlanCard"
 import Markdown from "./Markdown"
@@ -145,42 +144,6 @@ export function ItemView({
   )
 }
 
-// A small "read aloud" speaker button under an agent message: tap to stream the
-// message text via TTS (the same Pocket streaming used in voice mode), tap again
-// to stop. Self-contained so each message tracks its own play state.
-function ReadAloudButton({ text }: { text: string }) {
-  const t = useTheme()
-  const [playing, setPlaying] = useState(false)
-  async function toggle() {
-    if (playing) {
-      await stopSpeaking()
-      setPlaying(false)
-      return
-    }
-    setPlaying(true)
-    try {
-      await speak(text) // resolves when playback finishes
-    } finally {
-      setPlaying(false)
-    }
-  }
-  return (
-    <TouchableOpacity
-      testID="read-aloud"
-      accessibilityLabel="read-aloud"
-      onPress={toggle}
-      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
-    >
-      {playing ? (
-        <ActivityIndicator size="small" color={t.accent} />
-      ) : (
-        <Icon name="volume" size={16} color={t.textMuted} />
-      )}
-    </TouchableOpacity>
-  )
-}
-
 // An agent exchange: the final response, with the tool-call steps collapsed
 // underneath (tap "N steps" to reveal them; each step expands to its result).
 export function ExchangeView({
@@ -219,8 +182,8 @@ export function ExchangeView({
   }
   const toolCount = useMemo(() => steps.filter((b) => b.kind === "tool").length, [steps])
   // Some models (Qwen3) emit their reasoning inline as <think>…</think> before the
-  // answer. Split it out so it renders as a collapsed block and the read-aloud/body
-  // only use the actual reply. When there's no <think>, body === finalText.
+  // answer. Split it out so it renders as a collapsed block and the body
+  // (and Read aloud) only use the actual reply. When there's no <think>, body === finalText.
   const { thinking: think, body } = useMemo(() => splitThinking(finalText), [finalText])
   const [thinkOpen, setThinkOpen] = useState(false)
   // What the agent put on the project canvas this turn stays visible even with the steps folded;
@@ -294,13 +257,8 @@ export function ExchangeView({
       {!finalText && !steps.length && !plans?.length ? (
         <Text onLongPress={onLongPress} style={[styles.finalText, { color: t.text }]}>…</Text>
       ) : null}
-      {/* Footer row: read-aloud speaker first, timestamp pushed to the end. */}
-      {ts || body ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-          {body ? <ReadAloudButton text={body} /> : null}
-          {ts ? <Text style={[styles.msgTime, { color: t.textMuted, marginTop: 0, marginLeft: "auto" }]}>{fmtClock(ts)}</Text> : null}
-        </View>
-      ) : null}
+      {/* Read aloud lives in the long-press menu (MessageActions). */}
+      {ts ? <Text testID="agent-time" style={[styles.msgTime, { color: t.textMuted, marginTop: 4, alignSelf: "flex-end" }]}>{fmtClock(ts)}</Text> : null}
     </View>
   )
 }
