@@ -113,6 +113,8 @@ function screen(initial: Route) {
     "../lib/liveEvents": { serialize, THREAD_FALLBACK_MS: [1500],
       startLiveRefresh: (o: { refresh: Function }) => { const id = ++timerId; polls.set(id, o.refresh); return () => polls.delete(id) } },
     "../api/events": { liveEvents: () => null },
+    // The first page goes through the shared open path; route it to the same deferred read (no prefetch cache).
+    "../api/threadOpen": { openThreadPage: (host: string, path: string) => modules["../api/client"].api.sessionReadPage(host, path) },
     ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "RedApprovalCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", PinnedBanner: "PinnedBanner", WorkingBubble: "WorkingBubble" },
   }
