@@ -493,3 +493,62 @@ def test_own_session_closing_its_card_cancels_the_queued_wake(board, monkeypatch
     actions.execute(_it("task_done", {"card_id": 42}, "session:bob"),
                     "owner", "ic", acting_session="sess-1")
     assert cancelled == [42, 42] and board.wakes == []
+
+
+def test_agent_ask_in_review_pushes_once_through_the_decision_queue(board, monkeypatch):
+    """A comment on a card waiting for the owner IS the ask: the inbox delivery
+    pushes it (or holds it behind a full queue), so the generic comment push
+    stays quiet — otherwise the owner got two pushes per ask."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append((kind, ref)))
+    monkeypatch.setattr(inbox, "format_card", lambda card, comment: comment)
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["column_id"] = 12                       # Review
+    resp, status = actions.execute(
+        _it("card_comment", {"card_id": 42, "body": "Ship it?"}, "session:bob"),
+        "owner", "ic", acting_session="sess-1")
+    assert status == 200 and "warning" not in resp
+    assert delivered == [("card", "42")]
+    assert board.pushes == []
+
+
+def test_the_inbox_ask_names_the_column_the_card_is_really_in(board, monkeypatch):
+    """The card row has only column_id; the delivered text used to fall back
+    to "Review" and told the owner a Needs-info card was in Review."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append(body))
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["column_id"] = 16                       # Needs-info
+    actions.execute(_it("card_comment", {"card_id": 42, "body": "Which port?"}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert delivered and delivered[0].startswith('Card 42 "Fix login" is in Needs-info')
+
+
+def test_an_ask_with_no_comment_yet_carries_the_cards_own_question(board, monkeypatch):
+    """An agent that writes its question in the card body and parks the card
+    used to send the owner a bare "the call is yours:" with nothing after it."""
+    from viewer import inbox, queue
+    delivered = []
+    monkeypatch.setattr(inbox, "deliver_decision",
+                        lambda sid, kind, ref, body: delivered.append(body))
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "")
+    board.db.card["body"] = "Should I ship the login fix tonight?"
+    actions.execute(_it("card_move", {"card_id": 42, "column_id": 12}, "session:bob"),
+                    "owner", "ic", acting_session="sess-1")
+    assert delivered and delivered[0].endswith("Should I ship the login fix tonight?")
+
+
+def test_agent_ask_behind_a_full_queue_is_told_so(board, monkeypatch):
+    from viewer import inbox, queue
+    monkeypatch.setattr(inbox, "deliver_decision", lambda *a: None)
+    monkeypatch.setattr(inbox, "format_card", lambda card, comment: comment)
+    monkeypatch.setattr(inbox, "last_session_comment", lambda cid: "")
+    monkeypatch.setattr(queue, "full_warning", lambda kind, ref: "QUEUE FULL")
+    resp, status = actions.execute(
+        _it("card_move", {"card_id": 42, "column_id": 12}, "session:bob"),
+        "owner", "ic", acting_session="sess-1")
+    assert status == 200 and resp["warning"] == "QUEUE FULL"

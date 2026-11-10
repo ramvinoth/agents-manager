@@ -12,7 +12,10 @@ export type { Note, NoteKind, NoteFilter }
 
 export type NoteTemplate = { kind: NoteKind; label: string; hint: string; body: string }
 
-const today = (now: Date) => now.toISOString().slice(0, 10)
+// The LOCAL calendar day: toISOString() is UTC, so an evening journal in PST
+// would otherwise be titled with tomorrow's date.
+const pad = (n: number) => String(n).padStart(2, "0")
+const today = (now: Date) => `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 
 /** The starting body for each note kind — what Apple Notes calls a template.
  *  Pure of the clock: the caller passes `now` so tests are deterministic. */

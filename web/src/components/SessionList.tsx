@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Network, Shapes, Plus, MoreHorizontal, Info } from "lucide-react"
+import { type LucideIcon, Folder, FolderOpen, ChevronRight, ChevronDown, ClipboardList, NotebookPen, Sparkles, Loader2, Mail, Shapes, Plus, MoreHorizontal, Info } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,7 +19,7 @@ import type { SessionListItem, SessionDetail, ProjectPlugin, OrgProject } from "
 import { activity, groupSessions, type Group } from "@/lib/projectGroups"
 import type { CanvasRef } from "@/lib/canvasRef"
 import { projectLabels, projectParents, projectTree, type TreeNode } from "@/lib/projectTree"
-import { KanbanDialog, NotesDialog, MapDialog, CanvasDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
+import { KanbanDialog, NotesDialog, CanvasDialog, InboxDialog, ProjectPluginDialog, NewSessionDialog } from "@/components/lazyDialogs"
 import { pluginIcon, useProjectPlugins } from "@/components/projectPlugins/registry"
 
 export function SessionList() {
@@ -37,10 +37,9 @@ export function SessionList() {
   const [tasksFor, setTasksFor] = useState<Group | null>(null)
   const [notesFor, setNotesFor] = useState<Group | null>(null)
   const [inboxFor, setInboxFor] = useState<Group | null>(null)
-  const [mapFor, setMapFor] = useState<Group | null>(null)
   const [canvasFor, setCanvasFor] = useState<Group | null>(null)
   // What a canvas tile asked to open inside the dialog it opens (a card, note or file).
-  const [openAt, setOpenAt] = useState<{ card?: number; note?: number; path?: string }>({})
+  const [openAt, setOpenAt] = useState<{ card?: number; note?: number }>({})
   const projectPlugins = useProjectPlugins()
   const [pluginFor, setPluginFor] = useState<{ plugin: ProjectPlugin; group: Group } | null>(null)
   const [inboxSession, setInboxSession] = useState<{ id: string; title: string; cwd: string } | null>(null)
@@ -167,7 +166,6 @@ export function SessionList() {
           onTasks={() => setTasksFor(g)}
           onNotes={() => setNotesFor(g)}
           onInbox={() => setInboxFor(g)}
-          onMap={() => setMapFor(g)}
           onCanvas={() => setCanvasFor(g)}
           onPlugin={(plugin) => setPluginFor({ plugin, group: g })}
         />
@@ -215,7 +213,6 @@ export function SessionList() {
   function openRef(g: Group, ref: CanvasRef) {
     if (ref.kind === "card") { setOpenAt({ card: Number(ref.id) }); setTasksFor(g) }
     else if (ref.kind === "note") { setOpenAt({ note: Number(ref.id) }); setNotesFor(g) }
-    else if (ref.kind === "code") { setOpenAt({ path: ref.id }); setMapFor(g) }
     else if (ref.kind === "inbox") setInboxFor(g)
     else {
       const sift = projectPlugins.find((p) => p.id === "sift")
@@ -285,15 +282,6 @@ export function SessionList() {
           onClose={() => setInboxFor(null)}
         />
       )}
-      {mapFor && (
-        <MapDialog
-          host={currentHost}
-          cwd={mapFor.project || mapFor.dir}
-          name={projectName(mapFor.project || mapFor.dir)}
-          initialPath={openAt.path}
-          onClose={() => { setMapFor(null); setOpenAt({}) }}
-        />
-      )}
       {canvasFor && (
         <CanvasDialog
           host={currentHost}
@@ -340,7 +328,6 @@ function ProjectMenu({
   onTasks,
   onNotes,
   onInbox,
-  onMap,
   onCanvas,
   onPlugin,
 }: {
@@ -352,7 +339,6 @@ function ProjectMenu({
   onTasks: () => void
   onNotes: () => void
   onInbox: () => void
-  onMap: () => void
   onCanvas: () => void
   onPlugin: (p: ProjectPlugin) => void
 }) {
@@ -383,9 +369,6 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onInbox}>
           <Mail className="size-3.5" /> Inbox
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onMap}>
-          <Network className="size-3.5" /> Map
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onCanvas}>
           <Shapes className="size-3.5" /> Canvas

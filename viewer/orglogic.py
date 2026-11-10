@@ -16,24 +16,6 @@ from __future__ import annotations
 
 # ── Views: one canonical card list → a filtered/ordered view ──────────────────
 
-def filter_cards(cards, *, session=None, project=None):
-    """Return the cards matching every provided filter (AND semantics). A None
-    filter is ignored. This is how a single board becomes a per-session /
-    per-project view without any duplicate card storage.
-
-    `cards` is a list of dict-like rows with keys session_id / project_id.
-    Filters compare by value; ids may be int or str — compared as-is (callers pass
-    matching types)."""
-    out = []
-    for c in cards:
-        if session is not None and c.get("session_id") != session:
-            continue
-        if project is not None and c.get("project_id") != project:
-            continue
-        out.append(c)
-    return out
-
-
 def order_column(cards):
     """Cards sorted by their fractional `position` ascending (missing position → 0.0).
     Stable: equal positions keep input order. Used to render one column top-to-bottom."""
@@ -67,28 +49,6 @@ def _pos(card):
         return float(card.get("position", 0.0) or 0.0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def next_position(cards_in_column, index):
-    """Fractional rank for a card being inserted at `index` within a column that is
-    ALREADY ordered by position. Returns a float strictly between its new neighbours
-    so a move never has to renumber the whole column (classic fractional indexing).
-
-    - Empty column → 1.0.
-    - index <= 0 (top)  → below the first card: first.position - 1.0.
-    - index >= len (bottom) → above the last: last.position + 1.0.
-    - middle → midpoint of the two straddling cards.
-    `index` is the target slot AMONG THE OTHER cards (the card being moved is assumed
-    not present in `cards_in_column`)."""
-    ordered = order_column(cards_in_column)
-    n = len(ordered)
-    if n == 0:
-        return 1.0
-    if index <= 0:
-        return _pos(ordered[0]) - 1.0
-    if index >= n:
-        return _pos(ordered[-1]) + 1.0
-    return (_pos(ordered[index - 1]) + _pos(ordered[index])) / 2.0
 
 
 # The claude CLI permission modes a session's runs may start in. One vocabulary,
@@ -280,6 +240,15 @@ _MIN_LEVEL = {
     # board-shaping authority, not an ic act on one's own
     # card. loop_delete is ALSO red → an agent's delete queues for the owner.
     "loop_create": "lead",
+    # ...except a session's ONE-SHOT wake for itself: the turn-end discipline every
+    # agent follows ("end a run by creating its next wake"). It only narrows (fires
+    # once, then retires), so it is ic. The route picks this action only after
+    # self_loop_change_allowed proved the create is the caller's own one-shot.
+    "loop_wake_self": "ic",
+    # ...and pausing one of its OWN loops: it only narrows what runs unattended, so
+    # it is ic too. The route picks this only after self_loop_change_allowed proved
+    # the update is a bare pause (resuming stays the owner's).
+    "loop_pause_self": "ic",
     # Starting a new worker session spends runs like a loop does, so the same
     # authority. Bypass mode is refused at the route (session_mode_set is the door).
     "session_create": "lead",
@@ -439,6 +408,9 @@ def mutates_own_session(acting_session, target_session):
 # Transport fields every agent request carries, never part of what it asks to change:
 # the MCP client (viewer_mcp._call) stamps `session` and `token` into every body.
 _TRANSPORT_KEYS = {"id", "session", "token"}
+# Fields that explain a request but change nothing: a pause that also says why is
+# still only a pause (the MCP asks agents for a `reason` on gated calls).
+_NOT_A_CHANGE = _TRANSPORT_KEYS | {"reason"}
 
 
 def self_loop_change_allowed(op, args):
@@ -460,7 +432,7 @@ def self_loop_change_allowed(op, args):
             and not str(args.get("cron") or "").strip() \
             and not str(args.get("interval") or "").strip()
     if op == "update":
-        changed = {k for k, v in args.items() if k not in _TRANSPORT_KEYS and v is not None}
+        changed = {k for k, v in args.items() if k not in _NOT_A_CHANGE and v is not None}
         return changed == {"enabled"} and args.get("enabled") is False
     return False
 

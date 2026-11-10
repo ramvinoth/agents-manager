@@ -43,7 +43,7 @@ eq("orphan bucketed", withOrphan[0].column.name, "Unsorted")
 eq("orphan card present", ids(withOrphan[0].cards), [9])
 eq("no orphan bucket when none", groupByColumn(cards, columns).length, 2)
 
-// nextPosition (fractional indexing — must match server orglogic.next_position)
+// nextPosition (fractional indexing)
 eq("empty column", nextPosition([], 0), 1)
 eq("top", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 0), 4)
 eq("bottom", nextPosition([C({ id: 1, position: 5 }), C({ id: 2, position: 6 })], 2), 7)

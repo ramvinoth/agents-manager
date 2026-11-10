@@ -2,6 +2,7 @@ const assert = require("node:assert/strict")
 const fs = require("node:fs")
 const path = require("node:path")
 const { startFixture, SESSION, BOARD_SESSION_B } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
 // Native W3C pointer actions, not JS callbacks or an alternate renderer.
 async function drag(points) {
@@ -39,17 +40,7 @@ describe("Native thread board gesture — isolated API", () => {
   before(async () => {
     assert.equal(process.env.E2E_BUNDLE_ID, "com.suhai.agents.e2e", "Use run-ios.sh's isolated app, never a production install")
     fixture = await startFixture({ boardIsolation: true, boardMutations: true })
-    await browser.waitUntil(async () => (await $("~server-url").isDisplayed()) || (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()), { timeout: 30000 })
-    if (await $("~server-url").isDisplayed()) {
-      await $("~server-url").setValue(fixture.url)
-      await $("~server-connect").click()
-      await browser.waitUntil(async () => (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()))
-    }
-    if (await $("~login-username").isDisplayed()) {
-      await $("~login-username").setValue("fixture")
-      await $("~login-password").setValue("fixture")
-      await $("~login-submit").click()
-    }
+    await signIn(fixture)
     await $(`~chat-${SESSION}`).waitForDisplayed()
     await $(`~chat-${SESSION}`).click()
     await $("~thread-viewport").waitForDisplayed()
@@ -268,7 +259,12 @@ describe("Native thread board gesture — isolated API", () => {
   async function createAndMove(title, columnId, inspectViewport = false) {
     const checkpoint = fixture.requests.length
     await $("~kanban-add-101").click()
-    await $("~kanban-new-card").setValue(title)
+    // WDA retypes the whole string if the keyboard was not up yet, keeping the
+    // partial first attempt ("NeNative…"). Wait for the keyboard before typing.
+    const input = await $("~kanban-new-card")
+    await input.click()
+    await $("-ios class chain:**/XCUIElementTypeKeyboard").waitForDisplayed({ timeout: 10000 })
+    await input.setValue(title)
     // Tap the column heading to blur the actual native input and submit through
     // KanbanScreen.onBlur (no direct API creation or JS callback invocation).
     await $('-ios predicate string:type == "XCUIElementTypeStaticText" AND label BEGINSWITH "To Do"').click()

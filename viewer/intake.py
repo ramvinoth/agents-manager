@@ -21,6 +21,14 @@ Trust: a channel's text comes from OUTSIDE the org. The wake tells the
 session so (actions._board_followup), and the card body says where it came
 from — content to evaluate, never instructions to follow.
 
+One thing, one card: a post may carry `key`, the sender's own id for what it
+is about (a membership, a CI run, an alert). A later post with the same key on
+the same channel updates that card (new title and body, its text as a comment)
+instead of opening another, so "sold" then "refunded" read as one story.
+`done: true` marks an event that asks for no work (a sale, a resolved alert):
+the card goes to the board's Done lane as a record. A door bound to no session
+pushes the owner itself — nobody else will tell them.
+
 Token, payload → card and view are pure; deliver() is the one function that
 touches the db (through actions.execute). db.py holds the SQL and
 routes/intake.py the HTTP.
@@ -30,11 +38,16 @@ import hmac
 import json
 import secrets
 import sys
+import threading
 
-# Cards one channel may create per hour. A leaked token or a looping sender
+# Posts (new cards and updates) one channel may make per hour. A leaked token or a looping sender
 # must not bury the board or burn the session's budget on wakes.
 RATE_PER_HOUR = 30
 TITLE_MAX = 120
+KEY_MAX = 200
+# Keyed posts look up then create; one lock keeps two first posts for the same
+# key (a vendor sending two events at once) from opening two cards.
+_KEYED = threading.Lock()
 BODY_MAX = 8000
 EXTERNAL_PREFIX = "intake:"      # actor/created_by of a card that came through a door
 # The built-in feedback channel (fixed id, so it is opened once and re-flagged,
@@ -82,7 +95,7 @@ def card_fields(channel_name, payload, origin):
     text = next((p[k] for k in ("text", "body", "message") if isinstance(p.get(k), str)
                  and p[k].strip()), "")
     rest = {k: v for k, v in p.items()
-            if k not in ("title", "text", "body", "message", "url", "from", "token")}
+            if k not in ("title", "text", "body", "message", "url", "from", "token", "key", "done")}
     title = _one_line(p.get("title")) or _one_line(text) or f"Event from {channel_name}"
     if len(title) > TITLE_MAX:
         title = title[:TITLE_MAX - 1] + "…"
@@ -97,6 +110,23 @@ def card_fields(channel_name, payload, origin):
         lines += ["", "Payload:", json.dumps(rest, indent=1, default=str)]
     body = "\n".join(lines)
     return title, body[:BODY_MAX]
+
+
+def options(payload):
+    """(key, done) from a post: the sender's id for the thing ('' = none) and
+    whether the event needs no work."""
+    p = payload if isinstance(payload, dict) else {}
+    key = p.get("key")
+    key = _one_line(key)[:KEY_MAX] if isinstance(key, (str, int)) else ""
+    return key, p.get("done") is True
+
+
+def comment_text(payload):
+    """What an update adds to the card's thread: the sender's text, else its title."""
+    p = payload if isinstance(payload, dict) else {"text": payload}
+    text = next((p[k] for k in ("text", "body", "message") if isinstance(p.get(k), str)
+                 and p[k].strip()), "")
+    return (text.strip() or _one_line(p.get("title")) or "Updated.")[:BODY_MAX]
 
 
 def view(channel):
@@ -174,14 +204,63 @@ def deliver(channel, payload, origin, human_role="", session_level="ic", actor="
     ledger and tells the board where the card came in. `column` names the
     lane (found or created on the channel's board); default: the first lane."""
     from viewer import actions, db
+    key, done = options(payload)
+    if not key:
+        return _create(channel, payload, origin, human_role, session_level, actor, column, key, done)
+    with _KEYED:
+        card = db.intake_card(channel["id"], key)
+        if not card:
+            return _create(channel, payload, origin, human_role, session_level, actor, column, key, done)
+    actor = actor or EXTERNAL_PREFIX + channel["id"]
     if db.intake_touch(channel["id"]) > RATE_PER_HOUR:
-        return {"error": f"rate limit: {RATE_PER_HOUR} cards per hour"}, 429
+        return {"error": f"rate limit: {RATE_PER_HOUR} posts per hour"}, 429
     title, body = card_fields(channel["name"], payload, origin)
+    run = lambda action, args: actions.execute(actions.intent(action, args, actor),
+                                               human_role, session_level)
+    resp, status = run("card_update", {"card_id": card["id"], "title": title, "body": body})
+    if status >= 300:
+        return resp, status
+    # The comment is the update's voice: it pushes the owner and wakes the
+    # card's session like any reply on the board.
+    resp, status = run("card_comment", {"card_id": card["id"], "body": comment_text(payload),
+                                         "author": actor})
+    if status >= 300:
+        return resp, status
+    lane = _done_lane(card["project_id"]) if done else None
+    if lane and card.get("column_id") != lane:
+        run("card_move", {"card_id": card["id"], "column_id": lane})
+    return dict(db.card_get(card["id"]) or card, updated=True), 200
+
+
+def _done_lane(project_id):
+    from viewer import db, orglogic
+    return orglogic.project_columns(db.board_columns_list(project_id)).get("done") if project_id else None
+
+
+def _create(channel, payload, origin, human_role, session_level, actor, column, key, done):
+    from viewer import actions, db
+    if db.intake_touch(channel["id"]) > RATE_PER_HOUR:
+        return {"error": f"rate limit: {RATE_PER_HOUR} posts per hour"}, 429
+    title, body = card_fields(channel["name"], payload, origin)
+    external = not actor
     actor = actor or EXTERNAL_PREFIX + channel["id"]
     args = {"title": title, "body": body, "project_id": channel["project_id"],
             "session": channel.get("session_id") or None,
             "created_by": EXTERNAL_PREFIX + channel["id"]}
-    if column:
+    lane = _done_lane(channel["project_id"]) if done else None
+    if lane:
+        args["column_id"] = lane
+    elif column:
         args["column_id"] = db.board_column_ensure(channel["project_id"], column)["id"]
-    return actions.execute(actions.intent("card_create", args, actor),
-                           human_role, session_level)
+    resp, status = actions.execute(actions.intent("card_create", args, actor),
+                                   human_role, session_level)
+    if status < 300 and resp.get("id"):
+        if key and not db.intake_card_key(resp["id"], key):
+            print(f"[intake] {channel['id']}: key {key!r} already on another card; "
+                  f"card {resp['id']} stays untagged", file=sys.stderr)
+        if external and not channel.get("session_id"):
+            # No session will read it, so the owner hears it straight from the door.
+            from viewer import push
+            push.notify_all(f"Card {resp['id']} · {title}"[:120], comment_text(payload)[:300],
+                            data={"card": resp["id"]})
+    return resp, status

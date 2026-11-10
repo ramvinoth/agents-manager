@@ -65,11 +65,22 @@ test("identical saves don't rewrite; no server is a no-op; bad files read as emp
   await c.saveChats("", "h", [2])
   assert.equal(writes, after)
   for (const k of files.keys()) if (k !== "index.json") files.set(k, "{oops")
-  assert.equal(await c.loadChats("s", "h"), null)
+  // A fresh start reads the disk (this run's copy is answered from memory).
+  assert.equal(await new OfflineCache(io).loadChats("s", "h"), null)
 })
 
 test("a failing disk never throws to the screen", async () => {
   const c = new OfflineCache({ read: async () => null, write: async () => { throw new Error("full") }, remove: async () => {} })
   await c.saveChats("s", "h", [1])
   assert.equal(await c.loadChats("s", "h"), null)
+})
+
+test("a thread saved this run reads back without touching the disk", async () => {
+  const { io } = memIO()
+  const c = new OfflineCache(io)
+  await c.saveThread("s1", "local", "/p.jsonl", ["a"])
+  let reads = 0
+  io.read = async () => (reads++, null)
+  assert.deepEqual(await c.loadThread("s1", "local", "/p.jsonl"), ["a"])
+  assert.equal(reads, 0)
 })

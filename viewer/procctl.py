@@ -1,4 +1,4 @@
-"""viewer.procctl — stopping a local child process, on every platform.
+"""viewer.procctl — starting and stopping a local child process, on every platform.
 
 POSIX interrupts a child with SIGINT and kills a process group with killpg.
 Windows has neither: a child started with CREATE_NEW_PROCESS_GROUP is
@@ -8,6 +8,13 @@ Everything here is stdlib and safe to import on any platform.
 import os
 import signal
 import subprocess
+
+
+def local_cwd(cwd):
+    """The directory a local child runs in. Popen never expands "~" (callers
+    default an unknown cwd to it, e.g. a resume or an inbox wake), so a bare
+    "~" would fail with FileNotFoundError. Empty means home."""
+    return os.path.expanduser(cwd or "~")
 
 
 def interruptible_kwargs():

@@ -36,7 +36,7 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import codemap, db, procctl, inference_health, orglogic, project_plugins, resume
+from viewer import db, procctl, inference_health, orglogic, project_plugins, resume
 from viewer import live as live_events  # `live` is a local name in several functions
 from viewer.sessions import compute_session_summary, last_cwd_in_file
 
@@ -292,73 +292,84 @@ def loop_scheduler(launch):
     purge still run regardless — they free memory, expire session tokens and bound the
     audit table, and holding stale credentials open would be the opposite of safe.
     """
-    global _last_purge
+    # One failed pass must never end the thread: it is the only thing that fires
+    # loops AND opens the maintenance window, so its death is silent and total
+    # (2026-11-04: a Postgres restart made loops_due raise, the thread died, and
+    # nothing fired for ~26h while the server looked healthy). Log and go on.
     while True:
         time.sleep(5)
-        now = time.time()
-        with CHAT_LOCK:
-            # Reap from when the run FINISHED, not when it started — a long run
-            # otherwise loses its final status seconds after completing.
-            stale = [sid for sid, j in CHAT_JOBS.items()
-                     if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
-            for sid in stale:
-                CHAT_JOBS.pop(sid, None)
-                # The run is truly over — drop its persisted tokens too, so a
-                # stale credential can't authorize an MCP call after the session
-                # ends (preserves the "only live sessions" guarantee).
-                try:
-                    db.session_token_delete(sid)
-                except Exception:
-                    pass
-        # Retention: bound job-run history so it can never overflow. Runs on THIS
-        # thread (no second timer) and self-throttles to hourly. Caps come from the
-        # settings table so a SaaS-admin portal can tune them per plan without a
-        # deploy. Independent of the master switch — pruning old audit rows is
-        # housekeeping, not unattended WORK, and must keep the table bounded even
-        # while automation is paused.
-        if now - _last_purge >= _PURGE_INTERVAL:
-            _last_purge = now
+        try:
+            _scheduler_pass(launch, time.time())
+        except Exception:
+            traceback.print_exc()
+
+
+def _scheduler_pass(launch, now):
+    """One 5s tick of loop_scheduler (see its docstring)."""
+    global _last_purge
+    with CHAT_LOCK:
+        # Reap from when the run FINISHED, not when it started — a long run
+        # otherwise loses its final status seconds after completing.
+        stale = [sid for sid, j in CHAT_JOBS.items()
+                 if not j.get("running") and now - j.get("finished", j.get("started", now)) > CHAT_JOB_TTL]
+        for sid in stale:
+            CHAT_JOBS.pop(sid, None)
+            # The run is truly over — drop its persisted tokens too, so a
+            # stale credential can't authorize an MCP call after the session
+            # ends (preserves the "only live sessions" guarantee).
             try:
-                rc = db.retention_config()
-                db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
-                db.ui_events_purge(rc["ui_events_days"])
-                db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
+                db.session_token_delete(sid)
             except Exception:
                 pass
-            # Credentials of runs this process never saw (they predate a restart)
-            # are outside the per-job reaper above; sweep them once they are far
-            # older than any run can live, so a dead session's token expires too.
-            try:
-                with CHAT_LOCK:
-                    live = list(CHAT_JOBS.keys())
-                db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
-            except Exception:
-                pass
-        fire_due_loops(launch, now)
-        # The hourly maintenance window (viewer.maintenance): applies queued
-        # restart requests at :50. Not gated by the master switch — agents only
-        # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+    # Retention: bound job-run history so it can never overflow. Runs on THIS
+    # thread (no second timer) and self-throttles to hourly. Caps come from the
+    # settings table so a SaaS-admin portal can tune them per plan without a
+    # deploy. Independent of the master switch — pruning old audit rows is
+    # housekeeping, not unattended WORK, and must keep the table bounded even
+    # while automation is paused.
+    if now - _last_purge >= _PURGE_INTERVAL:
+        _last_purge = now
         try:
-            from viewer import maintenance
-            maintenance.tick(now)
+            rc = db.retention_config()
+            db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
+            db.ui_events_purge(rc["ui_events_days"])
+            db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
         except Exception:
             pass
-        # The 30-minute board sweep — a safety net for event wakes the action
-        # path missed. Its wakes are agent-origin, so it only runs when the
-        # autonomous side may act (master switch ON and the loop mode licenses
-        # agents) — otherwise it would stamp the interval and drop the event
-        # the wakes could never fire. Idle board = zero cost either way.
+        # Credentials of runs this process never saw (they predate a restart)
+        # are outside the per-job reaper above; sweep them once they are far
+        # older than any run can live, so a dead session's token expires too.
         try:
-            from viewer import board_wake
-            from viewer.orchestrator import automation_enabled, loop_mode
-            autonomous = automation_enabled() and loop_mode() in ("agent", "both")
-            if autonomous:
-                board_wake.sweep()
-            # Expired asks are always recorded (the session's inbox is the
-            # durable record); only the resume is gated with the sweep.
-            board_wake.expire_asks(now, wake=autonomous)
+            with CHAT_LOCK:
+                live = list(CHAT_JOBS.keys())
+            db.session_tokens_purge_stale(live, SESSION_TOKEN_MAX_AGE)
         except Exception:
             pass
+    fire_due_loops(launch, now)
+    # The hourly maintenance window (viewer.maintenance): applies queued
+    # restart requests at :50. Not gated by the master switch — agents only
+    # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+    try:
+        from viewer import maintenance
+        maintenance.tick(now)
+    except Exception:
+        pass
+    # The 30-minute board sweep — a safety net for event wakes the action
+    # path missed. Its wakes are agent-origin, so it only runs when the
+    # autonomous side may act (master switch ON and the loop mode licenses
+    # agent) — otherwise it would stamp the interval and drop the event
+    # the wakes could never fire. Idle board = zero cost either way.
+    try:
+        from viewer import board_wake
+        from viewer.orchestrator import automation_enabled, loop_mode
+        autonomous = automation_enabled() and loop_mode() in ("agent", "both")
+        if autonomous:
+            board_wake.sweep()
+        # Expired asks are always recorded (the session's inbox is the
+        # durable record); only the resume is gated with the sweep.
+        board_wake.expire_asks(now, wake=autonomous)
+    except Exception:
+        pass
 
 
 def frontmatter_description(path):
@@ -417,7 +428,7 @@ def stream_user_message(proc, text):
 _STDOUT_EOF = object()
 
 
-def iter_stdout_until(proc, idle_timeout):
+def iter_stdout_until(proc, idle_timeout, paused=None, poll=30):
     """Yield stdout lines, killing the turn only after `idle_timeout` of SILENCE.
 
     `for line in proc.stdout` blocks in readline() until the child writes, so a
@@ -433,7 +444,13 @@ def iter_stdout_until(proc, idle_timeout):
 
     Note: a long-running tool call is silent on the stream until it returns, so
     `idle_timeout` must exceed the longest legitimate quiet gap (see
-    CHAT_IDLE_TIMEOUT)."""
+    CHAT_IDLE_TIMEOUT).
+
+    `paused()` true means the silence is the human's, not the child's: a
+    question, plan or permission hook is holding the CLI until the owner
+    answers. While paused the window does not run, and it re-arms in full once
+    the answer lands. Those hooks bound their own wait (QUESTION_TIMEOUT,
+    PERM_TIMEOUT), so a pause cannot park the turn forever."""
     q = queue.Queue()
 
     def _pump():
@@ -444,13 +461,20 @@ def iter_stdout_until(proc, idle_timeout):
             q.put(_STDOUT_EOF)
 
     threading.Thread(target=_pump, daemon=True).start()
+    last = time.monotonic()
     while True:
         try:
-            item = q.get(timeout=idle_timeout)
+            item = q.get(timeout=min(poll, idle_timeout))
         except queue.Empty:
-            raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+            now = time.monotonic()
+            if paused and paused():
+                last = now
+            elif now - last >= idle_timeout:
+                raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
+            continue
         if item is _STDOUT_EOF:
             return
+        last = time.monotonic()
         yield item
 
 
@@ -610,7 +634,7 @@ def start_pi_run(session_id, session_uuid, message, cwd, provider="", model=""):
             if re.fullmatch(r"[A-Za-z0-9._/-]+", model or ""):
                 cmd += ["--model", model]
             cmd += ["--session", session_uuid, message]
-            proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+            proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     **procctl.interruptible_kwargs())
             with CHAT_LOCK:
@@ -711,7 +735,7 @@ def start_codex_run(session_id, codex_id, message, cwd, model="", host="local"):
             else:
                 env = agent_env()
                 cmd[0] = codex_bin()
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
@@ -800,7 +824,7 @@ def start_copilot_run(session_id, message, cwd, host="local", model="", mode="")
                 except Exception:
                     pass
                 cmd[0] = copilot_bin()
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         **procctl.interruptible_kwargs())
                 with CHAT_LOCK:
@@ -908,7 +932,7 @@ def start_copilot_new(message, cwd, host="local"):
     except Exception:
         pass
     try:
-        proc = subprocess.Popen([copilot_bin(), "-p", message, "--allow-all-tools"], cwd=cwd, env=env,
+        proc = subprocess.Popen([copilot_bin(), "-p", message, "--allow-all-tools"], cwd=procctl.local_cwd(cwd), env=env,
                                 text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 **procctl.interruptible_kwargs())
     except Exception:
@@ -1181,14 +1205,6 @@ def _await_question_answer(session_id, tinput, tool_use_id):
         entry = next((e for e in pend if e["id"] == pid), None)
         if entry:
             entry["revision"] = revision
-    # Background push so the user knows a question is waiting (works app-closed).
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   "Your agent has a question for you.",
-                   data={"session": session_id, "host": host, "question": True})
-    except Exception:
-        pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -1289,13 +1305,6 @@ def _await_plan_decision(session_id, tinput, tool_use_id):
         questions.record_plan(session_id, {"tool_use_id": tool_use_id, "plan": plan_md}, host)
     except Exception:
         pass
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   "Your agent has a plan to review.",
-                   data={"session": session_id, "host": host, "plan": True})
-    except Exception:
-        pass
     decided = ev.wait(timeout=QUESTION_TIMEOUT)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
@@ -1363,16 +1372,9 @@ def register_permission(session_id, token, tool_name, tinput, tool_use_id):
              "created": time.time()})
         cwd = job.get("cwd", "")
         host = job.get("host", "local")
-    # Background push: the run is now blocked waiting on the user (best-effort).
     live_events.publish("tool_approvals", pid, "INSERT")
-    try:
-        from viewer.push import notify_all
-        notify_all(_push_label(session_id, cwd),
-                   _perm_push_body(tool_name, tinput, host),
-                   data={"session": session_id, "host": host, "approval": pid})
-    except Exception:
-        pass
-    # Mirror into the owner's inbox: the live registry above stays the one
+    # Mirror into the owner's inbox (and the owner's one push for this ask,
+    # sent by deliver_decision): the live registry above stays the one
     # source of truth (it disappears on restart — so does this row's open
     # state); the inbox row carries the cold-reader context and a reply
     # path. Exception-safe: never fail the permission request on delivery.
@@ -1580,6 +1582,21 @@ def _perm_push_body(tool_name, tinput, host):
     return body
 
 
+def owner_time_line(now=None, localtime_path="/etc/localtime"):
+    """The owner's time zone, said once per run, so an agent writes every time
+    it shows them in THEIR zone (this server's) and never in UTC. Zone only, no
+    clock: a fixed line keeps the prompt cacheable; `date` gives the time. Pure."""
+    now = (now or datetime.now()).astimezone()
+    real = os.path.realpath(localtime_path)
+    iana = os.environ.get("TZ") or (real.split("zoneinfo/", 1)[1] if "zoneinfo/" in real else "")
+    off = now.strftime("%z")
+    zone = f"{iana} ({now.tzname()}, UTC{off[:3]}:{off[3:]})" if iana else f"{now.tzname()} (UTC{off[:3]}:{off[3:]})"
+    return (f"Time: the owner's time zone is {zone}. Write every time you show the owner "
+            f"in it (e.g. 9:16 PM {now.tzname()}), never in UTC. Tool timestamps are UTC/epoch "
+            "unless they carry an offset or a *_local twin; convert them. A loop_create `at` "
+            "or calendar time without an offset is read in this zone. Run `date` for the time now.")
+
+
 def _integrations_summary():
     """What this run may use right now (accounts, services, operations, local
     folders), so an agent knows its integrations natively. Built per run from
@@ -1719,6 +1736,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     preamble = db.setting_get("system_preamble", "") or ""
     if preamble.strip():
         extra.append(preamble)
+    extra.append(owner_time_line())
     summary = _integrations_summary()
     if summary:
         extra.append(summary)
@@ -1825,7 +1843,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
-                proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True,
+                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
             with CHAT_LOCK:
@@ -1842,18 +1860,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  provider_env.get("ANTHROPIC_MODEL", ""),
                                  provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
-            # Map lens: when this project has it on, a file the agent writes
-            # lights up on the map while the agent works (code_index.touched).
-            map_project = None
-            if kanban_project and not remote:
-                try:
-                    proj = db.project_get(int(kanban_project))
-                    if proj and "map" in (proj.get("lenses") or []):
-                        map_project = proj
-                except Exception:
-                    pass
-
-            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT):
+            for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT,
+                                          paused=lambda: bool(job.get("pending_approvals"))):
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
                 # (the code + human sentence survive JSON escaping) so it works
@@ -1871,25 +1879,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     continue
                 if watch_url:
                     job["model_wait"].update(ev, time.time())
-                if map_project:
-                    try:
-                        for rel in codemap.edited_paths(ev, map_project["cwd"]):
-                            db.code_index_touch(map_project["id"], rel, session_id)
-                    except Exception as e:  # a highlight, never a reason to fail a run
-                        print(f"[map] touch failed: {e}", flush=True)
-                # Remember the newest assistant text as it streams. The plan card
-                # needs the text that immediately precedes ExitPlanMode, and the
-                # transcript file is written asynchronously — reading it back at
-                # approval time can still show the PREVIOUS turn's text (measured:
-                # a stale "ACKNOWLEDGED" from the prior run). The stream is the
-                # only ordering-safe source.
-                if ev.get("type") == "assistant":
-                    blocks = ((ev.get("message") or {}).get("content")) or []
-                    if isinstance(blocks, list):
-                        txt = "\n".join(b.get("text", "") for b in blocks
-                                        if isinstance(b, dict) and b.get("type") == "text").strip()
-                        if txt:
-                            job["last_assistant_text"] = txt
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1

@@ -17,6 +17,7 @@ import { recordSwipe } from "../lib/usageReporter"
 import { useSeen } from "../components/Tracked"
 import { useDecisionCockpit } from "../components/useDecisionCockpit"
 import { shouldAutoOpenDeck } from "../lib/decisionDeck"
+import { matchDecision } from "../lib/notificationRoute"
 
 export type HomeTabParamList = {
   Chats: undefined
@@ -60,7 +61,7 @@ function ChatsPage({ gesture, navigation }: { gesture: ReturnType<typeof Gesture
  * boards, Integrations…) lives in the side menu, which every tab opens from
  * the hamburger in its header (useMenuButton).
  */
-export default function HomeTabs({ navigation }: Props) {
+export default function HomeTabs({ navigation, route }: Props) {
   const t = useTheme()
   useSeen("swipe-tab", undefined, true)
   const insets = useSafeAreaInsets()
@@ -123,6 +124,23 @@ export default function HomeTabs({ navigation }: Props) {
     })
     return () => sub.remove()
   }, [navigation])
+
+  // A decision push opens the deck ON that decision (matched by its ref, else
+  // its session), not on whatever happens to be first. One gone by now (decided
+  // on another device) falls back to the front of the queue.
+  const wanted = route.params?.decision
+  useEffect(() => {
+    if (!wanted) return
+    const want = { kind: wanted, ref: route.params?.ref || "", session: route.params?.session || "" }
+    navigation.setParams({ decision: undefined, ref: undefined, session: undefined })
+    api.openDecisions()
+      .then((r) => {
+        const decisions = r.decisions || []
+        if (!alive.current || !decisions.length) return
+        openDeck.current(decisions, Math.max(0, matchDecision(decisions, want)))
+      })
+      .catch(() => {})
+  }, [wanted, route.params?.ref]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Chats is the leftmost page: a rightward drag there has no page to reach, so
   // it pulls out the side menu, which follows the finger and settles open or

@@ -21,7 +21,7 @@ export async function resolveSessionPath(
 ): Promise<string | null> {
   let ended = 0
   for (let i = 0; i < maxTries; i++) {
-    await new Promise((r) => setTimeout(r, intervalMs))
+    if (i > 0) await new Promise((r) => setTimeout(r, intervalMs))
     if (stop()) return null
     try {
       const res = await lookup()

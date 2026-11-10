@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture, SESSION } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
 // The swipeable home tabs share ONE parent-stack header. Each tab must leave exactly
 // its own header controls after every transition — never a sibling's lingering
@@ -50,17 +51,7 @@ describe("Tab header ownership — every transition", function () {
   let fixture
   before(async () => {
     fixture = await startFixture()
-    await browser.waitUntil(async () => (await $("~server-url").isDisplayed()) || (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()), { timeout: 30000 })
-    if (await $("~server-url").isDisplayed()) {
-      await $("~server-url").setValue(fixture.url)
-      await $("~server-connect").click()
-      await browser.waitUntil(async () => (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()))
-    }
-    if (await $("~login-username").isDisplayed()) {
-      await $("~login-username").setValue("fixture")
-      await $("~login-password").setValue("fixture")
-      await $("~login-submit").click()
-    }
+    await signIn(fixture)
     await $(`~chat-${SESSION}`).waitForDisplayed()
   })
   after(async () => { if (fixture) await fixture.close() })

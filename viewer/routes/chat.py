@@ -199,7 +199,7 @@ class ChatMixin:
         pending_plan = questions.get_open_plan(sid) if sid else None
         # An org (Red) approval this session raised outlives its run too; the
         # chat shows it inline with Approve/Deny (card 223).
-        from viewer.routes.inbox import session_red_items
+        from viewer.queue import session_red_items
         pending_red = session_red_items(sid)
         job = CHAT_JOBS.get(sid)
         if not job:
@@ -228,13 +228,13 @@ class ChatMixin:
         """The cross-session decision queue (card #60): every open durable
         question, durable plan, live tool approval, and board card parked in
         Review/Needs-info — one read of the EXISTING sources (no parallel
-        store), oldest first, with a total count. Items the owner snoozed
-        (Inbox or cockpit — one snooze) are held back until the snooze lapses.
+        store), oldest first, at most the owner's cap with how many are held
+        behind it (viewer.queue). Items the owner snoozed (Inbox or cockpit —
+        one snooze) are held back until the snooze lapses.
         This route only lists; deciding an item goes through the existing
         per-session routes, which are race-safe via the decisions gate."""
-        from viewer import inbox
-        from viewer.routes.inbox import open_decisions_items
-        self.send_json(inbox.visible_queue(open_decisions_items()))
+        from viewer import queue
+        self.send_json(queue.shown())
 
     def _p_chat_permission(self, req):
         """Internal (called by permission_mcp.py, authed by a per-run token):

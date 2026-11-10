@@ -17,80 +17,9 @@ Reads derive state, never store it: a decision row is open only while its
 durable source is open (inbox.attach_state against the live sources, the same
 ones /api/decisions/open reads). Snoozed rows resurface when the snooze lapses.
 """
-import sys
 import time
 
-from viewer import audit, db, decisions, inbox
-from viewer.engine import _push_label, pending_approvals_all_public
-from viewer import questions
-
-
-def red_row(approval):
-    """An open org approval with the words the queue shows a cold reader:
-    the action's plain name, what it touches, why the asker needs it, and
-    what approving costs."""
-    intent = approval.get("detail") if isinstance(approval.get("detail"), dict) else {}
-    action = intent.get("action") or ""
-    return dict(approval,
-                action_label=audit.action_label(action) if action else "",
-                subject=inbox.red_subject(intent),
-                risk=inbox.red_risk(intent),
-                reason=inbox.red_reason(intent))
-
-
-def session_red_items(session_id):
-    """Open org approvals this one session raised, worded for a cold reader —
-    the asking chat's inline Approve/Deny (card 223). Deciding one goes
-    through the same /api/org/approvals/resolve as the queue."""
-    if not session_id:
-        return []
-    try:
-        mine = [red_row(r) for r in db.approval_list_open()
-                if decisions.red_session(r) == session_id]  # word only this chat's
-    except Exception as e:
-        # The chat status this rides on must still answer (a live run polls
-        # it); the Inbox and the board still carry the approval.
-        print(f"[chat] open approvals for {session_id} unreadable: {e}", file=sys.stderr)
-        return []
-    return decisions.session_red(mine, session_id, time.time())
-
-
-def open_decisions_items():
-    """The cross-session decision queue — the SAME sources /api/decisions/open
-    reads (durable questions, durable plans, the live approval registry, cards
-    in Review/Needs-info, open org Red approvals), shaped by decisions.open_decisions and joined to
-    each item's inbox row (inbox_id, snoozed_until) so ONE snooze holds on
-    every surface. Returns EVERY open item, snoozed included: the inbox's
-    derived open-state needs the full set (a snoozed item is deferred, not
-    decided); a human-facing queue applies inbox.visible_queue last."""
-    qrows = questions.get_open_all()
-    prows = questions.get_open_plan_all()
-    arows = pending_approvals_all_public()
-    crows = db.cards_awaiting_owner()
-    rrows = [red_row(r) for r in db.approval_list_open()]
-    now = time.time()
-    labels = {}
-    for sid in ({r["session_id"] for r in qrows}
-                | {r["session_id"] for r in prows}
-                | {r["session"] for r in arows}
-                | {r["session_id"] for r in crows if r.get("session_id")}
-                | {(r.get("detail") or {}).get("session") for r in rrows} - {None, ""}):
-        try:
-            labels[sid] = _push_label(sid, "")
-        except Exception:
-            labels[sid] = ""
-    items = decisions.open_decisions(qrows, prows, arows, labels, now, crows, rrows)["decisions"]
-    refs = db.inbox_decision_refs()
-    # An open org approval with no inbox row (queued before approvals were
-    # delivered, or its delivery failed) is delivered now — once: the upsert
-    # gives it a row, so it can be postponed like any other item.
-    held = {f"{r['kind']}:{r['ref_id']}" for r in refs}
-    missing = [r for r in rrows if f"red:{r['id']}" not in held]
-    for r in missing:
-        inbox.deliver_red(r)
-    if missing:
-        refs = db.inbox_decision_refs()
-    return inbox.attach_snooze(items, refs, now)
+from viewer import db, inbox, queue
 
 
 class InboxMixin:
@@ -112,9 +41,15 @@ class InboxMixin:
         unread_only = (q.get("unread_only") or [""])[0].lower() not in ("", "0", "false")
         archived = (q.get("archived") or [None])[0] not in (None, "")
         pid = int(project) if project else None
-        items = open_decisions_items()
-        unread = inbox.unread_count(
-            db.inbox_list(session_id=session, project_id=pid, kind=kind, unread_only=True), items)
+        items = queue.open_items()
+        cap = queue.cap()
+        agent = p["kind"] == "mcp"
+        unread_rows = db.inbox_list(session_id=session, project_id=pid, kind=kind, unread_only=True,
+                                    to_session=session if agent else None)
+        # The owner's badge counts what waits on the owner; an agent's count is
+        # the mail sent to it that it has not listed yet.
+        unread = (len(inbox.unread_for_session(unread_rows, session)) if agent
+                  else inbox.unread_count(unread_rows, items, cap=cap))
         if (q.get("count_only") or [None])[0] not in (None, ""):
             # The tab badge polls this from every screen: the number only,
             # not the full list it would throw away.
@@ -128,12 +63,20 @@ class InboxMixin:
         except ValueError:
             limit = default_limit
         rows = db.inbox_list(session_id=session, project_id=pid, kind=kind,
-                             unread_only=unread_only, archived=archived, limit=limit)
+                             unread_only=unread_only, archived=archived, limit=limit,
+                             to_session=session if unread_only and agent else None)
         messages = inbox.attach_state(rows, items)
-        out = {"messages": messages, "unread": unread}
+        if agent:
+            # Listing is the agent's read. This response still shows the rows
+            # as 'sent' (new to it); the next wake's unread_only skips them.
+            db.inbox_mark_read_many(inbox.unread_for_session(rows, session))
+        view = inbox.visible_queue(items, cap)
+        # Agents read this before raising an ask: held > 0 means the owner's
+        # queue is full and a new ask would wait unseen.
+        out = {"messages": messages, "unread": unread,
+               "owner_queue": {"cap": cap, "shown": view["count"], "held": view["held"]}}
         if p["kind"] == "app":
-            qview = inbox.action_queue(messages, items)
-            out["queue"] = qview
+            out["queue"] = inbox.action_queue(messages, items, cap=cap)
         self.send_json(out)
 
 
@@ -157,9 +100,33 @@ class InboxMixin:
                         "sender_type": sender[0], "sender_id": sender[1],
                         "created_by": p["actor"]})
 
+    def _g_inbox_cap(self, req):
+        """How many decisions the owner sees at once (viewer.queue). Any
+        resolved caller may read it; only the owner may change it."""
+        self.send_json({"cap": queue.cap(), "default": queue.DEFAULT_CAP,
+                        "max": queue.MAX_CAP})
+
+    def _p_inbox_cap(self, req):
+        """Set the owner's decision-queue cap. Owner only: the cap protects
+        the owner's attention, so no agent may widen it to get its asks in."""
+        p = req.principal or {}
+        if p.get("kind") != "app" or (p.get("user") or {}).get("role") != "owner":
+            self.send_json({"error": "Only the owner can set the decision queue size"},
+                           status=403)
+            return
+        n = (self.read_body() or {}).get("cap")
+        try:
+            queue.set_cap(n)
+        except ValueError as e:
+            self.send_json({"error": str(e)}, status=400)
+            return
+        db.audit_append(p.get("actor") or "owner", "decision_queue_cap", str(n), "ok")
+        self.send_json({"cap": queue.cap(), "default": queue.DEFAULT_CAP,
+                        "max": queue.MAX_CAP})
+
     def _p_inbox_read(self, req):
-        """Mark a message read. Owner surface only: a session's consumption
-        is the wake itself, not a status write."""
+        """Mark a message read. Owner surface only: a session marks its own
+        mail read by listing it (_g_inbox)."""
         if req.principal["kind"] != "app":
             self.send_json({"error": "not allowed"}, status=403)
             return

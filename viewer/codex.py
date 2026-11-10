@@ -229,7 +229,7 @@ def start_codex_new(message, cwd, model=""):
         cmd += ["-m", model]
     cmd += [message]
     try:
-        proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL,
+        proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 **procctl.interruptible_kwargs())
     except Exception:

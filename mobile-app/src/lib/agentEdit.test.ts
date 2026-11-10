@@ -6,7 +6,7 @@ const role = {
   id: 3, name: "Engineer", description: "d", category: "engineering", icon: "code",
   system_prompt: "sp", goal: "g", level: "lead" as const,
   jobs: [{ prompt: "daily", cron: "0 9 * * *" }, { prompt: "once", at: "2026-10-12T09:00:00Z" }],
-  plugin: "engineer", lens: "map", is_builtin: true, created_by: "", created_at: 0,
+  plugin: "engineer", is_builtin: true, created_by: "", created_at: 0,
 }
 
 test("a new draft has the server's defaults", () => {
@@ -17,10 +17,9 @@ test("a new draft has the server's defaults", () => {
   assert.equal(draftBlocker(d), "Name the agent")
 })
 
-test("editing keeps plugin and lens (an update replaces every field) and drops one-shot jobs", () => {
+test("editing keeps the plugin (an update replaces every field) and drops one-shot jobs", () => {
   const p = draftPayload(draftFrom(role))
   assert.equal(p.plugin, "engineer")
-  assert.equal(p.lens, "map")
   assert.deepEqual(p.jobs, [{ prompt: "daily", cron: "0 9 * * *" }])
 })
 

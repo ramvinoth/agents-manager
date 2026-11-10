@@ -77,7 +77,8 @@ export function IntakeSection() {
         <Inbox className="mt-0.5 size-3.5 shrink-0" />
         <span className="flex-1">
           A link anything outside can post to — a website form, a failing build, an alert, your own app feedback.
-          Each post becomes a card on the board you pick and wakes the chat you pick to work on it.
+          Each post becomes a card on the board you pick and wakes the chat you pick to work on it (no chat: you get a push).
+          Send a <code>key</code> to update the same card later, and <code>"done": true</code> for events that need no work.
           Your app feedback always lands on one: the switched-on channel, else the built-in "In-app feedback".
         </span>
         {busy && <Loader2 className="size-3.5 animate-spin" />}
@@ -102,7 +103,7 @@ export function IntakeSection() {
               </button>
             </div>
             <div className="text-xs text-muted-foreground">
-              Board: {projectName(c.project_id)} · Wakes: {c.session_id ? title(c.session_id) : "nobody (board only)"}
+              Board: {projectName(c.project_id)} · Wakes: {c.session_id ? title(c.session_id) : "nobody (you get a push)"}
             </div>
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate font-mono text-xs">{url(c)}</code>
@@ -148,7 +149,7 @@ export function IntakeSection() {
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.cwd}</option>)}
             </select>
             <select className={SELECT} value={draft.session} onChange={(e) => setDraft({ ...draft, session: e.target.value })}>
-              <option value="">Wake nobody (cards wait on the board)</option>
+              <option value="">Wake nobody (you get a push)</option>
               {sessionOpts.map((s) => <option key={s.id} value={s.id}>Wake: {s.title}</option>)}
             </select>
             <label className="flex items-center gap-2 text-xs">

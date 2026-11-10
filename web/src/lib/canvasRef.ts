@@ -1,12 +1,11 @@
 /** Canvas links back to their source: a shape whose link is agents://card/12,
- *  agents://note/3, agents://inbox/<session>, agents://sift/<doc> or
- *  agents://code/<path> opens that thing in the app instead of navigating.
+ *  agents://note/3, agents://inbox/<session> or agents://sift/<doc> opens that thing in the app instead of navigating.
  *  The kinds match the server's REF_RE (viewer/canvas_summary.py). */
 
-export type CanvasRefKind = "card" | "note" | "inbox" | "sift" | "code"
+export type CanvasRefKind = "card" | "note" | "inbox" | "sift"
 export type CanvasRef = { kind: CanvasRefKind; id: string }
 
-const REF = /^agents:\/\/(card|note|inbox|sift|code)\/(.+)$/
+const REF = /^agents:\/\/(card|note|inbox|sift)\/(.+)$/
 const INT_KINDS = new Set(["card", "note"])
 
 export function parseCanvasRef(link?: string | null): CanvasRef | null {

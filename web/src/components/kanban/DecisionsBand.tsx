@@ -30,6 +30,7 @@ export function DecisionsBand({
   onCardChange?: (card: Card) => void
 }) {
   const [items, setItems] = useState<OpenDecision[] | null>(null)
+  const [held, setHeld] = useState(0)
   const [err, setErr] = useState("")
   const [busy, setBusy] = useState(false)
   const [hidden, setHidden] = useState(false)
@@ -41,6 +42,7 @@ export function DecisionsBand({
     try {
       const r = await api.openDecisions()
       setItems(r.decisions || [])
+      setHeld(r.held || 0)
       setErr("")
       setHidden(false)
     } catch (ex: any) {
@@ -104,6 +106,11 @@ export function DecisionsBand({
               </li>
           ))}
         </ul>
+      )}
+      {held > 0 && (
+        <div className="mt-1 text-[11px] text-muted-foreground" data-testid="decisions-held">
+          {held} more waiting · each comes up as you decide or skip one
+        </div>
       )}
       {cockpit && (
         <DecisionCockpit

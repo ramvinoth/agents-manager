@@ -118,14 +118,6 @@ def get_open_all():
     return db.pending_question_open_all()
 
 
-def clear_exact(session_id, tool_use_id, host="local", run_id="", revision=0):
-    """Consume only the exact request identified (tool + host + run + revision).
-    The answer path itself is owned by decisions.accept_answer (consume-then-
-    deliver, first-writer-wins); this is the identity primitive for any other
-    exact consumer."""
-    return db.pending_question_clear_exact(session_id, tool_use_id, host, run_id, revision)
-
-
 def clear(session_id):
     """Session-wide drop — for session DELETE only. Never the answer path: the
     row is keyed by session and replaced on re-ask, so a session-wide delete

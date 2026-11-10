@@ -202,7 +202,7 @@ test("parseOpenRef: tile links the page asks the app to open", () => {
   const open = (o: unknown) => parseOpenRef(JSON.stringify(o))
   assert.deepEqual(open({ t: "open", kind: "card", id: "12" }), { kind: "card", id: 12 })
   assert.deepEqual(open({ t: "open", kind: "note", id: "7" }), { kind: "note", id: 7 })
-  assert.deepEqual(open({ t: "open", kind: "code", id: "viewer/db.py" }), { kind: "code", id: "viewer/db.py" })
+  assert.deepEqual(open({ t: "open", kind: "sift", id: "doc-1" }), { kind: "sift", id: "doc-1" })
   assert.deepEqual(open({ t: "open", kind: "inbox", id: "41" }), { kind: "inbox", id: "41" })
   // Card and note ids are positive integers; unknown kinds and socket traffic are not refs.
   for (const bad of [
@@ -211,7 +211,8 @@ test("parseOpenRef: tile links the page asks the app to open", () => {
     { t: "open", kind: "note", id: "-2" },
     { t: "open", kind: "card", id: 12 },
     { t: "open", kind: "file", id: "x" },
-    { t: "open", kind: "code", id: "" },
+    { t: "open", kind: "sift", id: "" },
+    { t: "open", kind: "code", id: "viewer/db.py" },
     { t: "ws-open", id: 1, url: "/api/x" },
   ]) assert.equal(open(bad), null, JSON.stringify(bad))
   assert.equal(parseOpenRef("not json"), null)

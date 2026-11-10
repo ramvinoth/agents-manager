@@ -162,7 +162,8 @@ def _card_move(a, *, by_agent=False):
     # move ends whatever was open (viewer.asks).
     since, exp = asks.after_move(into_decision, by_agent, expires, now)
     db.card_ask_set(card["id"], since, exp)
-    return dict(moved, ask_since=since, ask_expires_at=exp)
+    out = dict(moved, ask_since=since, ask_expires_at=exp)
+    return _with_queue_warning(out, card["id"]) if into_decision and by_agent else out
 
 
 def _card_delete(a):
@@ -314,15 +315,17 @@ def _task_done(a, *, by_agent=False):
 def _inbox_send(a):
     """Send one free inbox message. The sender is the intent's stamped sender
     (the resolved principal — never the body); `to` is "user" (the owner) or
-    "session:<id>". The handler persists (inbox.deliver_message), then wakes
-    the recipient session or pushes the owner — all exception-safe, so this
-    Green action can never strand a decision it is carrying context for."""
+    "session:<ref>" (a full id, a unique id prefix or a title — resolved to the
+    full id, or refused). The handler persists (inbox.deliver_message), then
+    wakes the recipient session or pushes the owner — all exception-safe, so
+    this Green action can never strand a decision it is carrying context for."""
     from viewer import inbox
     to = str(a.get("to", ""))
     if to.startswith("session:"):
-        rtype, rid = "session", to.split(":", 1)[1]
-        if not rid:
-            return {"error": "bad recipient"}
+        rtype = "session"
+        rid, err = inbox.resolve_session(to.split(":", 1)[1])
+        if err:
+            return {"error": err}
     elif to == "user":
         rtype, rid = "user", ""
     else:
@@ -369,7 +372,20 @@ def _card_comment(a, *, by_agent=False):
                                            expires, now)
     if new_state != (float(state[0]), float(state[1])):
         db.card_ask_set(card["id"], *new_state)
-    return dict(row, warning=asks.SPLIT_WARNING) if second else row
+    row = dict(row, warning=asks.SPLIT_WARNING) if second else row
+    return _with_queue_warning(row, card["id"]) if by_agent and in_decision else row
+
+
+def _with_queue_warning(result, card_id):
+    """Tell the agent when its ask landed behind the owner's full queue
+    (viewer.queue): it is held, silent, and the agent should decide what it
+    can itself. Joined to any warning already there."""
+    from viewer import queue
+    full = queue.full_warning("card", str(card_id))
+    if not full:
+        return result
+    prior = result.get("warning")
+    return dict(result, warning=f"{prior} {full}" if prior else full)
 
 
 def _card_dep_add(a):
@@ -781,6 +797,8 @@ ACTIONS = {
     "approval_resolve": _approval_resolve,
     "session_create": _session_create,
     "loop_create": _loop_create,
+    "loop_wake_self": _loop_create,
+    "loop_pause_self": _loop_update,
     "loop_update": _loop_update,
     "loop_delete": _loop_delete,
     "loop_mode_set": _loop_mode_set,
@@ -824,29 +842,41 @@ _BOARD_ACTIONS = ("card_create", "card_move", "card_update", "card_comment",
                   "card_dep_add", "card_dep_remove", "task_done")
 
 
+def _decision_column(card):
+    """The name of the decision column (Review/Needs-info) the card is parked
+    in, or "" when it is not parked where the owner's call is needed."""
+    if not card or not card.get("project_id"):
+        return ""
+    cols = db.board_columns_list(card["project_id"])
+    name = next((c["name"] for c in cols if c["id"] == card.get("column_id")), "")
+    return name if asks.is_decision_column(name) else ""
+
+
 def _card_inbox_delivery(card, action, args, agent):
     """Surface a card parked in a decision column (Review/Needs-info) in the
     owner's inbox. The card's COLUMN stays the one source of truth — the inbox
     row carries only its context (the card's own comment thread) so the owner
     can decide cold, and it derives open-at-read-time against the live card.
-    Fires on an agent's move INTO the column (including a self-move — that is
-    how a worker requests the call) and on an agent's comment while it sits
-    there. Exception-safe by contract; a lost delivery is a missed convenience,
+    Fires when an agent creates a card in the column, moves one INTO it
+    (including a self-move — that is how a worker requests the call), or
+    comments while it sits there. With no agent comment yet the question is
+    the card's own body, so the owner never gets a bare "the call is yours".
+    Exception-safe by contract; a lost delivery is a missed convenience,
     never a lost decision (the queue also lists it)."""
-    if not agent or action not in ("card_move", "card_comment") or not card:
+    if not agent or action not in ("card_create", "card_move", "card_comment") or not card:
         return
     try:
-        cols = db.board_columns_list(card["project_id"]) if card.get("project_id") else []
-        col = next((c for c in cols if c["id"] == card.get("column_id")), None)
-        if (col or {}).get("name", "").lower() not in ("review", "needs-info"):
+        column = _decision_column(card)
+        if not column:
             return
         from viewer import inbox
         comment = ((args.get("body") or "").strip()
                    if action == "card_comment"
-                   else (inbox.last_session_comment(card["id"]) or ""))
+                   else (inbox.last_session_comment(card["id"])
+                         or (card.get("body") or "").strip()))
         inbox.deliver_decision(card.get("session_id") or "", "card",
                                str(card["id"]),
-                               inbox.format_card(card, comment))
+                               inbox.format_card(dict(card, column_name=column), comment))
     except Exception:
         pass
 
@@ -899,7 +929,10 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # The push is for the owner, so it fires whether or not the card is
         # bound to a session: an agent answering an unbound card (an in-app
         # feedback note, a card the owner typed) must still reach them.
-        if agent and action == "card_comment":
+        # A comment on a card waiting for the owner is the ask itself: the
+        # inbox delivery above pushes it (or holds it behind a full queue),
+        # so a second push here would double it.
+        if agent and action == "card_comment" and not _decision_column(card):
             from viewer import push
             # The owner reads this cold, possibly hours later: the title must
             # identify the card by number AND name, and the payload must carry

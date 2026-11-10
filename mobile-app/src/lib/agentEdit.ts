@@ -18,8 +18,8 @@ export type AgentDraft = {
   /** Manager plugins every chat from this agent starts with. */
   plugins: string[]
   /** Not editable here, but an edit replaces every field: carried through so
-   *  saving a duplicated role agent never drops its skills or lens. */
-  plugin: string; lens: string
+   *  saving a duplicated role agent never drops its skills. */
+  plugin: string
 }
 
 /** The plugin catalog as the picker lists it: those matching `query` (name or
@@ -45,7 +45,7 @@ export function draftFrom(t?: AgentTemplate): AgentDraft {
     jobs: (t?.jobs ?? []).filter((j) => !j.at),
     // An agent that never kept a list brings its one seeded plugin.
     plugins: t?.plugins ?? (t?.plugin ? [t.plugin] : []),
-    plugin: t?.plugin ?? "", lens: t?.lens ?? "",
+    plugin: t?.plugin ?? "",
   }
 }
 
@@ -64,7 +64,7 @@ export function draftPayload(d: AgentDraft): AgentTemplateFields {
     name: trim(d.name), icon: d.icon, category: d.category, description: trim(d.description),
     system_prompt: trim(d.system_prompt), goal: trim(d.goal), ai: d.ai, level: d.level,
     jobs: d.jobs.map(({ prompt, cron, interval }) => (cron ? { prompt, cron } : { prompt, interval })),
-    plugins: d.plugins, plugin: d.plugin, lens: d.lens,
+    plugins: d.plugins, plugin: d.plugin,
   }
 }
 

@@ -183,4 +183,19 @@ test("the server's auto-resume folds into the reply it continues", () => {
   assert.deepEqual((items[1] as any).steps.map((b: any) => b.kind), ["tool", "resume"])
 })
 
+test("a mid-turn steer folds into the reply as a step; task notifications stay hidden", () => {
+  const items = groupThread(parseTranscript([
+    line({ type: "user", uuid: "1", message: { content: "build it" } }),
+    line({ type: "assistant", uuid: "2", message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: {} }] } }),
+    line({ type: "attachment", uuid: "3", attachment: { type: "queued_command", commandMode: "prompt", prompt: "also add tests" } }),
+    line({ type: "attachment", uuid: "4", attachment: { type: "queued_command", commandMode: "prompt", prompt: [{ type: "text", text: "[inbox] From Sift:\nbuild 33 is live" }] } }),
+    line({ type: "attachment", uuid: "5", attachment: { type: "queued_command", commandMode: "task-notification", prompt: "bg done" } }),
+    line({ type: "queue-operation", operation: "remove" }),
+    line({ type: "assistant", uuid: "6", message: { content: [{ type: "text", text: "done" }] } }),
+  ]))
+  assert.deepEqual(items.map((i) => i.kind), ["user", "exchange"])
+  const steps = (items[1] as any).steps.filter((b: any) => b.kind === "steer")
+  assert.deepEqual(steps, [{ kind: "steer", text: "also add tests" }, { kind: "steer", text: "build 33 is live", from: "Sift" }])
+})
+
 console.log(`${passed} passing`)

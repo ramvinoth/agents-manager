@@ -30,6 +30,7 @@ the session + token + viewer base passed in the environment.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -71,7 +72,6 @@ _TOOLS = {
     "note_list":        ("GET", "/api/org/notes"),
     "note":             ("GET", "/api/org/note"),
     "note_graph":       ("GET", "/api/org/notes/graph"),
-    "code_map":         ("GET", "/api/org/map"),
     "note_comments":    ("GET", "/api/org/note_comments"),
     "loop_list":        ("GET", "/api/loops"),
     "loop_control_get": ("GET", "/api/org/loop-control"),
@@ -151,7 +151,7 @@ _RAW = {"session_read", "fs_read"}
 _FIXED_ARGS = {"card_list": {"view": "ledger"}}
 
 _PROJECT_DEFAULT = {"board_list": "project", "card_list": "project", "note_list": "project",
-                    "note_graph": "project", "code_map": "project",
+                    "note_graph": "project",
                     "canvas_read": "project", "canvas_patch": "project", "canvas_snapshot": "project"}
 
 _HOST_ARG = {"type": "string",
@@ -182,6 +182,11 @@ _EVENT_PROPS = {
     "all_day": {"type": "boolean"},
     "location": {"type": "string"}, "description": {"type": "string"},
     "attendees": {"type": "array", "items": {"type": "string"}, "description": "Guest emails (never notified)."}}
+
+_FULL_ARG = {"type": "boolean", "description": "Return everything uncut (results are compact by default)."}
+_PAGE_ARGS = {"limit": {"type": "integer", "description": "Rows per page."},
+              "offset": {"type": "integer", "description": "Skip this many rows (the result's `more` gives the next)."},
+              "full": _FULL_ARG}
 
 _TOOL_LIST = [
     # ── See everything ──────────────────────────────────────────────────────
@@ -238,7 +243,7 @@ _TOOL_LIST = [
     {"name": "audit_tail",
      "description": "Recent audit entries: who did what, and whether it ran, queued or was denied.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "limit": {"type": "integer", "description": "How many entries (default 100)."}}}},
+         "limit": {"type": "integer", "description": "How many entries (default 10)."}, "full": _FULL_ARG}}},
     {"name": "usage_report",
      "description": "How the owner actually uses the Manager app (their own web and phone clients, recorded on this server only): hot controls (most used — taps, and on the phone long-presses and swipes, each also counted on its own — with times seen), dead controls (on screen 20+ times, never used — candidates to remove, merge or move; web and phone alike, kept apart by `client`), cold controls (used before the window, not in it), screen opens, and the owner's in-app feedback notes. Each feedback note is also a card in the Feedback column of the feedback channel's board (intake_list: the app_feedback one) — answer it there with card_comment and the owner gets your reply as a push. Read it before proposing UI changes; cite it on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
@@ -247,12 +252,12 @@ _TOOL_LIST = [
      "description": "Intake channels: doors from the outside world onto a board. Each is a URL (path) + secret token bound to one project board and optionally one session; any POST to it (a website form, CI failure, alert, support tool, or the owner's in-app feedback when app_feedback is true) becomes a card on that board and wakes that session. Shows name, project_id, session_id, app_feedback, received, last_used — never the token.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     {"name": "intake_create",
-     "description": "Request a new intake channel onto a project board, optionally bound to a session (that session is woken per card) and optionally receiving the owner's in-app feedback (app_feedback; at most one channel does). Red: an outside door, so it queues for the owner's approval. The token is never shown to an agent: after approving, the owner takes it from Integrations → Intake channels (New token).",
+     "description": "Request a new intake channel onto a project board, optionally bound to a session (that session is woken per card) and optionally receiving the owner's in-app feedback (app_feedback; at most one channel does). Red: an outside door, so it queues for the owner's approval. The token is never shown to an agent: after approving, the owner takes it from Integrations → Intake channels (New token). Senders POST JSON {title, text, url, from}; `key` (the sender's id for the thing) makes later posts with the same key update that card and comment on it, and `done: true` files an event that needs no work straight into Done.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["name", "project_id", "reason"], "properties": {
          "reason": _REASON_ARG,
          "name": {"type": "string", "description": "What feeds it, e.g. 'Website contact form'."},
          "project_id": {"type": "integer"},
-         "for_session": {"type": "string", "description": "Session to wake for each new card; omit for board-only."},
+         "for_session": {"type": "string", "description": "Session to wake for each new card; omit to push the owner instead."},
          "app_feedback": {"type": "boolean"}}}},
     {"name": "restart_request",
      "description": "Ask for a Manager server restart so your server-code change goes live. Never restart the server yourself: every restart cuts off every running agent turn. Requests queue for the hourly maintenance window (:50 local time): it waits for running turns to finish (up to 10 min), preflights the code on a spare port, restarts ONCE for all queued requests and writes one audit entry. You are woken afterwards with the result (live, or why it was not applied). Commit your change first.",
@@ -268,38 +273,34 @@ _TOOL_LIST = [
     {"name": "card_list", "description": "List the open cards in your project — the durable work ledger. Check this, not memory, when asked what work is pending. Each card carries its column name, comment_count and a body preview (read one in full with card). Done cards are left out and counted in done_hidden; pass include_done=true to list them too. Optionally filtered by session.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"},
-         "include_done": {"type": "boolean"}}}},
-    {"name": "card", "description": "Read one card in full with its comment thread. On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
+         "include_done": {"type": "boolean"}, **_PAGE_ARGS}}},
+    {"name": "card", "description": "Read one card in full with its newest comments (older ones: card_comments with offset). On a [board-watch] wake (a [board-watch] prompt names your card id), read the card and its comments here, then act: Approved means go ahead (finish, then move to Done), Declined means stop, a comment is the owner's message for you — answer by commenting on the card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
-         "id": {"type": "integer"}}}},
-    {"name": "card_comments", "description": "Read a card's comment thread (who said what, in order).",
+         "id": {"type": "integer"}, "full": _FULL_ARG}}},
+    {"name": "card_comments", "description": "Read a card's comment thread (who said what, in order), a page at a time.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
-         "card_id": {"type": "integer"}}}},
+         "card_id": {"type": "integer"}, **_PAGE_ARGS}}},
     {"name": "card_deps", "description": "Read a card's dependency edges (card_deps): which other cards it cannot move forward until, each with its column and a done flag. The owner sees and edits the same rows in the UI (dual control) — if a dep is not done, say so in a card comment instead of stalling silently.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
     {"name": "loop_list",
      "description": "List scheduled loops — recurring prompts (cron/interval) and pending one-shots (kind='once'), optionally for one session. Start here to find a loop's id before updating or deleting it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string", "description": "Session id to filter by; omit for all."}}}},
+         "session": {"type": "string", "description": "Session id to filter by; omit for all."}, **_PAGE_ARGS}}},
     {"name": "loop_control_get",
      "description": "The current loop-firing mode (user/agent/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Notes (the knowledge ledger next to the board) ──────────────────────
     {"name": "note_list", "description": "List notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass session to see one chat's notes, archived=true for the shelf. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"}}}},
+         "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"},
+         **_PAGE_ARGS}}},
     {"name": "note", "description": "Read one note in full (markdown body).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
     {"name": "note_graph", "description": "How notes connect. Notes link like an Obsidian vault: [[Title]], [[Title#Heading]], [[Title|shown text]], and tag themselves with #tag. Returns nodes, link edges (with the line each link sits on), ghosts (titles linked but not written yet), tag counts. Pass id for one note: its backlinks and outgoing links. Read this before writing so you link to what exists instead of duplicating it.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer"}, "id": {"type": "integer", "description": "One note's backlinks + links."}}}},
-    {"name": "code_map", "description": "Your project's code as a graph (the Map lens), parsed live with tree-sitter. level=project: top folders and how they import each other; level=folder + path (e.g. viewer/routes): its files and sub-folders with import edges; level=file + path (e.g. viewer/db.py): its classes and functions with line numbers, what it imports and who imports it. `touched` lists files an agent wrote in the last 15 minutes. Read this before a cross-file change to find what depends on what you touch.",
-     "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
-         "project": {"type": "integer"},
-         "level": {"type": "string", "enum": ["project", "folder", "file"]},
-         "path": {"type": "string", "description": "Repo-relative folder or file; omit at project level."}}}},
     {"name": "note_create", "description": "Create a note (markdown). kind: note | journal | meeting | idea | checklist | discussion (a topic you post for others to answer in its thread). Link related notes with [[Their Title]] and tag with #tag so the knowledge stays a connected graph. Notes you create are owned by you and scoped to this session and its project; they archive when the chat is archived and go when it is deleted.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["title"], "properties": {
          "title": {"type": "string"}, "body": {"type": "string"}, "kind": {"type": "string"},
@@ -433,15 +434,16 @@ _TOOL_LIST = [
          "id": {"type": "string", "description": "Target session id from session_list."}}}},
     # ── Inbox: your message ledger (you ↔ owner, you ↔ peers) ───────────────
     {"name": "inbox_list",
-     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card | red — red is an approval you queued for a Red action) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Newest 20 by default; filter with kind, unread_only, limit.",
+     "description": "Your inbox: the messages addressed to your session (from the owner or other sessions) and the ones you sent to the owner, newest first. A row can carry a decision (kind: message | question | plan | approval | card | red — red is an approval you queued for a Red action) with its LIVE state — open/resolved, read/snoozed — derived at read time; the deciding tap itself stays in the chat UI, the inbox only tells you what is waiting and what the owner said. Read it on a wake and before you act. Listing marks the messages addressed to you read, so unread_only=true shows only messages sent to you since your last read (your own asks to the owner are left out). The response also carries owner_queue {cap, shown, held}: the owner sees only `cap` decisions at a time; held > 0 means the queue is full and a new ask would wait unseen, so decide what you can yourself. Newest 10 by default; filter with kind, unread_only, limit.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "kind": {"type": "string", "enum": ["message", "question", "plan", "approval", "card", "red"]},
          "unread_only": {"type": "boolean", "description": "Only what still needs reading."},
-         "limit": {"type": "integer", "description": "How many, newest first (default 20, max 200)."}}}},
+         "limit": {"type": "integer", "description": "How many, newest first (default 10, max 200)."},
+         "full": _FULL_ARG}}},
     {"name": "inbox_send",
-     "description": "Send a message: to='user' reaches the owner (he gets a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
+     "description": "Send a message: to='user' reaches the owner (they get a push); to='session:<id>' wakes another session with your text (queued into its live run, or a fresh resumed turn on its host). Use it to hand work to a peer, ask a question, or report a result — the board stays the record of the work, the inbox is the channel; the recipient's reply arrives in YOUR inbox. Green (your own messages), never gated behind a decision.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["to", "body"], "properties": {
-         "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session)."},
+         "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session: its full id from session_list, an id prefix, or its exact title; an unknown or ambiguous one is refused)."},
          "body": {"type": "string", "description": "The message — self-contained: the recipient has no context beyond this text."},
          "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
     # ── Canvas: the project's shared board, where a picture beats prose ─────
@@ -453,11 +455,11 @@ _TOOL_LIST = [
          "content": {"type": "string", "description": "Markdown, mermaid source, a full HTML document, or slides (markdown with --- between slides)."},
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},
     {"name": "canvas_read",
-     "description": "Read your project's shared canvas (the Excalidraw board the owner and agents draw on together) as meaning, not geometry: counts, frames, workflows (a frame marked customData.kind=workflow, steps in arrow order), labelled shapes, free text, arrows (from → to), agents:// references with their titles (card/N, note/N, inbox/N a decision, sift/<doc> a Sift document, code/<path> a file in the project; missing=true when it is gone), and freehand ink as groups (group_id, bbox, stroke_count). Ink is handwriting or a sketch: to see one, call canvas_snapshot with its group_id. Each element carries createdBy.",
+     "description": "Read your project's shared canvas (the Excalidraw board the owner and agents draw on together) as meaning, not geometry: counts, frames, workflows (a frame marked customData.kind=workflow, steps in arrow order), labelled shapes, free text, arrows (from → to), agents:// references with their titles (card/N, note/N, inbox/N a decision, sift/<doc> a Sift document; missing=true when it is gone), and freehand ink as groups (group_id, bbox, stroke_count). Ink is handwriting or a sketch: to see one, call canvas_snapshot with its group_id. Each element carries createdBy.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},
     {"name": "canvas_patch",
-     "description": "Draw on the shared project canvas; every open browser sees it live and the owner can Undo your whole patch. ops (≤2000), each one of: {\"op\":\"add\",\"element\":{type: rectangle|diamond|ellipse|text|arrow|line|frame|embeddable (a web page tile; link required), x, y, width?, height?, label? (text inside a shape or on an arrow), text (for type text), fontSize?, from?/to? (element ids: an arrow bound between two shapes), points?, frame? (frame id to sit in), name? (frame title), link? (e.g. agents://card/12, agents://note/3, agents://inbox/41, agents://sift/<doc id>, agents://code/viewer/db.py — the owner opens it from the tile), customData?, strokeColor?, backgroundColor?, fillStyle?}}, {\"op\":\"update\",\"id\":..,\"set\":{x,y,width,height,angle,strokeColor,backgroundColor,fillStyle,strokeWidth,strokeStyle,roughness,opacity,text,name,link,locked,points,fontSize,customData}}, {\"op\":\"delete\",\"id\":..}. Returns results[i] per op ({ok, ids} or {ok:false, error}); one bad op never sinks the rest. At Own work level you change only what you drew. Read first so you place things where there is room.",
+     "description": "Draw on the shared project canvas; every open browser sees it live and the owner can Undo your whole patch. ops (≤2000), each one of: {\"op\":\"add\",\"element\":{type: rectangle|diamond|ellipse|text|arrow|line|frame|embeddable (a web page tile; link required), x, y, width?, height?, label? (text inside a shape or on an arrow), text (for type text), fontSize?, from?/to? (element ids: an arrow bound between two shapes), points?, frame? (frame id to sit in), name? (frame title), link? (e.g. agents://card/12, agents://note/3, agents://inbox/41, agents://sift/<doc id> — the owner opens it from the tile), customData?, strokeColor?, backgroundColor?, fillStyle?}}, {\"op\":\"update\",\"id\":..,\"set\":{x,y,width,height,angle,strokeColor,backgroundColor,fillStyle,strokeWidth,strokeStyle,roughness,opacity,text,name,link,locked,points,fontSize,customData}}, {\"op\":\"delete\",\"id\":..}. Returns results[i] per op ({ok, ids} or {ok:false, error}); one bad op never sinks the rest. At Own work level you change only what you drew. Read first so you place things where there is room.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["ops"], "properties": {
          "ops": {"type": "array", "items": {"type": "object"}},
          "project": {"type": "integer", "description": "Project id; defaults to this session's project."}}}},
@@ -485,6 +487,7 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["for_session", "prompt"], "properties": {
          "for_session": {"type": "string", "description": "Target session id to run the prompt in (your own only with `at`)."},
          "prompt": {"type": "string", "description": "The prompt to run (each time, or once for a one-shot)."},
+         "reason": {**_REASON_ARG, "description": _REASON_ARG["description"] + " Not needed for your own one-shot wake, which any session may set."},
          "cron": {"type": "string", "description": "5-field cron expression for a recurring schedule (wins over interval)."},
          "interval": {"type": "string", "description": "Recurring: e.g. 30s, 5m, 1h."},
          "at": {"type": "string", "description": "ONE-SHOT: fire once, then stop. A relative offset (30m, 2h, 1d) or an ISO time. Without an offset an ISO time is the SERVER's local time zone — when you mean a market or another zone, give the offset ('2026-09-17T09:25-04:00')."},
@@ -533,6 +536,111 @@ def _send(msg):
     sys.stdout.flush()
 
 
+_TIME_KEYS = ("at", "ts", "next_window", "next_run", "last_run", "created", "updated", "modified")
+
+
+def with_local_times(obj):
+    """Give every epoch timestamp a `<key>_local` twin in the owner's zone (this
+    machine's), e.g. "2026-11-05 9:16 PM PST", so an agent quotes the owner's
+    clock instead of converting epoch to UTC in its head. Pure; the epoch stays."""
+    if isinstance(obj, list):
+        return [with_local_times(v) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    out = {}
+    for k, v in obj.items():
+        out[k] = with_local_times(v)
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and (k in _TIME_KEYS or k.endswith("_at") or k.endswith("_ts"))
+                and f"{k}_local" not in obj):
+            sec = v / 1000 if 1e12 <= v < 1e13 else v
+            if 1e9 <= sec < 1e10:
+                t = time.localtime(sec)
+                out[f"{k}_local"] = time.strftime("%Y-%m-%d ", t) + \
+                    time.strftime("%I:%M %p %Z", t).lstrip("0")
+    return out
+
+
+# ── Progressive disclosure ──────────────────────────────────────────────────
+# Every tool result lands in the calling agent's context window. A full card
+# thread or loop list ran to 40-70k characters and made Claude Code's
+# auto-compact thrash, so list-shaped results come back COMPACT by default:
+# a page of rows, long text cut to a preview, and a hint saying how to drill
+# down (offset, the one-item tool, or full=true). Shaping lives only here, in
+# the agent's adapter; the HTTP API the web and phone apps read is unchanged.
+_RESULT_CAP = 14000          # characters of JSON one tool result may take
+_PAGED = {                   # tool -> (list key or None for a bare list, default page size)
+    "card_list": ("cards", 15), "card_comments": ("comments", 20),
+    "loop_list": (None, 15), "note_list": ("notes", 30),
+}
+_PREVIEW = {                 # tool -> (text field cut in each row, characters kept, where the full text is)
+    "card_list": ("body", 120, "card id=<id>"),
+    "note_list": ("body", 200, "note id=<id>"),
+    "inbox_list": ("body", 240, "inbox_list full=true"),
+    "loop_list": ("prompt", 160, "loop_list full=true"),
+    "card_comments": ("body", 600, "card_comments full=true"),
+}
+_CARD_COMMENTS_SHOWN = 5     # the newest comments `card` shows inline
+_LOCAL_PAGING = set(_PAGED) | {"card"}   # tools whose limit/offset this adapter applies
+
+
+def _slim(row):
+    """A list row without its empty fields, and without an epoch whose `_local`
+    twin already says the same instant in the owner's clock."""
+    if not isinstance(row, dict):
+        return row
+    return {k: v for k, v in row.items()
+            if v not in (None, "", []) and f"{k}_local" not in row}
+
+
+def _cut(rows, field, keep, where):
+    out = []
+    for r in rows:
+        v = r.get(field) if isinstance(r, dict) else None
+        if isinstance(v, str) and len(v) > keep:
+            r = {**r, field: v[:keep] + f"… [{len(v)} chars; full text: {where}]"}
+        out.append(r)
+    return out
+
+
+def shape_result(tool, result, full=False, offset=0, limit=None):
+    """Make one tool result fit an agent's context: page list results, cut long
+    text to a preview, and cap the whole at _RESULT_CAP with a drill-down hint.
+    full=True returns the result untouched. Pure."""
+    if full or not isinstance(result, (dict, list)) or (isinstance(result, dict) and "error" in result):
+        return result
+    offset = max(0, int(offset or 0))
+    if tool == "card" and isinstance(result, dict) and isinstance(result.get("comments"), list):
+        comments = result["comments"]
+        if len(comments) > _CARD_COMMENTS_SHOWN:
+            result = {**result, "comments": comments[-_CARD_COMMENTS_SHOWN:],
+                      "comments_total": len(comments),
+                      "comments_hint": f"Showing the newest {_CARD_COMMENTS_SHOWN} of {len(comments)}. "
+                                       "Older ones: card_comments card_id=<id> offset=N."}
+        result = {**result, "comments": _cut(result["comments"], "body", 1500, "card_comments full=true")}
+    if tool in _PAGED:
+        key, size = _PAGED[tool]
+        rows = result if key is None else (result.get(key) if isinstance(result, dict) else None)
+        if isinstance(rows, list):
+            size = max(1, min(int(limit or size), 200))
+            page = [_slim(r) for r in rows[offset:offset + size]]
+            meta = {"total": len(rows), "offset": offset, "shown": len(page)}
+            if offset + size < len(rows):
+                meta["more"] = f"offset={offset + size}"
+            result = {"items": page, **meta} if key is None else {**result, key: page, **meta}
+    if tool in _PREVIEW:
+        field, keep, where = _PREVIEW[tool]
+        key = _PAGED.get(tool, ("messages" if tool == "inbox_list" else None, 0))[0] or "items"
+        if isinstance(result, dict) and isinstance(result.get(key), list):
+            result = {**result, key: _cut(result[key], field, keep, where)}
+    text = json.dumps(result)
+    if len(text) > _RESULT_CAP:
+        return {"_truncated": f"Result was {len(text)} characters; showing the first {_RESULT_CAP}. "
+                              "Narrow it (limit/offset, a filter, or the one-item tool), or pass full=true.",
+                "partial": text[:_RESULT_CAP]}
+    return result
+
+
 def _call(tool, args):
     """Proxy a tool call to the viewer. Returns the server's JSON — already the
     policy verdict (allowed / queued / denied), never a local decision."""
@@ -541,6 +649,16 @@ def _call(tool, args):
         return {"error": f"unknown tool {tool}"}
     method, path = spec
     payload = dict(args or {})
+    # A model's own `session` arg is a FILTER (loop_list, note_list, card_list),
+    # not the caller: the caller rides in headers. Keep it apart so the identity
+    # below cannot overwrite it.
+    filter_session = payload.pop("session", None)
+    # Disclosure args are this adapter's, not the server's: keep them off the URL.
+    full = bool(payload.pop("full", False))
+    offset = payload.pop("offset", 0) if tool in _LOCAL_PAGING else 0
+    limit = payload.pop("limit", None) if tool in _LOCAL_PAGING else None
+    if tool in ("audit_tail", "inbox_list"):
+        payload.setdefault("limit", 10)
     payload["session"] = SESSION
     payload["token"] = TOKEN
     payload.update(_FIXED_ARGS.get(tool, {}))
@@ -566,6 +684,8 @@ def _call(tool, args):
             from urllib.parse import urlencode
             q = {k: v for k, v in payload.items()
                  if k not in ("session", "token") and v is not None}
+            if filter_session:
+                q["session"] = filter_session
             if q:
                 url += "?" + urlencode(q)
             req = urllib.request.Request(url, method="GET", headers=auth)
@@ -592,9 +712,14 @@ def _call(tool, args):
     if tool in _RAW:
         # The payload IS the file/transcript, so it must reach the model
         # verbatim — a JSON file read would otherwise be parsed and reshaped.
-        return {"text": body.decode(errors="replace")}
+        text = body.decode(errors="replace")
+        if not full and len(text) > 3 * _RESULT_CAP:
+            return {"_truncated": f"{len(text)} characters; showing the last {3 * _RESULT_CAP}. "
+                                  "Pass tail=N (session_read) or full=true.",
+                    "text": text[-3 * _RESULT_CAP:]}
+        return {"text": text}
     try:
-        return json.loads(body)
+        return shape_result(tool, with_local_times(json.loads(body)), full, offset, limit)
     except ValueError:
         return {"text": body.decode(errors="replace")}
 

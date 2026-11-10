@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture, SESSION, NEW_SESSION, PROVIDER, LONG_MODEL } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 const clone = value => JSON.parse(JSON.stringify(value))
 const shown = id => $("~" + id).isDisplayed()
 async function tap(id) { const el = await $("~" + id); await el.waitForDisplayed(); await el.click() }
@@ -62,14 +63,7 @@ describe("Native AI settings — isolated transactional API", function () {
     fixture = await startFixture({ ai: true })
     // Make dirty-dismissal an explicit tested choice, not auto-accepted by WDA.
     await browser.updateSettings({ autoAcceptAlerts: false })
-    await browser.waitUntil(async () => await shown("server-url") || await shown("login-username") || await shown("chats-list"), { timeout: 30000 })
-    if (await shown("server-url")) {
-      await $("~server-url").setValue(fixture.url); await tap("server-connect")
-      await browser.waitUntil(async () => await shown("login-username") || await shown("chats-list"))
-    }
-    if (await shown("login-username")) {
-      await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await tap("login-submit")
-    }
+    await signIn(fixture)
     await $("~chats-list").waitForDisplayed()
   })
   afterEach(async function () {

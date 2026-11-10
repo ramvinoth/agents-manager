@@ -50,7 +50,7 @@ export function InboxDialog({
 }) {
   const [project, setProject] = useState<OrgProject | null>(null)
   const [messages, setMessages] = useState<InboxMessage[]>([])
-  const [queue, setQueue] = useState<{ count: number; items: InboxMessage[] } | null>(null)
+  const [queue, setQueue] = useState<{ count: number; items: InboxMessage[]; held?: number } | null>(null)
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState("")
@@ -207,6 +207,7 @@ export function InboxDialog({
           <div className="rounded-md border border-border bg-muted/40 p-2">
             <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Zap className="size-3.5" /> Needs you · {queue.count}
+              {!!queue.held && <span className="font-normal">· {queue.held} more waiting</span>}
               {/* Starts on this inbox's oldest; the cockpit then walks the
                   whole org queue (its "i of n" says how many in all). */}
               {queueItems.length > 0 && (

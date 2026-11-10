@@ -14,7 +14,7 @@ from viewer.config import (
 from viewer.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from viewer.codex import codex_fork, codex_restore, start_codex_new
 from viewer.engine import (
-    extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
+    _push_label, extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
     start_copilot_new,
 )
 from viewer.loops import USER_ORIGIN, build_schedule
@@ -512,7 +512,14 @@ class SessionsMixin:
             self.send_json({"found": False, "error": str(e)})
             return
         r["running"] = job.get("running", False)
-        if not r.get("found"):
+        if r.get("found"):
+            # A thread opened from a push knows only the id: give it the
+            # chat's name so the header settles on the first read.
+            try:
+                r["title"] = _push_label(sid)
+            except Exception:
+                pass
+        else:
             r["returncode"] = job.get("returncode")
             r["stderr"] = job.get("stderr", "")
         self.send_json(r)
@@ -1289,14 +1296,9 @@ def start_new_session(body):
         # (a remote run gets no --name, and the client's rename can fail).
         meta["title"] = title
     # Started from an agent template: its plugin rides on every Claude run
-    # (engine --plugin-dir) and its lens turns on for this project.
+    # (engine --plugin-dir).
     if template:
         meta.update(chatplugins.start_from_template(template, session_id))
-        if template.get("lens") and host == "local":
-            try:
-                db.project_lens_enable(host, cwd, template["lens"], os.path.basename(cwd.rstrip("/")))
-            except Exception as e:  # a lens is a view; never block the chat on it
-                print(f"[new-session] lens enable failed: {e}", flush=True)
     if selection is not None:
         meta.update(ai.meta_fields(selection), aiRevision=1)
     try:

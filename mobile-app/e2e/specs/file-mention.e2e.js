@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture, SESSION } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
 // Typing "#fs" and picking a file replaces the "#fs" term with the @mention
 // (user report: the pick produced "#fs@viewer/routes/fs.py").
@@ -8,8 +9,7 @@ describe("Composer # file mention", function () {
   let fixture
   before(async () => {
     fixture = await startFixture()
-    await browser.waitUntil(async () => (await $("~server-url").isDisplayed()) || (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()), { timeout: 30000 })
-    if (await $("~server-url").isDisplayed()) { await $("~server-url").setValue(fixture.url); await $("~server-connect").click(); await browser.waitUntil(async () => (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed())) }
+    await signIn(fixture)
     if (await $("~login-username").isDisplayed()) { await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await $("~login-submit").click() }
     await $(`~chat-${SESSION}`).waitForDisplayed(); await $(`~chat-${SESSION}`).click()
     await $("~thread-viewport").waitForDisplayed()

@@ -114,36 +114,66 @@ def attach_snooze(items, ref_rows, now=None):
     return out
 
 
-def visible_queue(items):
-    """The queue a human is shown right now: every open item whose snooze is
-    not live. Snoozed items stay open in the source (attach_state still reads
-    them open) — they are deferred, not decided — so this is a view, applied
-    last, and only on the surfaces a human scans. With the count."""
-    shown = [it for it in items or [] if not it.get("snoozed_until")]
-    return {"count": len(shown), "decisions": shown}
+def visible_queue(items, cap=None):
+    """The queue a human is shown right now: open items whose snooze is not
+    live, the first `cap` of them (items arrive oldest first), with `held`:
+    how many more wait behind them. Snoozed and held items stay open in the
+    source (attach_state still reads them open); they are deferred, not
+    decided, so this is a view, applied last, on the surfaces a human scans.
+    `cap` None shows everything (viewer.queue owns the owner's cap)."""
+    open_ = [it for it in items or [] if not it.get("snoozed_until")]
+    shown = open_ if cap is None else open_[:cap]
+    return {"count": len(shown), "decisions": shown, "held": len(open_) - len(shown),
+            "cap": cap}
 
 
-def unread_count(rows, open_items, now=None):
+def unread_for_session(rows, session_id):
+    """Ids of the rows addressed TO this session that it has not read yet. An
+    agent's own listing is its read: without this every wake re-listed
+    yesterday's messages as unread and the agent re-acted on them. Pure."""
+    return [r["id"] for r in rows
+            if r.get("recipient_type") == "session"
+            and str(r.get("recipient_id")) == str(session_id)
+            and (r.get("status") or "sent") == "sent"]
+
+
+def _shown_refs(open_items, cap):
+    """The 'kind:ref' keys the owner is shown, or None when nothing is capped."""
+    if cap is None:
+        return None
+    return {decision_ref(i) for i in visible_queue(open_items, cap)["decisions"]}
+
+
+def unread_count(rows, open_items, now=None, cap=None):
     """The badge number: rows still waiting on the owner's eye — addressed to
     the owner, unread (a lapsed snooze counts) and, for decision kinds, still
-    open. The owner's own messages to sessions, session-to-session traffic,
-    and a question already answered or a card already moved out of Review are
+    open and in front of them (a held decision is silent until it surfaces).
+    The owner's own messages to sessions, session-to-session traffic, and a
+    question already answered or a card already moved out of Review are
     history, not a call to make, so none of them inflate the badge. Pure."""
+    shown = _shown_refs(open_items, cap)
     return sum(1 for r in attach_state(rows, open_items, now)
                if r.get("recipient_type") == "user"
-               and r["effective_status"] == "sent" and r["open"] is not False)
+               and r["effective_status"] == "sent" and r["open"] is not False
+               and (shown is None or (r.get("kind") or "message") not in DECISION_KINDS
+                    or f"{r.get('kind')}:{r.get('ref_id')}" in shown))
 
 
-def action_queue(rows, open_items, now=None):
+def action_queue(rows, open_items, now=None, cap=None):
     """The 'needs your action' view: decision-kind rows that are still open
     and not snoozed, oldest first (waiting time is the only order before a
-    human ranks anything — the same rule as the decision queue). With the
-    total count, for the '3 of 12' header."""
+    human ranks anything — the same rule as the decision queue), limited to
+    the ones the decision queue shows, so both surfaces show the same few.
+    With the count and how many are held, for the '1 of 3' header."""
     rows = attach_state(rows, open_items, now)
     now = time.time() if now is None else float(now)
+    shown = _shown_refs(open_items, cap)
     items = [r for r in rows if r.get("open") and not r["snoozed"]]
+    if shown is not None:
+        items = [r for r in items if f"{r.get('kind')}:{r.get('ref_id')}" in shown]
     items.sort(key=lambda r: (float(r.get("created_at") or now), int(r.get("id") or 0)))
-    return {"count": len(items), "items": items}
+    held = 0 if shown is None else visible_queue(open_items, cap)["held"]
+    return {"count": len(items), "items": items, "held": held}
 
 
 # ---- message bodies (cold-reader standard) ----------------------------------
@@ -347,6 +377,36 @@ def last_session_comment(card_id):
     return None
 
 
+def resolve_session(ref):
+    """The full session id an agent means by `ref`, as (id, None), or
+    (None, error). Agents address peers the way they see them — a full id, the
+    8-char prefix every list shows, or the chat's title — and a row stored
+    under anything but the full id is a message nobody's mailbox holds and a
+    wake that resumes a session that doesn't exist. Resolution order: a live
+    run or local transcript with that exact id; a unique id prefix; a unique
+    exact (case-insensitive) title."""
+    from viewer import engine
+    from viewer.config import CLAUDE_DIR, transcript_path
+    ref = str(ref or "").strip()
+    if not ref:
+        return None, "no recipient session given"
+    with engine.CHAT_LOCK:
+        live = list(engine.CHAT_JOBS)
+    if ref in live or transcript_path(ref):
+        return ref, None
+    ids = set(live) | {p.stem for p in CLAUDE_DIR.glob("*/*.jsonl")}
+    hits = sorted(i for i in ids if i.startswith(ref)) if len(ref) >= 6 else []
+    if not hits:
+        want = ref.casefold()
+        hits = sorted(i for i in ids if engine._session_title(i)[0].strip().casefold() == want)
+    if len(hits) == 1:
+        return hits[0], None
+    if hits:
+        return None, (f"'{ref}' matches {len(hits)} sessions ({', '.join(h[:8] for h in hits)}); "
+                      "send to session:<full id> from session_list")
+    return None, f"no session '{ref}'; send to session:<full id> from session_list"
+
+
 def session_project(session_id):
     """The project a session's messages are born into (its board's project —
     the same binding cards get), or None."""
@@ -388,12 +448,20 @@ def deliver_decision(session_id, kind, ref_id, body, push_title=None):
                         session_id=str(session_id),
                         project_id=session_project(session_id))
         who = label or "An agent session"
-        _push_owner(push_title or f"{who} · {kind}",
-                    body.replace("\n", " ")[:180],
-                    {"session": str(session_id)})
+        from viewer import queue
+        # Only a decision in front of the owner pushes; one held behind a full
+        # queue stays silent until it surfaces (viewer.queue).
+        shown = queue.admits(kind, ref_id or "")
+        if shown:
+            _push_owner(push_title or f"{who} · {kind}",
+                        body.replace("\n", " ")[:180],
+                        # kind + ref let the tap open the deck ON this item.
+                        {"session": str(session_id), "decision": kind,
+                         "ref": str(ref_id or "")})
         try:
             db.audit_append(f"session:{session_id}", "inbox_deliver",
-                            {"kind": kind, "ref": ref_id or ""}, "delivered")
+                            {"kind": kind, "ref": ref_id or ""},
+                            "delivered" if shown else "held")
         except Exception:
             pass
     except Exception:
@@ -446,8 +514,10 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
                         body.replace("\n", " ")[:180],
                         {"session": str(recipient_id)})
         elif sender_type == "session":
+            # The tap opens this session's mailbox, where the message is.
             _push_owner(f"{_label(sender_id)} · inbox",
-                        body.replace("\n", " ")[:180], {})
+                        body.replace("\n", " ")[:180],
+                        {"inbox": row.get("id"), "session": str(sender_id)})
         db.audit_append(_who(sender_type, sender_id), "inbox_send",
                         {"to": f"{recipient_type}:{recipient_id}",
                          "in_reply_to": int(in_reply_to or 0)}, "sent")
@@ -465,7 +535,7 @@ def _who(sender_type, sender_id):
 
 
 def _wake_session(session_id, prompt):
-    """Wake a session with an incoming message: into its running turn's queue
+    """Wake a session with an incoming message: steered into its running turn
     when a run is live, else a fresh resumed turn on its original host.
     Best-effort — a failed wake means the message sits in its inbox, where
     the session's next run will list it (the inbox is the durable surface).
@@ -479,9 +549,15 @@ def _wake_session(session_id, prompt):
             job = engine.CHAT_JOBS.get(session_id)
             running = bool(job and job.get("running"))
             host = (job or {}).get("host", "local")
-        if running and engine.enqueue_chat(session_id, prompt):
-            how = "queued"
-            return
+        if running:
+            # Steer, don't queue: a queued message waits for the WHOLE turn to
+            # end, and a turn can run for an hour (a long build, a wait on a
+            # background task), so the peer's "wait" or the owner's question
+            # sat unseen. Steering lands it at the run's next tool boundary;
+            # steer_chat itself falls back to the queue once stdin is closing.
+            how = engine.steer_chat(session_id, prompt) or "failed"
+            if how != "failed":
+                return
         cwd = "~"
         if host != "local":
             from viewer import remote

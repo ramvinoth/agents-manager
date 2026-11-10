@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture, SESSION } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
 // A long markdown reply (bold lead-ins, nested bullets, a closing paragraph)
 // must stay inside its bubble: the footer (read-aloud + time) sits below the
@@ -19,8 +20,7 @@ describe("Agent bubble fits its markdown", function () {
   let fixture
   before(async () => {
     fixture = await startFixture({ reply: REPLY })
-    await browser.waitUntil(async () => (await $("~server-url").isDisplayed()) || (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed()), { timeout: 30000 })
-    if (await $("~server-url").isDisplayed()) { await $("~server-url").setValue(fixture.url); await $("~server-connect").click(); await browser.waitUntil(async () => (await $("~login-username").isDisplayed()) || (await $("~chats-list").isDisplayed())) }
+    await signIn(fixture)
     if (await $("~login-username").isDisplayed()) { await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await $("~login-submit").click() }
     await $(`~chat-${SESSION}`).waitForDisplayed(); await $(`~chat-${SESSION}`).click()
     await $("~thread-viewport").waitForDisplayed()

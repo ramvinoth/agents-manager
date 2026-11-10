@@ -17,6 +17,7 @@
 #   deploy/install.sh                 # full install as the invoking user
 #   SERVICE_USER=alice deploy/install.sh   # Linux only (systemd User=)
 #   PORT=9000 deploy/install.sh
+#   OWNER_TZ=America/Los_Angeles deploy/install.sh   # the owner's zone (boxes default to UTC)
 #   SKIP_DEPS=1 deploy/install.sh     # skip system-package install (already present)
 #   NO_SERVICE=1 deploy/install.sh    # set up everything but don't install the service
 #
@@ -27,6 +28,7 @@ set -euo pipefail
 # shellcheck source=deploy/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
+hm_timezone      # 0. owner's time zone (OWNER_TZ)
 hm_deps          # 1. system prerequisites
 hm_claude_cli    # 1b. Claude Code CLI for the service user
 hm_db            # 2. Postgres `viewer` database

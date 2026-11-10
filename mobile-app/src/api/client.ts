@@ -164,9 +164,9 @@ export type AgentTemplate = {
   ai?: AISelection | null
   /** The scheduled jobs a chat started from this agent begins with. */
   jobs?: NewChatJob[]
-  /** Bundled role skills (viewer/agent_plugins/<plugin>) and the project
-   *  lens it turns on ("map"); both are read server-side from the template row. */
-  plugin?: string; lens?: string
+  /** Bundled role skills (viewer/agent_plugins/<plugin>), read server-side
+   *  from the template row. */
+  plugin?: string
   /** Manager authority a chat started from this role acts at on the board. */
   level?: OrgLevel
   is_builtin: boolean; created_by: string; created_at: number
@@ -178,14 +178,14 @@ export type AgentTemplate = {
   editable?: boolean
 }
 /** What a person sets on an agent (viewer/db.TEMPLATE_FIELDS). */
-export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "lens" | "level"> & { ai: AISelection | null; plugins: string[] }
+export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "level"> & { ai: AISelection | null; plugins: string[] }
 /** GET /api/agent-templates/extras: the plugin catalog an agent picks from, and
  *  the skills and MCP servers saved on the agent itself (empty for a new one). */
 export type AgentExtras = { catalog: { name: string; description: string }[]; skills: Skill[]; mcp: McpServer[] }
 export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
-export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; lenses?: string[]; missing?: boolean }
+export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; missing?: boolean }
 /** An app sharing a project's folder (viewer/project_plugins.py), e.g. Sift. */
 export type ProjectPlugin = { id: string; label: string; icon: string; description: string }
 export type BoardColumn = { id: number; name: string; position: number }
@@ -198,20 +198,6 @@ export type IntakeChannel = {
   token?: string
 }
 type IntakeReply = IntakeChannel | Queued | { error: string }
-/** One node of the Map lens (GET /api/org/map): a folder (id ends in "/"),
- *  a file, or a class/function inside one. `touched` = an agent wrote it lately. */
-export type MapNode = {
-  id: string; kind: "folder" | "file" | "class" | "function" | "method"; label: string
-  files: number; symbols: number; touched: boolean; line?: number
-}
-export type MapLevel = "project" | "folder" | "file"
-/** One level of a project's code as a graph; `available: false` means the
- *  server lacks the tree-sitter grammars (`install` says how to add them). */
-export type MapView =
-  | { available: false; level: MapLevel; path: string; install: string }
-  | { available: true; project: number; level: MapLevel; path: string; files: number; mermaid: string
-      nodes: MapNode[]; edges: { from: string; to: string; weight: number }[]
-      touched: Record<string, string>; truncated: boolean }
 /** One row of the cross-session decision queue (GET /api/decisions/open): a
  *  durable question, a durable plan, or a live tool approval. The queue is a
  *  READ of the existing sources — deciding an item uses the per-session
@@ -320,6 +306,8 @@ export type OrchestratorConfig = { automation_enabled?: boolean }
  *  loops only, both = every loop, none = paused. Governs loop firing alone; it does
  *  NOT start the manager tick (that is `automation_enabled`). */
 export type LoopMode = "user" | "agent" | "both" | "none"
+/** The owner's attention cap (GET/POST /api/inbox/cap). */
+export type DecisionCap = { cap: number; default: number; max: number }
 export type LoopControl = { mode: LoopMode }
 /** One row of the team skill library (/api/org/skills): every SKILL.md on disk joined with
  *  the learned-skill ledger. Ledger fields are absent for a hand-written/installed skill;
@@ -465,8 +453,7 @@ export const api = {
     (await api.sessionReadPage(host, path, tail)).lines,
   // Like sessionRead but returns the paging envelope too: `start` is the byte
   // offset of the first returned line (0 ⇒ we've reached the top of the file, so
-  // there's no older history to load). Used by the thread to grow its window when
-  // the user scrolls up.
+  // there's no older history to load).
   sessionReadPage: async (
     host: string,
     path: string,
@@ -481,6 +468,14 @@ export const api = {
   // its whole tail window — bytes scale with new output, not transcript size.
   sessionReadFrom: async (host: string, path: string, from: number): Promise<SessionPage> => {
     const q = new URLSearchParams({ from: String(from) })
+    if (host && host !== "local") q.set("host", host)
+    return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
+  },
+  // Older history: the `lines` records that end at byte offset `before` (the
+  // loaded window's `start`). The server caps a tail read at 5000 lines, so the
+  // thread pages upward with this instead of growing its tail window.
+  sessionReadBefore: async (host: string, path: string, before: number, lines = 400): Promise<SessionPage> => {
+    const q = new URLSearchParams({ before: String(before), lines: String(lines) })
     if (host && host !== "local") q.set("host", host)
     return toPage(await req<RawPage | null>("GET", `/api/session/${path}?${q.toString()}`))
   },
@@ -504,7 +499,7 @@ export const api = {
   }) => req<{ started: boolean; session: string; path?: string; jobs?: string[] }>("POST", "/api/new-session", { ...body, model: normModel(body.model) }),
   // Resolve a session id to its transcript path (polls until Claude creates the JSONL).
   resolve: (id: string, host?: string) =>
-    req<{ found: boolean; path?: string; running?: boolean; error?: string }>(
+    req<{ found: boolean; path?: string; running?: boolean; title?: string; error?: string }>(
       "GET",
       `/api/resolve?id=${encodeURIComponent(id)}${host && host !== "local" ? `&host=${encodeURIComponent(host)}` : ""}`
     ),
@@ -931,13 +926,6 @@ export const api = {
     req<BoardColumn>("POST", "/api/org/columns/update", body),
   orgDeleteColumn: (id: number) =>
     req<{ deleted?: boolean }>("POST", "/api/org/columns/delete", { id }),
-  // Scope is a project, or a session whose bound project the server resolves.
-  orgMap: (scope: { project?: number; session?: string }, level: MapLevel, path = "") => {
-    const p = new URLSearchParams({ level, path })
-    if (scope.project !== undefined) p.set("project", String(scope.project))
-    else if (scope.session) p.set("session", scope.session)
-    return req<MapView>("GET", `/api/org/map?${p}`)
-  },
   orgCards: (filter: CardFilter = {}) => {
     const p = new URLSearchParams()
     if (filter.session !== undefined) p.set("session", filter.session)
@@ -1010,7 +998,10 @@ export const api = {
   // plan + live tool approval, oldest first, with a total count. Read-only —
   // deciding an item goes through the per-session routes, which are race-safe.
   openDecisions: () =>
-    req<{ count: number; decisions: OpenDecision[] }>("GET", "/api/decisions/open"),
+    req<{ count: number; decisions: OpenDecision[]; held?: number; cap?: number }>("GET", "/api/decisions/open"),
+  // The owner's attention cap: decisions shown at once; the rest wait silently.
+  decisionCap: () => req<DecisionCap>("GET", "/api/inbox/cap"),
+  setDecisionCap: (cap: number) => req<DecisionCap>("POST", "/api/inbox/cap", { cap }),
   // ---- inbox (the channel). The owner (app principal) may filter freely and
   //  gets the action queue; an agent (mcp) is pinned to its own mailbox and
   //  gets no queue — the server decides, not the client. Deciding an open

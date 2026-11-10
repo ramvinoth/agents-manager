@@ -98,6 +98,25 @@ HM_NODE_MIN_MAJOR=20
 
 hm_log() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 
+# 0. Time zone ────────────────────────────────────────────────────────────────
+# Manager shows every time in the owner's zone, and the owner's zone IS this
+# machine's zone (prompts, calendar times, loop `at`, MCP *_local twins). A fresh
+# Linux/WSL box is usually UTC, which would put every time the owner reads in UTC.
+# OWNER_TZ=<IANA zone> sets it; without it we only warn, never guess.
+hm_timezone() {
+  local cur
+  cur=$(readlink /etc/localtime 2>/dev/null | sed 's#.*zoneinfo/##')
+  if [[ -n "${OWNER_TZ:-}" && "$cur" != "$OWNER_TZ" ]]; then
+    [[ -f "/usr/share/zoneinfo/$OWNER_TZ" ]] || { echo "OWNER_TZ=$OWNER_TZ is not a known zone" >&2; return 1; }
+    if [[ "$(uname)" == Darwin ]]; then sudo systemsetup -settimezone "$OWNER_TZ" >/dev/null
+    elif command -v timedatectl >/dev/null && timedatectl >/dev/null 2>&1; then sudo timedatectl set-timezone "$OWNER_TZ"
+    else sudo ln -sf "/usr/share/zoneinfo/$OWNER_TZ" /etc/localtime; fi   # WSL without systemd
+    hm_log "Time zone set to $OWNER_TZ"
+  elif [[ -z "${OWNER_TZ:-}" && ( -z "$cur" || "$cur" =~ ^(Etc/)?(UTC|UCT|GMT|Universal|Zulu)$ ) ]]; then
+    hm_log "WARNING: this machine is on UTC, so Manager will show the owner UTC times. Re-run with OWNER_TZ=<zone>, e.g. OWNER_TZ=America/Los_Angeles"
+  fi
+}
+
 # 1. System prerequisites ──────────────────────────────────────────────────────
 hm_deps() {
   if [[ -n "${SKIP_DEPS:-}" ]]; then
@@ -193,12 +212,6 @@ hm_pyenv() {
   # Every third-party module the server imports: deploy/requirements.txt.
   "$py" -m pip install --quiet --disable-pip-version-check \
     -r "$HM_APP_DIR/deploy/requirements.txt"
-  # Optional: tree-sitter grammars for the code Map lens. Wheels exist for the
-  # common platforms; where they do not, the Map says "install code map" and
-  # nothing else is affected — so a failure here never fails the install.
-  "$py" -m pip install --quiet --disable-pip-version-check \
-    -r "$HM_APP_DIR/deploy/codemap-requirements.txt" \
-    || hm_log "Code map grammars unavailable on this platform (the Map lens stays off)."
 }
 
 # 3. Bootstrap schema + seed data (idempotent) ─────────────────────────────────

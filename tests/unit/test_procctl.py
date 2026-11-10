@@ -128,5 +128,17 @@ class StopTest(unittest.TestCase):
         self.assertEqual(proc.wait(10), -signal.SIGKILL)
 
 
+    def test_local_cwd_expands_the_tilde_default_popen_rejects(self):
+        home = os.path.expanduser("~")
+        for raw in ("~", "", None):
+            self.assertEqual(procctl.local_cwd(raw), home)
+        self.assertEqual(procctl.local_cwd("~/x"), os.path.join(home, "x"))
+        self.assertEqual(procctl.local_cwd("/tmp"), "/tmp")
+        # the real failure: a bare "~" as cwd made Popen raise FileNotFoundError
+        proc = subprocess.Popen([sys.executable, "-c", "import os; print(os.getcwd())"],
+                                cwd=procctl.local_cwd("~"), stdout=subprocess.PIPE, text=True)
+        self.assertEqual(os.path.realpath(proc.communicate(timeout=10)[0].strip()), os.path.realpath(home))
+
+
 if __name__ == "__main__":
     unittest.main()

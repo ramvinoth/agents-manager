@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react"
-import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, Presentation, Archive, RotateCcw } from "lucide-react"
+import { Wrench, Bot, Terminal as TerminalIcon, ChevronDown, ChevronRight, AlertTriangle, Presentation, Archive, RotateCcw, CornerDownRight } from "lucide-react"
 import { splitThinking } from "@/lib/thinking"
 import { Markdown } from "./Markdown"
 import { Badge } from "@/components/ui/badge"
@@ -126,6 +126,7 @@ function BlockView({ block, latest }: { block: Block; latest?: boolean }) {
   if (block.type === "text") return <TextBlock text={block.text} latest={latest} />
   if (block.type === "compact") return <CompactStep summary={block.summary} />
   if (block.type === "resume") return <ResumeStep note={block.note} />
+  if (block.type === "steer") return <SteerStep text={block.text} from={block.from} />
   if (block.name === "AskUserQuestion") return <AuqBlock block={block} />
   if (block.name === "ExitPlanMode") return <PlanBlock block={block} />
   if (block.name === CANVAS_SHOW_TOOL && showSucceeded(block.result, block.isError)) return <CanvasChip block={block} />
@@ -169,6 +170,19 @@ function ResumeStep({ note }: { note: string }) {
   )
 }
 
+/** A message that reached the agent mid-turn: who sent it on one line, the message behind it. */
+function SteerStep({ text, from }: { text: string; from?: string }) {
+  const first = text.split("\n", 1)[0]
+  return (
+    <QuietStep
+      icon={<CornerDownRight className="size-3.5" />}
+      label={<span className="min-w-0 truncate">{from ? `Message from ${from}` : "You steered"}: {first}</span>}
+    >
+      <div className="whitespace-pre-wrap rounded-md bg-muted px-3 py-2 text-xs">{text}</div>
+    </QuietStep>
+  )
+}
+
 /** A successful canvas_show reads as what it did — "opened a canvas" — and reopens it. */
 function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) {
   const title = String((block.input as { title?: unknown } | null)?.title ?? "")
@@ -183,7 +197,7 @@ function CanvasChip({ block }: { block: Extract<Block, { type: "tool_use" }> }) 
 
 /** What an exchange shows with the Tools filter off: narration, compactions and image-bearing calls only. */
 function visibleSteps(ex: Exchange, showTools: boolean): Block[] {
-  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || b.type === "resume" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
+  return showTools ? ex.steps : ex.steps.filter((b) => b.type === "text" || b.type === "compact" || b.type === "resume" || b.type === "steer" || blockHasImages(b) || (b.type === "tool_use" && b.name === CANVAS_SHOW_TOOL && showSucceeded(b.result, b.isError)))
 }
 
 /**

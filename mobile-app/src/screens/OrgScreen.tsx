@@ -147,18 +147,6 @@ export default function OrgScreen({ navigation }: Props) {
             <Row>
               <Text style={styles.orgName}>{p.name}</Text>
               {p.description ? <Text style={styles.orgDesc} numberOfLines={1}>{p.description}</Text> : null}
-              {p.host === "local" || !p.host ? (
-                <TouchableOpacity
-                  testID={`org-project-map-${p.id}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Code map of ${p.name}`}
-                  onPress={() => navigation.navigate("Map", { project: p.id, title: p.name })}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.orgMapBtn}
-                >
-                  <Text style={styles.orgMapText}>Code map</Text>
-                </TouchableOpacity>
-              ) : null}
               {(p.host === "local" || !p.host) && p.cwd ? plugins.map((pl) => (
                 <TouchableOpacity
                   key={pl.id}
@@ -168,9 +156,9 @@ export default function OrgScreen({ navigation }: Props) {
                   disabled={!!opening}
                   onPress={() => openPlugin(pl, p)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.orgMapBtn}
+                  style={styles.orgLinkBtn}
                 >
-                  {opening === `${pl.id}:${p.id}` ? <ActivityIndicator size="small" /> : <Text style={styles.orgMapText}>Open in {pl.label}</Text>}
+                  {opening === `${pl.id}:${p.id}` ? <ActivityIndicator size="small" /> : <Text style={styles.orgLinkText}>Open in {pl.label}</Text>}
                 </TouchableOpacity>
               )) : null}
             </Row>

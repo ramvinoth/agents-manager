@@ -79,7 +79,7 @@ export default function IntakeSection() {
 
   const pickSession = (title_: string, onPick: (s: Session | null) => void) =>
     showActions(title_, [
-      { text: "Wake nobody (cards wait on the board)", onPress: () => onPick(null) },
+      { text: "Wake nobody (you get a push)", onPress: () => onPick(null) },
       ...sessions.filter((s) => s.id).map((s) => ({ text: s.title || s.id.slice(0, 8), onPress: () => onPick(s) })),
     ])
 
@@ -136,7 +136,7 @@ export default function IntakeSection() {
               onPress={() => pickSession("Which chat should each post wake?", (s) =>
                 run(`ses:${c.id}`, () => api.intakeUpdate({ id: c.id, for_session: s?.id || "" })))}>
               <Text style={styles.igHint}>
-                Wakes: {c.session_id ? title(c.session_id) : "nobody (board only)"} <Text style={styles.igLink}>Change</Text>
+                Wakes: {c.session_id ? title(c.session_id) : "nobody (you get a push)"} <Text style={styles.igLink}>Change</Text>
               </Text>
             </TouchableOpacity>
             <View style={[styles.rowCenter, { marginTop: 6 }]}>
@@ -186,7 +186,7 @@ export default function IntakeSection() {
             <TouchableOpacity testID="intake-new-session" style={[styles.rowCenter, { paddingVertical: 8 }]}
               onPress={() => pickSession("Which chat should each post wake?", (s) => setDraft((d) => d && { ...d, session: s }))}>
               <Text style={[styles.ssRowLabel, styles.flex1]}>
-                {draft.session ? `Wakes: ${draft.session.title || draft.session.id.slice(0, 8)}` : "Wakes nobody (cards wait on the board)"}
+                {draft.session ? `Wakes: ${draft.session.title || draft.session.id.slice(0, 8)}` : "Wakes nobody (you get a push)"}
               </Text>
               <Icon name="chevronRight" size={14} color={t.textMuted} />
             </TouchableOpacity>

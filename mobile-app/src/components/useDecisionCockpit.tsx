@@ -1,8 +1,7 @@
 import React, { useCallback, useState } from "react"
-import { Alert } from "react-native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type OpenDecision } from "../api/client"
+import { type OpenDecision } from "../api/client"
 import DecisionCockpit from "./DecisionCockpit"
 
 /**
@@ -34,21 +33,13 @@ export function useDecisionCockpit(
     navigation.navigate("CardDetail", { id })
   }, [navigation, guard])
 
-  // Review-needed: jump to the session that owns the decision, resolved
-  // id → path on its host. A session no longer listed explains itself; the
-  // item stays in the queue either way.
-  const openThread = useCallback(async (d: OpenDecision) => {
+  // Review-needed: jump to the session that owns the decision. The Thread opens
+  // at once on the session id and resolves its transcript itself (a gone chat
+  // explains itself there); the item stays in the queue either way.
+  const openThread = useCallback((d: OpenDecision) => {
     if (!guard()) return
     setState(null)
-    const host = d.host || "local"
-    try {
-      const match = (await api.sessions(host)).find((s) => s.id === d.session)
-      if (!guard()) return
-      if (match) navigation.navigate("Thread", { host, label: match.title || d.label || match.id.slice(0, 8), path: match.path })
-      else Alert.alert(d.label || d.session.slice(0, 8), `This chat is not listed on ${host} right now. The decision keeps waiting in the queue.`)
-    } catch {
-      /* cross-host or offline: the item stays in the queue */
-    }
+    navigation.navigate("Thread", { host: d.host || "local", label: d.label || d.session.slice(0, 8), session: d.session })
   }, [navigation, guard])
 
   const element = state ? (

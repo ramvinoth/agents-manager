@@ -67,6 +67,7 @@ PING_EVERY = 20                # seconds; protocol pings are free at the relay e
 DEAD_AFTER = 3 * PING_EVERY    # no frame (pongs included) for this long -> redial
 HANDSHAKE_TIMEOUT = 30
 MAX_BACKOFF = 60
+STABLE_AFTER = PING_EVERY      # a control socket up this long earns a fast redial
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
 # Headers never forwarded to the loopback server. Hop-by-hop ones are the
@@ -562,6 +563,7 @@ class RelayService:
         backoff = 1
         while not self.stopped.is_set():
             ws = None
+            up_since = None
             try:
                 ws = self._control = self.dial()
                 if self.stopped.is_set():
@@ -569,7 +571,7 @@ class RelayService:
                 ws.sock.settimeout(PING_EVERY)
                 self.connected.set()
                 print(f"[relay] connected to {self.relay_url} as {self.ident['serverId']}", flush=True)
-                backoff = 1
+                up_since = time.monotonic()
                 while True:
                     try:
                         op, payload = ws.recv()
@@ -595,6 +597,10 @@ class RelayService:
                 self._control = None
                 if ws:
                     ws.close()
+            # Reset only after a connection that held: a relay that accepts and
+            # drops at once would otherwise be redialled every second forever.
+            if up_since is not None and time.monotonic() - up_since >= STABLE_AFTER:
+                backoff = 1
             if self.stopped.wait(backoff + secrets.randbelow(1000) / 1000):
                 break
             backoff = min(backoff * 2, MAX_BACKOFF)

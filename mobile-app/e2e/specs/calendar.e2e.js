@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict")
 const { startFixture } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
 const shown = id => $("~" + id).isDisplayed()
 async function tap(id) { const el = await $("~" + id); await el.waitForDisplayed(); await el.click() }
@@ -14,14 +15,7 @@ describe("Native calendar — agenda, create, edit, delete", () => {
   before(async () => {
     assert.equal(process.env.E2E_BUNDLE_ID, "com.suhai.agents.e2e", "Never run against a production bundle")
     fixture = await startFixture({ integrations: true })
-    await browser.waitUntil(async () => await shown("server-url") || await shown("login-username") || await shown("chats-list"), { timeout: 30000 })
-    if (await shown("server-url")) {
-      await $("~server-url").setValue(fixture.url); await tap("server-connect")
-      await browser.waitUntil(async () => await shown("login-username") || await shown("chats-list"))
-    }
-    if (await shown("login-username")) {
-      await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await tap("login-submit")
-    }
+    await signIn(fixture)
     await $("~chats-list").waitForDisplayed()
     // The delete confirm is a native alert this spec taps itself; WDA's configured
     // autoAcceptAlerts would otherwise dismiss it first. Runtime honours only defaultAlertAction.

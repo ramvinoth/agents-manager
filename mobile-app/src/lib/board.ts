@@ -99,8 +99,7 @@ export function formatActor(actor: string | null | undefined, selfUsername?: str
 
 /**
  * nextPosition — the fractional rank for a card dropped at `index` within a column
- * that is ALREADY ordered by position (the card being moved assumed absent). Same
- * rule as server orglogic.next_position so client + server agree:
+ * that is ALREADY ordered by position (the card being moved assumed absent):
  *  - empty column → 1
  *  - top (index<=0)    → first.position - 1
  *  - bottom (index>=n) → last.position + 1

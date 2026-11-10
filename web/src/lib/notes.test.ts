@@ -15,6 +15,8 @@ const N = (o: Partial<Note> & { id: number }): Note => ({
 const tpl = noteTemplates(new Date("2026-09-26T10:00:00Z"))
 eq("template kinds", tpl.map((t) => t.kind), ["note", "journal", "meeting", "idea", "checklist", "discussion"])
 eq("journal dated", tpl[1].body.startsWith("# 2026-09-26"), true)
+// 9 PM local on Sep 26 is already Sep 27 in UTC: the title must keep the local day.
+eq("journal uses the local day", noteTemplates(new Date(2026, 8, 26, 23, 30))[1].body.startsWith("# 2026-09-26"), true)
 eq("blank note", tpl[0].body, "")
 
 // scope

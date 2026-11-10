@@ -33,6 +33,24 @@ function resumeNote(msg: any): string | null {
   return typeof t === "string" && t.startsWith(RESUME_MARK) ? t : null
 }
 
+/** How viewer/inbox.py heads a message it steers into a running turn. */
+const INBOX_MARK = /^\[inbox\] From ([^\n:]+):\n/
+
+/**
+ * A message steered into a running turn, or null. Claude Code records the steer
+ * as a queued_command attachment (commandMode "prompt"); task notifications use
+ * the same record with another mode and stay hidden.
+ */
+function steerOf(msg: any): { text: string; from?: string } | null {
+  const a = msg.type === "attachment" ? msg.attachment : null
+  if (a?.type !== "queued_command" || a.commandMode !== "prompt") return null
+  const p = a.prompt
+  const raw = typeof p === "string" ? p : Array.isArray(p) ? p.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n") : ""
+  if (!raw.trim()) return null
+  const m = raw.match(INBOX_MARK)
+  return m ? { text: raw.slice(m[0].length), from: m[1].trim() } : { text: raw }
+}
+
 const SKIP_TYPES = new Set([
   "mode",
   "file-history-snapshot",
@@ -153,7 +171,8 @@ export class SessionParser {
   }
 
   private buildTurn(msg: any): Turn | null {
-    if (SKIP_TYPES.has(msg.type)) return null
+    const steer = steerOf(msg)
+    if (!steer && SKIP_TYPES.has(msg.type)) return null
     if (msg.uuid) {
       if (this.seen.has(msg.uuid)) return null
       this.seen.add(msg.uuid)
@@ -165,6 +184,8 @@ export class SessionParser {
     // long run still reads as one message and one answer.
     if (msg.type === "system" && msg.subtype === "compact_boundary") return null
     const domId = "t" + ++this.counter
+    // A message steered in mid-turn is a step of the reply it reached, like a compaction.
+    if (steer) return { type: "assistant", domId, blocks: [{ type: "steer", ...steer }], timestamp: msg.timestamp, uuid: msg.uuid }
     if (msg.isCompactSummary) {
       const c = msg.message?.content
       const summary =

@@ -78,7 +78,14 @@ export interface ResumeBlock {
   type: "resume"
   note: string
 }
-export type Block = TextBlock | ToolUseBlock | CompactBlock | ResumeBlock
+/** A message that reached the agent while it worked (the owner's steer, or an
+ *  inbox message from `from`): a step of the reply, read at its next tool call. */
+export interface SteerBlock {
+  type: "steer"
+  text: string
+  from?: string
+}
+export type Block = TextBlock | ToolUseBlock | CompactBlock | ResumeBlock | SteerBlock
 
 export interface ImagePart {
   mime: string
@@ -349,39 +356,9 @@ export interface OrgProject {
   cwd: string
   created_by: string
   created_at: number
-  /** Views an agent turned on for this project (viewer/db.LENSES), e.g. "map". */
-  lenses?: string[]
   /** A local project whose folder no longer exists. */
   missing?: boolean
 }
-/** One box on the code Map (viewer/codemap.graph). Folder ids end in "/";
- *  symbol ids are "<file>#<Class.>name". */
-export interface MapNode {
-  id: string
-  kind: "folder" | "file" | "class" | "function" | "method"
-  label: string
-  files: number
-  symbols: number
-  touched: boolean
-  line?: number
-}
-export type MapLevel = "project" | "folder" | "file"
-/** GET /api/org/map — one level of a project's code as a graph. */
-export type MapView =
-  | { available: false; level: MapLevel; path: string; install: string }
-  | {
-      available: true
-      project: number
-      level: MapLevel
-      path: string
-      files: number
-      mermaid: string
-      nodes: MapNode[]
-      edges: { from: string; to: string; weight: number; kind?: string }[]
-      /** file → the session id that wrote it in the last 15 minutes */
-      touched: Record<string, string>
-      truncated: boolean
-    }
 /** An intake channel (viewer/intake.py): a door from outside onto one board.
  *  POST to `path` with the channel token → a card there, waking `session_id`. */
 export interface IntakeChannel {
@@ -513,6 +490,9 @@ export interface InboxMessage {
   /** Added by GET /api/inbox: true while the snooze is still in effect. */
   snoozed?: boolean
 }
+/** The owner's attention cap (GET/POST /api/inbox/cap). */
+export type DecisionCap = { cap: number; default: number; max: number }
+
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 export type CardFilter = { session?: string; project?: number }
 /** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared

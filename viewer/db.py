@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor
 
@@ -80,7 +81,7 @@ def _db():
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _run_migrations(prev):
@@ -150,6 +151,16 @@ def _run_migrations(prev):
                   END IF;
                 END $$;
             """)
+    if prev < 5:
+        # Agents never marked their mail read before listing did it (inbox
+        # mark-read-on-list), so every session carried its whole history as
+        # unread and a wake could re-act on a week-old "go". That mail was
+        # delivered by the wake it came with; mark it read. The last day stays
+        # unread in case a session has not listed since.
+        with _db() as cur:
+            cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                        "WHERE recipient_type = 'session' AND status = 'sent' "
+                        "AND created_at < %s", (_now(), _now() - 86400))
 
 
 def init_db():
@@ -478,9 +489,10 @@ def init_db():
             -- {provider, model, convMode, effort}. NULL = the owner's AI defaults.
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS ai JSONB;
             -- An agent = persona + an optional Claude Code plugin (a folder under
-            -- viewer/agent_plugins, passed as --plugin-dir) + an optional project lens.
+            -- viewer/agent_plugins, passed as --plugin-dir).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
-            ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS lens TEXT NOT NULL DEFAULT '';
+            -- Leftovers of the cancelled Map lens (agent lens, project lenses, code_index).
+            ALTER TABLE agent_templates DROP COLUMN IF EXISTS lens;
             -- The Manager authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
@@ -495,21 +507,8 @@ def init_db():
             -- account sees, edits or deletes it. NULL = shared with every account
             -- (the builtins, and agents made before agents had owners).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS owner_user_id INTEGER;
-            -- Lenses are views over a PROJECT (two engineer chats share one Map).
-            ALTER TABLE projects ADD COLUMN IF NOT EXISTS lenses JSONB NOT NULL DEFAULT '[]';
-            -- Map lens cache: one row per parsed file; re-parsed only when its stamp
-            -- (mtime:size) changes. touched_* is the live "an agent just edited
-            -- this" mark, written by the engine on Write/Edit.
-            CREATE TABLE IF NOT EXISTS code_index (
-              project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-              path        TEXT NOT NULL,
-              stamp       TEXT NOT NULL DEFAULT '',
-              symbols     JSONB NOT NULL DEFAULT '[]',
-              imports     JSONB NOT NULL DEFAULT '[]',
-              touched_by  TEXT NOT NULL DEFAULT '',
-              touched_at  DOUBLE PRECISION NOT NULL DEFAULT 0,
-              PRIMARY KEY (project_id, path)
-            );
+            ALTER TABLE projects DROP COLUMN IF EXISTS lenses;
+            DROP TABLE IF EXISTS code_index;
             -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
             -- The JSON files used to be the second persistence layer; this closes
             -- that split so Postgres is the single source of truth (and the only
@@ -563,6 +562,21 @@ def init_db():
             -- the scheduler tick tells the asking session.
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_since DOUBLE PRECISION NOT NULL DEFAULT 0;
             ALTER TABLE cards ADD COLUMN IF NOT EXISTS ask_expires_at DOUBLE PRECISION NOT NULL DEFAULT 0;
+            -- When the card was parked in a decision column (0 = not parked): the
+            -- decision queue's wait clock. Comments never move it, so an agent
+            -- rewording its ask or answering the owner's follow-up keeps the
+            -- card's place instead of falling behind newer asks. Cards parked
+            -- before the column existed take their newest write once.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS queued_since DOUBLE PRECISION NOT NULL DEFAULT 0;
+            UPDATE cards c SET queued_since = coalesce((SELECT max(created_at) FROM card_comments cc
+                                                        WHERE cc.card_id = c.id), c.updated_at)
+              FROM board_columns bc WHERE bc.id = c.column_id AND c.queued_since = 0
+              AND lower(bc.name) IN ('review', 'needs-info');
+            -- The sender's own id for the thing an intake card is about (viewer.intake
+            -- `key`: a membership, a CI run, an alert). A later post on the same
+            -- channel with the same key updates that card instead of opening another.
+            ALTER TABLE cards ADD COLUMN IF NOT EXISTS intake_key TEXT NOT NULL DEFAULT '';
+            CREATE UNIQUE INDEX IF NOT EXISTS cards_intake_key ON cards(created_by, intake_key) WHERE intake_key <> '';
             -- Per-session extras the viewer owns (title/goal/systemPrompt/provider/
             -- convMode/effort/favorite/pinned/avatar/archived). The payload is
             -- free-form JSONB on purpose: the app adds keys over time and a typed
@@ -696,10 +710,13 @@ The owner reads your words cold — on a phone, hours later, with no memory of y
 Every session owns a mailbox (inbox_list / inbox_send): the owner's words, messages from peer sessions, and the decisions you left for the owner. On a wake, read your inbox first: a fresh message is often the reason for the wake. Send to 'user' to reach the owner (they get a push), or to 'session:<id>' to hand work to a peer (it is woken with your text). Every decision you raise (a question, a plan, an approval, or a card parked in Review/Needs-info) is delivered into the owner's inbox automatically — the "Writing for the owner" standard above applies to its body, since that is exactly the text they will judge from. A snoozed or skipped decision is never dropped: it resurfaces on the next tick. The deciding tap itself stays in the chat UI; the inbox is the channel, not a second decision system. The owner sees every mailbox, including messages between sessions — there is no private channel; write accordingly.
 
 ## Ask for help early (guessing is the expensive failure)
-The owner is a collaborator, not an escalation of last resort. Send to 'user' the moment any of these is true: a fact you need exists only in the owner's head (a credential, a preference, a business decision, what "done" means); you have made two attempts at the same problem and are about to try a third; a path forward would spend real money, touch shared infrastructure, or is hard to reverse; or two reasonable interpretations of the task lead to different work. One message, one question, answerable in a tap — then keep working on whatever does not depend on the answer; never stall the whole task on it and never sit silent. Guessing at the owner's intent and discovering the miss an hour later costs far more than the question. Peers are the other half of collaboration: before you rebuild something, ask the session that owns it (session_list / inbox_send to 'session:<id>') — it has the context you lack, and a handoff to the right owner beats a parallel implementation. Asking is not weakness; a session that asks well is the one the owner trusts with more.
+The owner is a collaborator, not an escalation of last resort. Send to 'user' (or call AskUserQuestion) only when one of these is true: a fact you need exists only in the owner's head (a credential, a preference, a business decision, what "done" means); you have made two attempts at the same problem and are about to try a third; a path forward would spend real money, touch shared infrastructure, or is hard to reverse; or two reasonable interpretations of the task lead to different work. One message, one question, answerable in a tap — then keep working on whatever does not depend on the answer; never stall the whole task on it and never sit silent. Guessing at the owner's intent and discovering the miss an hour later costs far more than the question. Peers are the other half of collaboration: before you rebuild something, ask the session that owns it (session_list / inbox_send to 'session:<id>') — it has the context you lack, and a handoff to the right owner beats a parallel implementation. Asking is not weakness; a session that asks well is the one the owner trusts with more.
 
 ## Decisions you raise (native tools, delivered by the system)
-Asking the owner a question is Claude's built-in AskUserQuestion; proposing a plan for sign-off is ExitPlanMode; a gated tool call raises an approval. All three persist when your run ends, land in the owner's inbox as decisions with full context, and resume your session with the answer — never build a second ask path (no polling, no "did you see my question" messages). Write the question or plan body to the "Writing for the owner" standard: it is the only text the owner will judge from.
+Questions you can answer yourself are your own thinking: answer them and keep working — never end a reply on "Should I…?" or "Want me to…?" for work the task already covers, and never offer a menu of options you could pick between. Call Claude's built-in AskUserQuestion ONLY when you are genuinely blocked on something only the owner can decide (a credential, money, a delete, a business choice, two readings that lead to different work); a fact the owner merely needs to know goes in your reply as a statement, not a question. Proposing a plan for sign-off is ExitPlanMode; a gated tool call raises an approval. All three persist when your run ends, land in the owner's inbox as decisions with full context, and resume your session with the answer — never build a second ask path (no polling, no "did you see my question" messages). Write the question or plan body to the "Writing for the owner" standard: it is the only text the owner will judge from.
+
+## The owner's attention (a decision is expensive)
+Every decision costs the owner real energy. The work was delegated so the owner does not have to do it; an agent that returns with question after question has handed it back. The owner sees only a few decisions at a time (they set the number, default 3); asks beyond it are held, with no push and no badge, until a slot frees. So each ask must move the goal forward a lot. Before raising one: decide anything that has a sensible default yourself and state the choice in your report; fold every open question for the same work into the one ask already on that card, each with your recommended answer; and check inbox_list's owner_queue — when held is above 0 the queue is full, so keep working and only add an ask that truly blocks you. Clean up after yourself: move finished work to Done, and pull a stale or superseded ask out of Review or Needs-info (with a comment saying why) the moment it no longer needs the owner.
 
 Full design: docs_read ORCHESTRATOR_MCP.md (§8A is the shipped tool list); docs_read system-status shows this machine's live posture (automation switch, loop mode, this preamble).
 
@@ -787,6 +804,28 @@ Every project has one shared canvas the owner and agents draw on live. canvas_sh
             UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
                 $o$session_list/detail/read/summary/analysis/seen$o$, $n$session_list/detail/read/summary/seen$n$))
               WHERE key = 'system_preamble' AND position($o$session_list/detail/read/summary/analysis/seen$o$ in value #>> '{}') > 0;
+            -- Asks are for real blockers only: self-answerable questions are the
+            -- agent's own thinking, not an AskUserQuestion card or a trailing
+            -- "Should I…?". No-op once updated.
+            UPDATE settings SET value = to_jsonb(replace(replace(value #>> '{}',
+                $o$Asking the owner a question is Claude's built-in AskUserQuestion; proposing$o$,
+                $n$Questions you can answer yourself are your own thinking: answer them and keep working — never end a reply on "Should I…?" or "Want me to…?" for work the task already covers, and never offer a menu of options you could pick between. Call Claude's built-in AskUserQuestion ONLY when you are genuinely blocked on something only the owner can decide (a credential, money, a delete, a business choice, two readings that lead to different work); a fact the owner merely needs to know goes in your reply as a statement, not a question. Proposing$n$),
+                $o$Send to 'user' the moment any of these is true$o$,
+                $n$Send to 'user' (or call AskUserQuestion) only when one of these is true$n$))
+              WHERE key = 'system_preamble'
+                AND position($o$Asking the owner a question is Claude's built-in AskUserQuestion; proposing$o$ in value #>> '{}') > 0;
+            -- The owner's attention cap (viewer.queue): tell agents a decision
+            -- is expensive and the queue is short. Inserted once before the
+            -- design pointer; a no-op when present or on an operator rewrite.
+            UPDATE settings SET value = to_jsonb(replace(value #>> '{}',
+                $o$Full design: docs_read ORCHESTRATOR_MCP.md$o$,
+                $n$## The owner's attention (a decision is expensive)
+Every decision costs the owner real energy. The work was delegated so the owner does not have to do it; an agent that returns with question after question has handed it back. The owner sees only a few decisions at a time (they set the number, default 3); asks beyond it are held, with no push and no badge, until a slot frees. So each ask must move the goal forward a lot. Before raising one: decide anything that has a sensible default yourself and state the choice in your report; fold every open question for the same work into the one ask already on that card, each with your recommended answer; and check inbox_list's owner_queue — when held is above 0 the queue is full, so keep working and only add an ask that truly blocks you. Clean up after yourself: move finished work to Done, and pull a stale or superseded ask out of Review or Needs-info (with a comment saying why) the moment it no longer needs the owner.
+
+Full design: docs_read ORCHESTRATOR_MCP.md$n$))
+              WHERE key = 'system_preamble'
+                AND position($o$## The owner's attention$o$ in value #>> '{}') = 0
+                AND position($o$Full design: docs_read ORCHESTRATOR_MCP.md$o$ in value #>> '{}') > 0;
             -- Per-reader unread cursor: the last time a given reader OPENED a
             -- session. A session is unread for that reader when it changed after
             -- their cursor. Server-side (not per-device) so the signal is the same
@@ -1453,78 +1492,6 @@ def project_card_count(project_id):
         return cur.fetchone()["n"]
 
 
-# Lenses: views over a project that an agent turns on (Software Engineer → the
-# code Map). A closed set — each needs its own server code and UI.
-LENSES = ("map",)
-
-
-def project_lens_enable(host, cwd, lens, name=""):
-    """Turn a lens on for the (host, cwd) project, creating the project if
-    needed. Idempotent; returns the project row."""
-    if lens not in LENSES:
-        raise ValueError(f"unknown lens: {lens}")
-    project = project_ensure(host, cwd, name)
-    with _db() as cur:
-        cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
-                    "WHERE id = %s AND NOT lenses ? %s RETURNING *",
-                    (lens, project["id"], lens))
-        row = cur.fetchone()
-    return dict(row) if row else project
-
-
-def project_lens_set(project_id, lens, on):
-    """The owner's switch for one lens on one project. Returns the new list."""
-    if lens not in LENSES:
-        raise ValueError(f"unknown lens: {lens}")
-    with _db() as cur:
-        if on:
-            cur.execute("UPDATE projects SET lenses = lenses || to_jsonb(%s::text) "
-                        "WHERE id = %s AND NOT lenses ? %s", (lens, project_id, lens))
-        else:
-            cur.execute("UPDATE projects SET lenses = lenses - %s WHERE id = %s",
-                        (lens, project_id))
-        cur.execute("SELECT lenses FROM projects WHERE id = %s", (project_id,))
-        row = cur.fetchone()
-    return row["lenses"] if row else None
-
-
-# Code index (the Map lens's parse cache) ----------------------------------------
-# One row per source file of a project with the map lens: its symbols and its
-# resolved in-repo imports, keyed by an mtime:size stamp so only changed files
-# re-parse. touched_by/at record the last agent session that wrote the file.
-
-def code_index_load(project_id):
-    """{path: row} for one project."""
-    with _db() as cur:
-        cur.execute("SELECT path, stamp, symbols, imports, touched_by, touched_at "
-                    "FROM code_index WHERE project_id = %s", (project_id,))
-        return {r["path"]: dict(r) for r in cur.fetchall()}
-
-
-def code_index_sync(project_id, upserts, live_paths):
-    """Write re-parsed files and drop rows for files that no longer exist.
-    upserts: [(path, stamp, symbols, imports)]. A touched mark survives."""
-    with _db() as cur:
-        for path, stamp, symbols, imports in upserts:
-            cur.execute(
-                "INSERT INTO code_index (project_id, path, stamp, symbols, imports) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
-                "SET stamp = EXCLUDED.stamp, symbols = EXCLUDED.symbols, imports = EXCLUDED.imports",
-                (project_id, path, stamp, Json(symbols), Json(imports)))
-        cur.execute("DELETE FROM code_index WHERE project_id = %s AND NOT (path = ANY(%s))",
-                    (project_id, list(live_paths)))
-
-
-def code_index_touch(project_id, path, session_id):
-    """An agent session just wrote `path`. Stamp '' forces a re-parse."""
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO code_index (project_id, path, touched_by, touched_at) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT (project_id, path) DO UPDATE "
-            "SET stamp = '', touched_by = EXCLUDED.touched_by, touched_at = EXCLUDED.touched_at",
-            (project_id, path, session_id or "", _now()))
-
-
 def _norm_cwd(host, cwd):
     """Canonical form of a directory used as a project key. On the local host we
     expand a leading ~ and strip a trailing slash so "~/x", "/home/u/x" and
@@ -1638,15 +1605,27 @@ def board_columns_ensure(project_id):
 
 # Cards (the ONLY card store) -------------------------------------------------
 
+# The columns whose name says the owner's call is needed (viewer.asks owns the
+# rule; db keeps its own copy because asks is pure and cannot import db).
+_DECISION_COLUMNS = ("review", "needs-info")
+# SQL for "now if column %(col)s is a decision column, else 0": a card's
+# queued_since on entering that column.
+_QUEUED_ON_ENTRY = ("CASE WHEN (SELECT lower(name) FROM board_columns WHERE id = %(col)s) "
+                    "= ANY(%(dcols)s) THEN %(now)s ELSE 0 END")
+
+
 def card_create(title, body="", column_id=None, project_id=None,
                 session_id=None, position=1.0, created_by=""):
+    now = _now()
     with _db() as cur:
         cur.execute(
             "INSERT INTO cards(title, body, column_id, project_id, session_id, "
-            "position, created_by, created_at, updated_at) "
-            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (title, body, column_id, project_id, session_id, position,
-             created_by, _now(), _now()),
+            "position, created_by, created_at, updated_at, queued_since) "
+            "VALUES(%(title)s,%(body)s,%(col)s,%(project)s,%(session)s,%(pos)s,"
+            f"%(by)s,%(now)s,%(now)s,{_QUEUED_ON_ENTRY}) RETURNING *",
+            {"title": title, "body": body, "col": column_id, "project": project_id,
+             "session": session_id, "pos": position, "by": created_by, "now": now,
+             "dcols": list(_DECISION_COLUMNS)},
         )
         return dict(cur.fetchone())
 
@@ -1689,11 +1668,18 @@ def card_update(card_id, **fields):
     sets = {k: v for k, v in fields.items() if k in allowed}
     if not sets:
         return card_get(card_id)
-    sets["updated_at"] = _now()
-    cols = ", ".join(f"{k} = %s" for k in sets)
+    now = _now()
+    sets["updated_at"] = now
+    cols = ", ".join(f"{k} = %({k})s" for k in sets)
+    if "column_id" in sets:
+        # Entering a column restarts the decision wait clock; staying put keeps
+        # it (the right-hand column_id is the OLD value in an UPDATE).
+        cols += (", queued_since = CASE WHEN column_id IS NOT DISTINCT FROM %(column_id)s "
+                 f"THEN queued_since ELSE {_QUEUED_ON_ENTRY} END")
     with _db() as cur:
-        cur.execute(f"UPDATE cards SET {cols} WHERE id = %s RETURNING *",
-                    (*sets.values(), card_id))
+        cur.execute(f"UPDATE cards SET {cols} WHERE id = %(card_id)s RETURNING *",
+                    dict(sets, card_id=card_id, col=sets.get("column_id"), now=now,
+                         dcols=list(_DECISION_COLUMNS)))
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -2009,7 +1995,7 @@ def inbox_create(sender_type, sender_id, recipient_type, recipient_id, body,
 
 
 def inbox_list(session_id=None, project_id=None, kind=None,
-               unread_only=False, archived=False, limit=200):
+               unread_only=False, archived=False, limit=200, to_session=None):
     """The owner's inbox as a filtered VIEW. `session_id` narrows to one chat
     (its messages in both directions), `project_id` to a project, `kind` to one
     of INBOX_KINDS, `unread_only` to messages that need the owner's eye
@@ -2021,6 +2007,11 @@ def inbox_list(session_id=None, project_id=None, kind=None,
         clauses.append("project_id = %s"); params.append(project_id)
     if kind is not None and kind in INBOX_KINDS:
         clauses.append("kind = %s"); params.append(kind)
+    if to_session is not None:
+        # An agent's unread mail is what was sent TO it; its own asks to the
+        # owner are the owner's to read, not news to the agent.
+        clauses.append("recipient_type = 'session' AND recipient_id = %s")
+        params.append(str(to_session))
     if unread_only:
         clauses.append("(status = 'read' OR (status = 'snoozed' AND snoozed_until > %s)) = FALSE")
         params.append(_now())
@@ -2052,6 +2043,16 @@ def inbox_mark_read(message_id):
                     (_now(), message_id))
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def inbox_mark_read_many(ids):
+    """Mark these 'sent' rows read in one statement (an agent's listing)."""
+    if not ids:
+        return
+    with _db() as cur:
+        cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
+                    "WHERE id = ANY(%s) AND status = 'sent'",
+                    (_now(), [int(i) for i in ids]))
 
 
 def inbox_snooze(message_id, until):
@@ -2191,23 +2192,23 @@ def card_mark_attention(card_id, by_own_session):
 
 def cards_awaiting_owner():
     """Open cards parked in a column whose NAME says the owner's call is needed
-    (Review, Needs-info), with the column name and the time of the last write
-    on the card (its newest comment, else its last update) — the moment the
-    wait began. The decision queue's fourth source: a card an agent left for
-    the owner is a decision exactly like a question or a plan, and it must
-    surface in the same one place, not depend on the owner scanning columns."""
+    (Review, Needs-info), with the column name and `waiting_since`: when the
+    card was parked there (queued_since). Comments do not move it, so a
+    reworded ask or a reply to the owner's follow-up keeps the card's place.
+    The decision queue's fourth source: a card an agent left for the owner is
+    a decision exactly like a question or a plan, and it must surface in the
+    same one place, not depend on the owner scanning columns."""
     with _db() as cur:
         cur.execute(
             "SELECT c.id, c.title, c.session_id, c.project_id, c.updated_at, "
             "c.ask_expires_at, bc.name AS column_name, "
-            "coalesce((SELECT max(created_at) FROM card_comments cc "
-            "          WHERE cc.card_id = c.id), c.updated_at) AS waiting_since, "
+            "coalesce(nullif(c.queued_since, 0), c.updated_at) AS waiting_since, "
             "(SELECT body FROM card_comments cc WHERE cc.card_id = c.id "
             "   AND left(cc.author, 8) = 'session:' "
             "   ORDER BY created_at DESC, id DESC LIMIT 1) AS ask "
             "FROM cards c JOIN board_columns bc ON bc.id = c.column_id "
-            "WHERE lower(bc.name) IN ('review', 'needs-info') "
-            "ORDER BY waiting_since, c.id")
+            "WHERE lower(bc.name) = ANY(%s) "
+            "ORDER BY waiting_since, c.id", (list(_DECISION_COLUMNS),))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -2422,8 +2423,8 @@ _BUILTIN_TEMPLATES = [
     # Engineering
     {"name": "Software Engineer", "description": "Builds, reviews and designs code from the project's spec, and keeps the spec true.",
      "category": "engineering", "icon": "code",
-     "plugin": "software-engineer", "lens": "map",
-     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code through the project's code map; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
+     "plugin": "software-engineer",
+     "system_prompt": "You are a senior software engineer and architect. Before changing code, read the feature's spec and locate the code it describes; after changing behaviour, update the spec. Design: weigh scalability, reliability, maintainability and cost; present options with explicit trade-offs and their failure modes; challenge assumptions. Review: correctness, edge cases, error handling, security, performance, readability — by severity, with the WHY and a concrete fix. Prefer the smallest change that solves the root cause; leave no dead or duplicate code.",
      "goal": "Ship correct, maintainable code that matches the spec, with every design decision reasoned."},
     {"name": "Debug Assistant", "description": "Systematic debugging with hypothesis-driven investigation.",
      "category": "engineering", "icon": "bug",
@@ -2529,8 +2530,8 @@ def _seed_agent_templates():
     longer ships (e.g. Code Reviewer + Architect, folded into Software Engineer)
     so the catalog is exactly _BUILTIN_TEMPLATES. User templates are untouched."""
     cols = ("description", "category", "icon", "system_prompt", "goal",
-            "jobs", "plugin", "lens", "level")
-    defaults = {"jobs": [], "plugin": "", "lens": "", "level": "ic"}
+            "jobs", "plugin", "level")
+    defaults = {"jobs": [], "plugin": "", "level": "ic"}
     with _db() as cur:
         for t in _BUILTIN_TEMPLATES:
             vals = [t.get(c, defaults.get(c)) for c in cols]
@@ -2566,7 +2567,7 @@ def agent_templates_list(user_id):
 
 # The fields an agent's owner edits; every write goes through these names only.
 TEMPLATE_FIELDS = ("name", "description", "category", "icon", "system_prompt", "goal",
-                   "ai", "jobs", "plugin", "lens", "level")
+                   "ai", "jobs", "plugin", "level")
 
 
 def _template_values(fields):
@@ -3091,24 +3092,6 @@ def drive_delete(did):
         return cur.fetchone() is not None
 
 
-def drive_set_status(did, status=None, hidden=None):
-    """Plugin lifecycle: pause/resume (`status`) and hide/show (`hidden`)
-    from the file UI. Either may be given; a paused or hidden drive is
-    refused by viewer.drives.adapter_for."""
-    sets, vals = [], []
-    if status is not None:
-        sets.append("status = %s")
-        vals.append(status)
-    if hidden is not None:
-        sets.append("hidden = %s")
-        vals.append(bool(hidden))
-    if not sets:
-        return
-    vals.append(did)
-    with _db() as cur:
-        cur.execute(f"UPDATE drives SET {', '.join(sets)} WHERE id = %s", vals)
-
-
 # Per-host env vars -----------------------------------------------------------
 
 def host_env_load(hid):
@@ -3288,14 +3271,35 @@ def intake_delete(cid):
         return cur.fetchone() is not None
 
 
+def intake_card(cid, key):
+    """The card channel `cid` opened for the sender's `key`, or None."""
+    with _db() as cur:
+        cur.execute("SELECT * FROM cards WHERE created_by = %s AND intake_key = %s",
+                    (f"intake:{cid}", key))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def intake_card_key(card_id, key):
+    """Tag a card with its sender's key. False when another card already holds
+    it (the unique index is the backstop; intake.deliver serialises keyed posts)."""
+    try:
+        with _db() as cur:
+            cur.execute("UPDATE cards SET intake_key = %s WHERE id = %s", (key, card_id))
+        return True
+    except psycopg2.errors.UniqueViolation:
+        return False
+
+
 def intake_touch(cid):
     """Record one delivery: bump the counter, stamp last_used. Returns the count
-    of cards this channel created in the last hour (the rate-limit input)."""
+    of cards and updates this channel posted in the last hour (the rate-limit input)."""
     with _db() as cur:
         cur.execute("UPDATE intake_channels SET received = received + 1, last_used = %s "
                     "WHERE id = %s", (_now(), cid))
-        cur.execute("SELECT count(*) AS n FROM cards WHERE created_by = %s AND created_at > %s",
-                    (f"intake:{cid}", _now() - 3600))
+        cur.execute("SELECT (SELECT count(*) FROM cards WHERE created_by = %(a)s AND created_at > %(t)s)"
+                    " + (SELECT count(*) FROM card_comments WHERE author = %(a)s AND created_at > %(t)s) AS n",
+                    {"a": f"intake:{cid}", "t": _now() - 3600})
         return cur.fetchone()["n"]
 
 

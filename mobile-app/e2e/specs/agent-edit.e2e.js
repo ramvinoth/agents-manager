@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict")
 const { startFixture } = require("../thread-board-fixture")
+const { signIn } = require("../signin")
 
-const shown = id => $("~" + id).isDisplayed()
 async function tap(id) { const el = await $("~" + id); await el.waitForDisplayed(); await el.click() }
 // Native scroll: wdio's scrollIntoView is a web script (a no-op in the app) and
 // "mobile: scroll toVisible" hangs on RN lists, so drag a third of a screen at a time.
@@ -25,21 +25,7 @@ describe("Edit agent — grouped settings rows", () => {
   before(async () => {
     assert.equal(process.env.E2E_BUNDLE_ID, "com.suhai.agents.e2e", "Never run against a production bundle")
     fixture = await startFixture({ agents: true, ai: true })
-    await browser.waitUntil(async () => await shown("server-url") || await shown("login-username") || await shown("chats-list"), { timeout: 30000 })
-    if (await shown("server-url")) {
-      // setValue can drop keystrokes on a cold keyboard ("h://..."): retype until it reads back right.
-      const url = await $("~server-url")
-      // (clearValue can't empty a controlled RN input, so backspace it out.)
-      await url.setValue(fixture.url)
-      for (let i = 0; i < 3 && (await url.getAttribute("value")) !== fixture.url; i++) {
-        await url.addValue("\b".repeat(120)); await url.addValue(fixture.url)
-      }
-      await tap("server-connect")
-      await browser.waitUntil(async () => await shown("login-username") || await shown("chats-list")).catch(async e => { await shot("connect-fail"); throw e })
-    }
-    if (await shown("login-username")) {
-      await $("~login-username").setValue("fixture"); await $("~login-password").setValue("fixture"); await tap("login-submit")
-    }
+    await signIn(fixture)
     await $("~chats-list").waitForDisplayed()
     await tap("menu-button")
     await tap("menu-Agents")

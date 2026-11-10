@@ -246,6 +246,55 @@ def test_deliver_returns_before_a_slow_wake(monkeypatch):
     assert woke.wait(5)               # and the wake still happens
 
 
+# ── pushes: one per item, carrying what the tap needs to land on it ─────────
+
+def _capture_pushes(monkeypatch):
+    sent = []
+    monkeypatch.setattr(inbox.db, "inbox_create", lambda *a, **k: {"id": 7})
+    monkeypatch.setattr(inbox.db, "audit_append", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "session_project", lambda sid: None)
+    monkeypatch.setattr(inbox, "_label", lambda sid: "Builder")
+    monkeypatch.setattr(inbox, "_wake_session", lambda *a, **k: None)
+    monkeypatch.setattr(inbox, "_push_owner", lambda t, b, d: sent.append((t, d)))
+    return sent
+
+
+def test_decision_push_names_the_item_it_opens(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_decision("s1", "approval", 42, "Approve Bash?")
+    assert sent == [("Builder · approval",
+                     {"session": "s1", "decision": "approval", "ref": "42"})]
+
+
+def test_session_message_push_opens_its_mailbox(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_message("session", "s1", "user", "", "done")
+    assert sent == [("Builder · inbox", {"inbox": 7, "session": "s1"})]
+
+
+# ── _wake_session: a live run gets the message mid-turn, not at turn end ──
+
+def test_wake_steers_into_a_running_turn(monkeypatch):
+    from viewer import engine
+    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    steered, started = [], []
+    monkeypatch.setattr(engine, "steer_chat", lambda sid, t: steered.append(t) or "steered")
+    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    inbox._wake_session("s1", "[inbox] wait")
+    assert steered == ["[inbox] wait"] and not started
+
+
+def test_wake_resumes_when_the_run_ended_before_the_steer(monkeypatch):
+    from viewer import engine
+    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    started = []
+    monkeypatch.setattr(engine, "steer_chat", lambda sid, t: None)   # run just finished
+    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    monkeypatch.setattr("viewer.config.transcript_path", lambda sid: None)
+    inbox._wake_session("s1", "[inbox] wait")
+    assert len(started) == 1        # never dropped: a fresh resumed turn carries it
+
+
 # ---- org Red approvals -------------------------------------------------------
 
 def test_red_is_a_decision_kind_keyed_by_approval_id():
@@ -306,11 +355,13 @@ class TestInboxRouteLimit:
     def _run(self, monkeypatch, principal, query):
         from viewer.routes import inbox as ri
         calls = []
-        monkeypatch.setattr(ri, "open_decisions_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "open_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "cap", lambda: 3)
         monkeypatch.setattr(ri.db, "inbox_list", lambda **kw: calls.append(kw) or [])
-        monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items: 0)
+        monkeypatch.setattr(ri.inbox, "unread_count", lambda rows, items, cap=None: 0)
         monkeypatch.setattr(ri.inbox, "attach_state", lambda rows, items: rows)
-        monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i: {})
+        monkeypatch.setattr(ri.inbox, "action_queue", lambda m, i, cap=None: {})
+        monkeypatch.setattr(ri.db, "inbox_mark_read_many", lambda ids: None)
         h = ri.InboxMixin.__new__(ri.InboxMixin)
         h.send_json = lambda data, status=200: None
         req = type("R", (), {"principal": principal, "query": query})()
@@ -330,3 +381,75 @@ class TestInboxRouteLimit:
         mcp = {"kind": "mcp", "session": "s1"}
         assert self._run(monkeypatch, mcp, {"unread_only": ["False"]})["unread_only"] is False
         assert self._run(monkeypatch, mcp, {"unread_only": ["True"]})["unread_only"] is True
+
+    def test_agent_unread_is_only_mail_sent_to_it(self, monkeypatch):
+        mcp = {"kind": "mcp", "session": "s1"}
+        assert self._run(monkeypatch, mcp, {"unread_only": ["1"]})["to_session"] == "s1"
+        assert self._run(monkeypatch, mcp, {})["to_session"] is None
+        assert self._run(monkeypatch, {"kind": "app"}, {"unread_only": ["1"]})["to_session"] is None
+
+    def test_agent_count_is_its_own_unread_mail(self, monkeypatch):
+        """The agent's `unread` is the mail sent to it, not the owner's badge."""
+        from viewer.routes import inbox as ri
+        sent = {}
+        rows = [{"id": 1, "recipient_type": "session", "recipient_id": "s1", "status": "sent"},
+                {"id": 2, "recipient_type": "user", "recipient_id": "", "status": "sent"}]
+        calls = []
+        monkeypatch.setattr(ri.queue, "open_items", lambda: [])
+        monkeypatch.setattr(ri.queue, "cap", lambda: 3)
+        monkeypatch.setattr(ri.db, "inbox_list", lambda **kw: calls.append(kw) or rows)
+        monkeypatch.setattr(ri.inbox, "attach_state", lambda r, items: r)
+        monkeypatch.setattr(ri.db, "inbox_mark_read_many", lambda ids: None)
+        h = ri.InboxMixin.__new__(ri.InboxMixin)
+        h.send_json = lambda data, status=200: sent.update(data)
+        h._g_inbox(type("R", (), {"principal": {"kind": "mcp", "session": "s1"}, "query": {}})())
+        assert calls[0]["to_session"] == "s1" and sent["unread"] == 1
+
+
+# ---- resolve_session: what an agent writes after "session:" ----------------
+
+A = "57496095-2c6d-4852-a42c-baa661d57f48"
+B = "57496095-ffff-4000-8000-000000000000"
+C = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
+
+
+def _sessions(tmp_path, monkeypatch, titles):
+    from viewer import config, engine
+    d = tmp_path / "-proj"
+    d.mkdir()
+    for sid in titles:
+        (d / f"{sid}.jsonl").write_text("")
+    monkeypatch.setattr(config, "CLAUDE_DIR", tmp_path)
+    monkeypatch.setattr(engine, "CHAT_JOBS", {})
+    monkeypatch.setattr(engine, "_session_title", lambda sid: (titles.get(sid, ""), ""))
+
+
+def test_resolve_full_id_prefix_and_title(tmp_path, monkeypatch):
+    _sessions(tmp_path, monkeypatch, {A: "Liquid Text Clone", B: "", C: "Manager"})
+    assert inbox.resolve_session(A) == (A, None)
+    assert inbox.resolve_session("65cf166a") == (C, None)
+    assert inbox.resolve_session("liquid text clone") == (A, None)
+
+
+def test_resolve_refuses_unknown_ambiguous_and_short(tmp_path, monkeypatch):
+    _sessions(tmp_path, monkeypatch, {A: "Twin", B: "Twin", C: ""})
+    for ref in ("RSI", "57496", "57496095", "Twin", "", "dbd49b66-"):
+        sid, err = inbox.resolve_session(ref)
+        assert sid is None and err, ref
+    assert "2 sessions" in inbox.resolve_session("57496095")[1]   # ambiguous prefix
+    assert "2 sessions" in inbox.resolve_session("Twin")[1]       # ambiguous title
+    assert inbox.resolve_session("57496")[1].startswith("no session")  # too short to guess
+
+
+def test_an_agent_reads_only_the_mail_addressed_to_it():
+    """Listing marks the session's incoming mail read, never the asks it sent
+    the owner (those stay unread until the OWNER reads them) and never
+    another session's mail."""
+    rows = [
+        {"id": 1, "recipient_type": "session", "recipient_id": "s1", "status": "sent"},
+        {"id": 2, "recipient_type": "session", "recipient_id": "s1", "status": "read"},
+        {"id": 3, "recipient_type": "user", "recipient_id": "", "status": "sent"},
+        {"id": 4, "recipient_type": "session", "recipient_id": "s2", "status": "sent"},
+        {"id": 5, "recipient_type": "session", "recipient_id": "s1", "status": "snoozed"},
+    ]
+    assert inbox.unread_for_session(rows, "s1") == [1]

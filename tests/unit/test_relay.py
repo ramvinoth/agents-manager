@@ -414,3 +414,42 @@ def test_stopped_service_ignores_late_phone_announcements():
     svc.stop()
     svc.attach("conn_late")
     assert svc.connections == {}
+
+
+def _flapping_service(monkeypatch, lifetimes):
+    """A relay that accepts each dial, then drops it after lifetimes[i] seconds
+    (fake clock). Returns the service and the backoff it waits before each redial."""
+    clock = [0.0]
+    monkeypatch.setattr(relay.time, "monotonic", lambda: clock[0])
+    svc = relay.RelayService("wss://relay.test", {"serverId": "s"})
+    waits, left = [], list(lifetimes)
+
+    class DroppingWS:
+        sock = type("S", (), {"settimeout": lambda self, t: None})()
+        last_rx = 0.0
+
+        def recv(self):
+            clock[0] += left.pop(0)
+            raise relay.wsclient.WSError("connection closed")
+
+        def close(self):
+            pass
+
+    svc.dial = lambda: DroppingWS()
+
+    def wait(t):
+        waits.append(int(t))
+        return not left            # stop once every scripted drop has happened
+
+    svc.stopped.wait = wait
+    svc.run_forever()
+    return waits
+
+
+def test_instant_drops_back_off_instead_of_redialling_every_second(monkeypatch):
+    assert _flapping_service(monkeypatch, [0, 0, 0, 0, 0]) == [1, 2, 4, 8, 16]
+
+
+def test_a_connection_that_held_earns_a_fast_redial(monkeypatch):
+    held = relay.STABLE_AFTER
+    assert _flapping_service(monkeypatch, [0, 0, held, 0]) == [1, 2, 1, 2]
