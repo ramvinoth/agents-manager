@@ -1267,32 +1267,18 @@ export default function ThreadScreen({ route, navigation }: Props) {
           <Text style={styles.runText} numberOfLines={1}>
             {queued ? `${queued} queued` : "Working…"}
           </Text>
-          {/* Two explicit actions inside the working pill (not a toggle): while
-              text is drafted, Queue runs it after this turn and Steer injects
-              it into the running turn now (mid-turn, no need to Stop first).
-              Each button does exactly what it says — no mode to guess. Stop
-              stays pinned at the right end. */}
+          {/* While text is drafted, Steer injects it into the running turn now.
+              Queueing needs no button of its own: Send already queues while busy. */}
           {input.trim() ? (
-            <>
-              <TouchableOpacity
-                testID="run-queue"
-                accessibilityLabel="Queue after this run"
-                style={styles.runModeToggle}
-                onPress={() => primary("queue")}
-              >
-                <Icon name="clock" size={13} color={t.textMuted} />
-                <Text style={styles.runModeText}>Queue</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                testID="run-interrupt"
-                accessibilityLabel="Steer the running turn now"
-                style={styles.runModeToggle}
-                onPress={() => primary("steer")}
-              >
-                <Icon name="flash" size={13} color={t.textMuted} />
-                <Text style={styles.runModeText}>Steer</Text>
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              testID="run-interrupt"
+              accessibilityLabel="Steer the running turn now"
+              style={styles.runModeToggle}
+              onPress={() => primary("steer")}
+            >
+              <Icon name="flash" size={13} color={t.textMuted} />
+              <Text style={styles.runModeText}>Steer</Text>
+            </TouchableOpacity>
           ) : null}
           <TouchableOpacity testID="composer-stop" style={styles.stopGhost} onPress={stop}>
             <Text style={styles.stopGhostText}>Stop</Text>
