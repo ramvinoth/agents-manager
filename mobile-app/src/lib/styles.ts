@@ -103,7 +103,6 @@ function buildStyles(t: Theme) {
     // Live-run dot: a run is in flight for this session (emerald, matches web).
     runningDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: t.success },
     // WhatsApp-style filter chips + archived reveal row (Chats list header).
-    filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
     filterChip: {
       paddingHorizontal: 14,
       paddingVertical: 6,
@@ -134,7 +133,6 @@ function buildStyles(t: Theme) {
       borderBottomWidth: 1,
       borderBottomColor: t.border,
     },
-    projectHeaderToggle: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
     projectHeaderText: { flex: 1, fontSize: 13, fontWeight: "700", color: t.textMuted, textTransform: "uppercase", letterSpacing: 0.5 },
     projectHeaderCount: { fontSize: 13, fontWeight: "600", color: t.textMuted },
     // AskUserQuestion quick-reply card — attention family ("the agent is

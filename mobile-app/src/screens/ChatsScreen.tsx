@@ -13,7 +13,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, groupByProject } from "../lib/chatList"
+import { activity, orderChats } from "../lib/chatList"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
@@ -43,11 +43,6 @@ function relTime(sec?: number): string {
   return `${Math.floor(d / 604800)}w`
 }
 
-function shortProject(p: string): string {
-  const parts = p.split("/").filter(Boolean)
-  return parts.length ? parts[parts.length - 1] : p
-}
-
 /** Stream events after which the chat list may differ. */
 const LIST_EVENTS = new Set(["list-changed", "turn-start", "turn-end", "resync"])
 
@@ -60,9 +55,7 @@ export default function ChatsScreen({ navigation }: Props) {
   const [error, setError] = useState("")
   const { host, label: hostLabel } = useHost()
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<"all" | "unread" | "favorites" | "projects">("all")
   const [showArchived, setShowArchived] = useState(false)
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [actionFor, setActionFor] = useState<Session | null>(null)
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -78,34 +71,14 @@ export default function ChatsScreen({ navigation }: Props) {
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
-  // The list is a flat array of rows: either a chat, or (in Projects view) a
-  // collapsible project header. Chips are authoritative — they are NOT gated by
-  // the Projects-tab `project` filter, so "All" always means all chats.
-  type Row = { kind: "chat"; s: Session } | { kind: "header"; project: string; count: number }
-  const rows = useMemo<Row[]>(() => {
-    // Base pool: archived view shows only archived; otherwise hide archived.
-    let pool = sessions.filter((s) => (showArchived ? s.archived : !s.archived))
+  // Search, then favorites first, newest message first (lib/chatList). The
+  // archive view shows only archived chats; the main view hides them.
+  const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const matchQ = (s: Session) =>
-      !q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)
-    pool = pool.filter(matchQ)
-
-    if (showArchived) return pool.map((s) => ({ kind: "chat", s }))
-
-    if (filter === "unread") return pool.filter((s) => s.unread).map((s) => ({ kind: "chat", s }))
-    if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
-    if (filter === "projects") {
-      // Collapsible project headers, the newest-message project first (lib/chatList).
-      const out: Row[] = []
-      for (const { project, chats } of groupByProject(pool)) {
-        out.push({ kind: "header", project, count: chats.length })
-        if (!collapsed.has(project)) for (const s of chats) out.push({ kind: "chat", s })
-      }
-      return out
-    }
-    // "all"
-    return pool.map((s) => ({ kind: "chat", s }))
-  }, [sessions, query, filter, showArchived, collapsed])
+    return orderChats(sessions.filter((s) =>
+      (showArchived ? s.archived : !s.archived) &&
+      (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q))))
+  }, [sessions, query, showArchived])
 
   async function rename(s: Session, title: string) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, title } : x))) // optimistic; path is unique, id is not
@@ -369,7 +342,7 @@ export default function ChatsScreen({ navigation }: Props) {
         <FlatList
           testID="chats-list"
           data={rows}
-          keyExtractor={(r) => (r.kind === "header" ? `hdr:${r.project}` : r.s.path)}
+          keyExtractor={(s) => s.path}
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={false} onRefresh={() => load(false)} />}
           ListHeaderComponent={
@@ -387,23 +360,6 @@ export default function ChatsScreen({ navigation }: Props) {
                   clearButtonMode="while-editing"
                 />
               </View>
-              {/* Filter chips (WhatsApp-style). Hidden while viewing the archive. */}
-              {!showArchived ? (
-                <View style={styles.filterRow}>
-                  {(["all", "unread", "favorites", "projects"] as const).map((f) => (
-                    <TouchableOpacity
-                      key={f}
-                      testID={`chip-${f}`}
-                      style={[styles.filterChip, filter === f ? styles.filterChipActive : null]}
-                      onPress={() => setFilter(f)}
-                    >
-                      <Text style={[styles.filterChipText, filter === f ? styles.filterChipTextActive : null]}>
-                        {f === "all" ? "All" : f === "unread" ? "Unread" : f === "favorites" ? "Favorites" : "Projects"}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : null}
               {/* Archived reveal row (main view) / back row (archive view). */}
               {showArchived ? (
                 <TouchableOpacity testID="archived-back" style={styles.archivedRow} onPress={() => setShowArchived(false)}>
@@ -451,43 +407,7 @@ export default function ChatsScreen({ navigation }: Props) {
               </Text>
             )
           }
-          renderItem={({ item: row }) => {
-            if (row.kind === "header") {
-              const open = !collapsed.has(row.project)
-              const named = row.project !== "No project"
-              return (
-                <View style={styles.projectHeader}>
-                  <TouchableOpacity
-                    testID={`project-header-${row.project}`}
-                    style={styles.projectHeaderToggle}
-                    onPress={() =>
-                      setCollapsed((prev) => {
-                        const n = new Set(prev)
-                        n.has(row.project) ? n.delete(row.project) : n.add(row.project)
-                        return n
-                      })
-                    }
-                  >
-                    <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
-                    <Text style={styles.projectHeaderText} numberOfLines={1}>
-                      {named ? shortProject(row.project) : row.project}
-                    </Text>
-                    <Text style={styles.projectHeaderCount}>{row.count}</Text>
-                  </TouchableOpacity>
-                  {named && (
-                    <TouchableOpacity
-                      testID={`project-new-chat-${row.project}`}
-                      accessibilityLabel={`New chat in ${shortProject(row.project)}`}
-                      hitSlop={10}
-                      onPress={() => navigation.navigate("NewChat", { cwd: row.project })}
-                    >
-                      <Icon name="add" size={18} color={t.accent} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )
-            }
-            const item = row.s
+          renderItem={({ item }) => {
             const name = item.title || item.id.slice(0, 8)
             const unread = !!item.unread
             const isSelected = selecting && selected.has(item.path)
