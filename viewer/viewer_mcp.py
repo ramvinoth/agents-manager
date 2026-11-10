@@ -570,11 +570,12 @@ def with_local_times(obj):
 # the agent's adapter; the HTTP API the web and phone apps read is unchanged.
 _RESULT_CAP = 14000          # characters of JSON one tool result may take
 _PAGED = {                   # tool -> (list key or None for a bare list, default page size)
-    "card_list": ("cards", 15), "card_comments": ("comments", 20),
+    "card_list": ("cards", 10), "card_comments": ("comments", 20),
     "loop_list": (None, 15), "note_list": ("notes", 30),
 }
 _PREVIEW = {                 # tool -> (text field cut in each row, characters kept, where the full text is)
-    "card_list": ("body", 120, "card id=<id>"),
+    # card_list is absent: the server's ledger view already cuts each body
+    # (orglogic.LEDGER_BODY_CHARS); a second cut here misreported the length.
     "note_list": ("body", 200, "note id=<id>"),
     "inbox_list": ("body", 240, "inbox_list full=true"),
     "loop_list": ("prompt", 160, "loop_list full=true"),
@@ -598,7 +599,8 @@ def _cut(rows, field, keep, where):
     for r in rows:
         v = r.get(field) if isinstance(r, dict) else None
         if isinstance(v, str) and len(v) > keep:
-            r = {**r, field: v[:keep] + f"… [{len(v)} chars; full text: {where}]"}
+            hint = where.replace("<id>", str(r.get("id", "<id>")))
+            r = {**r, field: v[:keep] + f"… [{len(v)} chars; full text: {hint}]"}
         out.append(r)
     return out
 
@@ -612,11 +614,12 @@ def shape_result(tool, result, full=False, offset=0, limit=None):
     offset = max(0, int(offset or 0))
     if tool == "card" and isinstance(result, dict) and isinstance(result.get("comments"), list):
         comments = result["comments"]
+        card_id = (result.get("card") or {}).get("id", result.get("id", "<id>"))
         if len(comments) > _CARD_COMMENTS_SHOWN:
             result = {**result, "comments": comments[-_CARD_COMMENTS_SHOWN:],
                       "comments_total": len(comments),
                       "comments_hint": f"Showing the newest {_CARD_COMMENTS_SHOWN} of {len(comments)}. "
-                                       "Older ones: card_comments card_id=<id> offset=N."}
+                                       f"Older ones: card_comments card_id={card_id} offset=N."}
         result = {**result, "comments": _cut(result["comments"], "body", 1500, "card_comments full=true")}
     if tool in _PAGED:
         key, size = _PAGED[tool]

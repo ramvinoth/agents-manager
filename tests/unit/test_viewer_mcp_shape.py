@@ -9,12 +9,14 @@ def test_full_returns_untouched():
     assert shape_result("card_list", big, full=True) is big
 
 
-def test_card_list_pages_and_previews():
-    rows = {"cards": [{"id": i, "body": "x" * 500} for i in range(75)], "done_hidden": 2}
+def test_card_list_pages_and_keeps_the_servers_preview():
+    # The server's ledger view already cuts bodies; a second cut here
+    # reported the preview's length as the body's.
+    rows = {"cards": [{"id": i, "body": "x" * 280 + "…"} for i in range(75)], "done_hidden": 2}
     out = shape_result("card_list", rows)
-    assert out["total"] == 75 and out["shown"] == 15 and out["more"] == "offset=15"
+    assert out["total"] == 75 and out["shown"] == 10 and out["more"] == "offset=10"
     assert out["done_hidden"] == 2
-    assert len(out["cards"][0]["body"]) < 200 and "card id=<id>" in out["cards"][0]["body"]
+    assert out["cards"][0]["body"] == "x" * 280 + "…"
     last = shape_result("card_list", rows, offset=60, limit=30)
     assert [c["id"] for c in last["cards"]] == list(range(60, 75)) and "more" not in last
 
@@ -29,6 +31,12 @@ def test_card_keeps_newest_comments():
     card = {"card": {"id": 1}, "comments": [{"id": i, "body": "c"} for i in range(12)]}
     out = shape_result("card", card)
     assert [c["id"] for c in out["comments"]] == [7, 8, 9, 10, 11] and out["comments_total"] == 12
+    assert "card_id=1 " in out["comments_hint"]
+
+
+def test_note_preview_names_the_real_id():
+    out = shape_result("note_list", {"notes": [{"id": 112, "body": "n" * 900}]})
+    assert "full text: note id=112]" in out["notes"][0]["body"]
 
 
 def test_inbox_bodies_cut_queue_kept():
