@@ -101,6 +101,9 @@ let pendingTap: PushTap | null = null
 function navToTarget({ data, title }: PushTap): void {
   const target = notificationTarget(data, title)
   if (!target) return
+  // Signed out (Server/Login is the root): a screen pushed over it would load with no session.
+  const root = navigationRef.getRootState()?.routes?.[0]?.name
+  if (root === "Server" || root === "Login") return
   switch (target.to) {
     case "card": return navigationRef.navigate("CardDetail", { id: target.id })
     case "note": return navigationRef.navigate("NoteEditor", { id: target.id })
