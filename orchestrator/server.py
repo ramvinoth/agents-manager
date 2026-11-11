@@ -774,6 +774,11 @@ def main():
                 print(f"  ⚠ removed {len(swept)} orphaned run settings file(s) left by the previous server process")
         except Exception as e:
             print(f"  ⚠ run settings sweep failed: {e}")
+        # Close the maintenance-window restart that ended the previous process (its
+        # audit entry + the requesters' wake). It takes the window lock HERE, before
+        # the scheduler's first tick, so no window opens until this boot is closed.
+        from orchestrator import maintenance
+        maintenance.start_boot_finish()
         threading.Thread(target=loop_scheduler, args=(run_loop_iteration,), daemon=True).start()
         # Turns the previous process was running when it stopped resume here, so
         # an update or crash pauses agent work instead of dropping it.
@@ -783,10 +788,6 @@ def main():
             if ids:
                 print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
         threading.Thread(target=_resume_cut_turns, daemon=True).start()
-        # Close the maintenance-window restart that ended the previous process
-        # (its audit entry + the requesters' wake), if there was one.
-        from orchestrator import maintenance
-        threading.Thread(target=maintenance.finish_after_boot, daemon=True).start()
         # Outbound to the Harman relay when it is on (the owner's switch, or
         # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
         # control socket per server, so a spare would steal the live server's phones.

@@ -23,6 +23,7 @@ Hooked into engine.loop_scheduler (no permanent thread); a window in progress
 runs on a short-lived thread so the scheduler keeps firing loops meanwhile.
 """
 import datetime
+import hashlib
 import json
 import os
 import socket
@@ -42,6 +43,7 @@ PREFLIGHT_TIMEOUT = 180  # seconds for the spare to answer GET / (a crash fails 
                          # a loaded machine can take minutes to serve the first page)
 _PENDING_KEY = "maintenance_pending"     # the restart in flight, across the exit
 _LAST_KEY = "maintenance_last_window"    # hour already handled (survives the exit)
+PREFLIGHT_TRIES = 3      # preflight again while agents keep changing the code under it
 
 _running = threading.Lock()
 
@@ -55,7 +57,21 @@ def _git_head():
         return ""
 
 
+def code_fingerprint():
+    """The code on disk now: HEAD, plus a hash of uncommitted changes and new
+    files' names. Two equal fingerprints = the preflight saw what will boot."""
+    head = _git_head()
+    try:
+        diff = b"".join(subprocess.run(["git", "-C", str(config.STATIC_DIR), *args], capture_output=True,
+                                       timeout=10).stdout
+                        for args in (["diff", "HEAD"], ["ls-files", "--others", "--exclude-standard"]))
+    except Exception:
+        return head
+    return f"{head}+{hashlib.sha1(diff).hexdigest()[:10]}" if diff else head
+
+
 BOOT_COMMIT = _git_head()   # the code THIS process loaded, not whatever is on disk later
+BOOT_CODE = code_fingerprint()
 BOOT_TIME = time.time()     # imported at boot (server.py), so requests older than this are live
 
 
@@ -185,20 +201,29 @@ def run_window(trigger, quiet_cap=QUIET_CAP, check=None, leave=None, sleep=time.
         ids = [r["id"] for r in reqs]
         record = {"trigger": trigger, "started_at": time.time(), "waited_s": waited,
                   "turns_cut": busy(), "version_before": config.VERSION,
-                  "commit_before": BOOT_COMMIT, "commit_on_disk": _git_head(),
-                  "requests": [_summary(r) for r in reqs]}
+                  "commit_before": BOOT_COMMIT, "requests": [_summary(r) for r in reqs]}
         if not supervised():
             record["preflight"] = "not run"
             return _abort(ids, reqs, record, "unsupervised",
                           "nothing would start the server again after it exits "
                           "(no launchd/systemd supervisor), so it was not restarted")
-        ok, detail = check()
-        record["preflight"] = detail
+        # An agent can commit while the preflight runs: what passed must be what boots.
+        for _ in range(PREFLIGHT_TRIES):
+            code = code_fingerprint()
+            ok, detail = check()
+            record.update(preflight=detail, code_preflighted=code)
+            if not ok or code_fingerprint() == code:
+                break
+        else:
+            return _abort(ids, reqs, record, "preflight_failed",
+                          f"the code on disk kept changing during {PREFLIGHT_TRIES} preflights")
         if not ok:
             return _abort(ids, reqs, record, "preflight_failed",
                           "the new code failed its preflight boot, so the old server keeps running")
-        db.restart_requests_set_status(ids, "restarting")
+        # Record first, then mark: a death in between leaves a record the next boot
+        # closes. The other order stranded the rows in "restarting" forever.
         db.setting_set(_PENDING_KEY, record)
+        db.restart_requests_set_status(ids, "restarting")
         leave()
         return "restarting"
     finally:
@@ -218,9 +243,26 @@ def _abort(ids, reqs, record, outcome, why):
     return outcome
 
 
+def start_boot_finish(**kw):
+    """Run finish_after_boot on its own thread, holding the window lock from
+    the caller's thread on, so no window can open before the boot is closed.
+    Call it BEFORE the scheduler starts: a boot inside :50-:59 used to let the
+    first tick restart again for requests this boot already made live."""
+    _running.acquire()
+
+    def run():
+        try:
+            finish_after_boot(**kw)
+        finally:
+            _running.release()
+    threading.Thread(target=run, daemon=True, name="maintenance-boot").start()
+
+
 def finish_after_boot(sleep=time.sleep, health=None):
     """On a real (non-preflight) boot: close the restart the previous process
-    started. Writes the one audit entry and wakes the requesters."""
+    started, plus any request filed before this boot (its code is loaded too).
+    Writes the one audit entry and wakes the requesters. Safe to repeat: the
+    pending record is cleared only after the rows are closed."""
     for attempt in range(24):   # after a reboot Postgres can still be starting: wait up to ~2 min
         try:
             record = db.setting_get(_PENDING_KEY)
@@ -229,28 +271,38 @@ def finish_after_boot(sleep=time.sleep, health=None):
             if attempt == 23:
                 raise
             sleep(5)
-    if record:
-        db.setting_set(_PENDING_KEY, None)
-    else:
-        # Restarted outside the window (the owner's kickstart, a crash, a reboot):
-        # requests filed before this boot are already live, so close them here
-        # rather than let the next window cut every running turn for nothing.
-        stale = [r for r in db.restart_requests_by_status("queued") if (r.get("created_at") or 0) < BOOT_TIME]
-        if not stale:
-            return None
+    # Requests filed before this boot are already live, so close them here rather
+    # than let the next window cut every running turn for nothing.
+    stale = [r for r in db.restart_requests_by_status("queued") if (r.get("created_at") or 0) < BOOT_TIME]
+    pending = bool(record)
+    if pending:
+        known = {r["id"] for r in record.get("requests", [])}
+        record["requests"] = record.get("requests", []) + [_summary(r) for r in stale if r["id"] not in known]
+    elif stale:
+        # Restarted outside the window (the owner's kickstart, a crash, a reboot).
         record = {"trigger": "restart outside the window", "version_before": "?", "commit_before": "",
                   "requests": [_summary(r) for r in stale]}
+    else:
+        return None
     sleep(5)   # let the HTTP server come up before probing it
     h = (health or _health)()
     record.update({"finished_at": time.time(), "version_after": config.VERSION,
-                   "commit_after": BOOT_COMMIT, "health": h})
+                   "commit_after": BOOT_COMMIT, "code_booted": BOOT_CODE, "health": h})
+    # Code that changed after the preflight (an edit while the process was down)
+    # booted unchecked: say so instead of claiming the preflighted change is live.
+    unchecked = pending and record.get("code_preflighted") not in (None, BOOT_CODE)
+    outcome = "unhealthy" if not h.get("ok") else "unpreflighted" if unchecked else "restarted"
     ids = [r["id"] for r in record.get("requests", [])]
     db.restart_requests_set_status(ids, "done")
-    db.audit_append("maintenance", "maintenance_restart", record, "restarted" if h.get("ok") else "unhealthy")
+    db.audit_append("maintenance", "maintenance_restart", record, outcome)
+    if pending:
+        db.setting_set(_PENDING_KEY, None)
     reqs = [{"session_id": r.get("session"), "requested_by": r.get("by")} for r in record.get("requests", [])]
+    warn = (f" WARNING: the code changed after the preflight ({record['code_preflighted']} was checked, "
+            f"{BOOT_CODE} booted), so what is running was never preflighted." if unchecked else "")
     _tell(reqs, (f"The server restarted in the maintenance window ({record['trigger']}). "
                  f"Version {record['version_before']} ({record['commit_before'] or '?'}) → "
-                 f"{config.VERSION} ({BOOT_COMMIT or '?'}); health: {json.dumps(h)}. "
+                 f"{config.VERSION} ({BOOT_COMMIT or '?'}); health: {json.dumps(h)}.{warn} "
                  "Your change is live — verify it and finish the work it was for."))
     return record
 
