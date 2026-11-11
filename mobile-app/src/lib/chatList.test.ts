@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chatProjects, defaultFilter, filterLabel, orderChats, toStored, visibleChats } from "./chatList.ts"
+import { defaultFilter, filterLabel, orderChats, toStored, visibleChats } from "./chatList.ts"
 
 const chat = (id: string, last_message: number, favorite = false) => ({ id, path: id, last_message, favorite })
 
@@ -26,7 +26,6 @@ const ids = (r: { id: string }[]) => r.map((s) => s.id)
 test("filters: unread, starred, project; archived chats stay out of the main view", () => {
   assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "", filter: { kind: "unread" } })), ["a"])
   assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "", filter: { kind: "starred" } })), ["b"])
-  assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "", filter: { kind: "project", project: "/w/sift" } })), ["a"])
   assert.deepEqual(ids(visibleChats(pool, { archived: true, query: "", filter: { kind: "unread" } })), ["c"])
 })
 
@@ -36,26 +35,17 @@ test("search and filter combine; no filter keeps star-first order", () => {
   assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "", filter: null })), ["b", "a", "d"])
 })
 
-test("projects menu: distinct, newest activity first; labels use the folder name", () => {
-  assert.deepEqual(chatProjects(pool), ["/w/sift", "/w/harman"])
-  assert.equal(filterLabel({ kind: "project", project: "/w/sift/" }), "sift")
+test("filter labels", () => {
+  assert.equal(filterLabel({ kind: "starred" }), "Starred")
   assert.equal(filterLabel(null), "")
 })
 
-test("default filter: all chats (grouped) when nothing was chosen", () => {
-  assert.equal(defaultFilter(undefined, pool), null)
-  assert.equal(defaultFilter({ kind: "bogus" }, pool), null)
-  assert.equal(defaultFilter(undefined, []), null)
-})
-
-test("default filter: a remembered choice stands; a project with no live chats falls back to all", () => {
-  assert.deepEqual(defaultFilter({ kind: "project", project: "/w/harman" }, pool), { kind: "project", project: "/w/harman" })
-  assert.equal(defaultFilter({ kind: "all" }, pool), null)
-  assert.deepEqual(defaultFilter({ kind: "starred" }, pool), { kind: "starred" })
-  // only an archived chat is left in /w/old: fall back to all
-  const withOld = [...pool, { id: "e", path: "e", project: "/w/old", last_message: 99, archived: true }]
-  assert.equal(defaultFilter({ kind: "project", project: "/w/old" }, withOld), null)
-  assert.equal(defaultFilter({ kind: "project", project: 7 }, pool), null)
+test("default filter: none unless Unread/Starred was chosen; legacy project filters drop", () => {
+  assert.equal(defaultFilter(undefined), null)
+  assert.equal(defaultFilter({ kind: "bogus" }), null)
+  assert.equal(defaultFilter({ kind: "all" }), null)
+  assert.equal(defaultFilter({ kind: "project", project: "/w/harman" }), null)
+  assert.deepEqual(defaultFilter({ kind: "starred" }), { kind: "starred" })
 })
 
 test("stored form: clearing the filter is remembered as all", () => {

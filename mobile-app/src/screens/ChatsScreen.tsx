@@ -13,7 +13,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, chatProjects, chatRows, isGrouped, NO_PROJECT, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
+import { activity, chatRows, isGrouped, NO_PROJECT, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
 import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -81,18 +81,18 @@ export default function ChatsScreen({ navigation }: Props) {
     () => chatRows(visibleChats(sessions, { archived: showArchived, query, filter }), grouped && !filter && !showArchived, collapsed),
     [sessions, query, filter, showArchived, grouped, collapsed])
 
-  // The search box's filter menu: Unread, Starred, or one project. One filter
+  // The search box's filter menu: Unread or Starred (projects are the grouped
+  // headers, and the search box matches project names). One filter
   // at a time; the active one shows as a pill under the box with a clear ✕.
-  // Project filtering is the default: the last choice is remembered per server
-  // and host ("Show all" included), and a first visit lands on the newest
-  // project (lib/chatList defaultFilter). Applied once per server|host, after
+  // The last choice is remembered per server and host ("Show all" included)
+  // (lib/chatList defaultFilter). Applied once per server|host, after
   // the first list arrives, so it never fights the user's own pick.
   const filterKey = `${activeServerId()}|${host}`
   const appliedKey = useRef("")
   useEffect(() => {
     if (!sessions.length || appliedKey.current === filterKey) return
     appliedKey.current = filterKey
-    setFilter(defaultFilter(chatFilterFor(filterKey), sessions))
+    setFilter(defaultFilter(chatFilterFor(filterKey)))
     setGrouped(isGrouped(chatFilterFor(`${filterKey}|grouped`)))
   }, [sessions, filterKey])
   function chooseGrouped(on: boolean) {
@@ -109,8 +109,6 @@ export default function ChatsScreen({ navigation }: Props) {
     showActions("Show only", [
       pick({ kind: "unread" }),
       pick({ kind: "starred" }),
-      ...chatProjects(sessions.filter((s) => !!s.archived === showArchived)).slice(0, 12)
-        .map((p) => ({ text: `Project: ${projectName(p)}`, onPress: () => chooseFilter({ kind: "project", project: p }) })),
       { text: grouped ? "Ungroup (flat list)" : "Group by project", onPress: () => chooseGrouped(!grouped) },
       ...(filter ? [{ text: "Show all chats", onPress: () => chooseFilter(null) }] : []),
     ])

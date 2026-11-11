@@ -35,7 +35,7 @@ export function chatRows(chats: Session[], grouped: boolean, collapsed: Readonly
 export const NO_PROJECT = "No project"
 
 /** The Chats search box's filter: one at a time, like a chat app's filter menu. */
-export type ChatFilter = { kind: "unread" } | { kind: "starred" } | { kind: "project"; project: string } | null
+export type ChatFilter = { kind: "unread" } | { kind: "starred" } | null
 
 /** A project's display name: the last folder of its path. */
 export function projectName(p: string): string {
@@ -45,14 +45,7 @@ export function projectName(p: string): string {
 
 export function filterLabel(f: ChatFilter): string {
   if (!f) return ""
-  return f.kind === "unread" ? "Unread" : f.kind === "starred" ? "Starred" : projectName(f.project)
-}
-
-/** The projects the filter menu offers: those with chats, the most recently active first. */
-export function chatProjects(chats: Session[]): string[] {
-  const seen = new Set<string>()
-  for (const s of [...chats].sort((a, b) => activity(b) - activity(a))) if (s.project) seen.add(s.project)
-  return [...seen]
+  return f.kind === "unread" ? "Unread" : "Starred"
 }
 
 /** What the Chats list shows: the archive or the main view, matching the search
@@ -63,12 +56,12 @@ export function visibleChats(chats: Session[], opts: { archived: boolean; query:
   return orderChats(chats.filter((s) =>
     !!s.archived === opts.archived &&
     (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)) &&
-    (!f || (f.kind === "unread" ? !!s.unread : f.kind === "starred" ? !!s.favorite : s.project === f.project))))
+    (!f || (f.kind === "unread" ? !!s.unread : !!s.favorite))))
 }
 
 /** The filter the Chats tab remembers per server and host. "all" is the owner's
  *  explicit "Show all chats", kept apart from "never chose" (undefined). */
-export type StoredFilter = { kind: "unread" } | { kind: "starred" } | { kind: "project"; project: string } | { kind: "all" }
+export type StoredFilter = { kind: "unread" } | { kind: "starred" } | { kind: "all" }
 
 export function toStored(f: ChatFilter): StoredFilter {
   return f ?? { kind: "all" }
@@ -76,17 +69,14 @@ export function toStored(f: ChatFilter): StoredFilter {
 
 function isStored(v: unknown): v is StoredFilter {
   const k = (v as { kind?: unknown } | null)?.kind
-  return k === "all" || k === "unread" || k === "starred" ||
-    (k === "project" && typeof (v as { project?: unknown }).project === "string")
+  return k === "all" || k === "unread" || k === "starred"
 }
 
-/** The filter the Chats tab opens with: the owner's remembered choice, else
- *  none, which shows every chat grouped by project. A remembered project that
- *  no longer has live chats falls back to all. */
-export function defaultFilter(stored: unknown, chats: Session[]): ChatFilter {
-  if (!isStored(stored) || stored.kind === "all") return null
-  if (stored.kind !== "project") return stored
-  return chats.some((s) => !s.archived && s.project === stored.project) ? stored : null
+/** The filter the Chats tab opens with: the owner's remembered Unread/Starred
+ *  choice, else none (every chat, grouped by project). A project filter saved by
+ *  an older build is not a valid choice any more and falls back to none. */
+export function defaultFilter(stored: unknown): ChatFilter {
+  return isStored(stored) && stored.kind !== "all" ? stored : null
 }
 
 /** Grouping by project is the default; only an explicit `false` turns it off. */
