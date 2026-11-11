@@ -23,7 +23,7 @@ describe("Composer # file mention", function () {
       const input = await $("~composer-input")
       await input.clearValue()
       await input.addValue(typed)
-      const row = await $("~file-mention-viewer/routes/fs.py")
+      const row = await $("~file-mention-orchestrator/routes/fs.py")
       await row.waitForDisplayed({ timeout: 10000 })
       await row.click()
       await browser.pause(500)
