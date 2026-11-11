@@ -42,24 +42,36 @@ test("projects menu: distinct, newest activity first; labels use the folder name
   assert.equal(filterLabel(null), "")
 })
 
-test("default filter: the newest project when nothing was chosen", () => {
-  assert.deepEqual(defaultFilter(undefined, pool), { kind: "project", project: "/w/sift" })
-  assert.deepEqual(defaultFilter({ kind: "bogus" }, pool), { kind: "project", project: "/w/sift" })
-  assert.equal(defaultFilter(undefined, [chat("x", 1)]), null) // no chat has a project
+test("default filter: all chats (grouped) when nothing was chosen", () => {
+  assert.equal(defaultFilter(undefined, pool), null)
+  assert.equal(defaultFilter({ kind: "bogus" }, pool), null)
   assert.equal(defaultFilter(undefined, []), null)
 })
 
-test("default filter: a remembered choice stands; a project with no live chats falls back", () => {
+test("default filter: a remembered choice stands; a project with no live chats falls back to all", () => {
   assert.deepEqual(defaultFilter({ kind: "project", project: "/w/harman" }, pool), { kind: "project", project: "/w/harman" })
   assert.equal(defaultFilter({ kind: "all" }, pool), null)
   assert.deepEqual(defaultFilter({ kind: "starred" }, pool), { kind: "starred" })
-  // only an archived chat is left in /w/old: fall back to the newest live project
+  // only an archived chat is left in /w/old: fall back to all
   const withOld = [...pool, { id: "e", path: "e", project: "/w/old", last_message: 99, archived: true }]
-  assert.deepEqual(defaultFilter({ kind: "project", project: "/w/old" }, withOld), { kind: "project", project: "/w/sift" })
-  assert.deepEqual(defaultFilter({ kind: "project", project: 7 }, pool), { kind: "project", project: "/w/sift" })
+  assert.equal(defaultFilter({ kind: "project", project: "/w/old" }, withOld), null)
+  assert.equal(defaultFilter({ kind: "project", project: 7 }, pool), null)
 })
 
 test("stored form: clearing the filter is remembered as all", () => {
   assert.deepEqual(toStored(null), { kind: "all" })
   assert.deepEqual(toStored({ kind: "unread" }), { kind: "unread" })
+})
+
+import { chatRows, isGrouped } from "./chatList.ts"
+test("chatRows groups by project in first-seen order, honours collapse, flat when off", () => {
+  const mk = (id: string, project?: string) => ({ id, path: id, project } as never)
+  const list = [mk("a", "/x/p1"), mk("b"), mk("c", "/x/p1")]
+  assert.deepEqual(chatRows(list, true, new Set()).map((r) => (r.kind === "header" ? `H:${r.project}:${r.count}` : r.s.id)),
+    ["H:/x/p1:2", "a", "c", "H:No project:1", "b"])
+  assert.deepEqual(chatRows(list, true, new Set(["/x/p1"])).map((r) => (r.kind === "header" ? r.project : r.s.id)),
+    ["/x/p1", "No project", "b"])
+  assert.equal(chatRows(list, false, new Set()).length, 3)
+  assert.equal(isGrouped(undefined), true)
+  assert.equal(isGrouped(false), false)
 })

@@ -13,7 +13,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, chatProjects, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
+import { activity, chatProjects, chatRows, isGrouped, NO_PROJECT, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
 import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -58,6 +58,8 @@ export default function ChatsScreen({ navigation }: Props) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<ChatFilter>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [grouped, setGrouped] = useState(true)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [actionFor, setActionFor] = useState<Session | null>(null)
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -76,8 +78,8 @@ export default function ChatsScreen({ navigation }: Props) {
   // Search + filter, then favorites first, newest message first (lib/chatList).
   // The archive view shows only archived chats; the main view hides them.
   const rows = useMemo(
-    () => visibleChats(sessions, { archived: showArchived, query, filter }),
-    [sessions, query, filter, showArchived])
+    () => chatRows(visibleChats(sessions, { archived: showArchived, query, filter }), grouped && !filter && !showArchived, collapsed),
+    [sessions, query, filter, showArchived, grouped, collapsed])
 
   // The search box's filter menu: Unread, Starred, or one project. One filter
   // at a time; the active one shows as a pill under the box with a clear ✕.
@@ -91,7 +93,12 @@ export default function ChatsScreen({ navigation }: Props) {
     if (!sessions.length || appliedKey.current === filterKey) return
     appliedKey.current = filterKey
     setFilter(defaultFilter(chatFilterFor(filterKey), sessions))
+    setGrouped(isGrouped(chatFilterFor(`${filterKey}|grouped`)))
   }, [sessions, filterKey])
+  function chooseGrouped(on: boolean) {
+    setGrouped(on)
+    void setChatFilterFor(`${filterKey}|grouped`, on)
+  }
   function chooseFilter(f: ChatFilter) {
     setFilter(f)
     void setChatFilterFor(filterKey, toStored(f))
@@ -104,6 +111,7 @@ export default function ChatsScreen({ navigation }: Props) {
       pick({ kind: "starred" }),
       ...chatProjects(sessions.filter((s) => !!s.archived === showArchived)).slice(0, 12)
         .map((p) => ({ text: `Project: ${projectName(p)}`, onPress: () => chooseFilter({ kind: "project", project: p }) })),
+      { text: grouped ? "Ungroup (flat list)" : "Group by project", onPress: () => chooseGrouped(!grouped) },
       ...(filter ? [{ text: "Show all chats", onPress: () => chooseFilter(null) }] : []),
     ])
   }
@@ -368,7 +376,7 @@ export default function ChatsScreen({ navigation }: Props) {
         <FlatList
           testID="chats-list"
           data={rows}
-          keyExtractor={(s) => s.path}
+          keyExtractor={(r) => (r.kind === "header" ? `hdr:${r.project}` : r.s.path)}
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={false} onRefresh={() => load(false)} />}
           ListHeaderComponent={
@@ -454,7 +462,41 @@ export default function ChatsScreen({ navigation }: Props) {
               </Text>
             )
           }
-          renderItem={({ item }) => {
+          renderItem={({ item: row }) => {
+            if (row.kind === "header") {
+              const open = !collapsed.has(row.project)
+              const named = row.project !== NO_PROJECT
+              return (
+                <View style={styles.projectHeader}>
+                  <TouchableOpacity
+                    testID={`project-header-${row.project}`}
+                    style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}
+                    onPress={() =>
+                      setCollapsed((prev) => {
+                        const n = new Set(prev)
+                        n.has(row.project) ? n.delete(row.project) : n.add(row.project)
+                        return n
+                      })
+                    }
+                  >
+                    <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
+                    <Text style={styles.projectHeaderText} numberOfLines={1}>{named ? projectName(row.project) : row.project}</Text>
+                    <Text style={styles.projectHeaderCount}>{row.count}</Text>
+                  </TouchableOpacity>
+                  {named && (
+                    <TouchableOpacity
+                      testID={`project-new-chat-${row.project}`}
+                      accessibilityLabel={`New chat in ${projectName(row.project)}`}
+                      hitSlop={10}
+                      onPress={() => navigation.navigate("NewChat", { cwd: row.project })}
+                    >
+                      <Icon name="add" size={18} color={t.accent} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )
+            }
+            const item = row.s
             const name = item.title || item.id.slice(0, 8)
             const unread = !!item.unread
             const isSelected = selecting && selected.has(item.path)

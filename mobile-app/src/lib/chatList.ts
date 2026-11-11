@@ -12,6 +12,28 @@ export function orderChats(chats: Session[]): Session[] {
   return [...chats].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || activity(b) - activity(a))
 }
 
+export type ChatRow = { kind: "chat"; s: Session } | { kind: "header"; project: string; count: number }
+
+/** The list's rows. Flat, or grouped by project: a header per project (the one
+ *  with the newest message first, "No project" last-named bucket by activity),
+ *  its chats under it unless collapsed. The archive view is always flat. */
+export function chatRows(chats: Session[], grouped: boolean, collapsed: ReadonlySet<string>): ChatRow[] {
+  if (!grouped) return chats.map((s) => ({ kind: "chat", s }))
+  const groups = new Map<string, Session[]>()
+  for (const s of chats) {
+    const key = s.project || NO_PROJECT
+    ;(groups.get(key) || groups.set(key, []).get(key)!).push(s)
+  }
+  const out: ChatRow[] = []
+  for (const [project, list] of groups) {
+    out.push({ kind: "header", project, count: list.length })
+    if (!collapsed.has(project)) for (const s of list) out.push({ kind: "chat", s })
+  }
+  return out
+}
+
+export const NO_PROJECT = "No project"
+
 /** The Chats search box's filter: one at a time, like a chat app's filter menu. */
 export type ChatFilter = { kind: "unread" } | { kind: "starred" } | { kind: "project"; project: string } | null
 
@@ -58,16 +80,16 @@ function isStored(v: unknown): v is StoredFilter {
     (k === "project" && typeof (v as { project?: unknown }).project === "string")
 }
 
-/** The filter the Chats tab opens with. Project filtering is the default: the
- *  project the owner last picked, while it still has chats, else the project
- *  with the newest message. An explicit "all", unread or starred choice stands. */
+/** The filter the Chats tab opens with: the owner's remembered choice, else
+ *  none, which shows every chat grouped by project. A remembered project that
+ *  no longer has live chats falls back to all. */
 export function defaultFilter(stored: unknown, chats: Session[]): ChatFilter {
-  const live = chats.filter((s) => !s.archived)
-  if (isStored(stored)) {
-    if (stored.kind === "all") return null
-    if (stored.kind !== "project") return stored
-    if (live.some((s) => s.project === stored.project)) return stored
-  }
-  const newest = chatProjects(live)[0]
-  return newest ? { kind: "project", project: newest } : null
+  if (!isStored(stored) || stored.kind === "all") return null
+  if (stored.kind !== "project") return stored
+  return chats.some((s) => !s.archived && s.project === stored.project) ? stored : null
+}
+
+/** Grouping by project is the default; only an explicit `false` turns it off. */
+export function isGrouped(stored: unknown): boolean {
+  return stored !== false
 }
