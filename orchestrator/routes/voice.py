@@ -134,6 +134,32 @@ class VoiceMixin:
                                                headers={"Content-Type": "application/json"}),
                         timeout=SPEECH_TIMEOUT)
 
+    def _g_call_live(self, req):
+        """Fish realtime call socket; the protocol is in orchestrator/fishcall.py."""
+        from orchestrator import callbrain, config, fishcall
+        from orchestrator.wsserver import WSServer
+        path = (req.query.get("path") or [""])[0]
+        full = self.resolve_session_quiet(path) if path else None
+        if not full:
+            self.send_json({"error": "Session required"}, status=400)
+            return
+        if callbrain.engine().get("engine") != "fish":
+            self.send_json({"error": "Fish call engine is off"}, status=409)
+            return
+        ws = WSServer.upgrade(self)
+        if not ws:
+            return
+        try:
+            fishcall.run_bridge(ws, full.stem, req.principal, [], {
+                "key": config.FISH_API_KEY, "asr_url": config.FISH_ASR_URL,
+                "tts_url": config.FISH_TTS_URL, "tts_model": config.FISH_TTS_MODEL,
+                "voice_id": config.FISH_VOICE_ID})
+        finally:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
     def _g_voice_ws(self, req):
         """The call's listening WebSocket. The app streams short audio windows as
         binary frames; for each one the GPU box transcribes (or, in wakeguard

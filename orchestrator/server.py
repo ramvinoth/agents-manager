@@ -414,6 +414,7 @@ class SessionViewerHandler(
         "/api/copilot-interactive": "_g_copilot_interactive",
         "/api/browser/ws": "_g_browser_ws",
         "/api/voice/ws": "_g_voice_ws",
+        "/api/call/live": "_g_call_live",
         "/api/live/ws": "_g_live_ws",
         "/api/canvas/board": "_g_canvas_board",
         "/api/canvas/file": "_g_canvas_file",
@@ -634,7 +635,7 @@ class PooledHTTPServer(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
     WS_PATHS = (b"/api/terminal/ws", b"/api/browser/ws", b"/api/voice/ws", b"/api/live/ws",
-                b"/api/canvas/ws", b"/api/events/ws")
+                b"/api/canvas/ws", b"/api/events/ws", b"/api/call/live")
     PEEK_TIMEOUT = 5       # cap the WS-detection peek so a silent client can't pin a worker
     REQUEST_TIMEOUT = 30   # cap a whole HTTP request read for the same reason (WS opts out)
 

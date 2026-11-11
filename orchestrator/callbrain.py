@@ -48,7 +48,8 @@ import urllib.request
 from datetime import datetime
 
 from orchestrator import actions, db, orglogic, providers
-from orchestrator.config import CHAT_JOBS, CHAT_LOCK, LFM3_SERVICE_URL, read_back, split_lines, transcript_path
+from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY, FISH_TTS_MODEL, LFM3_SERVICE_URL,
+                                 read_back, split_lines, transcript_path)
 from orchestrator.customrun import chat_completion_message
 
 SETTING_KEY = "call_brain"        # {"provider": <preset id>}
@@ -291,6 +292,12 @@ def describe_engine(preset):
 
 
 def engine():
+    if CALL_ENGINE == "fish" and FISH_API_KEY:
+        # Fish listens and speaks over /api/call/live; the call brain still thinks.
+        d = describe_engine(brain_preset())
+        out = {"engine": "fish", "model": f"Fish {FISH_TTS_MODEL} + {d.get('model', '')}".rstrip(" +"),
+               "live": "/api/call/live"}
+        return {**out, "error": d["error"]} if "error" in d else out
     if LFM3_SERVICE_URL:
         try:
             if _lfm3_http("GET", "/health", timeout=2).get("ok"):

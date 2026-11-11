@@ -206,6 +206,15 @@ TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "")
 # LFM3-Audio speaks the call natively (one model: board tools + spoken audio, see
 # callbrain.lfm3_turn). Empty = the call uses the Qwen brain + Pocket TTS instead.
 LFM3_SERVICE_URL = os.environ.get("HARMAN_LFM3_URL", "")
+# Fish Audio realtime call (orchestrator.fishcall): streaming ASR in, streaming TTS out,
+# the Qwen brain in between. Opt in with HARMAN_CALL_ENGINE=fish + FISH_API_KEY; off by
+# default so LFM3 / the brain stay the call engine until the owner flips it.
+CALL_ENGINE = os.environ.get("HARMAN_CALL_ENGINE", "")
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
+FISH_TTS_MODEL = os.environ.get("FISH_TTS_MODEL", "s2.1-pro-free")
+FISH_VOICE_ID = os.environ.get("FISH_VOICE_ID", "")
+FISH_ASR_URL = os.environ.get("FISH_ASR_URL", "wss://api.fish.audio/v1/asr/realtime")
+FISH_TTS_URL = os.environ.get("FISH_TTS_URL", "wss://api.fish.audio/v1/tts/live")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).

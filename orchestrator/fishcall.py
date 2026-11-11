@@ -1,0 +1,398 @@
+"""Fish Audio realtime call engine: the phone's /api/call/live socket.
+
+One WebSocket from the phone carries the whole call:
+  phone -> server  binary PCM16 mono 16 kHz (20-40 ms chunks), and JSON
+                   {"type":"start","history":[...]}, {"type":"played"},
+                   {"type":"stop"}, {"type":"ping"}
+  server -> phone  binary PCM16 mono 24 kHz (the reply's voice), and JSON
+                   ready{sample_rate}, heard{text}, reply{text}, audio_end,
+                   barge, error{message}, pong
+
+Behind it the server holds two Fish sockets (msgpack frames):
+  ASR  wss://api.fish.audio/v1/asr/realtime  — streams the caller's audio and
+       decides when they finished a turn (eager_end_of_turn, then committed).
+  TTS  wss://api.fish.audio/v1/tts/live      — one socket per reply; closing
+       it is how a barge-in stops the voice.
+The brain in between is callbrain.call_turn (the board tools), unchanged.
+
+Speed: Fish sends an EAGER end-of-turn before it is sure. The brain starts on
+it; when the turn is then committed with the same words, the reply is ready.
+If the caller keeps talking (turn_resumed) the speculative answer is dropped.
+A speculative turn may only READ (board_status, card_detail): a tool that
+writes raises NeedsCommit and the turn is answered again once committed.
+
+TurnTaker is the pure state machine (unit-tested); run_bridge wires sockets
+and threads, with the dialer and brain injectable so tests need no network.
+"""
+
+import json
+import struct
+import threading
+
+import msgpack
+
+from orchestrator import wsclient
+from orchestrator.wsclient import OP_BINARY, OP_CLOSE, OP_TEXT, WSHandshakeError
+
+PHONE_RATE = 16000          # what the phone sends
+VOICE_RATE = 24000          # what TTS sends back
+READ_TIMEOUT = 10           # ASR read tick; an idle tick sends keepalive (Fish closes at 30 s idle)
+ASR_RECONNECT = 1012        # Fish "service restart": dial again
+READ_ONLY_TOOLS = frozenset({"board_status", "card_detail"})
+
+
+def dial_error(e, default):
+    """What the phone says when Fish refuses the socket: 402 means the API balance
+    (separate from the app subscription) is empty, 401 a bad key, 429 too many calls."""
+    status = getattr(e, "status", None) if isinstance(e, WSHandshakeError) else None
+    return {402: "The Fish API balance is empty; top it up to use the call.",
+            401: "The Fish API key was refused.",
+            429: "Fish is busy with too many calls; try again in a moment."}.get(status, default)
+
+
+def pack(d):
+    return msgpack.packb(d, use_bin_type=True)
+
+
+def unpack(b):
+    return msgpack.unpackb(b, raw=False)
+
+
+class NeedsCommit(Exception):
+    """A speculative turn tried a tool that writes; answer it after commit."""
+
+
+# ------------------------------------------------------------ turn taking
+
+class TurnTaker:
+    """Decides, from Fish ASR events and brain results, what to do next.
+
+    Every method returns a list of actions:
+      ("think", turn, text, eager)  start the brain on `text`
+      ("cancel", turn)              drop that turn's speculative answer
+      ("speak", turn, reply)        voice `reply`
+      ("barge",)                    the caller cut in: stop the voice now
+      ("heard", text)               show the caller's committed words
+    """
+
+    def __init__(self):
+        self.current = None       # newest turn index
+        self.asked = {}           # turn -> text the brain is answering
+        self.replies = {}         # turn -> finished reply awaiting commit
+        self.committed = {}       # turn -> committed text
+        self.speaking = False
+
+    def on_asr(self, ev):
+        kind, turn = ev.get("type"), ev.get("turn_index")
+        if kind == "user_turn_taken":
+            self.current = turn
+            if self.speaking:
+                self.speaking = False
+                return [("barge",)]
+            return []
+        if kind == "eager_end_of_turn":
+            text = (ev.get("text") or "").strip()
+            if not text or turn in self.committed:
+                return []
+            self.current = turn
+            self.asked[turn] = text
+            self.replies.pop(turn, None)
+            return [("think", turn, text, True)]
+        if kind == "turn_resumed":
+            self.replies.pop(turn, None)
+            if self.asked.pop(turn, None) is None:
+                return []
+            return [("cancel", turn)]
+        if kind == "committed":
+            text = (ev.get("text") or "").strip()
+            if ev.get("user_turn") is False or not text:
+                return []
+            self.current = turn
+            self.committed[turn] = text
+            acts = [("heard", text)]
+            if self.asked.get(turn) == text:
+                if turn in self.replies:
+                    acts.append(self._speak(turn))
+                return acts
+            if turn in self.asked:
+                acts.append(("cancel", turn))
+            self.asked[turn] = text
+            self.replies.pop(turn, None)
+            acts.append(("think", turn, text, False))
+            return acts
+        return []                 # speech_start, user_backchannel, progress, configured ...
+
+    def brain_done(self, turn, text, reply):
+        if self.asked.get(turn) != text or turn != self.current:
+            return []             # stale: the caller moved on or the words changed
+        self.replies[turn] = reply
+        if self.committed.get(turn) == text:
+            return [self._speak(turn)]
+        return []
+
+    def brain_deferred(self, turn, text):
+        """The eager answer needed a write; re-run it for real once committed."""
+        if self.asked.get(turn) != text:
+            return []
+        if self.committed.get(turn) == text:
+            return [("think", turn, text, False)]
+        self.asked.pop(turn, None)  # committed will re-ask
+        return []
+
+    def played(self):
+        self.speaking = False
+
+    def _speak(self, turn):
+        self.speaking = True
+        reply = self.replies.pop(turn)
+        self.asked.pop(turn, None)
+        return ("speak", turn, reply)
+
+
+# ------------------------------------------------------------ Fish sockets
+
+def asr_config(history):
+    ctx = [{"role": m["role"], "text": str(m.get("content") or "")[:2000]}
+           for m in (history or [])
+           if isinstance(m, dict) and m.get("role") in ("user", "assistant") and m.get("content")]
+    return {"type": "config",
+            "audio": {"format": "pcm_s16le", "sample_rate": PHONE_RATE, "channels": 1},
+            "turn_detection": {"mode": "auto", "eager": True},
+            "results": {"drafts": False, "tag_audio_events": False},
+            "context": {"history": ctx[-32:]}}
+
+
+def tts_start(voice_id):
+    req = {"text": "", "format": "pcm", "sample_rate": VOICE_RATE, "latency": "low"}
+    if voice_id:
+        req["reference_id"] = voice_id
+    return {"event": "start", "request": req}
+
+
+def close_code(payload):
+    return struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1005
+
+
+# ------------------------------------------------------------ the bridge
+
+class Bridge:
+    """One live call. `phone` is a server-side socket (recv/send_bytes/
+    send_text/close); `dial(url, headers)` opens a Fish client socket;
+    `brain(text, history, tool_runner)` returns call_turn's dict."""
+
+    def __init__(self, phone, dial, brain, key, asr_url, tts_url, tts_model, voice_id="",
+                 history=None, speakable=lambda s: s):
+        self.phone, self.dial, self.brain = phone, dial, brain
+        self.key, self.asr_url, self.tts_url = key, asr_url, tts_url
+        self.tts_model, self.voice_id, self.speakable = tts_model, voice_id, speakable
+        self.history = list(history or [])
+        self.turns = TurnTaker()
+        self.lock = threading.Lock()     # guards turns, history, tts
+        self.asr = None
+        self.tts = None
+        self.done = threading.Event()
+
+    # -- helpers
+    def tell(self, kind, **kw):
+        try:
+            self.phone.send_text(json.dumps({"type": kind, **kw}))
+        except Exception:
+            self.done.set()
+
+    def _asr_send(self, msg):
+        asr = self.asr
+        if asr is not None:
+            try:
+                asr.send_bytes(pack(msg))
+            except Exception:
+                pass
+
+    def open_asr(self):
+        asr = self.dial(self.asr_url, {"Authorization": "Bearer " + self.key})
+        asr.sock.settimeout(READ_TIMEOUT)
+        asr.send_bytes(pack(asr_config(self.history)))
+        self.asr = asr
+
+    # -- actions
+    def act(self, actions):
+        for a in actions:
+            if a[0] == "think":
+                threading.Thread(target=self._think, args=a[1:], daemon=True).start()
+            elif a[0] == "heard":
+                self.tell("heard", text=a[1])
+            elif a[0] == "speak":
+                threading.Thread(target=self._speak, args=(a[2],), daemon=True).start()
+            elif a[0] == "barge":
+                self._stop_voice()
+                self.tell("barge")
+                self._asr_send({"type": "agent_speaking", "speaking": False})
+            # "cancel": the stale answer is dropped by TurnTaker; nothing to close
+
+    def _think(self, turn, text, eager):
+        def runner(name, args, ctx):
+            if eager and name not in READ_ONLY_TOOLS:
+                raise NeedsCommit(name)
+            from orchestrator.callbrain import run_tool
+            return run_tool(name, args, ctx)
+        with self.lock:
+            history = list(self.history)
+        try:
+            out = self.brain(text, history, runner)
+        except NeedsCommit:
+            with self.lock:
+                acts = self.turns.brain_deferred(turn, text)
+            return self.act(acts)
+        except Exception as e:
+            print(f"[fishcall] brain failed: {e}", flush=True)
+            out = {"reply": "Sorry, I could not think that through. Say it again?", "history": history}
+        with self.lock:
+            acts = self.turns.brain_done(turn, text, out["reply"])
+            if acts:
+                self.history = out.get("history") or history
+        self.act(acts)
+
+    def _speak(self, reply):
+        self.tell("reply", text=reply)
+        self._asr_send({"type": "agent_speaking", "speaking": True})
+        self._asr_send({"type": "context_add", "items": [{"role": "assistant", "text": reply[:2000]}]})
+        words = self.speakable(reply)
+        try:
+            tts = self.dial(self.tts_url, {"Authorization": "Bearer " + self.key, "model": self.tts_model})
+        except Exception as e:
+            print(f"[fishcall] tts dial failed: {e}", flush=True)
+            self.tell("error", message=dial_error(e, "The voice service is unreachable."))
+            return self._voice_over()
+        with self.lock:
+            self._stop_voice_locked()
+            self.tts = tts
+        try:
+            tts.send_bytes(pack(tts_start(self.voice_id)))
+            tts.send_bytes(pack({"event": "text", "text": words}))
+            tts.send_bytes(pack({"event": "flush"}))
+            tts.send_bytes(pack({"event": "stop"}))
+            while True:
+                op, payload = tts.recv()
+                if op == OP_CLOSE:
+                    break
+                if op != OP_BINARY:
+                    continue
+                ev = unpack(payload)
+                if ev.get("event") == "audio" and ev.get("audio"):
+                    self.phone.send_bytes(ev["audio"])
+                elif ev.get("event") == "finish":
+                    break
+        except Exception:
+            pass                  # closed by a barge-in, or the voice dropped
+        finally:
+            with self.lock:
+                barged = self.tts is not tts
+                if not barged:
+                    self.tts = None
+            tts.close()
+        if not barged:
+            self.tell("audio_end")  # the phone answers "played" once its buffer drains
+
+    def _stop_voice_locked(self):
+        if self.tts is not None:
+            self.tts.close()
+            self.tts = None
+
+    def _stop_voice(self):
+        with self.lock:
+            self._stop_voice_locked()
+
+    def _voice_over(self):
+        with self.lock:
+            self.turns.played()
+        self._asr_send({"type": "agent_speaking", "speaking": False})
+
+    # -- loops
+    def asr_loop(self):
+        while not self.done.is_set():
+            try:
+                op, payload = self.asr.recv()
+            except TimeoutError:
+                self._asr_send({"type": "keepalive"})
+                continue
+            except Exception:
+                op, payload = OP_CLOSE, b""
+            if op == OP_CLOSE:
+                if self.done.is_set():
+                    return
+                if close_code(payload) == ASR_RECONNECT:
+                    try:
+                        self.open_asr()
+                        continue
+                    except Exception:
+                        pass
+                self.tell("error", message="The listening service closed the call.")
+                self.done.set()
+                return
+            if op != OP_BINARY:
+                continue
+            ev = unpack(payload)
+            if ev.get("type") == "error":
+                print(f"[fishcall] asr error: {ev.get('message')}", flush=True)
+                if not ev.get("recoverable"):
+                    self.tell("error", message="The listening service failed.")
+                    self.done.set()
+                    return
+                continue
+            with self.lock:
+                acts = self.turns.on_asr(ev)
+            self.act(acts)
+
+    def run(self):
+        try:
+            self.open_asr()
+        except Exception as e:
+            print(f"[fishcall] asr dial failed: {e}", flush=True)
+            self.tell("error", message=dial_error(e, "The listening service is unreachable."))
+            return
+        self.tell("ready", sample_rate=VOICE_RATE)
+        reader = threading.Thread(target=self.asr_loop, daemon=True)
+        reader.start()
+        try:
+            while not self.done.is_set():
+                op, payload = self.phone.recv()
+                if op == OP_CLOSE:
+                    break
+                if op == OP_BINARY and payload:
+                    self.asr.send_bytes(pack({"type": "audio", "data": payload}))
+                elif op == OP_TEXT:
+                    msg = json.loads(payload.decode("utf-8", "replace") or "{}")
+                    kind = msg.get("type") if isinstance(msg, dict) else None
+                    if kind == "start":
+                        # The phone's call history so far; it feeds the brain's turns
+                        # (the ASR context was already sent when the socket opened).
+                        hist = msg.get("history")
+                        if isinstance(hist, list):
+                            with self.lock:
+                                self.history = [m for m in hist if isinstance(m, dict)]
+                    elif kind == "played":
+                        self._voice_over()
+                    elif kind == "stop":
+                        break
+                    elif kind == "ping":
+                        self.tell("pong")
+        except Exception:
+            pass
+        finally:
+            self.done.set()
+            self._stop_voice()
+            self._asr_send({"type": "audio_done"})
+            if self.asr is not None:
+                self.asr.close()
+
+
+def run_bridge(phone, sid, principal, history, settings, dial=None, brain=None, speakable=None):
+    """Serve one phone call. `settings` = {key, asr_url, tts_url, tts_model, voice_id}."""
+    if brain is None:
+        from orchestrator import callbrain
+        def brain(text, hist, runner):
+            return callbrain.call_turn(sid, principal, text, hist, tool_runner=runner)
+    if speakable is None:
+        from orchestrator.speakable import speakable
+    dial = dial or (lambda url, headers: wsclient.dial(url, headers=headers))
+    Bridge(phone, dial, brain, settings["key"], settings["asr_url"], settings["tts_url"],
+           settings["tts_model"], settings.get("voice_id", ""), history, speakable).run()
