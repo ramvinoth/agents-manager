@@ -3,7 +3,7 @@ import { type LucideIcon, AppWindow, BookOpenText } from "lucide-react"
 import { api } from "@/lib/api"
 import type { ProjectPlugin } from "@/lib/types"
 
-/** The icons a project plugin may name (viewer/project_plugins.py `icon`).
+/** The icons a project plugin may name (orchestrator/project_plugins.py `icon`).
  *  The server owns which plugins exist; the web only draws them. */
 const ICONS: Record<string, LucideIcon> = { BookOpenText }
 

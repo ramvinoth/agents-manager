@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for your interest in improving Agents. This is a small, dependency-light
-project — a Python `http.server` backend (`viewer/`) and a React + Vite frontend
+project — a Python `http.server` backend (`orchestrator/`) and a React + Vite frontend
 (`web/`). The goal is to keep it that way: readable, modular, and easy to run.
 
 ## Development setup

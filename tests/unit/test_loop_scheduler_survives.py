@@ -4,7 +4,7 @@ from unittest import mock
 
 import pytest
 
-from viewer import engine
+from orchestrator import engine
 
 
 class _Stop(BaseException):

@@ -1,9 +1,9 @@
-"""Tests for viewer.speakable — markdown → TTS-friendly prose."""
+"""Tests for orchestrator.speakable — markdown → TTS-friendly prose."""
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from viewer.speakable import speakable  # noqa: E402
+from orchestrator.speakable import speakable  # noqa: E402
 
 
 def test_strips_bold_italic_marks():

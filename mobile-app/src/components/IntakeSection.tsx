@@ -15,7 +15,7 @@ type Draft = { name: string; project: OrgProject | null; session: Session | null
 
 /**
  * Intake channels — doors from the outside world onto a board
- * (viewer/intake.py). Each is a URL + token bound to one project board and
+ * (orchestrator/intake.py). Each is a URL + token bound to one project board and
  * optionally one chat; a POST becomes a card there and wakes that chat. One
  * channel may also receive the owner's in-app feedback. Twin of the web
  * IntakeSection; the server owns every rule.

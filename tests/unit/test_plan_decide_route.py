@@ -9,9 +9,9 @@ plan loses the consume and gets 409 — it never double-resumes the session.
 """
 import pytest
 
-from viewer import db, engine, questions
-from viewer.routes import chat
-from viewer.routes.chat import ChatMixin
+from orchestrator import db, engine, questions
+from orchestrator.routes import chat
+from orchestrator.routes.chat import ChatMixin
 
 
 class _Handler(ChatMixin):

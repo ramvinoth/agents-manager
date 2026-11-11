@@ -1,8 +1,8 @@
-"""viewer.inference_health: liveness verdicts for a custom model endpoint,
+"""orchestrator.inference_health: liveness verdicts for a custom model endpoint,
 instead of blind timeouts (the 2026-10-07 Cloudflare 524 / dead-host incident)."""
 import json
 
-from viewer import inference_health as h
+from orchestrator import inference_health as h
 
 UP_BUSY = {"state": h.REACHABLE, "load": (1, 0)}
 UP_IDLE = {"state": h.REACHABLE, "load": (0, 0)}
@@ -107,7 +107,7 @@ def test_a_subagents_model_calls_are_watched():
 
 
 def test_anthropic_env_caps_cli_retries():
-    from viewer import providers
+    from orchestrator import providers
     env = providers.anthropic_env(None, preset={"baseUrl": "https://x", "model": "m"})
     assert env["CLAUDE_CODE_MAX_RETRIES"] == h.MAX_RETRIES
 

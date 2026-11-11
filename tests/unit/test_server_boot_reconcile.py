@@ -10,7 +10,7 @@ import sys
 import time
 
 
-from viewer import engine
+from orchestrator import engine
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,13 +18,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # whether they were called instead of being neutralised.
 BOOT = """
 import threading, sys
-from viewer import server, db
+from orchestrator import server, db
 db.init_db = lambda: None
 db.job_runs_abandon_running = lambda: print("RECONCILE job_runs") or 0
 server.run_settings_paths_in_use = lambda: set()
 server.run_settings_sweep_orphans = lambda live: print("RECONCILE settings") or []
 server.loop_scheduler = lambda *a, **k: print("SCHEDULER started")
-from viewer import resume
+from orchestrator import resume
 resume.resume_inflight = lambda: print("RECONCILE resume") or []
 class _Blocking:
     def __init__(self, *a, **k): pass

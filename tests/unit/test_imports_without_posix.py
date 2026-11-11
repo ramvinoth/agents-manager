@@ -1,6 +1,6 @@
 """Every viewer module must import on Windows: none may import a POSIX-only
 module at load time (pty, fcntl, termios, ...). The terminal device lives behind
-viewer.ptyproc, which imports its platform modules only when it spawns.
+orchestrator.ptyproc, which imports its platform modules only when it spawns.
 
 Runs on every OS by hiding the POSIX-only modules in a fresh interpreter, so a
 Mac or Linux run catches a new top-level `import fcntl` before Windows CI does.
@@ -24,9 +24,9 @@ class HidePosixOnly:
 for m in [m for m in sys.modules if m.split(".")[0] in POSIX_ONLY]:
     del sys.modules[m]
 sys.meta_path.insert(0, HidePosixOnly())
-import viewer
+import orchestrator
 bad = []
-for info in pkgutil.walk_packages(viewer.__path__, "viewer."):
+for info in pkgutil.walk_packages(orchestrator.__path__, "orchestrator."):
     try:
         importlib.import_module(info.name)
     except Exception as e:

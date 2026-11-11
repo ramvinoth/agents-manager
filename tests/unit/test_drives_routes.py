@@ -1,8 +1,8 @@
-"""Tests for DrivesMixin (viewer/routes/drives.py) — the cloud-drive control
+"""Tests for DrivesMixin (orchestrator/routes/drives.py) — the cloud-drive control
 surface the file browser's location picker calls.
 
 The handlers are thin mappers: one HTTP request → a call into the pure layer
-(viewer.db drive helpers + viewer.drive_oauth) with a DriveError translated to
+(orchestrator.db drive helpers + orchestrator.drive_oauth) with a DriveError translated to
 its HTTP status. So the tests stand those sources in with fakes and check the
 SHAPES and the security property that matters: the list route never echoes the
 per-user tokens or the vendor client secret out of the API. No Postgres, no
@@ -10,9 +10,9 @@ network.
 """
 import pytest
 
-from viewer import db, drive_oauth, server
-from viewer.drives import DriveError
-from viewer.routes.drives import DrivesMixin
+from orchestrator import db, drive_oauth, server
+from orchestrator.drives import DriveError
+from orchestrator.routes.drives import DrivesMixin
 
 
 class _Handler(DrivesMixin):

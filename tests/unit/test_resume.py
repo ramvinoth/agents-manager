@@ -1,9 +1,9 @@
-"""viewer.resume — boot resumes turns a server restart cut off, so an update
+"""orchestrator.resume — boot resumes turns a server restart cut off, so an update
 or crash pauses agent work instead of dropping it. Storage is faked; the
 launcher is injected."""
 import pytest
 
-from viewer import db, questions, resume, inbox
+from orchestrator import db, questions, resume, inbox
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def test_one_bad_row_does_not_stop_the_rest(store):
 
 
 def test_start_requeues_backlog(monkeypatch):
-    from viewer import engine, ai, config, turn
+    from orchestrator import engine, ai, config, turn
     sent = {}
     monkeypatch.setattr(config, "transcript_path", lambda sid: "/x.jsonl")
     monkeypatch.setattr(db, "session_meta_get", lambda sid: {})
@@ -99,7 +99,7 @@ def test_start_requeues_backlog(monkeypatch):
 
 
 def test_start_skips_session_without_transcript(monkeypatch):
-    from viewer import config
+    from orchestrator import config
     monkeypatch.setattr(config, "transcript_path", lambda sid: None)
     assert resume._start(_row("s")) is False
 
@@ -135,7 +135,7 @@ def test_the_cap_ask_quotes_the_last_error(store):
 def test_a_capped_run_does_not_also_push_a_generic_error(monkeypatch):
     """At the cap the owner is asked in the inbox; the finalizer must know, so
     it skips the vaguer 'The run ended with an error.' push."""
-    from viewer import engine
+    from orchestrator import engine
     monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
     monkeypatch.setattr(resume, "resume_one", lambda row, reason="": False)
     monkeypatch.setattr(db, "inflight_run_get",
@@ -147,7 +147,7 @@ def test_a_capped_run_does_not_also_push_a_generic_error(monkeypatch):
 def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
     """The finalizer's hand-off: the run's own row (with its leftovers) goes to
     resume_one; a row a newer run already replaced is left alone."""
-    from viewer import engine
+    from orchestrator import engine
     monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
     got = []
     monkeypatch.setattr(resume, "resume_one", lambda row, reason="": got.append(row) or True)
@@ -191,9 +191,9 @@ def test_every_harness_cut_by_a_restart_is_resumed_at_boot(monkeypatch, tmp_path
     the conversation again (codex id, pi session uuid, the session's AI)."""
     import threading
     import time
-    import viewer.push
-    from viewer import ai, config, customrun, engine, turn
-    from viewer.config import CHAT_JOBS
+    import orchestrator.push
+    from orchestrator import ai, config, customrun, engine, turn
+    from orchestrator.config import CHAT_JOBS
 
     # Durable store, faked with the real semantics: start upserts, clear only
     # removes the row of the run that recorded it.
@@ -218,7 +218,7 @@ def test_every_harness_cut_by_a_restart_is_resumed_at_boot(monkeypatch, tmp_path
     monkeypatch.setattr(questions, "get_open_plan", lambda sid: None)
     monkeypatch.setattr(db, "session_meta_get", lambda sid: {"sid": sid})
     monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
-    monkeypatch.setattr(viewer.push, "notify_all", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrator.push, "notify_all", lambda *a, **k: None)
 
     # The runs: every spawn blocks mid-turn until `gate` fires.
     gate, ended = threading.Event(), []
@@ -302,7 +302,7 @@ def test_oneshot_run_end_settles_before_clearing_a_failed_turn(monkeypatch):
     SIGTERM: wait RESUME_SETTLE before clearing, so a server that goes down
     meanwhile leaves the row for boot. A clean exit or the owner's stop clears
     at once."""
-    from viewer import engine
+    from orchestrator import engine
     slept, cleared = [], []
     monkeypatch.setattr(engine.time, "sleep", slept.append)
     monkeypatch.setattr(db, "inflight_run_clear", lambda sid, started: cleared.append((sid, started)))

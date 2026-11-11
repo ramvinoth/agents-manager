@@ -20,8 +20,8 @@ already render. So:
 import time
 
 
-from viewer import decisions
-from viewer.routes.chat import ChatMixin
+from orchestrator import decisions
+from orchestrator.routes.chat import ChatMixin
 
 NOW = 1_000_000.0
 
@@ -137,7 +137,7 @@ class TestRoute:
         """An open Red approval with no inbox row (queued before delivery
         existed) is delivered on read so it can be postponed; one with a row
         is not re-delivered."""
-        import viewer.inbox as vi
+        import orchestrator.inbox as vi
         sent = []
         monkeypatch.setattr(vi, "deliver_red", lambda r: sent.append(r["id"]))
         monkeypatch.setattr(vi, "red_subject", lambda intent: "Harman → bypass")
@@ -159,16 +159,16 @@ class TestRoute:
 
     def _fakes(self, monkeypatch, qrows, prows, arows, labeler=None, crows=(),
                inbox_rows=(), red=()):
-        import viewer.db as vdb
-        import viewer.questions as q
-        import viewer.queue as vqueue
+        import orchestrator.db as vdb
+        import orchestrator.questions as q
+        import orchestrator.queue as vqueue
         monkeypatch.setattr(vdb, "cards_awaiting_owner", lambda: list(crows))
         monkeypatch.setattr(vdb, "approval_list_open", lambda: list(red))
         monkeypatch.setattr(vdb, "inbox_decision_refs", lambda: list(inbox_rows))
         monkeypatch.setattr(q, "get_open_all", lambda: qrows)
         monkeypatch.setattr(q, "get_open_plan_all", lambda: prows)
         # The route (chat._g_decisions_open) delegates the gather to
-        # viewer.queue.open_items — patch the source names where THAT module
+        # orchestrator.queue.open_items — patch the source names where THAT module
         # holds its references. The cap is the default (3) unless a test sets it.
         monkeypatch.setattr(vqueue, "cap", lambda: vqueue.DEFAULT_CAP)
         monkeypatch.setattr(vqueue, "pending_approvals_all_public", lambda: arows)
@@ -312,10 +312,10 @@ class TestChatStatusRed:
     SID = "s-ask"
 
     def _status(self, monkeypatch, red, job=None):
-        import viewer.db as vdb
-        import viewer.inbox as vi
-        import viewer.questions as q
-        import viewer.routes.chat as vchat
+        import orchestrator.db as vdb
+        import orchestrator.inbox as vi
+        import orchestrator.questions as q
+        import orchestrator.routes.chat as vchat
         monkeypatch.setattr(vdb, "approval_list_open", red if callable(red) else (lambda: list(red)))
         monkeypatch.setattr(vi, "red_subject", lambda intent: "")
         monkeypatch.setattr(q, "get_open", lambda s: None)

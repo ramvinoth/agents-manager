@@ -6,7 +6,7 @@ Backup: branch `backup/pre-review-fixes` @ `5127f63`. Restore with
 Working branch: `voice-mode`. Fix ONE item per loop tick, verify, then commit.
 Never batch unrelated fixes into one commit. After every code change run the
 relevant gate before committing:
-- Python (viewer/deploy): `python3 -c "import ast; ast.parse(open('<file>').read())"`
+- Python (orchestrator/deploy): `python3 -c "import ast; ast.parse(open('<file>').read())"`
   + `ruff check <file>` if available; restart `make serve` only when testing behavior.
 - Mobile (TS): `cd mobile-app && npm run check` (tsc + unit tests) — MUST be clean.
 - Do NOT ship to TestFlight per tick; batch a single ship at the end if mobile changed.

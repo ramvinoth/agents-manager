@@ -1,8 +1,8 @@
-"""viewer.canvas_patch: agent ops -> valid Excalidraw elements, ownership, revert."""
+"""orchestrator.canvas_patch: agent ops -> valid Excalidraw elements, ownership, revert."""
 import pytest
 
-from viewer import canvas_patch as cp
-from viewer import canvas_reconcile as rec
+from orchestrator import canvas_patch as cp
+from orchestrator import canvas_reconcile as rec
 
 ME, OTHER = "session:me", "session:other"
 

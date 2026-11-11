@@ -1,10 +1,10 @@
-"""viewer.events: the pub-sub, the snapshot diff, the list throttle and the
+"""orchestrator.events: the pub-sub, the snapshot diff, the list throttle and the
 watcher's lifecycle — all without a server or a database."""
 import json
 import threading
 import time
 
-from viewer import events
+from orchestrator import events
 
 
 # ---- Hub / Subscription ---------------------------------------------------------
@@ -287,7 +287,7 @@ def test_local_transcript_confines_a_claude_path_to_the_projects_root(monkeypatc
 
 def test_local_transcript_of_another_agent_needs_its_path(monkeypatch):
     calls = []
-    monkeypatch.setattr("viewer.adapters.resolve_agent_session",
+    monkeypatch.setattr("orchestrator.adapters.resolve_agent_session",
                         lambda agent, rel: calls.append((agent, rel)) or "resolved")
     assert events.local_transcript("s", {"agent": "codex", "path": ""}) is None
     assert events.local_transcript("s", {"agent": "codex", "path": "a/b.jsonl"}) == "resolved"
@@ -379,7 +379,7 @@ def test_remote_sizes_thread_exits_when_nobody_asks(monkeypatch):
 
 def test_remote_stat_resolves_once_and_stats_on_one_channel(monkeypatch):
     from contextlib import contextmanager
-    from viewer import remote
+    from orchestrator import remote
     opened, resolved = [], []
 
     class St:

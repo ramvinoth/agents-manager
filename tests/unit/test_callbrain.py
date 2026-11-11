@@ -1,4 +1,4 @@
-"""viewer.callbrain — the fast phone-call brain. The model is faked (a scripted
+"""orchestrator.callbrain — the fast phone-call brain. The model is faked (a scripted
 chat_completion_message), the board writes go through a faked actions.execute,
 so the whole turn is exercised hermetically: the live snapshot the brain answers
 from, transcript activity parsing, the spoken run description, card/board
@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from viewer import callbrain
+from orchestrator import callbrain
 
 NOW = datetime(2026, 9, 26, 15, 4, tzinfo=timezone(timedelta(hours=-7), "PDT"))
 T = NOW.timestamp()

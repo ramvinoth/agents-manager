@@ -1,5 +1,5 @@
 """Unit tests for the job-history DB helpers that carry real Python logic on
-top of their SQL: retention purge (viewer.db.job_runs_purge) and the boot /
+top of their SQL: retention purge (orchestrator.db.job_runs_purge) and the boot /
 token reconciliation helpers.
 
 The SQL itself needs Postgres, but the parts worth a regression test are pure
@@ -12,7 +12,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from viewer import db
+from orchestrator import db
 
 
 class _FakeCursor:
@@ -37,7 +37,7 @@ class _FakeCursor:
 
 @pytest.fixture
 def cursor(monkeypatch):
-    """Swap viewer.db._db for a context manager yielding a scriptable fake cursor."""
+    """Swap orchestrator.db._db for a context manager yielding a scriptable fake cursor."""
     cur = _FakeCursor()
 
     @contextmanager

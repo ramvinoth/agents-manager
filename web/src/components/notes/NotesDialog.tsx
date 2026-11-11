@@ -22,7 +22,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 const SAVE_DEBOUNCE_MS = 700
 
 /**
- * NotesDialog — the project's notes ledger (viewer/db `notes`) as a two-pane
+ * NotesDialog — the project's notes ledger (orchestrator/db `notes`) as a two-pane
  * modal: list on the left (search, archived shelf, template "+"), editor on the
  * right (title, kind, markdown body with autosave and a preview toggle, pin /
  * archive / delete). Resolves the org project from (host, cwd) exactly like the
@@ -30,7 +30,7 @@ const SAVE_DEBOUNCE_MS = 700
  * write through their note_* MCP tools.
  *
  * Notes link like an Obsidian vault: `[[Title]]` and `#tags` in a body. The
- * server derives the graph from the bodies (viewer/notelinks.py); this dialog
+ * server derives the graph from the bodies (orchestrator/notelinks.py); this dialog
  * reads it to make links clickable (a link to a note not written yet creates
  * it), list backlinks under the open note, filter by tag, draw the graph, and
  * export the whole project as a vault.

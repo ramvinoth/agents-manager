@@ -4,22 +4,22 @@ A file this long has more than one job, and the next edit lands in the wrong pla
 The files already over the limit are listed in OVERSIZED with the size they had when
 the guard went in. That number is a ceiling that only goes down: shrink a file and
 lower its entry (or drop it once it is under LIMIT); grow it and this test fails.
-Plan: note "Server architecture: rename viewer/ into bounded contexts (plan)".
+Plan: note "Server architecture: rename the server package into bounded contexts (plan)".
 """
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LIMIT = 1200
-SOURCES = ("viewer", "web/src", "mobile-app/src")
+SOURCES = ("orchestrator", "web/src", "mobile-app/src")
 SUFFIXES = (".py", ".ts", ".tsx")
 
 OVERSIZED = {
-    "viewer/db.py": 3498,
-    "viewer/engine.py": 2678,
-    "viewer/browser.py": 1407,
-    "viewer/remote.py": 1398,
-    "viewer/routes/sessions.py": 1375,
+    "orchestrator/db.py": 3498,
+    "orchestrator/engine.py": 2678,
+    "orchestrator/browser.py": 1407,
+    "orchestrator/remote.py": 1398,
+    "orchestrator/routes/sessions.py": 1375,
     "mobile-app/src/screens/ThreadScreen.tsx": 1536,
     "mobile-app/src/lib/styles.ts": 1451,
 }

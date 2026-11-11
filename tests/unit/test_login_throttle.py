@@ -1,7 +1,7 @@
 """Sign-in throttle keying: the raw peer IP, except a loopback peer (the local
 Cloudflare tunnel) is keyed on CF-Connecting-IP so internet clients don't
 share — and jointly exhaust — one bucket. Hermetic: pure functions only."""
-from viewer.routes import auth
+from orchestrator.routes import auth
 
 
 def test_direct_peer_ignores_cf_header():

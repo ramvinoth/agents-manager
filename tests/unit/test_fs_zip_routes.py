@@ -1,4 +1,4 @@
-"""Local-disk zip legs of viewer/routes/fs.py: /api/fs/compress (writes the
+"""Local-disk zip legs of orchestrator/routes/fs.py: /api/fs/compress (writes the
 archive next to the items) and /api/fs/download-zip (streams it). Both walk
 the selection with the same _zip_local, so a directory keeps its relative
 paths in either. tmp dir only — no drive, no SSH.
@@ -7,7 +7,7 @@ import io
 import json
 import zipfile
 
-from viewer.routes.fs import FsMixin
+from orchestrator.routes.fs import FsMixin
 
 
 class _Handler(FsMixin):

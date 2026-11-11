@@ -12,7 +12,7 @@ import secrets
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import viewer.db as db  # noqa: E402
+import orchestrator.db as db  # noqa: E402
 
 _CI_USER = "_ci"
 _SECRET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ci-secret")

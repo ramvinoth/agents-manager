@@ -11,15 +11,15 @@ Postgres. Regression for "fork drops provider/model/permission mode".
 import unittest
 from unittest.mock import patch
 
-from viewer.routes.sessions import SessionsMixin
+from orchestrator.routes.sessions import SessionsMixin
 
 
 class TestCarryForkMeta(unittest.TestCase):
     def setUp(self):
         self.store = {}
-        self.get = patch("viewer.db.session_meta_get",
+        self.get = patch("orchestrator.db.session_meta_get",
                          side_effect=lambda sid: dict(self.store.get(sid, {}))).start()
-        self.set = patch("viewer.db.session_meta_set",
+        self.set = patch("orchestrator.db.session_meta_set",
                          side_effect=lambda sid, data: self.store.__setitem__(sid, dict(data))).start()
         self.addCleanup(patch.stopall)
 

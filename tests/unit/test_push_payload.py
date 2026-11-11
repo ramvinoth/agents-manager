@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from viewer import db, engine, push
+from orchestrator import db, engine, push
 
 SID = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
 
@@ -107,11 +107,11 @@ def test_bash_command_with_secret_is_redacted():
 def test_non_bash_tool_previews_identity_not_payload():
     body = engine._perm_push_body(
         "Edit",
-        {"file_path": "/srv/tim/agents/viewer/push.py",
+        {"file_path": "/srv/tim/agents/orchestrator/push.py",
          "content": "internal secret draft text"},
         "local",
     )
-    assert "file_path=/srv/tim/agents/viewer/push.py" in body
+    assert "file_path=/srv/tim/agents/orchestrator/push.py" in body
     assert "internal secret draft text" not in body
 
 

@@ -3,9 +3,9 @@ session token. Codes are single-use, short-lived, capped per user, and only a
 person (never an agent's MCP session) can mint one."""
 import pytest
 
-from viewer import db, pairing, relay
-from viewer.routes import auth
-from viewer.routes.auth import AuthMixin
+from orchestrator import db, pairing, relay
+from orchestrator.routes import auth
+from orchestrator.routes.auth import AuthMixin
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +76,7 @@ def test_start_requires_a_person():
 def test_start_tells_the_qr_the_public_address(monkeypatch):
     """The QR must carry the address a phone can reach (the tunnel), not the
     localhost the customer's browser happens to be on."""
-    from viewer.routes import auth
+    from orchestrator.routes import auth
     monkeypatch.setattr(auth, "PUBLIC_URL", "https://harman.example.com")
     h = _Handler()
     h._p_auth_pair_start(_Req(APP))

@@ -1,4 +1,4 @@
-"""A function-local `from viewer import db` (or any re-import of a module the
+"""A function-local `from orchestrator import db` (or any re-import of a module the
 file already imports at the top) makes the name LOCAL to the whole function, so
 every use above that line raises UnboundLocalError. Wrapped in a best-effort
 try/except it fails silently: start_claude_run lost its in-flight record this
@@ -7,7 +7,7 @@ import importlib
 import pkgutil
 import types
 
-import viewer
+import orchestrator
 
 
 def _codes(obj):
@@ -27,7 +27,7 @@ def _nested(code):
 
 def test_no_function_rebinds_a_module_level_module_import():
     bad = []
-    for info in pkgutil.walk_packages(viewer.__path__, "viewer."):
+    for info in pkgutil.walk_packages(orchestrator.__path__, "orchestrator."):
         mod = importlib.import_module(info.name)
         modules = {k for k, v in vars(mod).items() if isinstance(v, types.ModuleType)}
         for obj in vars(mod).values():

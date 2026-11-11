@@ -83,7 +83,7 @@ export const createDetailsSlice: Slice<DetailsSlice> = (set, get) => {
       } catch {
         /* ignore */
       }
-      // The AI selection is a separate, revisioned document (viewer/ai.py) —
+      // The AI selection is a separate, revisioned document (orchestrator/ai.py) —
       // read it from its own route, never from the legacy meta fields.
       try {
         const c = await api.aiConfig({ id: sessionIdOf(currentSessionPath), host: get().currentHost, agent: get().currentAgent })

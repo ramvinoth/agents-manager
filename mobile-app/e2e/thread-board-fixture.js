@@ -57,7 +57,7 @@ const initialSelection = { provider: "", model: null, convMode: "agent", effort:
 function aiCapabilities(provider = "", host = "local", agent = "claude") {
   return { ...capabilities, editable: agent === "claude", customProviders: agent === "claude" && host === "local", conversationModes: provider ? ["agent", "chat"] : ["agent"], efforts: provider ? [""] : capabilities.efforts }
 }
-// Mirrors viewer/providers.model_rows: one row per known model with its effective window.
+// Mirrors orchestrator/providers.model_rows: one row per known model with its effective window.
 function modelRow(id, discovered = 0, override = 0) {
   return { id, contextWindow: override || discovered, source: override ? "override" : discovered ? "discovered" : "", discovered, override, maxOutput: 0 }
 }
@@ -105,7 +105,7 @@ const INTEGRATIONS = {
       services: [{ id: "dropbox.files", label: "Files", kind: "files", agent: "Browse and read files", available: true, unavailable: "", ops: FILE_OPS }],
       connections: [],
     },
-    // API-token providers (viewer/integrations._token / _planned): one connectable, one "coming later".
+    // API-token providers (orchestrator/integrations._token / _planned): one connectable, one "coming later".
     {
       id: "hetzner", label: "Hetzner Cloud", auth: "token", category: "compute", public: false,
       fields: [{ id: "name", label: "Name", placeholder: "Optional — e.g. Production", required: false }],
@@ -129,7 +129,7 @@ const INTEGRATIONS = {
 }
 const NO_INTEGRATIONS = { providers: [], redirect_uri: "", local: { roots: [], ops: [] } }
 
-// The marketplace browse shape (viewer/marketplace.mcp_entry).
+// The marketplace browse shape (orchestrator/marketplace.mcp_entry).
 // A small machine for the folder picker: home holds two projects and a file.
 const FS_HOME = "/Users/fixture"
 const FS_TREE = {
@@ -179,7 +179,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
   } : undefined
   const auditScenario = audit ? createAuditScenario() : null
   const marketCaps = { skills: [], mcp: [] }
-  // Mirrors viewer/agent_templates: one personal agent the owner may edit, with
+  // Mirrors orchestrator/agent_templates: one personal agent the owner may edit, with
   // its own skill and MCP server; update writes are recorded and applied.
   const agentRows = agents ? [{ id: 7, name: "Writing Coach", description: "Edits for clarity, keeps my voice", category: "personal", icon: "sparkle",
     system_prompt: "Edit for clarity; keep my voice.", goal: "", ai: null, jobs: [{ prompt: "Summarise this week's drafts", cron: "0 9 * * 1" }],
@@ -193,19 +193,19 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     creations: [], failNextSave: false, discoveryFailure: true, providerSaves: [],
     permissionMode: "acceptEdits",
   }
-  // Mirrors viewer/integrations.view(): one Google account with every service
+  // Mirrors orchestrator/integrations.view(): one Google account with every service
   // state represented, and an unconfigured public-client provider.
   const integrationsState = clone(INTEGRATIONS)
   // One event today, an hour from now, so the agenda always has a "Today" row.
   const soon = new Date(Date.now() + 3600_000)
   const calendarEvents = [{ id: "ev-0", title: "Fixture standup", start: soon.toISOString(), end: new Date(soon.getTime() + 900_000).toISOString(),
     all_day: false, location: "HQ", description: "", attendees: ["guest@example.com"], link: "", status: "confirmed" }]
-  // Mirrors viewer/inbox: rows carry their mailbox session_id and the derived
+  // Mirrors orchestrator/inbox: rows carry their mailbox session_id and the derived
   // open / effective_status. One chat (SESSION) has an open question waiting on
   // the owner; the other (BOARD_SESSION_B) has an unread free message.
   const inboxRows = inbox ? clone(INBOX) : []
-  let loopMode = "none" // viewer/loops: POST applies and echoes the mode
-  // Scheduled jobs (viewer/loops): create and edit are recorded and applied, so a
+  let loopMode = "none" // orchestrator/loops: POST applies and echoes the mode
+  // Scheduled jobs (orchestrator/loops): create and edit are recorded and applied, so a
   // spec can prove the job sheet sends exactly one write per Add / Save.
   const jobRows = [], jobWrites = []
   const waiting = m => m.recipient_type === "user" && m.effective_status === "sent" && m.open !== false
@@ -316,7 +316,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       integrationsState.local = { roots: body.roots, ops: integrationsState.local.ops.map(o => ({ ...o, on: body.ops.includes(o.id) })) }
       return send(integrationsState)
     }
-    // Calendar: the owner's events, per viewer/workspace._event. Writes are
+    // Calendar: the owner's events, per orchestrator/workspace._event. Writes are
     // refused unless the account was granted editing (the server's rule).
     if (integrations && route.startsWith("POST /api/calendar/")) {
       const conn = integrationsState.providers.flatMap(p => p.connections).find(c => c.id === body.connection)
@@ -413,7 +413,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     if (jobs && route === "GET /api/loops") return send(jobRows)
     if (route === "POST /api/org/loop-control") { loopMode = body.mode; return send({ mode: loopMode }) }
     // Connection editor (ProvidersScreen): draft discovery reports per-model windows;
-    // a save is recorded and echoed the way viewer/providers.upsert_preset returns it.
+    // a save is recorded and echoed the way orchestrator/providers.upsert_preset returns it.
     if (ai && route === "POST /api/providers/models") {
       if (!body || typeof body.baseUrl !== "string" || "apiKey" in body && body.apiKeyAction !== "replace") return send({ error: "Invalid fixture draft" }, 400)
       const found = [["fixture-alpha-default", 131072], ["fixture-alpha-large", 262144], ["fixture-alpha-mystery", 0]]
@@ -454,7 +454,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
       }
       return send({ lines: thread, start: 0, end: thread.length, size: thread.length })
     }
-    // Mirrors viewer/routes/sessions._meta_doc: Trust reads its policy from here.
+    // Mirrors orchestrator/routes/sessions._meta_doc: Trust reads its policy from here.
     if (url.pathname === "/api/session-meta") return send({ session: (url.searchParams.get("session") || "").split("/").pop().replace(/\.jsonl$/, ""), pinned: [], cwd: "/fixture",
       permission_mode: ai ? state.permissionMode : "", level: "", effective_level: "ic" })
     if (url.pathname === "/api/session-summary") return send({ models: [], messages: 20, toolCalls: 0 })
@@ -545,7 +545,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     // Composer "#" file mentions: one file per query, mirroring viewer filesearch's shape.
     if (route === "GET /api/fs/search") {
       const q = (url.searchParams.get("q") || "").toLowerCase()
-      return send({ results: ["viewer/routes/fs.py", "viewer/filesearch.py"].filter(p => p.includes(q)).map(path => ({ path, dir: false })) })
+      return send({ results: ["orchestrator/routes/fs.py", "orchestrator/filesearch.py"].filter(p => p.includes(q)).map(path => ({ path, dir: false })) })
     }
     if (route === "GET /api/drives") return send({ drives: [], vendors: [] })
     // The canvas screen's page, reduced to what the bridge must carry: its own

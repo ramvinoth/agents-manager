@@ -1,10 +1,10 @@
-"""viewer.maintenance — the hourly maintenance window (Card 133). Storage is
+"""orchestrator.maintenance — the hourly maintenance window (Card 133). Storage is
 faked; preflight and the process exit are injected, so nothing restarts."""
 import datetime
 
 import pytest
 
-from viewer import actions, config, db, inbox, maintenance, orglogic
+from orchestrator import actions, config, db, inbox, maintenance, orglogic
 
 
 @pytest.fixture

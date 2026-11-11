@@ -1,6 +1,6 @@
 /**
  * board.ts — pure Kanban board logic for the org/empire UI. Mirrors the server's
- * viewer/orglogic.py so the client filters/orders/positions cards identically:
+ * orchestrator/orglogic.py so the client filters/orders/positions cards identically:
  * one canonical `cards` list → any filtered VIEW, columns rendered by position,
  * and fractional indexing so a drag computes a new `position` locally (then POSTs
  * card_move) without renumbering a whole column. Pure + unit-tested (no RN imports).
@@ -72,7 +72,7 @@ export function groupByColumn(
 }
 
 /**
- * A principal actor string (viewer/server.py: `user:<name>` for a human,
+ * A principal actor string (orchestrator/server.py: `user:<name>` for a human,
  * `session:<title>` for an agent — and `employee:<name>` on audit rows from
  * before the employee roster was retired) rendered for a person: the name
  * alone, plus whether it was a human, an agent, or the reader. "employee:?"

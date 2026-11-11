@@ -1,9 +1,9 @@
-"""The owner's attention cap (viewer.queue): the owner sees at most `cap`
+"""The owner's attention cap (orchestrator.queue): the owner sees at most `cap`
 decisions at a time; the rest are held — open, never dropped, but silent (no
 push, no badge) — and surface oldest first as slots free."""
 import pytest
 
-from viewer import inbox, queue
+from orchestrator import inbox, queue
 
 NOW = 1_000_000.0
 

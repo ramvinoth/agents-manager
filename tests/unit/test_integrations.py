@@ -1,13 +1,13 @@
-"""Tests for the Integrations catalog (viewer.integrations, pure) and its
-routes (viewer.routes.integrations). No Postgres, no network: db helpers and
+"""Tests for the Integrations catalog (orchestrator.integrations, pure) and its
+routes (orchestrator.routes.integrations). No Postgres, no network: db helpers and
 drive_oauth.start are faked; the catalog functions take plain dicts."""
 import json
 
 import pytest
 
-from viewer import cloudauth, db, drive_oauth, integrations as I, server
-from viewer.routes.integrations import IntegrationsMixin
-from viewer.routes.drives import DrivesMixin
+from orchestrator import cloudauth, db, drive_oauth, integrations as I, server
+from orchestrator.routes.integrations import IntegrationsMixin
+from orchestrator.routes.drives import DrivesMixin
 
 G = "https://www.googleapis.com/auth/"
 
@@ -197,7 +197,7 @@ def test_connect_new_account_creates_row_and_starts_consent(rows, monkeypatch):
 
 
 def test_refused_consent_leaves_no_empty_account(rows, monkeypatch):
-    from viewer.drives import DriveError
+    from orchestrator.drives import DriveError
     monkeypatch.setattr(drive_oauth, "start", lambda *a: (_ for _ in ()).throw(DriveError("No client", 403)))
     h = _H({"service": "google.gmail"})
     h._p_integrations_connect(_Req())
@@ -309,7 +309,7 @@ def test_routes_are_registered_and_not_public():
 
 
 def test_mcp_tools_map_to_the_routes_and_mail_never_sends():
-    from viewer import viewer_mcp
+    from orchestrator import viewer_mcp
     assert viewer_mcp._TOOLS["gmail_draft"] == ("POST", "/api/gmail/draft")
     assert viewer_mcp._TOOLS["calendar_events"] == ("GET", "/api/calendar/events")
     names = {t["name"] for t in viewer_mcp._TOOL_LIST}
@@ -414,7 +414,7 @@ def test_local_route_saves_rules_and_agents_cannot(rows):
 
 
 def test_fs_gate_holds_agents_to_the_local_rules(rows, tmp_path):
-    from viewer.routes import fs
+    from orchestrator.routes import fs
     (tmp_path / "ok").mkdir()
     rows.settings["local_disk"] = {"roots": [str(tmp_path / "ok")], "ops": ["read"]}
     agent, human = _Req(human=False), _Req()
@@ -426,7 +426,7 @@ def test_fs_gate_holds_agents_to_the_local_rules(rows, tmp_path):
 
 
 def test_fs_gate_holds_agents_to_the_drive_ops(rows):
-    from viewer.routes import fs
+    from orchestrator.routes import fs
     rows["c1"] = _conn(refresh_token="R", scopes=[G + "drive"])
     agent = _Req(human=False)
     assert fs._agent_refusal(agent, "drive", "c1", "/a", "write") is None
@@ -456,8 +456,8 @@ def test_op_route(rows):
 
 
 def test_root_route_checks_the_folder_before_saving(rows, monkeypatch):
-    from viewer import drives
-    from viewer.drives import DriveError
+    from orchestrator import drives
+    from orchestrator.drives import DriveError
     rows["c1"] = _conn(refresh_token="R", scopes=[G + "drive"])
 
     def fs_list(self, path, hidden=False):
@@ -481,7 +481,7 @@ def test_root_route_checks_the_folder_before_saving(rows, monkeypatch):
 # --- calendar writes ---------------------------------------------------------------
 
 def test_event_body_sends_only_what_was_given():
-    from viewer import workspace as W
+    from orchestrator import workspace as W
     assert W.event_body({"title": "T"}) == {"summary": "T"}
     b = W.event_body({"start": "2026-10-06", "end": "2026-10-07", "all_day": True, "attendees": ["a@x", ""]})
     assert b == {"start": {"date": "2026-10-06"}, "end": {"date": "2026-10-07"}, "attendees": [{"email": "a@x"}]}
@@ -494,7 +494,7 @@ def test_event_body_sends_only_what_was_given():
 
 
 def test_calendar_writes_are_gated_per_op_and_never_notify_guests(rows, monkeypatch):
-    from viewer import workspace as W
+    from orchestrator import workspace as W
     calls = []
     monkeypatch.setattr(W.Calendar, "_json", lambda self, m, url, body=None: (
         calls.append((m, url, body)), {"id": "e1", "summary": (body or {}).get("summary", "")})[1])
@@ -519,7 +519,7 @@ def test_calendar_writes_are_gated_per_op_and_never_notify_guests(rows, monkeypa
 
 
 def test_phase3_routes_and_mcp_tools():
-    from viewer import viewer_mcp
+    from orchestrator import viewer_mcp
     H = server.SessionViewerHandler
     for path, m in {"/api/integrations/op": "_p_integrations_op", "/api/integrations/root": "_p_integrations_root",
                     "/api/integrations/local": "_p_integrations_local", "/api/calendar/create": "_p_calendar_create",
@@ -660,7 +660,7 @@ class _FakeHTTP:
 
 
 def test_token_connect_probes_before_saving_and_never_echoes_the_token(rows, monkeypatch):
-    from viewer import drives
+    from orchestrator import drives
     fake = _FakeHTTP(body=b'{"account": {"email": "ops@x.test"}}')
     monkeypatch.setattr(drives, "_http", fake)
     h = _H({"provider": "digitalocean", "token": "dop_v1_SECRET", "fields": {"name": "Prod"}})
@@ -674,12 +674,12 @@ def test_token_connect_probes_before_saving_and_never_echoes_the_token(rows, mon
     do = next(p for p in data["providers"] if p["id"] == "digitalocean")
     assert do["auth"] == "token" and do["client"]["configured"] and do["connections"][0]["services"] == {"digitalocean.api": "on"}
     assert fake.calls[0][2]["Authorization"] == "Bearer dop_v1_SECRET"
-    from viewer.routes.drives import _public_view
+    from orchestrator.routes.drives import _public_view
     assert _public_view(row)["authorized"] and "SECRET" not in repr(_public_view(row))
 
 
 def test_token_connect_refused_saves_nothing(rows, monkeypatch):
-    from viewer import drives
+    from orchestrator import drives
     monkeypatch.setattr(drives, "_http", _FakeHTTP(status=401))
     h = _H({"provider": "cloudflare", "token": "bad"})
     h._p_integrations_token(_Req())
@@ -693,7 +693,7 @@ def test_token_connect_refused_saves_nothing(rows, monkeypatch):
 
 
 def test_api_proxy_checks_the_owners_switch(rows, monkeypatch):
-    from viewer import drives
+    from orchestrator import drives
     fake = _FakeHTTP(body=b'{"servers": []}')
     monkeypatch.setattr(drives, "_http", fake)
     rows["c1"] = _conn(kind="hetzner", **I.token_config("hetzner", "T", "", {}))
@@ -716,7 +716,7 @@ def test_api_proxy_checks_the_owners_switch(rows, monkeypatch):
 
 
 def test_token_routes_registered():
-    from viewer import viewer_mcp
+    from orchestrator import viewer_mcp
     H = server.SessionViewerHandler
     for path, m in {"/api/integrations/token": "_p_integrations_token", "/api/integrations/api": "_p_integrations_api"}.items():
         assert H.POST_ROUTES[path] == m and path not in H.PUBLIC_API
@@ -725,7 +725,7 @@ def test_token_routes_registered():
 
 
 def test_a_refused_token_marks_the_account_and_a_new_token_keeps_the_switches(rows, monkeypatch):
-    from viewer import drives
+    from orchestrator import drives
     rows["c1"] = _conn(kind="tailscale", **I.token_config("tailscale", "OLD", "me", {}))
     rows["c1"]["config"] = I.with_op(rows["c1"]["config"], "tailscale.api", "change", True)
     monkeypatch.setattr(drives, "_http", _FakeHTTP(status=401))
@@ -744,7 +744,7 @@ def test_a_refused_token_marks_the_account_and_a_new_token_keeps_the_switches(ro
 
 
 def test_an_approved_change_runs_once_and_is_red(rows, monkeypatch):
-    from viewer import actions, drives, orglogic
+    from orchestrator import actions, drives, orglogic
     fake = _FakeHTTP(body=b'{"server": {"id": 1}}')
     monkeypatch.setattr(drives, "_http", fake)
     rows["c1"] = _conn(kind="hetzner", **I.token_config("hetzner", "T", "", {}))
@@ -758,7 +758,7 @@ def test_an_approved_change_runs_once_and_is_red(rows, monkeypatch):
 
 
 def test_a_revoked_exchanged_token_is_traded_again_once(rows, monkeypatch):
-    from viewer import cloudauth, drives
+    from orchestrator import cloudauth, drives
     tokens = iter(["old", "new"])
     monkeypatch.setitem(cloudauth._EXCHANGES, "github_app", lambda k, f, http: (next(tokens), 3600))
     monkeypatch.setattr(cloudauth, "_CACHE", {})
@@ -777,7 +777,7 @@ def test_a_revoked_exchanged_token_is_traded_again_once(rows, monkeypatch):
 
 
 def test_a_short_429_is_waited_out_once_and_a_long_one_is_returned(rows, monkeypatch):
-    from viewer import drives
+    from orchestrator import drives
     waits = []
     monkeypatch.setattr(I, "_sleep", waits.append)
 

@@ -1,4 +1,4 @@
-"""Unit tests for the Ask-mode tool-approval flow in viewer.engine:
+"""Unit tests for the Ask-mode tool-approval flow in orchestrator.engine:
 register_permission (blocks until decided / times out -> deny), decide_permission
 (the UI's Allow/Deny), and pending_approvals_public (drops the internal Event).
 
@@ -8,9 +8,9 @@ import os
 import threading
 import time
 
-import viewer.engine as engine
-from viewer.config import CHAT_JOBS
-from viewer.engine import decide_permission, pending_approvals_public, register_permission
+import orchestrator.engine as engine
+from orchestrator.config import CHAT_JOBS
+from orchestrator.engine import decide_permission, pending_approvals_public, register_permission
 
 
 def _fresh_job(sid, token="tok"):

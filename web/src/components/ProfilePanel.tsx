@@ -57,7 +57,7 @@ export function ProfilePanel() {
   }, [currentHost])
 
   // The owner's attention cap: how many decisions are in front of them at
-  // once. The server owns it (viewer.queue); the rest wait, silent.
+  // once. The server owns it (orchestrator.queue); the rest wait, silent.
   const [cap, setCap] = useState<DecisionCap | null>(null)
   const [capErr, setCapErr] = useState("")
   useEffect(() => {

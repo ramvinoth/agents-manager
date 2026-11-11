@@ -1,7 +1,7 @@
 """Card 235: one open ask per card, and asks that run out of time.
 
 Three layers, all without a database:
-  - viewer.asks — the pure rules (when an ask opens, closes, is a second ask,
+  - orchestrator.asks — the pure rules (when an ask opens, closes, is a second ask,
     has expired);
   - actions' card_move / card_comment / card_update — the handlers that apply
     them, with `expires_at` validation and the split warning;
@@ -13,12 +13,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from viewer import actions, asks, board_wake, boardwatch, decisions, inbox, orglogic, push
+from orchestrator import actions, asks, board_wake, boardwatch, decisions, inbox, orglogic, push
 
 NOW = 1_800_000_000.0
 
 
-# ── viewer.asks: the pure rules ────────────────────────────────────────────
+# ── orchestrator.asks: the pure rules ────────────────────────────────────────────
 
 def test_decision_columns_match_by_name():
     assert asks.is_decision_column("Review") and asks.is_decision_column(" needs-info ")

@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from viewer import db
+from orchestrator import db
 
 
 class RecordingCursor:
@@ -44,6 +44,6 @@ def test_timeout_cleanup_requires_exact_request_identity(cursor):
 
 
 def test_answer_acceptance_is_durable_before_delivery():
-    from viewer import decisions
+    from orchestrator import decisions
     assert callable(decisions.accept_answer)
     assert callable(db.decision_answer_accept)

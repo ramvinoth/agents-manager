@@ -122,7 +122,7 @@ export async function unregisterPush(send: (token: string) => Promise<unknown>):
 
 /**
  * Route notification taps to the right chat. The server merges `{session, host}`
- * into every push payload (viewer/push.py:notify_all), so a tap carries enough to
+ * into every push payload (orchestrator/push.py:notify_all), so a tap carries enough to
  * open the exact session. Handles BOTH cases: a tap while the app is
  * running/backgrounded (addNotificationResponseReceivedListener) AND a cold start
  * where the tap launched the app (getLastNotificationResponseAsync). Best-effort:

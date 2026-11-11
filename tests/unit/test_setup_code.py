@@ -7,9 +7,9 @@ import stat
 
 import pytest
 
-from viewer import db, setupcode
-from viewer.routes import auth
-from viewer.routes.auth import AuthMixin
+from orchestrator import db, setupcode
+from orchestrator.routes import auth
+from orchestrator.routes.auth import AuthMixin
 
 
 @pytest.fixture(autouse=True)

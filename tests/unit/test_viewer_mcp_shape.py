@@ -1,7 +1,7 @@
-"""Progressive disclosure in the agent's MCP adapter (viewer/viewer_mcp.py)."""
+"""Progressive disclosure in the agent's MCP adapter (orchestrator/viewer_mcp.py)."""
 import json
 
-from viewer.viewer_mcp import _RESULT_CAP, shape_result
+from orchestrator.viewer_mcp import _RESULT_CAP, shape_result
 
 
 def test_full_returns_untouched():

@@ -1,6 +1,6 @@
 """Unit tests are hermetic: no live Postgres, no network.
 
-Every module that touches storage imports `viewer.db`, whose every accessor opens a
+Every module that touches storage imports `orchestrator.db`, whose every accessor opens a
 connection through `db._get_pool()`. Any test that reaches a real accessor — because
 a fixture mocked one seam but a handler called another — is a bug in the test, and
 it must FAIL, not write into the production database. (Before this guard,
@@ -17,7 +17,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from viewer import db
+from orchestrator import db
 
 
 @pytest.fixture(autouse=True)

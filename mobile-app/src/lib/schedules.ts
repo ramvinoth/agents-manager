@@ -1,7 +1,7 @@
 // schedules.ts — the Profile screen's scheduling controls as two plain on/off
 // choices ("your schedules", "the agents' schedules") over the server's single
-// loop_control mode (viewer/loops.LOOP_MODES), plus ONE truthful line saying
-// what actually runs. Truth = viewer/engine.fire_due_loops: a mode licenses
+// loop_control mode (orchestrator/loops.LOOP_MODES), plus ONE truthful line saying
+// what actually runs. Truth = orchestrator/engine.fire_due_loops: a mode licenses
 // origins, and the automation master switch additionally halts agent-origin
 // loops — so "agents' schedules on" with automation off still runs nothing.
 // DUPLICATED in web/src/lib/schedules.ts (the apps share no build) — keep in sync BY HAND
@@ -38,7 +38,7 @@ export function agentScheduleHint(mode: LoopMode, automation: boolean | undefine
   return "Jobs an agent scheduled for itself (follow-ups, check-ins) fire on time."
 }
 
-/** The server account's role (viewer/orglogic.HUMAN_ROLES) in words. */
+/** The server account's role (orchestrator/orglogic.HUMAN_ROLES) in words. */
 export function roleLabel(role: string | undefined): string {
   if (role === "owner") return "Owner of this server"
   if (role === "operator") return "Operator — can run work, not change server settings"

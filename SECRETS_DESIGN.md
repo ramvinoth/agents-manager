@@ -8,9 +8,9 @@ master key**, **design-first**. Plus a key simplification agreed during design:
 ## 1. Why (and why NOT an MCP tool)
 
 We already inject secrets into every agent run's subprocess environment:
-- `viewer/hostenv.py` — `host_env(hid)` → `{KEY: VALUE}` merged into the run env.
-- `viewer/providers.py` — provider API key → `ANTHROPIC_AUTH_TOKEN`.
-- `viewer/gitops.py` — git token via a credential-helper file.
+- `orchestrator/hostenv.py` — `host_env(hid)` → `{KEY: VALUE}` merged into the run env.
+- `orchestrator/providers.py` — provider API key → `ANTHROPIC_AUTH_TOKEN`.
+- `orchestrator/gitops.py` — git token via a credential-helper file.
 
 So an agent can already do `curl -H "Authorization: Bearer $STRIPE_KEY" …` with
 **no new tooling** — and, crucially, the raw value never enters the model's
@@ -95,7 +95,7 @@ Retrofit note (separate task, optional): migrate the existing plaintext
 `.viewer-providers.json` / `.viewer-hosts.json` to the same encrypted store so
 there's one crypto path. Keep out of v1 scope to limit blast radius.
 
-## 3. Server (`viewer/secrets.py`, mirrors providers.py)
+## 3. Server (`orchestrator/secrets.py`, mirrors providers.py)
 
 `secrets.py` holds the crypto + the public API and delegates persistence to the
 `SecretStore` backend (§2a) — it never reads/writes a file or the DB directly:
@@ -106,7 +106,7 @@ there's one crypto path. Keep out of v1 scope to limit blast radius.
     delete_secret(name)                       # _store.delete
     secret_env(host, session_id) -> {NAME: VALUE}  # _store.all_blobs → decrypt in-scope
 
-Routes (`viewer/routes/secrets.py`, auth-gated like everything else):
+Routes (`orchestrator/routes/secrets.py`, auth-gated like everything else):
     GET  /api/secrets            -> {secrets:[{name,scope,created}]}   (no values)
     POST /api/secrets            -> set {name,value,scope}
     POST /api/secrets/delete     -> {name}

@@ -9,7 +9,7 @@ owner sees in approvals and audit rows:
 The engine supplies `label` as a per-run snapshot
 (start_claude_run), so the auth path reads a dict, never the transcript.
 """
-from viewer import server
+from orchestrator import server
 
 SID = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
 

@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from viewer import actions, audit, db, server
-from viewer.routes.orchestrator import OrchestratorMixin
+from orchestrator import actions, audit, db, server
+from orchestrator.routes.orchestrator import OrchestratorMixin
 
 
 SECRET = "SENSITIVE_COMMENT_PASSWORD_PROMPT_SENTINEL"

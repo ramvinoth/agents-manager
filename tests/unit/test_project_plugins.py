@@ -1,4 +1,4 @@
-"""Project plugins (viewer.project_plugins): an app sharing a project's folder
+"""Project plugins (orchestrator.project_plugins): an app sharing a project's folder
 turns on with its env, hands every local run its Claude Code plugin, and opens
 for the owner signed in at that folder's project. Hermetic: env and the app's
 HTTP calls are patched; the plugin folder is a tmp dir."""
@@ -12,8 +12,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
-from viewer import project_plugins
-from viewer.project_plugins import PluginError, Sift
+from orchestrator import project_plugins
+from orchestrator.project_plugins import PluginError, Sift
 
 
 class TestSift(unittest.TestCase):

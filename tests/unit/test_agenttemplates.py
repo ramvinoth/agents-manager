@@ -1,9 +1,9 @@
-"""Agent template rules (viewer.agenttemplates): one validator for create and
+"""Agent template rules (orchestrator.agenttemplates): one validator for create and
 edit, who sees a personal agent, who may change it."""
 import unittest
 
-from viewer import agenttemplates as at
-from viewer.db import TEMPLATE_FIELDS
+from orchestrator import agenttemplates as at
+from orchestrator.db import TEMPLATE_FIELDS
 
 
 class TestFields(unittest.TestCase):

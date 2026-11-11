@@ -1,19 +1,19 @@
 """Unit tests for the custom-provider feature:
-- viewer.providers: the preset store's keys-vs-reveal contract (list never leaks
+- orchestrator.providers: the preset store's keys-vs-reveal contract (list never leaks
   the apiKey; reveal returns it) + validation + edit-preserves-key.
-- viewer.customrun: the OpenAI-response -> Claude-transcript line builders parse
+- orchestrator.customrun: the OpenAI-response -> Claude-transcript line builders parse
   back as renderable user/assistant bubbles, and history replay skips tool noise.
 """
 import json
 
 import pytest
 
-from viewer import providers, customrun
+from orchestrator import providers, customrun
 
 
 class _FakeProviderDB:
     """In-memory stand-in for the providers table: the three accessors
-    viewer.providers calls, with the "at most one default" invariant provider_upsert
+    orchestrator.providers calls, with the "at most one default" invariant provider_upsert
     enforces in one SQL transaction reproduced here."""
 
     def __init__(self):
@@ -186,7 +186,7 @@ class TestPerModelLimits:
 
 
 def test_model_facts_reads_each_server_dialect():
-    from viewer.routes.providers import _model_facts
+    from orchestrator.routes.providers import _model_facts
     assert _model_facts({"id": "x", "max_input_tokens": 242000, "max_output_tokens": 64000}) == {"discovered": 242000, "maxOutput": 64000}
     assert _model_facts({"id": "x", "max_model_len": 131072}) == {"discovered": 131072, "maxOutput": 0}
     assert _model_facts({"id": "x", "meta": {"n_ctx": 242000, "n_ctx_train": 262144}}) == {"discovered": 242000, "maxOutput": 0}

@@ -1,12 +1,12 @@
-"""Notes — the knowledge ledger next to the board (viewer/db notes, the note_*
+"""Notes — the knowledge ledger next to the board (orchestrator/db notes, the note_*
 actions, the /api/org/notes routes, the MCP tools, and the session lifecycle
 hooks). Hermetic: db is faked at the module seam, as in test_actions.
 """
 import pytest
 
-from viewer import actions, db, orglogic, viewer_mcp
-from viewer.routes.orchestrator import OrchestratorMixin
-from viewer.server import SessionViewerHandler
+from orchestrator import actions, db, orglogic, viewer_mcp
+from orchestrator.routes.orchestrator import OrchestratorMixin
+from orchestrator.server import SessionViewerHandler
 
 
 class FakeDB:
@@ -68,11 +68,11 @@ class FakeDB:
 def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(actions, "db", f)
-    import viewer.routes.orchestrator as orch
+    import orchestrator.routes.orchestrator as orch
     monkeypatch.setattr(orch, "db", f)
     # _note_delete clears a note's discussion wakes via discussion.cancel_wakes,
     # which reads discussion.db (its own singleton ref) — point it at the fake.
-    from viewer import discussion
+    from orchestrator import discussion
     monkeypatch.setattr(discussion, "db", f)
     return f
 

@@ -1,11 +1,11 @@
 // A chat's Trust: the two server-side policies that gate what its agent may do.
 // Mirrors mobile-app (SessionProfileScreen Trust card + lib/harmanLevel).
 
-/** Harman authority, least → most (viewer/orglogic.LEVELS). The keys are wire
+/** Harman authority, least → most (orchestrator/orglogic.LEVELS). The keys are wire
  *  values; a person reads LEVEL_NAME ("ic" is never shown). */
 export type HarmanLevel = "ic" | "lead" | "manager"
 export const HARMAN_LEVELS: readonly HarmanLevel[] = ["ic", "lead", "manager"]
-/** Mirrors viewer/orglogic.LEVEL_NAMES — named by reach, never a job title. */
+/** Mirrors orchestrator/orglogic.LEVEL_NAMES — named by reach, never a job title. */
 export const LEVEL_NAME: Record<HarmanLevel, string> = { ic: "Own work", lead: "Workspace", manager: "Organization" }
 export function isHarmanLevel(v: unknown): v is HarmanLevel {
   return typeof v === "string" && (HARMAN_LEVELS as readonly string[]).includes(v)

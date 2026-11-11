@@ -79,11 +79,11 @@ becomes an approval item surfaced to the responsible party.
 | Approval | extend `pending_questions`/`pending_plans` pattern → `approvals` table | typed: destructive/secret/money/infra. Harman auto-handles Green; queues Red. |
 | Audit log | new `audit_log` table | append-only: who/what/when/target/outcome. Every Green action Harman takes + every Red decision. |
 
-All in the EXISTING Postgres (`viewer` DB) via `viewer/db.py` — new `init_db()` tables + accessors,
+All in the EXISTING Postgres (`viewer` DB) via `orchestrator/db.py` — new `init_db()` tables + accessors,
 mirroring the existing `pending_questions` lifecycle (set/get_open/resolve/delete).
 
 ## The MCP tool — `kanban` (per-session)
-A new MCP server (pattern: `viewer/permission_mcp.py`) exposing task ops so a chat session (any
+A new MCP server (pattern: `orchestrator/permission_mcp.py`) exposing task ops so a chat session (any
 agent: Claude/Qwen/Codex) can drive its own board from inside a turn:
 - `board_list` / `board_create(name, columns?)`
 - `card_create(board, title, body?, column?, assignee?)`
@@ -94,12 +94,12 @@ Registered automatically per session (see bootstrap). Writes go through db.py; e
 appends to `audit_log`. Harman reads the same tables to monitor.
 
 ## Server (viewer) — new surfaces
-- `viewer/orchestrator.py`: the registry + queue + Harman's tick. Employee/project CRUD, assignment,
+- `orchestrator/orchestrator.py`: the registry + queue + Harman's tick. Employee/project CRUD, assignment,
   board/card CRUD (shared by MCP tool + REST), approval queue, audit append.
-- `viewer/routes/orchestrator.py`: REST for the app — `/api/org/employees`, `/api/org/projects`,
+- `orchestrator/routes/orchestrator.py`: REST for the app — `/api/org/employees`, `/api/org/projects`,
   `/api/org/boards`, `/api/org/cards`, `/api/org/approvals`, `/api/org/audit`. (Cross-check: no
   duplicate of existing routes — this is net-new surface.)
-- `viewer/mcp/kanban_mcp.py`: the MCP server above.
+- `orchestrator/mcp/kanban_mcp.py`: the MCP server above.
 - Approval gate reuses the charter's Green/Red tiers. Harman auto-resolves Green + logs; Red items
   land on the Approvals page and (only these) notify the owner.
 
@@ -124,7 +124,7 @@ appends to `audit_log`. Harman reads the same tables to monitor.
 ## Organizational learning — employees turn experience into shared skills (the owner, 2026-08-15)
 The empire gets smarter over time: when an employee solves something hard or recovers from a mistake,
 that lesson becomes a **skill** EVERY employee automatically has next time — nobody repeats the same
-struggle. Built on the EXISTING skill system (verified in `viewer/routes/capabilities.py`), not new infra.
+struggle. Built on the EXISTING skill system (verified in `orchestrator/routes/capabilities.py`), not new infra.
 
 **How skills work here (verified):** skills are `SKILL.md` files scanned from three scopes — project
 (`<cwd>/.claude/skills`), **user (`~/.claude/skills`) = shared across ALL sessions on a host**, and

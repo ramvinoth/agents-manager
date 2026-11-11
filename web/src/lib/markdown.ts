@@ -141,7 +141,7 @@ function renderTables(h: string): string {
 }
 
 /** Notes-only syntax: `[[Title#Heading|alias]]` links and `#tags`
- *  (viewer/notelinks.py is the grammar). Off for chat text, where `[[` and
+ *  (orchestrator/notelinks.py is the grammar). Off for chat text, where `[[` and
  *  `#` mean nothing. `resolves` says whether a link target exists, so an
  *  unwritten one renders as a ghost the reader can click to create. */
 export type NoteSyntax = { resolves: (target: string) => boolean }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { fromBase64, toBase64, utf8Encode } from "./bytes.ts"
 import { RelayChannel, pack, unpack, HTTP_REQ, RES_END, ChannelError } from "./relayChannel.ts"
 
-// Vectors produced by viewer/relay.py (server sk = bytes 0..31, phone sk = bytes 32..63).
+// Vectors produced by orchestrator/relay.py (server sk = bytes 0..31, phone sk = bytes 32..63).
 const SPK = "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8="
 const PPK = "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ="
 const TO_PHONE = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3bmkfTVanNCNxm073+Nod2oNo/dT"

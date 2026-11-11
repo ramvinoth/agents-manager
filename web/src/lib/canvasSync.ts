@@ -1,4 +1,4 @@
-/** The shared project canvas: client half of the room protocol (viewer/canvas_room.py).
+/** The shared project canvas: client half of the room protocol (orchestrator/canvas_room.py).
  *  Pure logic only — components/canvas/ProjectCanvas wires it to Excalidraw and the socket.
  *
  *  The server holds the truth. `known` is what we believe it holds (id → version):
@@ -6,7 +6,7 @@
  *  resend queue — refetch the snapshot, reset `known`, and the diff resends the rest. */
 
 export const PROTOCOL = 1
-export const MAX_BATCH = 2000          // viewer/routes/canvas_board.MAX_BATCH
+export const MAX_BATCH = 2000          // orchestrator/routes/canvas_board.MAX_BATCH
 
 export interface El {
   id: string
@@ -18,7 +18,7 @@ export interface El {
   [k: string]: unknown
 }
 
-/** 32-bit FNV-1a over UTF-8 — the same number viewer/canvas_reconcile.fnv1a computes. */
+/** 32-bit FNV-1a over UTF-8 — the same number orchestrator/canvas_reconcile.fnv1a computes. */
 export function fnv1a(text: string): number {
   let h = 0x811c9dc5
   for (const b of new TextEncoder().encode(text)) h = Math.imul(h ^ b, 0x01000193) >>> 0

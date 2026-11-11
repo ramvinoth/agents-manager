@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from viewer import actions, boardwatch, orglogic, push
+from orchestrator import actions, boardwatch, orglogic, push
 
 
 def _col(name, position, cid):
@@ -499,7 +499,7 @@ def test_agent_ask_in_review_pushes_once_through_the_decision_queue(board, monke
     """A comment on a card waiting for the owner IS the ask: the inbox delivery
     pushes it (or holds it behind a full queue), so the generic comment push
     stays quiet — otherwise the owner got two pushes per ask."""
-    from viewer import inbox, queue
+    from orchestrator import inbox, queue
     delivered = []
     monkeypatch.setattr(inbox, "deliver_decision",
                         lambda sid, kind, ref, body: delivered.append((kind, ref)))
@@ -517,7 +517,7 @@ def test_agent_ask_in_review_pushes_once_through_the_decision_queue(board, monke
 def test_the_inbox_ask_names_the_column_the_card_is_really_in(board, monkeypatch):
     """The card row has only column_id; the delivered text used to fall back
     to "Review" and told the owner a Needs-info card was in Review."""
-    from viewer import inbox, queue
+    from orchestrator import inbox, queue
     delivered = []
     monkeypatch.setattr(inbox, "deliver_decision",
                         lambda sid, kind, ref, body: delivered.append(body))
@@ -531,7 +531,7 @@ def test_the_inbox_ask_names_the_column_the_card_is_really_in(board, monkeypatch
 def test_an_ask_with_no_comment_yet_carries_the_cards_own_question(board, monkeypatch):
     """An agent that writes its question in the card body and parks the card
     used to send the owner a bare "the call is yours:" with nothing after it."""
-    from viewer import inbox, queue
+    from orchestrator import inbox, queue
     delivered = []
     monkeypatch.setattr(inbox, "deliver_decision",
                         lambda sid, kind, ref, body: delivered.append(body))
@@ -543,7 +543,7 @@ def test_an_ask_with_no_comment_yet_carries_the_cards_own_question(board, monkey
 
 
 def test_agent_ask_behind_a_full_queue_is_told_so(board, monkeypatch):
-    from viewer import inbox, queue
+    from orchestrator import inbox, queue
     monkeypatch.setattr(inbox, "deliver_decision", lambda *a: None)
     monkeypatch.setattr(inbox, "format_card", lambda card, comment: comment)
     monkeypatch.setattr(inbox, "last_session_comment", lambda cid: "")

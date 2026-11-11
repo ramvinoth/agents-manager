@@ -1,4 +1,4 @@
-"""Unit tests for viewer.sessions and viewer.loops — the I/O-core functions
+"""Unit tests for orchestrator.sessions and orchestrator.loops — the I/O-core functions
 that previously had zero test coverage. Pure-function tests: no simulator,
 no network, no database."""
 import io
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from viewer.sessions import (
+from orchestrator.sessions import (
     StatCache,
     auto_trim_session,
     compute_session_summary,
@@ -22,7 +22,7 @@ from viewer.sessions import (
     _session_id_from_path,
     _BACKUP_DIR,
 )
-from viewer.loops import parse_interval
+from orchestrator.loops import parse_interval
 
 
 class TestLastCwdInFile(unittest.TestCase):
@@ -143,7 +143,7 @@ class TestAutoTrimSession(unittest.TestCase):
         try:
             size_before = os.path.getsize(path)
             self.assertGreater(size_before, 16 * 1024 * 1024)
-            with patch("viewer.sessions.create_backup"):
+            with patch("orchestrator.sessions.create_backup"):
                 auto_trim_session(path)
             size_after = os.path.getsize(path)
             self.assertLess(size_after, size_before)
@@ -174,7 +174,7 @@ class TestAutoTrimSession(unittest.TestCase):
         f.close()
         try:
             self.assertGreater(os.path.getsize(f.name), 17 * 1024 * 1024)
-            with patch("viewer.sessions.create_backup"):
+            with patch("orchestrator.sessions.create_backup"):
                 auto_trim_session(f.name)
             # Check that no line in the output exceeds 512 KB + some overhead
             with open(f.name, "rb") as fh:
@@ -304,8 +304,8 @@ class TestCreateBackup(unittest.TestCase):
         f.close()
         return f.name
 
-    @patch("viewer.sessions._prune_backups")
-    @patch("viewer.db.backup_create")
+    @patch("orchestrator.sessions._prune_backups")
+    @patch("orchestrator.db.backup_create")
     def test_creates_compressed_backup(self, mock_bc, mock_prune):
         """create_backup produces a compressed file and calls db.backup_create."""
         mock_bc.return_value = {"id": 1}
@@ -330,11 +330,11 @@ class TestCreateBackup(unittest.TestCase):
                 import shutil
                 shutil.rmtree(bdir)
 
-    @patch("viewer.db.backup_delete")
-    @patch("viewer.db.backup_list")
+    @patch("orchestrator.db.backup_delete")
+    @patch("orchestrator.db.backup_list")
     def test_prune_keeps_only_3(self, mock_list, mock_delete):
         """_prune_backups deletes rows + files beyond BACKUP_KEEP."""
-        from viewer.sessions import _prune_backups
+        from orchestrator.sessions import _prune_backups
         # Simulate 5 backup rows, newest first
         fake_rows = []
         tmpfiles = []
@@ -403,8 +403,8 @@ class TestRestoreSession(unittest.TestCase):
         mock_row = {"id": 42, "session_id": session_id, "backup_path": str(backup_file)}
 
         try:
-            with patch("viewer.db.backup_get", return_value=mock_row):
-                with patch("viewer.config.CLAUDE_DIR", claude_dir):
+            with patch("orchestrator.db.backup_get", return_value=mock_row):
+                with patch("orchestrator.config.CLAUDE_DIR", claude_dir):
                     restored = restore_session(session_id, 42)
                     self.assertTrue(Path(restored).exists())
                     self.assertEqual(Path(restored).read_text(), original_content)

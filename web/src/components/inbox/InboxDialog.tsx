@@ -23,7 +23,7 @@ import { userError } from "@/lib/errors"
 const POLL_MS = 60_000  // fallback only: live events refetch on change
 
 /**
- * InboxDialog — the message ledger (viewer/inbox) as a two-pane modal: the
+ * InboxDialog — the message ledger (orchestrator/inbox) as a two-pane modal: the
  * list on the left (kind chips, unread toggle), one row in full on the right
  * with the actions that row allows. Opened two ways, exactly like the board:
  * a project row opens the project's inbox (every session in it, both

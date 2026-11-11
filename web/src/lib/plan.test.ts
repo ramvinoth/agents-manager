@@ -48,7 +48,7 @@ eq("approved split across parts", planDecision([{ text: "User has approved " }, 
 eq("approved with leading newline", planDecision("\n  " + APPROVED), "approved")
 
 // ── planDecision: declined. The result is the user's own feedback text
-//    (viewer/engine.py, _await_plan_decision), so it can be anything. ────────
+//    (orchestrator/engine.py, _await_plan_decision), so it can be anything. ────────
 eq("feedback is a revision", planDecision("Use Postgres, not SQLite"), "revised")
 eq("server default deny message", planDecision("The user did not approve the plan. Revise and re-present it."), "revised")
 eq("feedback as content parts", planDecision([{ type: "text", text: "too broad" }]), "revised")

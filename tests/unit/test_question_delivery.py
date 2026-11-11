@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from viewer import engine, questions
+from orchestrator import engine, questions
 
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def job(monkeypatch):
     monkeypatch.setattr(engine, "CHAT_JOBS", {"question-session": row})
     monkeypatch.setattr(engine, "QUESTION_TIMEOUT", 0)
     monkeypatch.setattr(questions, "record", lambda *a, **kw: None)
-    monkeypatch.setattr("viewer.push.notify_all", lambda *a, **kw: None)
+    monkeypatch.setattr("orchestrator.push.notify_all", lambda *a, **kw: None)
     return row
 
 

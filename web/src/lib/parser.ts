@@ -22,7 +22,7 @@ export function extractImages(content: unknown): ImagePart[] {
   return out
 }
 
-/** How viewer/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together). */
+/** How orchestrator/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together). */
 const RESUME_MARK = "Your last turn was cut off mid-way"
 
 /** The text of a server auto-resume prompt, or null when the record is anything else. */
@@ -33,7 +33,7 @@ function resumeNote(msg: any): string | null {
   return typeof t === "string" && t.startsWith(RESUME_MARK) ? t : null
 }
 
-/** How viewer/inbox.py heads a message it steers into a running turn. */
+/** How orchestrator/inbox.py heads a message it steers into a running turn. */
 const INBOX_MARK = /^\[inbox\] From ([^\n:]+):\n/
 
 /**

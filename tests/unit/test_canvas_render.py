@@ -1,8 +1,8 @@
-"""viewer.canvas_render: snapshot target selection and a cached PNG."""
+"""orchestrator.canvas_render: snapshot target selection and a cached PNG."""
 import pytest
 
-from viewer import canvas_render as cr
-from viewer import canvas_summary as cs
+from orchestrator import canvas_render as cr
+from orchestrator import canvas_summary as cs
 
 pytest.importorskip("PIL")
 

@@ -19,7 +19,7 @@ common providers ship as *seed presets*, not as code branches.
 
 ## 1. Current state (what we're replacing)
 
-- `viewer/providers.py` — LLM-only presets, Anthropic-compatible endpoints, stored
+- `orchestrator/providers.py` — LLM-only presets, Anthropic-compatible endpoints, stored
   in `.viewer-providers.json`. Chat picks one via `SESSION_META.provider`.
 - Voice STT/TTS is **hardcoded** to `SPEECH_SERVICE_URL` (:8095 sherpa) /
   `ASSISTANT_SERVICE_URL` (:8099, now dead) in `config.py`, chosen by `?assistant=1`.
@@ -77,7 +77,7 @@ A small dispatch — the ONLY place that knows protocol details, keyed by `wire`
 `wire` is just the request/response SHAPE an adapter speaks — sherpa/pocket are
 shapes the user's custom endpoint can select, NOT built-in providers. One
 `stt_client(provider)` / `tts_client(provider)` picks the adapter by the selected
-provider's `wire`. `viewer/voice.py` stops importing hardcoded URLs entirely.
+provider's `wire`. `orchestrator/voice.py` stops importing hardcoded URLs entirely.
 
 ## 4. Selection (NO built-ins, NO fallback)
 
@@ -110,7 +110,7 @@ registry filtered to kind=llm.
 - Routes: extend `/api/providers` to accept/filter `kind`; add `/api/voice/config`
   (get/set default STT+TTS provider ids). Vendor catalog served at
   `/api/providers/vendors` (autofill hints only).
-- `viewer/voice.py` + `routes/voice.py`: replace hardcoded SPEECH/ASSISTANT URLs
+- `orchestrator/voice.py` + `routes/voice.py`: replace hardcoded SPEECH/ASSISTANT URLs
   with `resolve_stt()/resolve_tts()` → wire adapter. Remove the dead `?assistant=1`
   / ASSISTANT_SERVICE_URL path. If resolve returns none → 409/empty, never a
   hardcoded default.

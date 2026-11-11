@@ -10,8 +10,8 @@ import os
 import unittest
 from unittest.mock import patch
 
-from viewer import engine
-from viewer.routes.sessions import SessionsMixin
+from orchestrator import engine
+from orchestrator.routes.sessions import SessionsMixin
 
 
 def _iso(epoch):
@@ -68,8 +68,8 @@ class TestListSessionsLastMessage(unittest.TestCase):
 
 class TestOverlayUnread(unittest.TestCase):
     def _unread(self, sessions, seen):
-        with patch("viewer.db.session_meta_all", return_value={}), \
-             patch("viewer.db.session_seen_get", return_value=seen):
+        with patch("orchestrator.db.session_meta_all", return_value={}), \
+             patch("orchestrator.db.session_seen_get", return_value=seen):
             m = SessionsMixin.__new__(SessionsMixin)
             m.session_busy = lambda sid: False
             m._overlay_meta(sessions, "user:r", "claude")

@@ -50,7 +50,7 @@ const EFFORT_LABELS: Record<string, string> = {
 
 /**
  * The AI selection editor — provider, conversation mode, effort and model — as
- * ONE staged transaction against the server-owned selection (viewer/ai.py).
+ * ONE staged transaction against the server-owned selection (orchestrator/ai.py).
  * Serves both scopes: a session ("AI for this chat") and the per-user new-chat
  * defaults (Profile tab). Nothing is written until Save; the server validates
  * and compare-and-swaps on `revision`, so two people editing the same thing

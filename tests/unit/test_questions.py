@@ -1,4 +1,4 @@
-"""Unit tests for viewer.questions — the AskUserQuestion input parser, the
+"""Unit tests for orchestrator.questions — the AskUserQuestion input parser, the
 resume-message composer, and the interruption count.
 
 `questions_from_input` runs inside a permission callback that a LIVE turn is
@@ -7,8 +7,8 @@ input must cost the user a card, not hang the turn.
 """
 import pytest
 
-from viewer import questions
-from viewer.questions import answer_message, questions_from_input
+from orchestrator import questions
+from orchestrator.questions import answer_message, questions_from_input
 
 
 Q = [{"header": "Drink", "question": "Tea or Coffee?", "options": [{"label": "Tea"}, {"label": "Coffee"}]}]

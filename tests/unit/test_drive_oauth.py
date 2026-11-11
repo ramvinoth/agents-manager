@@ -1,4 +1,4 @@
-"""Tests for the hosted OAuth consent flow (viewer.drive_oauth).
+"""Tests for the hosted OAuth consent flow (orchestrator.drive_oauth).
 
 The pure helpers (_pkce, _build_auth_url, redirect_uri_for) are tested
 directly. The rest are tested END-TO-END through the module's public surface:
@@ -19,8 +19,8 @@ import urllib.parse
 
 import pytest
 
-from viewer import drive_oauth, drives, integrations
-from viewer.drives import DriveError
+from orchestrator import drive_oauth, drives, integrations
+from orchestrator.drives import DriveError
 
 ORIGIN = "https://life.example.test"
 CALLBACK = ORIGIN + "/api/drive/oauth/callback"

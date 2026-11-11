@@ -12,7 +12,7 @@ const SELECT = "h-7 rounded-md border border-border bg-background px-1 text-xs"
 
 /**
  * IntakeSection — Integrations → "Intake channels": doors from the outside
- * world onto a board (viewer/intake.py). Each channel is a URL + token bound
+ * world onto a board (orchestrator/intake.py). Each channel is a URL + token bound
  * to one project board and optionally one session; a POST becomes a card
  * there and wakes that session. One channel may also receive the owner's
  * in-app feedback ("Send feedback" on web and phone); with none switched on,

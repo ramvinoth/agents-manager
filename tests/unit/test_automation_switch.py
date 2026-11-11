@@ -27,7 +27,7 @@ scheduler body is the only way to catch someone later moving a launch above a ga
 """
 import pytest
 
-from viewer import board_wake, engine, orchestrator, orglogic
+from orchestrator import board_wake, engine, orchestrator, orglogic
 
 
 class _StopAfterOnePass(Exception):
@@ -35,7 +35,7 @@ class _StopAfterOnePass(Exception):
 
 
 class FakeDB:
-    """In-memory stand-in for viewer.db — only the accessors the scheduler and the
+    """In-memory stand-in for orchestrator.db — only the accessors the scheduler and the
     orchestrator config actually call. `settings` backs the harman config; `loops`
     backs the schedule. Every write is recorded so a test can assert that a paused
     pass consumed nothing."""

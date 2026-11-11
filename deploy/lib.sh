@@ -151,7 +151,7 @@ hm_deps() {
 # Every agent run and the "Sign in with Claude" flow spawn `claude`; a box
 # without it boots fine and then hangs at the first sign-in. Anthropic's native
 # installer puts it in ~/.local/bin of whoever runs it (it refuses sudo-as-root
-# by design), so it runs AS the service user — viewer/config.py claude_bin()
+# by design), so it runs AS the service user — orchestrator/config.py claude_bin()
 # looks in exactly that place. It keeps itself current afterwards. Non-fatal:
 # a network blip must not block a Harman update, and the app names the gap.
 hm_claude_cli() {
@@ -217,7 +217,7 @@ hm_pyenv() {
 # 3. Bootstrap schema + seed data (idempotent) ─────────────────────────────────
 hm_bootstrap() {
   hm_log "Bootstrapping DB tables + seed data…"
-  ( cd "$HM_APP_DIR" && "$(hm_py)" -m viewer.bootstrap )
+  ( cd "$HM_APP_DIR" && "$(hm_py)" -m orchestrator.bootstrap )
 }
 
 # 4. Build the web UI ──────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ hm_service_install() {
   fi
 }
 
-# First-run setup code (viewer/setupcode.py): while the instance has no owner
+# First-run setup code (orchestrator/setupcode.py): while the instance has no owner
 # account, the server writes it at boot and signup requires it, so whoever
 # reaches a fresh install over the network first cannot claim it. Prints it for
 # the person running the install; silent once the owner exists (file deleted).
@@ -411,7 +411,9 @@ hm_rollback() {
   [[ -x "$(hm_py "$HM_RELEASES/$target")" ]] || {
     echo "refusing rollback: $target has no .venv (never fully provisioned)" >&2; return 1; }
   local tgt_schema db_schema
-  tgt_schema="$(cd "$HM_RELEASES/$target" && "$(hm_py "$HM_RELEASES/$target")" -c 'from viewer import db; print(db.SCHEMA_VERSION)' 2>/dev/null || echo 0)"
+  # Releases before 2026-11-10 named the package `viewer`; ask whichever one the target ships.
+  local pkg=orchestrator; [[ -d "$HM_RELEASES/$target/orchestrator" ]] || pkg=viewer
+  tgt_schema="$(cd "$HM_RELEASES/$target" && "$(hm_py "$HM_RELEASES/$target")" -c "from $pkg import db; print(db.SCHEMA_VERSION)" 2>/dev/null || echo 0)"
   db_schema="$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/healthz" 2>/dev/null \
                 | sed -n 's/.*"db_schema"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')"
   if [[ -n "$db_schema" && "$tgt_schema" -lt "$db_schema" && -z "${HM_FORCE:-}" ]]; then

@@ -1,6 +1,6 @@
-"""Unit tests for viewer.copilot pure functions — the Copilot run-flag builder
+"""Unit tests for orchestrator.copilot pure functions — the Copilot run-flag builder
 (security: gates the --model string) and the /models picker filter."""
-from viewer.copilot import copilot_run_flags, _pick_models
+from orchestrator.copilot import copilot_run_flags, _pick_models
 
 
 class TestRunFlags:

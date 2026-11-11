@@ -25,8 +25,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from viewer import actions, board_wake, boardwatch, db, loops
-from viewer.config import CHAT_JOBS, CHAT_LOCK
+from orchestrator import actions, board_wake, boardwatch, db, loops
+from orchestrator.config import CHAT_JOBS, CHAT_LOCK
 
 
 # ── db: dependency edges ──────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import { aiError, modelChoices, sameAI, switchAIProvider, type AIConfig, type AI
 import { useTheme } from "../lib/useTheme"
 import { useStyles } from "../lib/styles"
 
-// Display labels for the two FIXED enum sets the server hands us (viewer/ai.py:
+// Display labels for the two FIXED enum sets the server hands us (orchestrator/ai.py:
 // conversationModes, EFFORTS). The set of valid values is the server's truth —
 // we only iterate what `caps` returns — but how each value READS is a client
 // presentation concern. Keyed by the raw value; an unknown future value falls

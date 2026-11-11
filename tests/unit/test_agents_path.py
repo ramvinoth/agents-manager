@@ -1,4 +1,4 @@
-"""viewer.agents — where a local agent CLI is looked for, on every platform
+"""orchestrator.agents — where a local agent CLI is looked for, on every platform
 (card 270). One PATH (agent_path) feeds both the spawn env and the installed
 check, so "installed" and "runs" can never disagree. The Windows branches are
 driven by setting os.name and os.pathsep; no real Windows runs them.
@@ -8,7 +8,7 @@ import shlex
 import unittest
 from unittest import mock
 
-from viewer import agents
+from orchestrator import agents
 
 
 class AgentPathTest(unittest.TestCase):

@@ -1,10 +1,10 @@
-"""Unit tests for viewer.adapters — the raw-agent-JSONL -> Claude-schema
+"""Unit tests for orchestrator.adapters — the raw-agent-JSONL -> Claude-schema
 normalizers (a silent format drift here empties transcripts) and the
 path-traversal guard on resolve_agent_session."""
 import json
 
-from viewer import adapters
-from viewer.adapters import (
+from orchestrator import adapters
+from orchestrator.adapters import (
     _codex_line, _copilot_line, _pi_line, normalize_lines, resolve_agent_session,
 )
 

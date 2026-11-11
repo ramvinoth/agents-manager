@@ -1,0 +1,285 @@
+"""orchestrator.routes.capabilities — CapabilitiesMixin route + business methods."""
+import os
+import re
+import time
+from pathlib import Path
+from urllib.parse import parse_qs
+from orchestrator import chatplugins
+from orchestrator.config import (
+    AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, HEADLESS_OK, TEMPLATE_PLUGINS_DIR, VIEWER_HANDLED,
+    load_system_commands,
+)
+from orchestrator.routes import require_human
+from orchestrator.adapters import resolve_agent_session
+from orchestrator.browser import (
+    MCP_CDP_CACHE,
+)
+from orchestrator.codex import codex_capabilities, codex_mcp_save, codex_skill_delete, codex_skill_save
+from orchestrator.engine import (
+    codex_session_meta, copilot_session_meta, extract_cwd, frontmatter_description, get_host, scan_command_dir, scan_skill_dir,
+)
+
+
+class CapabilitiesMixin:
+    def handle_skill_delete(self, req):
+        body = self.read_body() or {}
+        if body.get("agent", "claude") == "codex":
+            self.send_host_result(codex_skill_delete(body.get("path", "")))
+            return
+        p = self.resolve_skill_path(body.get("path", ""))
+        if not p or not p.exists():
+            self.send_json({"error": "Skill not found"}, status=404)
+            return
+        if str(p).startswith((str(Path.home() / ".claude" / "plugins"), str(AGENT_PLUGINS_DIR),
+                              str(TEMPLATE_PLUGINS_DIR))):
+            self.send_json({"error": "Plugin skills are read-only"}, status=403)
+            return
+        trash = Path.home() / ".claude" / ".viewer-trash" / "skills"
+        try:
+            trash.mkdir(parents=True, exist_ok=True)
+            dest = trash / f"{p.parent.name}-{int(time.time())}"
+            os.rename(p.parent, dest)
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
+            return
+        self.send_json({"deleted": True, "trash": str(dest)})
+
+    def handle_mcp_save(self, req, delete=False):
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        scope = body.get("scope", "project")
+        cfg = body.get("config")
+        if not name:
+            self.send_json({"error": "Empty server name"}, status=400)
+            return
+        if not delete and not isinstance(cfg, dict):
+            self.send_json({"error": "config must be a JSON object"}, status=400)
+            return
+        host = body.get("host", "local")
+        if scope == "chat":
+            MCP_CDP_CACHE.pop("local", None)
+            self._chat_write(req, lambda sid: (chatplugins.delete_mcp(chatplugins.chat_root(sid, create=False), name) if delete
+                                          else chatplugins.save_mcp(chatplugins.chat_root(sid), name, cfg)) or {"saved": True}, body)
+            return
+        if body.get("agent", "claude") == "codex" and host == "local":
+            MCP_CDP_CACHE.pop(host, None)
+            self.send_host_result(codex_mcp_save(name, cfg, delete))
+            return
+        MCP_CDP_CACHE.pop(host, None)   # config is changing — re-read on next run
+        h = get_host(host)
+        # Resolve the project cwd on the host: explicit dir from the picker, else
+        # the session's own cwd (project scope needs a folder to write .mcp.json).
+        cwd = (body.get("cwd") or "").strip()
+        if scope == "project" and not cwd and body.get("session"):
+            try:
+                cwd = h.extract_cwd(body["session"])
+            except Exception:
+                cwd = ""
+        try:
+            res = h.mcp_save(name, scope, cfg, cwd, delete)
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+            return
+        self.send_host_result(res)
+
+    # ----- Full-session summary -----
+
+    def _p_skill_save(self, req):
+        self.handle_skill_save(req)
+
+    def _p_skill_delete(self, req):
+        self.handle_skill_delete(req)
+
+    def _g_commands(self, req):
+        self.serve_commands(req.raw_query)
+
+    def _p_mcp_delete(self, req):
+        self.handle_mcp_save(req, delete=True)
+
+    def serve_commands(self, query):
+        """List available slash commands from every source: project, user,
+        plugins, and the CLI's own system commands (researched list)."""
+        q = parse_qs(query)
+        rel = (q.get("session") or [""])[0]
+        cmds = {}
+        if rel:
+            full = self.resolve_session_quiet(rel)
+            if full:
+                cwd = Path(extract_cwd(full))
+                scan_command_dir(cwd / ".claude" / "commands", "project", cmds)
+                scan_skill_dir(cwd / ".claude" / "skills", "project skill", cmds)
+        scan_command_dir(Path.home() / ".claude" / "commands", "user", cmds)
+        scan_skill_dir(Path.home() / ".claude" / "skills", "user skill", cmds)
+
+        # Plugins: ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/
+        plugins_root = Path.home() / ".claude" / "plugins" / "cache"
+        if plugins_root.is_dir():
+            for skill_md in plugins_root.glob("*/*/*/skills/*/SKILL.md"):
+                plugin = skill_md.parents[2].parent.name
+                name = skill_md.parent.name
+                cmds.setdefault(name, {"name": name, "description": frontmatter_description(skill_md),
+                                       "source": f"plugin:{plugin}"})
+            for cmd_md in plugins_root.glob("*/*/*/commands/*.md"):
+                plugin = cmd_md.parents[1].parent.name
+                name = f"{plugin}:{cmd_md.stem}"
+                cmds.setdefault(name, {"name": name, "description": frontmatter_description(cmd_md),
+                                       "source": f"plugin:{plugin}"})
+
+        for name, desc in VIEWER_HANDLED.items():
+            cmds[name] = {"name": name, "description": desc, "source": "viewer", "handler": "viewer"}
+
+        for name, desc in load_system_commands().items():
+            if name in cmds:
+                continue
+            entry = {"name": name, "description": desc, "source": "built-in"}
+            if name not in HEADLESS_OK:
+                entry["interactive"] = True
+            cmds[name] = entry
+
+        self.send_json(sorted(cmds.values(), key=lambda c: c["name"]))
+
+    def handle_skill_save(self, req):
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        name = (body.get("name") or "").strip()
+        scope = body.get("scope", "user")
+        content = body.get("content") or ""
+        if body.get("agent", "claude") == "codex":
+            self.send_host_result(codex_skill_save(name, content))
+            return
+        if not re.fullmatch(r"[\w-]+", name):
+            self.send_json({"error": "Skill name must be letters/digits/dashes/underscores"}, status=400)
+            return
+        if scope == "chat":
+            self._chat_write(req, lambda sid: {"saved": True, "path": str(chatplugins.save_skill(chatplugins.chat_root(sid), name, content))}, body)
+            return
+        cwd = None
+        if scope == "project":
+            cwd = self.session_cwd(body.get("session", ""))
+            if not cwd:
+                self.send_json({"error": "Session not found for project scope"}, status=404)
+                return
+        try:
+            from orchestrator import skills
+            p = skills.write_skill(name, content, scope=scope, cwd=cwd)
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
+            return
+        self.send_json({"saved": True, "path": str(p)})
+
+    def session_cwd(self, rel):
+        full = self.resolve_session_quiet(rel) if rel else None
+        return Path(extract_cwd(full)) if full else None
+
+    def _p_mcp_save(self, req):
+        self.handle_mcp_save(req, delete=False)
+
+    def serve_capabilities(self, query):
+        q = parse_qs(query)
+        rel = (q.get("session") or [""])[0]
+        host = (q.get("host") or ["local"])[0]
+        agent = (q.get("agent") or ["claude"])[0]
+        cwd = (q.get("cwd") or [""])[0].strip()
+        data, status = self.compute_capabilities(host, agent, rel, cwd)
+        self.send_json(data, status=status or 200)
+
+    def compute_capabilities(self, host, agent, rel, cwd=""):
+        """Resolve one session's skills, MCP servers and plugins -> ({skills, mcp, plugins}, status).
+
+        The single source of truth for per-session capabilities: the /api/capabilities
+        route serves this directly, and session_detail composes it in. `status` is None
+        on success or an HTTP code on failure, so a caller composing several sources can
+        decide whether a partial failure is fatal. cwd from the picked new-session dir,
+        or the session's own cwd on that host, so project-scoped skills/MCP resolve
+        against the right folder."""
+        if agent == "codex" and host == "local":
+            if not cwd and rel:
+                full = resolve_agent_session("codex", rel)
+                if full:
+                    cwd = codex_session_meta(full)[1]
+            return codex_capabilities(cwd), None
+        if agent == "copilot":
+            # Host-aware read of ~/.copilot skills + MCP (local or over SSH). cwd
+            # is best-effort: local sessions resolve it, remote falls back to
+            # user-level config only.
+            from orchestrator.copilot import copilot_capabilities
+            if not cwd and rel and host == "local":
+                full = resolve_agent_session("copilot", rel)
+                if full:
+                    cwd = copilot_session_meta(full)[1]
+            return copilot_capabilities(host, cwd), None
+        h = get_host(host)
+        if not cwd and rel:
+            try:
+                cwd = h.extract_cwd(rel)
+            except Exception:
+                cwd = ""
+        try:
+            caps = h.capabilities(cwd)
+        except Exception as e:
+            return {"error": f"SSH: {e}", "skills": [], "mcp": []}, 502
+        # The chat's Harman plugins and its own extras ride --plugin-dir on local
+        # claude runs only (engine), from folders the host scanner never reads —
+        # merge them for exactly that case so this stays the true per-session view.
+        if host == "local" and rel:
+            chatplugins.merge_into(caps, self.sid_from_path(rel))
+        return caps, None
+
+    def _chat_write(self, req, fn, body):
+        """Run a write against the body's chat (its extras or plugin list).
+        Human-only: a chat's MCP server is code that runs on this machine."""
+        if not require_human(self, req):
+            return
+        sid = self.sid_from_path(body.get("session") or "")
+        if not sid or not self.resolve_session_quiet(body.get("session") or ""):
+            self.send_json({"error": "Pick a local chat for chat scope"}, status=404)
+            return
+        try:
+            self.send_json(fn(sid))
+        except chatplugins.ChatPluginError as e:
+            self.send_json({"error": str(e)}, status=e.status)
+
+    def _p_chat_plugin(self, req):
+        """Add (on=true) or remove one Harman plugin for a chat."""
+        body = self.read_body() or {}
+        name = (body.get("name") or "").strip()
+        self._chat_write(req, lambda sid: {"plugins": chatplugins.set_plugin(sid, name, bool(body.get("on")))}, body)
+
+    def _p_chat_save_to_agent(self, req):
+        """Keep this chat's plugins, skills and MCP on the agent it came from."""
+        body = self.read_body() or {}
+        self._chat_write(req, chatplugins.save_to_template, body)
+
+    def resolve_skill_path(self, raw):
+        """Only allow paths inside the known skill roots."""
+        try:
+            p = Path(raw).resolve()
+        except Exception:
+            return None
+        roots = [Path.home() / ".claude" / "skills",
+                 Path.home() / ".claude" / "plugins" / "cache",
+                 AGENT_PLUGINS_DIR, CHAT_PLUGINS_DIR, TEMPLATE_PLUGINS_DIR]
+        if p.is_file() and p.name == "SKILL.md":
+            # project skills can live anywhere under a project's .claude/skills
+            if ".claude/skills" in str(p) or any(str(p).startswith(str(r)) for r in roots):
+                return p
+        return None
+
+    def _g_skill(self, req):
+        p = self.resolve_skill_path((req.query.get("path") or [""])[0])
+        if not p or not p.exists():
+            self.send_json({"error": "Skill not found"}, status=404)
+            return
+        try:
+            self.send_json({"path": str(p), "content": p.read_text(errors="replace")})
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
+
+    def _g_capabilities(self, req):
+        self.serve_capabilities(req.raw_query)
+

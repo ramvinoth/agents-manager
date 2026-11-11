@@ -2,7 +2,7 @@
 chat too long for the client to page through."""
 import json
 
-from viewer.config import find_tool_call
+from orchestrator.config import find_tool_call
 
 
 def _write(tmp_path, recs):

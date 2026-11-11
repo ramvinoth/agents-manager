@@ -10,7 +10,7 @@ import { useTheme } from "../lib/useTheme"
 
 /**
  * Per-host environment variables injected into that machine's terminal and
- * agent runs (e.g. GH_TOKEN). Twin of the web EnvDialog; viewer/hostenv.py
+ * agent runs (e.g. GH_TOKEN). Twin of the web EnvDialog; orchestrator/hostenv.py
  * owns storage and validation. Names are listed; a value is fetched only when
  * revealed, and re-masked after a save. Deleting confirms first — a variable
  * is often a credential and removing it breaks that service's runs.

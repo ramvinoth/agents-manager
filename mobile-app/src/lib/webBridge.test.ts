@@ -212,7 +212,7 @@ test("parseOpenRef: tile links the page asks the app to open", () => {
     { t: "open", kind: "card", id: 12 },
     { t: "open", kind: "file", id: "x" },
     { t: "open", kind: "sift", id: "" },
-    { t: "open", kind: "code", id: "viewer/db.py" },
+    { t: "open", kind: "code", id: "orchestrator/db.py" },
     { t: "ws-open", id: 1, url: "/api/x" },
   ]) assert.equal(open(bad), null, JSON.stringify(bad))
   assert.equal(parseOpenRef("not json"), null)

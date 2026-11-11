@@ -1,6 +1,6 @@
 /**
- * Where a tapped push goes. The server sets the payload (viewer/inbox.py,
- * viewer/push.py); this maps it to one screen, synchronously, so the tap
+ * Where a tapped push goes. The server sets the payload (orchestrator/inbox.py,
+ * orchestrator/push.py); this maps it to one screen, synchronously, so the tap
  * navigates in the same frame instead of after a network read.
  *
  *   {card}            → that board card

@@ -1,5 +1,5 @@
 /**
- * notes.ts — pure logic for the Notes surface (mirrors the server's viewer/db
+ * notes.ts — pure logic for the Notes surface (mirrors the server's orchestrator/db
  * notes contract). Templates, the scope rule for a filtered notes VIEW, the
  * sort every notes app uses (pinned first, newest edit next), and the list-row
  * preview derived from a markdown body. No RN imports: unit-tested under node.
@@ -70,7 +70,7 @@ export function searchNotes(notes: Note[], q: string): Note[] {
   return notes.filter((n) => (n.title + "\n" + n.body).toLowerCase().includes(needle))
 }
 
-/** Exporting ONE note as a file (server: viewer/noteexport.py). Mirrors the mobile
+/** Exporting ONE note as a file (server: orchestrator/noteexport.py). Mirrors the mobile
  *  lib/noteExport.ts table, file name rule and error text. */
 export type NoteExportFormat = "md" | "docx" | "pdf"
 export const NOTE_EXPORT_FORMATS: { format: NoteExportFormat; label: string }[] = [

@@ -1,4 +1,4 @@
-// Calendar — the pure half of the Calendar screen. The server (viewer/workspace.Calendar)
+// Calendar — the pure half of the Calendar screen. The server (orchestrator/workspace.Calendar)
 // speaks Google's shapes: a timed event's start/end are RFC 3339 datetimes, an
 // all-day event's are YYYY-MM-DD dates with an EXCLUSIVE end (a one-day event
 // on Oct 5 ends "2026-10-06"). This module turns those into an agenda and back
@@ -95,7 +95,7 @@ export function draftProblem(d: EventDraft): string {
   return ""
 }
 
-/** The body the server takes (viewer/workspace.event_body). */
+/** The body the server takes (orchestrator/workspace.event_body). */
 export function fieldsOf(d: EventDraft): EventFields {
   return {
     title: d.title.trim() || "(no title)", all_day: d.all_day,

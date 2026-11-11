@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from viewer import login
-from viewer.config import ANSI_RE
+from orchestrator import login
+from orchestrator.config import ANSI_RE
 
 DUMMY_TOKEN = "sk-ant-oat01-" + ("TESTONLY0123456789abcdefghij_-" * 4)[:95]   # 108 chars
 URL = ("https://claude.com/cai/oauth/authorize?code=true&client_id=00000000-0000-0000-0000-000000000000"

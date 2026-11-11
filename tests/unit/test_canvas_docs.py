@@ -2,9 +2,9 @@
 retired per-session pane into them. Storage is faked: no Postgres."""
 import pytest
 
-from viewer import canvas_room as cr
-from viewer import db
-from viewer.routes import canvas_board as cb
+from orchestrator import canvas_room as cr
+from orchestrator import db
+from orchestrator.routes import canvas_board as cb
 
 AGENT = {"kind": "mcp", "session": "sess-a", "actor": "session:sess-a", "human_role": "owner", "level": "ic"}
 HUMAN = {"kind": "app", "session": "", "actor": "user:o", "human_role": "owner"}

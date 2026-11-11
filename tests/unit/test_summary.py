@@ -3,7 +3,7 @@ engine behind the Stats tab. Feed synthetic transcripts, lock the aggregates
 (counts, tokens, tool tally, title/summaries, timeline downsampling)."""
 import json
 
-from viewer.sessions import compute_session_summary
+from orchestrator.sessions import compute_session_summary
 
 
 def _summary(objs, cwd="/tmp/proj"):

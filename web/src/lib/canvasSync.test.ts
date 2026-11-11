@@ -8,7 +8,7 @@ function eq(label: string, got: unknown, want: unknown) {
 
 const el = (id: string, version = 1, versionNonce = 5, extra: Partial<El> = {}): El => ({ id, type: "rectangle", version, versionNonce, ...extra })
 
-// Same numbers as viewer/canvas_reconcile (tests/unit/test_canvas_reconcile.py pins the server side).
+// Same numbers as orchestrator/canvas_reconcile (tests/unit/test_canvas_reconcile.py pins the server side).
 eq("fnv1a empty = offset basis", fnv1a(""), 0x811c9dc5)
 eq("fnv1a 'a'", fnv1a("a"), 0xe40c292c)
 eq("fnv1a is utf-8", fnv1a("é") === fnv1a("e"), false)

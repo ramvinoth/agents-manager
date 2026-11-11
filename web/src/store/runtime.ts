@@ -17,7 +17,7 @@ import { pickOpen, reloadForHost, sessionIdOf } from "./helpers"
 
 const POLL_MS = 2000
 const CHAT_POLL_MS = 1500
-/** The server pings every 25s (viewer/events.py PING_EVERY); two missed = dead. */
+/** The server pings every 25s (orchestrator/events.py PING_EVERY); two missed = dead. */
 const EVENTS_STALE_MS = 60_000
 /** Git has no event: a run's own commits refresh it at run end; a terminal's
  *  branch switch shows up within this. */

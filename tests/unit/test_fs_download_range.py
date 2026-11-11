@@ -1,7 +1,7 @@
-"""/api/fs/download local leg (viewer/routes/fs.py): streamed, one HTTP Range
+"""/api/fs/download local leg (orchestrator/routes/fs.py): streamed, one HTTP Range
 honoured (so the browser's PDF viewer fetches only the pages it shows), and
 ?inline=1 renders only safe types inline — never HTML or SVG."""
-from viewer.routes.fs import _parse_range
+from orchestrator.routes.fs import _parse_range
 from test_fs_zip_routes import _Handler, _Req
 
 

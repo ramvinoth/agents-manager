@@ -3,7 +3,7 @@
  *
  * Mirrors web/src/lib/api.ts, but authenticates with a Bearer token (mobile has
  * no cookie jar) instead of the HttpOnly `viewer_session` cookie. The backend
- * accepts either — see viewer/server.py `_auth_token`.
+ * accepts either — see orchestrator/server.py `_auth_token`.
  */
 import { serverFetch, serverMedia, serverSocket, serverUpload, serverDownload } from "./transport"
 import { normModel } from "../lib/model"
@@ -32,7 +32,7 @@ export type ChatResult = { session: string }
 export type CallHistory = Array<Record<string, unknown>>
 import type { CallAnswer } from "../lib/callSegments"
 export type { CallAnswer }
-/** GET /api/call/engine (viewer.callbrain.engine). `model` is the server's own
+/** GET /api/call/engine (orchestrator.callbrain.engine). `model` is the server's own
  *  name for the call brain; `error` means no brain is configured and a call
  *  cannot start. */
 export type CallEngine = { engine: "brain"; model?: string; error?: string }
@@ -46,7 +46,7 @@ export type FsScope = { drive: string } | { host: string } | {}
  *  token" flag; an unauthorized drive still lists, picking it runs consent. */
 export type Drive = { id: string; label: string; kind: string; status: string; hidden: boolean; authorized: boolean }
 /** GET /api/integrations — the Integrations screen in one response, built
- *  server-side from viewer/integrations.py. No secrets or tokens. */
+ *  server-side from orchestrator/integrations.py. No secrets or tokens. */
 export type ServiceState = "on" | "off" | "grant" | "unavailable"
 /** One thing an agent may do with a service (read, draft, create, delete…). */
 export type IntegrationOp = { id: string; label: string }
@@ -86,12 +86,12 @@ export type IntegrationProvider = {
   services: IntegrationService[]
   connections: IntegrationConnection[]
 }
-/** What agents may do on this machine's disk (viewer/integrations.local_view). */
+/** What agents may do on this machine's disk (orchestrator/integrations.local_view). */
 export type LocalDisk = { roots: string[]; ops: (IntegrationOp & { on: boolean })[] }
 export type IntegrationCategory = { id: string; label: string }
 /** `categories`: the order and names of the "Add an account" groups; absent on older servers. */
 export type IntegrationsView = { providers: IntegrationProvider[]; categories?: IntegrationCategory[]; redirect_uri: string; local: LocalDisk }
-/** One Google Calendar event as viewer/workspace._event returns it. `start`/`end`
+/** One Google Calendar event as orchestrator/workspace._event returns it. `start`/`end`
  *  are RFC 3339 datetimes, or YYYY-MM-DD dates when `all_day`. */
 export type CalendarEvent = {
   id: string; title: string; start: string; end: string; all_day: boolean
@@ -154,7 +154,7 @@ export type McpSignin = { name: string; stage: "idle" | "starting" | "url" | "do
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
 /** Harman (org) authority, server-enforced on every board/org action whatever the
- *  harness: ic < lead < manager (viewer/orglogic.LEVELS). Separate from the
+ *  harness: ic < lead < manager (orchestrator/orglogic.LEVELS). Separate from the
  *  harness PermissionMode, which gates the CLI's own tools inside a run. */
 export type HarmanLevel = "ic" | "lead" | "manager"
 export type AgentTemplate = {
@@ -164,7 +164,7 @@ export type AgentTemplate = {
   ai?: AISelection | null
   /** The scheduled jobs a chat started from this agent begins with. */
   jobs?: NewChatJob[]
-  /** Bundled role skills (viewer/agent_plugins/<plugin>), read server-side
+  /** Bundled role skills (orchestrator/agent_plugins/<plugin>), read server-side
    *  from the template row. */
   plugin?: string
   /** Harman authority a chat started from this role acts at on the board. */
@@ -177,7 +177,7 @@ export type AgentTemplate = {
   /** The server's answer to "may this caller edit/delete it". */
   editable?: boolean
 }
-/** What a person sets on an agent (viewer/db.TEMPLATE_FIELDS). */
+/** What a person sets on an agent (orchestrator/db.TEMPLATE_FIELDS). */
 export type AgentTemplateFields = Pick<AgentTemplate, "name" | "description" | "category" | "icon" | "system_prompt" | "goal" | "jobs" | "plugin" | "level"> & { ai: AISelection | null; plugins: string[] }
 /** GET /api/agent-templates/extras: the plugin catalog an agent picks from, and
  *  the skills and MCP servers saved on the agent itself (empty for a new one). */
@@ -186,10 +186,10 @@ export type PendingQuestion = { tool_use_id: string; questions: unknown }
 export type PendingPlan = { tool_use_id: string; plan: string; host?: string }
 // ---- org / Kanban (the "empire") ----
 export type OrgProject = { id: number; name: string; description: string; host: string; cwd: string; created_by: string; created_at: number; missing?: boolean }
-/** An app sharing a project's folder (viewer/project_plugins.py), e.g. Sift. */
+/** An app sharing a project's folder (orchestrator/project_plugins.py), e.g. Sift. */
 export type ProjectPlugin = { id: string; label: string; icon: string; description: string }
 export type BoardColumn = { id: number; name: string; position: number }
-/** A door from the outside onto a board (viewer/intake.py): a POST to `path`
+/** A door from the outside onto a board (orchestrator/intake.py): a POST to `path`
  *  with the token becomes a card there and wakes `session_id`. */
 export type IntakeChannel = {
   id: string; name: string; project_id: number; session_id: string; app_feedback: boolean
@@ -242,12 +242,12 @@ export type CardDep = { id: number; title: string; column_name: string; done: bo
 export type CardComment = { id: number; card_id: number; author: string; body: string; created_at: number }
 export type Approval = { id: number; kind: string; summary: string; detail: unknown; status: string; created_by: string; created_at: number; resolved_at?: number; resolution?: string }
 export type CardFilter = { session?: string; project?: number }
-// A note: the org's knowledge ledger next to the board (server: viewer/db notes).
+// A note: the org's knowledge ledger next to the board (server: orchestrator/db notes).
 // `kind` is its template; `archived` follows the owning chat's archive flag.
 export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"
 // replies / last_reply_at: the discussion thread's stats, on the list read only.
 export type Note = { id: number; title: string; body: string; kind: NoteKind; project_id: number | null; session_id: string | null; pinned: boolean; archived: boolean; created_by: string; created_at: number; updated_at: number; replies?: number; last_reply_at?: number | null }
-// One comment of a note's discussion, nested + sorted by the server (viewer/discussion.thread).
+// One comment of a note's discussion, nested + sorted by the server (orchestrator/discussion.thread).
 export type NoteComment = { id: number; note_id: number; parent_id: number | null; author: string; session_id: string; body: string; created_at: number; score: number; my_vote: -1 | 0 | 1; replies: NoteComment[] }
 export type NoteCommentSort = "best" | "new" | "old"
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
@@ -286,7 +286,7 @@ export type InboxMessage = {
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
- *  viewer/actions.py execute). Any org write can return this, so writes whose
+ *  orchestrator/actions.py execute). Any org write can return this, so writes whose
  *  action is Red are typed `T | Queued`: the compiler then forces the call site
  *  to decide, instead of letting a queued request read as a completed one. */
 export type Queued = { queued: true; approval: number }
@@ -382,7 +382,7 @@ async function req<T = unknown>(method: string, path: string, body?: unknown): P
   }
   if (!res.ok) {
     // The org gate refuses with `{denied, reason}` rather than `{error}` (see
-    // viewer/actions.py execute), so read both — otherwise every authority
+    // orchestrator/actions.py execute), so read both — otherwise every authority
     // refusal reaches the UI as a bare "HTTP 403" with the reason discarded.
     const d = data as { error?: string; reason?: string }
     const msg = d?.error || d?.reason || `HTTP ${res.status}`
@@ -939,7 +939,7 @@ export const api = {
     req<Card>("POST", "/api/org/cards/move", body),
   orgUpdateCard: (body: { card_id: number; title?: string; body?: string; column_id?: number; project_id?: number; position?: number }) =>
     req<Card>("POST", "/api/org/cards/update", body),
-  // `card_delete` and the automation resume are Red (viewer/orglogic), so these
+  // `card_delete` and the automation resume are Red (orchestrator/orglogic), so these
   // two can come back queued instead of done — the union makes the caller say so.
   orgDeleteCard: (body: { card_id: number }) =>
     req<{ deleted?: boolean } | Queued>("POST", "/api/org/cards/delete", body),
@@ -981,7 +981,7 @@ export const api = {
   orgCreateNote: (body: { title: string; body?: string; kind?: NoteKind; project_id?: number; session?: string; pinned?: boolean }) =>
     req<Note>("POST", "/api/org/notes", body),
   orgUpdateNote: (body: { note_id: number; title?: string; body?: string; kind?: NoteKind; pinned?: boolean; archived?: boolean }) =>
-    // relinked: a rename rewrote [[links]] in that many notes (viewer/notelinks.py)
+    // relinked: a rename rewrote [[links]] in that many notes (orchestrator/notelinks.py)
     req<Note & { relinked?: number }>("POST", "/api/org/notes/update", body),
   /** How a project's notes link ([[Title]], #tags) — see lib/noteLinks.ts. */
   orgNotesGraph: (project?: number | null) =>

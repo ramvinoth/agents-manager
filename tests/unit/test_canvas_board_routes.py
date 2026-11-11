@@ -1,6 +1,6 @@
-"""viewer.routes.canvas_board: the socket's write path, without a socket."""
-from viewer import canvas_room as cr
-from viewer.routes import canvas_board as cb
+"""orchestrator.routes.canvas_board: the socket's write path, without a socket."""
+from orchestrator import canvas_room as cr
+from orchestrator.routes import canvas_board as cb
 
 
 class Sub:
@@ -63,7 +63,7 @@ def _frame(payload, mask=b"\x01\x02\x03\x04"):
 def test_ws_recv_unmasks_and_refuses_an_oversized_frame_before_reading_it():
     import socket
     import pytest
-    from viewer.browser import WSServer
+    from orchestrator.browser import WSServer
     a, b = socket.socketpair()
     try:
         ws = WSServer(a)
@@ -81,7 +81,7 @@ import io
 
 import pytest
 
-from viewer import db
+from orchestrator import db
 
 AGENT = {"kind": "mcp", "actor": "session:s1", "human_role": "owner", "level": "lead"}
 AGENT_IC = {**AGENT, "level": "ic"}

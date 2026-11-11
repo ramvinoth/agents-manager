@@ -1,6 +1,6 @@
 /**
  * Test double for the far end of the Harman relay: a fake WebSocket whose
- * peer speaks viewer/relay.py's end-to-end protocol. Shared by the transport
+ * peer speaks orchestrator/relay.py's end-to-end protocol. Shared by the transport
  * tests; not a test file itself (npm test runs *.test.ts only).
  */
 import assert from "node:assert/strict"
@@ -21,7 +21,7 @@ function nonce(dir: number, c: number) {
 
 export type Frame = { kind: number; stream: number; payload: Uint8Array }
 
-/** The server end of one phone socket, speaking viewer/relay.py's protocol. */
+/** The server end of one phone socket, speaking orchestrator/relay.py's protocol. */
 export class FakeServer {
   key: Uint8Array | null = null
   rx = 0

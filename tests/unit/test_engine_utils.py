@@ -1,7 +1,7 @@
-"""Unit tests for pure helpers in viewer.engine: loop-interval parsing (clamped)
+"""Unit tests for pure helpers in orchestrator.engine: loop-interval parsing (clamped)
 and SKILL.md/command frontmatter description extraction."""
-from viewer.engine import frontmatter_description
-from viewer.loops import parse_interval
+from orchestrator.engine import frontmatter_description
+from orchestrator.loops import parse_interval
 
 
 class TestParseInterval:
@@ -55,7 +55,7 @@ class TestPermissionDeniedHint:
 
     def test_tcc_folder_names_the_switch(self, monkeypatch):
         from pathlib import Path
-        from viewer import engine
+        from orchestrator import engine
         monkeypatch.setattr(engine.sys, "platform", "darwin")
         monkeypatch.setattr(engine.sys, "executable", "/opt/py/bin/python3")
         monkeypatch.setattr(engine, "_responsible_app", lambda: None)
@@ -67,7 +67,7 @@ class TestPermissionDeniedHint:
 
     def test_tcc_folder_names_the_wrapping_app(self, monkeypatch):
         from pathlib import Path
-        from viewer import engine
+        from orchestrator import engine
         monkeypatch.setattr(engine.sys, "platform", "darwin")
         monkeypatch.setattr(engine, "_responsible_app",
                             lambda: ("Harman", "/Applications/Harman.app"))
@@ -77,7 +77,7 @@ class TestPermissionDeniedHint:
         assert "Python" not in msg
 
     def test_responsible_app_reads_the_parent_bundle(self, monkeypatch):
-        from viewer import engine
+        from orchestrator import engine
         class R: stdout = "/Users/x/Applications/Harman.app/Contents/MacOS/Harman\n"
         monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: R)
         assert engine._responsible_app() == ("Harman", "/Users/x/Applications/Harman.app")
@@ -86,14 +86,14 @@ class TestPermissionDeniedHint:
 
     def test_other_paths_stay_plain(self, monkeypatch):
         from pathlib import Path
-        from viewer import engine
+        from orchestrator import engine
         monkeypatch.setattr(engine.sys, "platform", "darwin")
         assert engine._permission_denied_hint(Path("/root")) == "Permission denied"
         assert engine._permission_denied_hint(Path.home() / "srv" / "Downloads") == "Permission denied"
 
     def test_not_a_mac_stays_plain(self, monkeypatch):
         from pathlib import Path
-        from viewer import engine
+        from orchestrator import engine
         monkeypatch.setattr(engine.sys, "platform", "linux")
         assert engine._permission_denied_hint(Path.home() / "Downloads") == "Permission denied"
 
@@ -101,7 +101,7 @@ class TestPermissionDeniedHint:
 def test_idle_timeout_waits_while_owner_is_deciding():
     import os, threading, time
     import pytest
-    from viewer.engine import iter_stdout_until
+    from orchestrator.engine import iter_stdout_until
 
     r, w = os.pipe()
 

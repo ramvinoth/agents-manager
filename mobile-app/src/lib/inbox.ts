@@ -1,6 +1,6 @@
 /**
  * inbox.ts — pure logic for the mobile Inbox screen (mirrors the server's
- * viewer/inbox + routes/inbox contract and the web's lib/inbox.ts). The inbox
+ * orchestrator/inbox + routes/inbox contract and the web's lib/inbox.ts). The inbox
  * is a DELIVERY SURFACE over the existing decision system, not a second one:
  * a row can carry a decision (question | plan | approval | card) whose open
  * state the server DERIVES at read time; the deciding tap stays in the chat.

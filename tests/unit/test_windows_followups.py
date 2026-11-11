@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from viewer import browser, db, gitops
+from orchestrator import browser, db, gitops
 
 
 class DefaultDsnTest(unittest.TestCase):

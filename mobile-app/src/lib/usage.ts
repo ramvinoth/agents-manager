@@ -1,6 +1,6 @@
 // usage.ts — which screens the owner opens on the phone, which controls are on
 // them, which they use there (tap, long-press, swipe), plus in-app feedback,
-// reported to the owner's own server (POST /api/usage; report: viewer/usage.py,
+// reported to the owner's own server (POST /api/usage; report: orchestrator/usage.py,
 // MCP usage_report — the same hot/dead/cold digest the web feeds).
 // Pure rules here; App.tsx feeds screen changes, components/Tracked.tsx feeds
 // presses and what is on screen, swipe sites call recordSwipe, and

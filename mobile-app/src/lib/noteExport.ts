@@ -1,4 +1,4 @@
-// Exporting ONE note as a file (server: viewer/noteexport.py, GET /api/org/note/export).
+// Exporting ONE note as a file (server: orchestrator/noteexport.py, GET /api/org/note/export).
 // Pure: the format table, the file name and the error text. The share flow is noteExportNative.ts.
 import { userError } from "./errors.ts"
 

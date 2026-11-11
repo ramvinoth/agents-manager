@@ -7,7 +7,7 @@ address for the viewer" and the banner printed http://:8091/ — and the empty
 result was cached for the life of the process."""
 import pytest
 
-from viewer import remote
+from orchestrator import remote
 
 
 @pytest.fixture(autouse=True)

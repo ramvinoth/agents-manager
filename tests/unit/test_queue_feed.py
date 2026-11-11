@@ -3,8 +3,8 @@ stdin is already closed (the CLI can still start another turn after that, on a
 background-task notification), and not when the write itself fails."""
 import io
 
-from viewer import engine, resume
-from viewer.engine import feed_next_queued
+from orchestrator import engine, resume
+from orchestrator.engine import feed_next_queued
 
 
 class _Proc:

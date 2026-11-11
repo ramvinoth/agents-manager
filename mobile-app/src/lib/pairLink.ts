@@ -6,7 +6,7 @@
  * password typed on the phone. The same text pasted into "Server URL" works too.
  *
  * A link carries at least one route: the server's direct address, the Harman
- * relay (viewer/relay.py) — the relay URL, the server's routing id and its
+ * relay (orchestrator/relay.py) — the relay URL, the server's routing id and its
  * X25519 public key, which is what makes the relayed channel end-to-end
  * encrypted to THIS server — or both.
  *

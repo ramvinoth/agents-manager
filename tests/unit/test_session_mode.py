@@ -27,10 +27,10 @@ policy over a db it only calls, so no Postgres and no network are needed.
 """
 import pytest
 
-from viewer import actions, engine, orglogic, push
-from viewer.routes import orchestrator
-from viewer.routes.orchestrator import OrchestratorMixin
-from viewer.routes.sessions import SessionsMixin
+from orchestrator import actions, engine, orglogic, push
+from orchestrator.routes import orchestrator
+from orchestrator.routes.orchestrator import OrchestratorMixin
+from orchestrator.routes.sessions import SessionsMixin
 
 
 # ── orglogic: the action's class and scope ─────────────────────────────────

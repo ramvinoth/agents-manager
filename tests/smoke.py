@@ -25,7 +25,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))  # repo root -> `viewer`
 sys.path.insert(0, _HERE)                   # tests/    -> `ci_auth`
 try:
-    import viewer.db as db
+    import orchestrator.db as db
     from ci_auth import mint
     _TOK = mint()
     _AUTH = {"Cookie": f"{db.SESSION_COOKIE}={_TOK}"} if _TOK else {}

@@ -48,7 +48,7 @@ export type ResumeBlock = { kind: "resume"; text: string }
 export type SteerBlock = { kind: "steer"; text: string; from?: string }
 export type Block = TextBlock | ToolBlock | CompactBlock | ResumeBlock | SteerBlock
 
-// How viewer/inbox.py heads a message it steers into a running turn.
+// How orchestrator/inbox.py heads a message it steers into a running turn.
 const INBOX_MARK = /^\[inbox\] From ([^\n:]+):\n/
 
 // A mid-turn steer the CLI recorded as a queued_command attachment, or null.
@@ -62,7 +62,7 @@ function steerOf(msg: any): { text: string; from?: string } | null {
   return m ? { text: raw.slice(m[0].length), from: m[1].trim() } : { text: raw }
 }
 
-// How viewer/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together).
+// How orchestrator/resume.py's RESUME_PROMPT begins (tests/unit/test_resume.py pins the two together).
 const RESUME_MARK = "Your last turn was cut off mid-way"
 
 // The text of a server auto-resume prompt, or null when the record is anything else.
