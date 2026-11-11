@@ -1,4 +1,7 @@
-"""orchestrator.routes.sessions — SessionsMixin route + business methods."""
+"""orchestrator.routes.sessions — read, list, describe, rename and delete chat sessions, and start new ones.
+
+Loops live in routes/loops.py, agent templates in routes/agent_templates.py, fork and restore in
+routes/session_fork.py."""
 import json
 import os
 import re
@@ -9,17 +12,15 @@ from urllib.parse import parse_qs
 from orchestrator import agenttemplates, chatplugins, db, discussion, history
 from orchestrator.history import HistoryView
 from orchestrator.config import (
-    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, agent_plugin_names,
-    find_tool_call, read_back_f, split_lines, template_plugin_dir,
+    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, find_tool_call, read_back_f, split_lines,
 )
 from orchestrator.adapters import list_sessions_local, normalize_lines, resolve_agent_session
-from orchestrator.codex import codex_fork, codex_restore, start_codex_new
+from orchestrator.codex import start_codex_new
 from orchestrator.engine import (
-    push_label, extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
+    push_label, extract_cwd, get_host, resolve_level, start_claude_run,
     start_copilot_new,
 )
 from orchestrator.loops import USER_ORIGIN, build_schedule
-from orchestrator.routes import require_human
 from orchestrator.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
 )
@@ -146,241 +147,9 @@ class SessionsMixin:
             return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
         return ""
 
-    def handle_create_loop(self):
-        body = self.read_body()
-        if body is None:
-            self.send_json({"error": "Invalid JSON body"}, status=400)
-            return
-        rel = body.get("session", "")
-        prompt = (body.get("prompt") or "").strip()
-        full = self.resolve_session_quiet(rel)
-        if not full:
-            self.send_json({"error": "Session not found"}, status=404)
-            return
-        if not prompt:
-            self.send_json({"error": "Empty prompt"}, status=400)
-            return
-        # cron > at (one-shot, kind='once') > interval — same vocabulary and
-        # precedence as the agent-side loop_create action.
-        sched, err = build_schedule(body.get("cron"), body.get("interval"), body.get("at"))
-        if err:
-            self.send_json({"error": err}, status=400)
-            return
-        lid = uuid_mod.uuid4().hex[:12]
-        entry = {"session": full.stem, "path": rel, "prompt": prompt,
-                 "runs": 0, "created": time.time(), "enabled": True,
-                 "origin": USER_ORIGIN,
-                 "model": (body.get("model") or "").strip(),
-                 "provider": (body.get("provider") or "").strip(),
-                 **sched}
-        db.loop_upsert(lid, entry)
-        self.send_json({"created": lid, "kind": sched["kind"], "interval": sched["interval"],
-                        "cron": sched["cron"], "nextRun": sched["nextRun"]})
-
-    def handle_edit_loop(self):
-        """Update an existing loop/job in place, preserving its id, session and
-        run history. Only the fields present in the body change. Any schedule
-        input (`at`, `cron`, `interval`) rebuilds the whole schedule through
-        build_schedule: `at` turns the job into a one-shot (kind='once') and
-        clears a stale cron; cron/interval turn a one-shot back to recurring."""
-        body = self.read_body()
-        if body is None:
-            self.send_json({"error": "Invalid JSON body"}, status=400)
-            return
-        lid = body.get("id", "")
-        loop = db.loop_get(lid)
-        if not loop:
-            self.send_json({"error": "Job not found"}, status=404)
-            return
-        fields = {}
-        if "prompt" in body:
-            prompt = (body.get("prompt") or "").strip()
-            if not prompt:
-                self.send_json({"error": "Empty prompt"}, status=400)
-                return
-            fields["prompt"] = prompt
-        if "at" in body:
-            sched, err = build_schedule(None, None, body.get("at"))
-        elif "cron" in body or "interval" in body:
-            # Absent inputs keep their stored value, so cron still wins over an
-            # interval-only edit until the caller clears it (cron: "").
-            sched, err = build_schedule(body.get("cron", loop.get("cron")),
-                                        body.get("interval", loop.get("interval")))
-        else:
-            sched, err = None, None
-        if err:
-            self.send_json({"error": err}, status=400)
-            return
-        if sched is not None:
-            # An unchanged recurring schedule (editor re-sending the same interval
-            # alongside a prompt tweak) must not push nextRun out again.
-            same = all(sched[k] == loop.get(k) for k in ("cron", "interval", "kind"))
-            if not (same and sched["kind"] == "recurring"):
-                fields.update(sched)
-        if "model" in body:
-            fields["model"] = (body.get("model") or "").strip()
-        if "provider" in body:
-            fields["provider"] = (body.get("provider") or "").strip()
-        if "enabled" in body:
-            # Pause/resume. nextRun is deliberately left untouched: a resumed loop
-            # that is already overdue fires at most ONCE (loop_scheduler's "paused
-            # means paused, not queued" — runtime/scheduler.py), never a burst of the runs it
-            # missed while off.
-            fields["enabled"] = bool(body["enabled"])
-        updated = db.loop_update(lid, fields)
-        self.send_json({"updated": lid, "kind": updated.get("kind", "recurring"),
-                        "interval": updated.get("interval"), "cron": updated.get("cron"),
-                        "nextRun": updated.get("nextRun"), "enabled": updated.get("enabled")})
-
     # ----- Slash commands / projects / session resolution -----
 
-    def _g_loops(self, req):
-        sid = (req.query.get("session") or [""])[0]
-        loops = [dict(lp, id=lid) for lid, lp in db.loop_list(sid or None).items()]
-        self.send_json(sorted(loops, key=lambda l: l.get("created", 0)))
-
     # ----- Agents (agent templates): shared + the caller's personal ones -----
-
-    def _template_viewer(self, req):
-        """The account whose agents this caller sees: the human at the app, or
-        for an agent session (no human) the install owner it acts for."""
-        user = req.principal.get("user")
-        return user["id"] if user else db.owner_user_id()
-
-    def _g_agent_templates(self, req):
-        """Shared agents + the caller's own, each marked `editable` for this
-        human (never for an agent session) so a client never re-derives it."""
-        user = req.principal.get("user")
-        self.send_json([{**t, "editable": bool(user) and agenttemplates.editable(t, user)}
-                        for t in db.agent_templates_list(self._template_viewer(req))])
-
-    def _p_agent_templates(self, req):
-        """Create a personal agent, owned by the human making it."""
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        fields, err = agenttemplates.fields_from(body)
-        plugins, perr = agenttemplates.plugins_from(body.get("plugins"))
-        if err or perr:
-            self.send_json({"error": err or perr}, status=400)
-            return
-        user = req.principal["user"]
-        row = db.agent_template_create(fields, user["id"], created_by=user["username"], plugins=plugins)
-        self.send_json({"id": row["id"], "template": row})
-
-    def _owned_template(self, req, body):
-        """The agent the body's id names, when this human may change it; else
-        answers 404/403 itself and returns None."""
-        tid = body.get("id")
-        template = db.agent_template_get(int(tid)) if str(tid or "").isdigit() else None
-        user = req.principal["user"]
-        if not template or not agenttemplates.visible(template, user["id"]):
-            self.send_json({"error": "Agent not found"}, status=404)
-            return None
-        if not agenttemplates.editable(template, user):
-            self.send_json({"error": "Built-in agents can't be changed; duplicate it to make your own"
-                            if template["is_builtin"] else "Only its owner can change this agent"}, status=403)
-            return None
-        return template
-
-    def _g_agent_template_extras(self, req):
-        """What an agent brings beyond its text: the plugin catalog to pick
-        from, and the skills and MCP servers saved on the agent itself. No id
-        (a new agent's form) answers the catalog alone."""
-        catalog = [{"name": n, "description": plugin_description(agent_plugin_dir(n))} for n in agent_plugin_names()]
-        tid = (req.query.get("id") or [""])[0]
-        if not tid:
-            self.send_json({"catalog": catalog, "skills": [], "mcp": []})
-            return
-        template = db.agent_template_get(int(tid)) if tid.isdigit() else None
-        if not template or not agenttemplates.visible(template, self._template_viewer(req)):
-            self.send_json({"error": "Agent not found"}, status=404)
-            return
-        user = req.principal.get("user")
-        root = template_plugin_dir(template["id"])
-        skills_, mcp = (chatplugins.extras_rows(root, "agent", bool(user) and agenttemplates.editable(template, user))
-                        if root else ([], []))
-        self.send_json({"catalog": catalog, "skills": skills_, "mcp": mcp})
-
-    def _p_agent_template_extra(self, req):
-        """Save or delete one skill or MCP server on an agent (its owner only):
-        {id, kind: skill|mcp, name, content | config | from_path, delete}.
-        `from_path` copies an existing skill on this machine (its SKILL.md path
-        from /api/capabilities) whole. Every new chat from the agent starts
-        with a copy; chats already running keep theirs."""
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        if not self._owned_template(req, body):
-            return
-        kind, name, delete = body.get("kind"), (body.get("name") or "").strip(), bool(body.get("delete"))
-        if kind not in ("skill", "mcp"):
-            self.send_json({"error": "kind must be skill or mcp"}, status=400)
-            return
-        try:
-            root = chatplugins.agent_root(int(body["id"]), create=not delete)
-            if kind == "skill":
-                if delete:
-                    chatplugins.delete_skill(root, name)
-                elif body.get("from_path"):
-                    src = self.resolve_skill_path(body["from_path"])
-                    if not src:
-                        self.send_json({"error": "Skill not found"}, status=404)
-                        return
-                    chatplugins.copy_skill(root, src)
-                else:
-                    chatplugins.save_skill(root, name, body.get("content") or "")
-            elif delete:
-                chatplugins.delete_mcp(root, name)
-            else:
-                chatplugins.save_mcp(root, name, body.get("config"))
-        except chatplugins.ChatPluginError as e:
-            self.send_json({"error": str(e)}, status=e.status)
-            return
-        self.send_json({"saved": True})
-
-    def _p_agent_templates_update(self, req):
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        if not self._owned_template(req, body):
-            return
-        fields, err = agenttemplates.fields_from(body)
-        plugins, perr = agenttemplates.plugins_from(body.get("plugins"))
-        if err or perr:
-            self.send_json({"error": err or perr}, status=400)
-            return
-        if plugins is not None:
-            db.agent_template_set_plugins(int(body["id"]), plugins)
-        self.send_json({"template": db.agent_template_update(int(body["id"]), fields)})
-
-    def _p_agent_templates_duplicate(self, req):
-        """A personal, editable copy of any agent this human can see — the way
-        to change a builtin. Carries its kept plugins and saved skills/MCP."""
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        tid = body.get("id")
-        source = db.agent_template_get(int(tid)) if str(tid or "").isdigit() else None
-        user = req.principal["user"]
-        if not source or not agenttemplates.visible(source, user["id"]):
-            self.send_json({"error": "Agent not found"}, status=404)
-            return
-        row = db.agent_template_create(agenttemplates.copy_fields(source), user["id"],
-                                       created_by=user["username"], plugins=source.get("plugins"))
-        chatplugins.copy_template_extras(source["id"], row["id"])
-        self.send_json({"id": row["id"], "template": row})
-
-    def _p_agent_templates_delete(self, req):
-        if not require_human(self, req):
-            return
-        body = self.read_body() or {}
-        if not self._owned_template(req, body):
-            return
-        deleted = db.agent_template_delete(int(body["id"]))
-        if deleted:
-            chatplugins.purge_template(int(body["id"]))
-        self.send_json({"deleted": deleted})
 
     def _g_default(self, req):
         self.send_json({"default": DEFAULT_SESSION})
@@ -492,12 +261,6 @@ class SessionsMixin:
     def _g_projects(self, req):
         self.serve_projects(req.host)
 
-    def _p_loops_delete(self, req):
-        body = self.read_body()
-        lid = (body or {}).get("id", "")
-        existed = db.loop_delete(lid)
-        self.send_json({"deleted": bool(existed)})
-
     def serve_raw_file(self, f):
         """The whole history: an open HistoryView, streamed."""
         self.send_response(200)
@@ -574,12 +337,6 @@ class SessionsMixin:
 
     def _g_resolve(self, req):
         self.serve_resolve(req.raw_query, req.host)
-
-    def _p_loops(self, req):
-        self.handle_create_loop()
-
-    def _p_loops_edit(self, req):
-        self.handle_edit_loop()
 
     def serve_remote_agent_session(self, host, agent, rel_path, q):
         if not any(k in q for k in ("tail", "before", "from")):
@@ -732,9 +489,6 @@ class SessionsMixin:
                        {"session": target, "level": (body.get("level") or "").strip(),
                         "reason": body.get("reason") or ""})
 
-    def _p_session_restore(self, req):
-        self.handle_restore()
-
     def handle_delete_session(self):
         body = self.read_body() or {}
         host = body.get("host", "local")
@@ -798,23 +552,6 @@ class SessionsMixin:
         chatplugins.purge(sid)
         self.send_json({"deleted": True, "trash": str(trash / full.name)})
 
-    def split_at_uuid(self, full_path, cut_uuid):
-        """Return (lines_before_cut, cut_record) — everything before the record
-        whose uuid == cut_uuid. None if the uuid isn't in the file."""
-        before, cut = [], None
-        with open(full_path, "r") as f:
-            for line in f:
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    before.append(line)
-                    continue
-                if obj.get("uuid") == cut_uuid:
-                    cut = obj
-                    break
-                before.append(line)
-        return (before, cut) if cut else (None, None)
-
     def _p_session_rename(self, req):
         body = self.read_body()
         if body is None:
@@ -854,110 +591,6 @@ class SessionsMixin:
             return
         self.send_json({"renamed": True, "title": title})
 
-    def snapshot_state_at(self, full_path, cut_uuid):
-        """Accumulate tracked-file blob pointers (last-seen wins) up to the
-        file-history checkpoint for cut_uuid — the working-tree state captured
-        just before that message ran. Returns {abs_path: backupFileName|None},
-        or None if cut_uuid isn't found in the file. Claude Code records each
-        checkpoint as a `file-history-snapshot` keyed by messageId==the user
-        turn uuid; each snapshot carries only the files that changed, so the
-        full state is the running union up to and including that checkpoint."""
-        parsed, cut_line, snap_line = [], None, None
-        with open(full_path, "r") as f:
-            for i, line in enumerate(f):
-                try:
-                    d = json.loads(line)
-                except json.JSONDecodeError:
-                    parsed.append(None)
-                    continue
-                parsed.append(d)
-                if cut_line is None and d.get("type") == "user" and d.get("uuid") == cut_uuid:
-                    cut_line = i
-                if (d.get("type") == "file-history-snapshot"
-                        and not d.get("isSnapshotUpdate")
-                        and d.get("messageId") == cut_uuid):
-                    snap_line = i
-        if cut_line is None and snap_line is None:
-            return None
-        cutoff = snap_line if snap_line is not None else cut_line
-        state = {}
-        for i, d in enumerate(parsed):
-            if i > cutoff:
-                break
-            if d and d.get("type") == "file-history-snapshot":
-                for path, info in (d.get("snapshot", {}) or {}).get("trackedFileBackups", {}).items():
-                    if isinstance(info, dict):
-                        state[path] = info.get("backupFileName")
-        return state
-
-    def _p_session_fork(self, req):
-        self.handle_fork()
-
-    def handle_restore(self):
-        body = self.read_body() or {}
-        host = body.get("host", "local")
-        cut_uuid = body.get("uuid", "")
-        mode = body.get("mode", "conversation")
-        if mode not in ("conversation", "code", "code+conversation"):
-            mode = "conversation"
-        agent = body.get("agent", "claude")
-        sid = self.sid_from_path(body.get("session", ""))
-        if sid and self.session_busy(sid):
-            self.send_json({"error": "A run is in progress for this session — wait for it to finish"}, status=409)
-            return
-        if agent == "codex" and host == "local":
-            # Codex has no file-history snapshots — conversation restore only.
-            self.send_host_result(codex_restore(body.get("session", ""), cut_uuid))
-            return
-        if host != "local":
-            if mode != "conversation":
-                self.send_json({"error": "Code restore isn't supported on remote hosts yet"}, status=400)
-                return
-            self.send_json(remote_session_edit(host, "restore", sid, uuid=cut_uuid))
-            return
-        full = self.resolve_session_quiet(body.get("session", ""))
-        if not full:
-            self.send_json({"error": "Session not found"}, status=404)
-            return
-        before, cut = self.split_at_uuid(full, cut_uuid)
-        if before is None:
-            self.send_json({"error": "Message not found in session"}, status=404)
-            return
-        result = {"restored": True, "mode": mode}
-
-        # ---- code restore: revert tracked files to their checkpoint content ----
-        if mode in ("code", "code+conversation"):
-            state = self.snapshot_state_at(full, cut_uuid)
-            if state is None:
-                self.send_json({"error": "No file checkpoint found for this message"}, status=404)
-                return
-            result["code"] = self.apply_code_restore(sid, state)
-
-        # ---- conversation restore: truncate the transcript at the cut ----
-        if mode in ("conversation", "code+conversation"):
-            backup = full.with_suffix(f".jsonl.bak-{int(time.time())}")
-            tmp = full.with_suffix(f".jsonl.tmp-{int(time.time())}")
-            try:
-                # Write the truncated copy fully to a temp file FIRST, then swap it
-                # in atomically — the live session is never left half-written.
-                with open(tmp, "w") as fo:
-                    fo.writelines(l if l.endswith("\n") else l + "\n" for l in before)
-                os.replace(full, backup)
-                os.replace(tmp, full)
-            except Exception as e:
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
-                if backup.exists() and not full.exists():
-                    os.rename(backup, full)  # roll back the swap
-                self.send_json({"error": str(e)}, status=500)
-                return
-            result["backup"] = backup.name
-            result["message"] = self.message_text(cut)
-
-        self.send_json(result)
-
     def serve_session_summary(self, query, host="local"):
         q = parse_qs(query)
         rel = (q.get("session") or [""])[0]
@@ -969,27 +602,6 @@ class SessionsMixin:
         self.send_host_result(data, not_found="Session not found")
 
     # ----- Fork / restore / delete -----
-
-    @staticmethod
-    def carry_fork_meta(parent_sid, new_sid, title=""):
-        """A fork inherits the parent conversation, so it must inherit the parent's
-        per-session settings too — provider, model, permission mode, effort,
-        convMode, kanbanProject and any UI prefs all live in the session_meta row,
-        keyed by session id, which copying the transcript alone does not carry.
-        Without this the child silently falls back to defaults (a different model /
-        provider / permission mode than the session it was forked from). The child
-        gets its own title (its own identity) but inherits everything else. No-op
-        when the parent has no meta row. Its own skills/MCP extras come along too."""
-        meta = dict(db.session_meta_get(parent_sid) or {})
-        if title:
-            meta["title"] = title
-        elif "title" in meta:
-            # Don't duplicate the parent's title onto the fork; a fork with no
-            # explicit title reads as "<parent> (fork)" in the list, not a twin.
-            meta.pop("title", None)
-        if meta:
-            db.session_meta_set(new_sid, meta)
-        chatplugins.fork(parent_sid, new_sid)
 
     def _g_sessions(self, req):
         reader = (req.principal or {}).get("actor", "")
@@ -1012,60 +624,6 @@ class SessionsMixin:
                                status=502 if req.host != "local" else 500)
             return
         self.serve_session_list(req.host, reader)
-
-    def handle_fork(self):
-        body = self.read_body() or {}
-        host = body.get("host", "local")
-        cut_uuid = body.get("uuid", "")
-        agent = body.get("agent", "claude")
-        if agent == "codex" and host == "local":
-            title = (body.get("title") or "").strip()[:200]
-            res = codex_fork(body.get("session", ""), cut_uuid, title)
-            if res.get("session"):
-                parent_sid = self.sid_from_path(body.get("session", "")) or ""
-                self.carry_fork_meta(parent_sid, res["session"], title)
-            self.send_host_result(res)
-            return
-        if host != "local":
-            sid = self.sid_from_path(body.get("session", ""))
-            title = (body.get("title") or "").strip()[:200]
-            res = remote_session_edit(host, "fork", sid, uuid=cut_uuid, title=title)
-            if isinstance(res, dict) and res.get("session"):
-                self.carry_fork_meta(sid or "", res["session"], title)
-            self.send_json(res)
-            return
-        full = self.resolve_session_quiet(body.get("session", ""))
-        if not full:
-            self.send_json({"error": "Session not found"}, status=404)
-            return
-        before, cut = self.split_at_uuid(full, cut_uuid)
-        if before is None:
-            self.send_json({"error": "Message not found in session"}, status=404)
-            return
-        new_sid = str(uuid_mod.uuid4())
-        dst = full.parent / f"{new_sid}.jsonl"
-        title = (body.get("title") or "").strip()[:200]
-        try:
-            with open(dst, "w") as fo:
-                for line in before:
-                    try:
-                        obj = json.loads(line)
-                        if obj.get("sessionId"):
-                            obj["sessionId"] = new_sid
-                        fo.write(json.dumps(obj) + "\n")
-                    except json.JSONDecodeError:
-                        fo.write(line if line.endswith("\n") else line + "\n")
-                if title:
-                    fo.write(json.dumps({"type": "custom-title", "customTitle": title, "sessionId": new_sid,
-                                         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())}) + "\n")
-        except Exception as e:
-            self.send_json({"error": str(e)}, status=500)
-            return
-        rel = str(dst.relative_to(CLAUDE_DIR.parent))
-        parent_sid = self.sid_from_path(body.get("session", "")) or full.stem
-        self.carry_fork_meta(parent_sid, new_sid, title)
-        self.send_json({"forked": True, "path": rel, "session": new_sid,
-                        "message": self.message_text(cut)})
 
     def _g_session_file(self, req):
         session_path = req.path[len("/api/session/"):]
@@ -1179,39 +737,6 @@ class SessionsMixin:
             s["last_message"] = s.get("last_message") or s.get("modified")
             last = seen.get(s.get("id")) or tracked_since
             s["unread"] = bool(last and s["last_message"] and s["last_message"] > last)
-
-    def apply_code_restore(self, sid, state):
-        """Overwrite each tracked file with its checkpoint content, backing up
-        the current content of every file it touches first (to
-        ~/.claude/.viewer-code-restore/<sid>/<ts>/, mirroring the tree). Never
-        deletes files. Returns {restored, skipped, backup}."""
-        hist = CLAUDE_DIR.parent / "file-history" / sid
-        bkdir = CLAUDE_DIR.parent / ".viewer-code-restore" / sid / str(int(time.time()))
-        restored, skipped = [], []
-        for path, blob in state.items():
-            if not blob:
-                continue  # null backup — no stored content, leave the file as-is
-            src = hist / blob
-            if not src.exists():
-                skipped.append(os.path.basename(path))
-                continue
-            try:
-                content = src.read_bytes()
-                dst = Path(path)
-                if dst.exists() and dst.read_bytes() == content:
-                    continue  # already at the checkpoint content
-                if dst.exists():
-                    mirror = bkdir / dst.relative_to(dst.anchor)
-                    mirror.parent.mkdir(parents=True, exist_ok=True)
-                    mirror.write_bytes(dst.read_bytes())
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(content)
-                restored.append(os.path.basename(path))
-            except Exception:
-                skipped.append(os.path.basename(path))
-        return {"restored": restored, "skipped": skipped,
-                "backup": str(bkdir) if restored else None}
-
 
 def start_new_session(body):
     """Launch a new chat from a validated request body → (payload, status).

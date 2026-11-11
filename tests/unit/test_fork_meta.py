@@ -11,7 +11,7 @@ Postgres. Regression for "fork drops provider/model/permission mode".
 import unittest
 from unittest.mock import patch
 
-from orchestrator.routes.sessions import SessionsMixin
+from orchestrator.routes.session_fork import SessionForkMixin
 
 
 class TestCarryForkMeta(unittest.TestCase):
@@ -29,7 +29,7 @@ class TestCarryForkMeta(unittest.TestCase):
             "permission_mode": "bypass", "effort": "high", "convMode": "agent",
             "kanbanProject": 15, "title": "Harman",
         }
-        SessionsMixin.carry_fork_meta("parent", "child", title="Harman (fork)")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="Harman (fork)")
         child = self.store["child"]
         self.assertEqual(child["provider"], "copilot")
         self.assertEqual(child["modelSelection"], {"model": "claude-opus-5"})
@@ -40,29 +40,29 @@ class TestCarryForkMeta(unittest.TestCase):
 
     def test_explicit_title_wins_parent_title_does_not_leak(self):
         self.store["parent"] = {"provider": "copilot", "title": "Harman"}
-        SessionsMixin.carry_fork_meta("parent", "child", title="My fork")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="My fork")
         self.assertEqual(self.store["child"]["title"], "My fork")
 
     def test_no_title_means_fork_does_not_copy_parent_title(self):
         # A fork with no explicit title must not become a title-twin of its parent.
         self.store["parent"] = {"provider": "copilot", "title": "Harman"}
-        SessionsMixin.carry_fork_meta("parent", "child", title="")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="")
         self.assertNotIn("title", self.store["child"])
         self.assertEqual(self.store["child"]["provider"], "copilot")
 
     def test_parent_without_meta_writes_nothing(self):
         # No parent row and no title → nothing to carry, no empty row created.
-        SessionsMixin.carry_fork_meta("parent", "child", title="")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="")
         self.assertNotIn("child", self.store)
 
     def test_title_only_when_parent_has_no_meta(self):
-        SessionsMixin.carry_fork_meta("parent", "child", title="Fresh")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="Fresh")
         self.assertEqual(self.store["child"], {"title": "Fresh"})
 
     def test_child_is_a_copy_not_an_alias(self):
         # Mutating the child later must not reach back into the parent's row.
         self.store["parent"] = {"provider": "copilot", "effort": "high"}
-        SessionsMixin.carry_fork_meta("parent", "child", title="")
+        SessionForkMixin.carry_fork_meta("parent", "child", title="")
         self.store["child"]["effort"] = "low"
         self.assertEqual(self.store["parent"]["effort"], "high")
 

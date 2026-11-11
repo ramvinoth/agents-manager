@@ -60,6 +60,9 @@ class _Req:
         self.host = (self.query.get("host") or ["local"])[0]
         self.principal = None   # set once by _resolve_principal(); see Principal
 from orchestrator.routes.sessions import SessionsMixin
+from orchestrator.routes.loops import LoopsMixin
+from orchestrator.routes.agent_templates import AgentTemplatesMixin
+from orchestrator.routes.session_fork import SessionForkMixin
 from orchestrator.routes.chat import ChatMixin
 from orchestrator.routes.capabilities import CapabilitiesMixin
 from orchestrator.routes.fs import FsMixin
@@ -82,7 +85,7 @@ from orchestrator.routes.canvas_board import CanvasBoardMixin
 
 
 class SessionViewerHandler(
-    SessionsMixin, ChatMixin, CapabilitiesMixin, FsMixin,
+    SessionsMixin, LoopsMixin, AgentTemplatesMixin, SessionForkMixin, ChatMixin, CapabilitiesMixin, FsMixin,
     PanelsMixin, AuthMixin, GitMixin, PushMixin, VoiceMixin, ProvidersMixin,
     OrchestratorMixin, DrivesMixin, IntegrationsMixin, InboxMixin, MarketplaceMixin, UsageMixin,
     IntakeMixin, ProjectPluginsMixin, LiveMixin, CanvasBoardMixin,
@@ -453,7 +456,6 @@ class SessionViewerHandler(
         "/api/org/notes/graph": "_g_org_notes_graph",
         "/api/org/notes/export": "_g_org_notes_export",
         "/api/org/note/export": "_g_org_note_export",
-        "/api/org/map": "_g_org_map",
         "/api/org/approvals": "_g_org_approvals",
         "/api/org/audit": "_g_org_audit",
         "/api/org/maintenance": "_g_org_maintenance",

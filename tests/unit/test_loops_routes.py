@@ -8,12 +8,12 @@ The db is simulated with a dict store; nothing here touches Postgres.
 import pytest
 
 from orchestrator import db
-from orchestrator.routes.sessions import SessionsMixin
+from orchestrator.routes.loops import LoopsMixin
 
 NOW = 1_700_000_000.0
 
 
-class _Handler(SessionsMixin):
+class _Handler(LoopsMixin):
     def __init__(self, body, session_found=True):
         self._body = body
         self._session_found = session_found
@@ -47,7 +47,7 @@ def store(monkeypatch):
     monkeypatch.setattr(db, "loop_upsert", upsert)
     monkeypatch.setattr(db, "loop_update", update)
     monkeypatch.setattr(db, "loop_get", lambda lid: dict(rows[lid]) if lid in rows else None)
-    monkeypatch.setattr("orchestrator.routes.sessions.time.time", lambda: NOW)
+    monkeypatch.setattr("orchestrator.routes.loops.time.time", lambda: NOW)
     monkeypatch.setattr("orchestrator.loops.time.time", lambda: NOW)
     return rows
 
