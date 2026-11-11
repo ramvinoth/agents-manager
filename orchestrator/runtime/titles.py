@@ -7,20 +7,11 @@ from pathlib import Path
 from orchestrator import db
 from orchestrator.config import transcript_path
 
-"""orchestrator.engine — agent runners (claude/codex/pi), chat control, loops,
-session summaries, skill scans, and the Host local/remote seam."""
-
-
 # Claude encodes a session's cwd as its project-dir name (every "/" -> "-"); the
 # current user's home prefix, encoded the same way, lets us show "~/…" generically.
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-# ===== Loops (recurring prompts per session) and session meta =====
-# Both stores live in Postgres now (orchestrator.db) — the single source of truth. Call
-# sites read/write per row through db.loop_* / db.session_meta_* instead of mutating
-# a shared in-memory dict and rewriting a whole JSON file. Postgres gives the
-# atomicity the old module-level locks used to provide.
 def _newer(latest, obj):
     """The later of `latest` and a user/assistant record's ISO `timestamp` (epoch
     seconds). Bookkeeping records (cost-state, last-prompt, …) carry no timestamp
@@ -63,6 +54,24 @@ def session_title(session_id):
 
 _TITLE_CACHE = {}
 
+# Claude Code writes its own bookkeeping into the transcript as "user" records:
+# the local-command caveat (isMeta), slash-command echoes and their stdout. None
+# is the person's words, so none may name the session (card 436: a session was
+# called "<local-command-caveat>The command below was run…").
+_CLI_WRAPPERS = ("<local-command-", "<command-", "<system-reminder>")
+
+
+def _user_text(obj):
+    """The person's own words in a user record, or "" for CLI bookkeeping."""
+    if obj.get("isMeta") or obj.get("isCompactSummary"):
+        return ""
+    msg = (obj.get("message") or {}).get("content")
+    if isinstance(msg, list):
+        msg = " ".join(b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(msg, str):
+        return ""
+    return "" if msg.lstrip().startswith(_CLI_WRAPPERS) else msg
+
 
 def _read_session_title(path):
     title = first_user = ""
@@ -80,13 +89,7 @@ def _read_session_title(path):
             elif t == "agent-name" and obj.get("agentName"):
                 title = obj["agentName"]
             elif not first_user and t == "user":
-                msg = (obj.get("message") or {}).get("content")
-                if isinstance(msg, str):
-                    first_user = msg
-                elif isinstance(msg, list):
-                    first_user = " ".join(
-                        b.get("text", "") for b in msg if isinstance(b, dict) and b.get("type") == "text"
-                    )
+                first_user = _user_text(obj)
     return " ".join(title.split())[:60], " ".join(first_user.split())[:60]
 
 

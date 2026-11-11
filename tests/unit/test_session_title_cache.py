@@ -36,3 +36,15 @@ def test_missing_transcript_is_empty_and_not_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(titles, "_TITLE_CACHE", {})
     assert titles.session_title("s2") == ("", "")
     assert titles._TITLE_CACHE == {}
+
+
+def test_cli_bookkeeping_never_names_a_session(tmp_path):
+    """Card 436: a session resumed with /resume was titled by the CLI's caveat."""
+    p = tmp_path / "s3.jsonl"
+    _write(p, [
+        {"type": "user", "isMeta": True, "message": {"content": "<local-command-caveat>The command below was run"}},
+        {"type": "user", "message": {"content": "<command-name>/resume</command-name>\n<command-args></command-args>"}},
+        {"type": "user", "message": {"content": "<local-command-stdout>This conversation is from a different directory."}},
+        {"type": "user", "message": {"content": [{"type": "text", "text": "  Fix the login bug"}]}},
+    ])
+    assert titles._read_session_title(p) == ("", "Fix the login bug")
