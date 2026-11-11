@@ -113,11 +113,22 @@ export function groupConversations(messages: InboxMessage[], labels: Record<stri
     Number(b.open > 0) - Number(a.open > 0) || b.at - a.at || b.last.id - a.last.id)
 }
 
-/** The conversation row's second line: the last message's first line, with
- *  "You: " when the owner wrote it — the messaging-app convention. */
+/** The conversation row's second line: the last message's first line, led by
+ *  its kind when it is a decision ("Question: …" — what the agent wants, at a
+ *  glance) or "You: " when the owner wrote it — the messaging-app convention. */
 export function conversationPreview(c: Conversation): string {
   const line = messageTitle(c.last, 120) || kindLabel(c.last.kind)
-  return c.last.sender_type === "user" ? `You: ${line}` : line
+  if (c.last.sender_type === "user") return `You: ${line}`
+  const kind = c.last.kind
+  return kind && kind !== "message" && INBOX_KIND_LABEL[kind as InboxKind] ? `${kindLabel(kind)}: ${line}` : line
+}
+
+/** The chip on a conversation row: how many decisions wait on the owner, the
+ *  unread count, or a quiet "snoozed" when the only open ask is on hold. */
+export function conversationBadge(c: Conversation): string | null {
+  if (c.open > 0) return c.open === 1 ? "needs you" : `${c.open} need you`
+  if (c.unread > 0) return String(c.unread)
+  return c.last.snoozed ? "snoozed" : null
 }
 
 /** Search the conversation list: a chat matches by name or by any message in

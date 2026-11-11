@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, conversationBadge, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -84,7 +84,7 @@ eq("unread counts waiting rows", convs[2].unread, 1)
 eq("open decision counted", convs[0].open, 1)
 eq("snoozed decision not counted open", convs[1].open, 0)
 eq("own last line says You", conversationPreview(convs[2]), "You: thanks")
-eq("their last line plain", conversationPreview(convs[0]), "Pick one?")
+eq("their decision leads with its kind", conversationPreview(convs[0]), "Question: Pick one?")
 eq("same-time tie: higher id is last", groupConversations([M({ id: 7, session_id: "z", created_at: 1 }), M({ id: 8, session_id: "z", created_at: 1 })])[0].last.id, 8)
 
 // search conversations: by name or by message body
@@ -103,3 +103,10 @@ eq("senderLabel: session title, system, owner",
   [senderLabel(M({ id: 1, sender_type: "session", sender_id: "a" }), { a: "Trader" }), senderLabel(M({ id: 1, sender_type: "session", sender_id: "abcdefghij" })),
    senderLabel(M({ id: 1, sender_type: "system" })), senderLabel(M({ id: 1, sender_type: "user" }))],
   ["Trader", "abcdefgh", "Harman", "You"])
+
+eq("conversationBadge: none, needs you, count, unread",
+  [conversationBadge({ session: "s", name: "n", at: 1, unread: 0, open: 0, last: M({ id: 1 }) }),
+   conversationBadge({ session: "s", name: "n", at: 1, unread: 0, open: 1, last: M({ id: 1 }) }),
+   conversationBadge({ session: "s", name: "n", at: 1, unread: 0, open: 3, last: M({ id: 1 }) }),
+   conversationBadge({ session: "s", name: "n", at: 1, unread: 2, open: 0, last: M({ id: 1 }) })],
+  [null, "needs you", "3 need you", "2"])

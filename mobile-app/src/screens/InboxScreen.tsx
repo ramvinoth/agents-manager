@@ -8,7 +8,7 @@ import type { RootStackParamList } from "../../App"
 import { api, type InboxMessage, type OpenDecision, type Session } from "../api/client"
 import {
   kindLabel, senderLabel, SNOOZE_OPTIONS,
-  conversationPreview, groupConversations, inboxScopeFilter, inboxStateBadge,
+  conversationPreview, conversationBadge, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending,
 } from "../lib/inbox"
@@ -460,6 +460,7 @@ function ConversationList({
         renderItem={({ item: c }) => {
           const s = byId.get(c.session)
           const bold = c.unread > 0
+          const badge = conversationBadge(c)
           return (
             <TouchableOpacity
               testID={`inbox-conv-${c.session}`}
@@ -477,13 +478,9 @@ function ConversationList({
                 <Text style={[styles.chatTime, bold ? styles.chatTimeUnread : null]}>
                   {fmtWaiting(Math.max(0, Date.now() / 1000 - c.at))}
                 </Text>
-                {c.open > 0 ? (
-                  <View style={styles.ibPill}>
-                    <Text style={styles.ibPillText}>needs you</Text>
-                  </View>
-                ) : bold ? (
-                  <View style={styles.ibCountPill}>
-                    <Text style={styles.ibPillText}>{c.unread}</Text>
+                {badge ? (
+                  <View style={c.open > 0 ? styles.ibPill : styles.ibCountPill}>
+                    <Text style={styles.ibPillText}>{badge}</Text>
                   </View>
                 ) : null}
               </View>
