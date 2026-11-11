@@ -12,6 +12,8 @@ interface HarmanAudioNative {
   start(sampleRate: number): Promise<void>
   stop(): Promise<void>
   isRunning(): boolean
+  enqueue(pcm: string, sampleRate: number): boolean
+  flushPlayback(): void
 }
 
 // Autolinked local Expo module (modules/harman-audio). On a platform without the
@@ -57,5 +59,21 @@ export const HarmanAudio = {
   addErrorListener(cb: (e: { message?: string }) => void): Subscription {
     if (!emitter) return { remove() {} } as Subscription
     return emitter.addListener("onError", cb)
+  },
+
+  /** Queue base64 PCM16 mono for playback on the capture engine (so AEC hears it). */
+  enqueue(pcm: string, sampleRate: number): boolean {
+    return native ? native.enqueue(pcm, sampleRate) : false
+  },
+
+  /** Drop all queued audio and silence the speaker now (barge-in). */
+  flushPlayback(): void {
+    native?.flushPlayback()
+  },
+
+  /** Fires when every queued buffer has finished playing. */
+  addDrainedListener(cb: () => void): Subscription {
+    if (!emitter) return { remove() {} } as Subscription
+    return emitter.addListener("onDrained", cb)
   },
 }

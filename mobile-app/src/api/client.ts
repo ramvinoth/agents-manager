@@ -35,7 +35,7 @@ export type { CallAnswer }
 /** GET /api/call/engine (orchestrator.callbrain.engine). `model` is the server's own
  *  name for the call brain; `error` means no brain is configured and a call
  *  cannot start. */
-export type CallEngine = { engine: "brain"; model?: string; error?: string }
+export type CallEngine = { engine: "brain" | "fish"; model?: string; error?: string; live?: string }
 export type Project = { cwd: string; modified?: number }
 export type SlashCommand = { name: string; description?: string; source?: string; interactive?: boolean }
 export type FileEntry = { name: string; dir: boolean; size: number; mtime: number }
@@ -856,6 +856,8 @@ export const api = {
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
   // signal, so there is no per-turn wake word.
   voiceSocket: () => serverSocket("/api/voice/ws?mode=call"),
+  /** Live call bridge (engine "fish"): one socket for mic, speech and turn events. */
+  callLive: (path: string) => serverSocket(`/api/call/live?path=${encodeURIComponent(path)}`),
 
   // Barge-in wake-guard socket: a lightweight keyword-spotting stream that runs
   // WHILE the assistant is speaking. The server uses a cheap KWS pass (not full
