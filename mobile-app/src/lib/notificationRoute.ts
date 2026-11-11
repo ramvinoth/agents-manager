@@ -57,3 +57,14 @@ export function matchDecision(queue: Decision[], want: { kind: string; ref: stri
   if (!want.session) return -1
   return queue.findIndex((d) => d.kind === want.kind && d.session === want.session)
 }
+
+/** Identity of a chat for the Thread route's `getId`. React Navigation's
+ *  `navigate` reuses a mounted route with the same name and merges params, so a
+ *  notification for chat B would re-point the open chat A's screen (keeping A's
+ *  draft and polling). Keying on the chat makes B its own instance while a
+ *  second tap on the SAME chat still reuses it. A transcript path
+ *  (`projects/<dir>/<id>.jsonl`) and a bare session id name the same chat. */
+export function threadInstanceId(p: { path?: string; session?: string; label?: string }): string {
+  const fromPath = p.path ? (p.path.split("/").pop() || "").replace(/\.jsonl$/, "") : ""
+  return fromPath || p.session || p.label || "thread"
+}

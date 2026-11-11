@@ -14,7 +14,7 @@ import { api } from "./src/api/client"
 import { hasServer, loadConfig, token } from "./src/state/config"
 import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
 import { registerForPush, onNotificationTap } from "./src/lib/notify"
-import { notificationTarget } from "./src/lib/notificationRoute"
+import { notificationTarget, threadInstanceId } from "./src/lib/notificationRoute"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
@@ -237,7 +237,7 @@ export default function App() {
             <Stack.Screen name="Login" component={LoginScreen} options={{ title: "Sign in" }} />
             <Stack.Screen name="Home" component={HomeTabs} options={{ title: "Chats" }} />
             <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: "New chat" }} />
-            <Stack.Screen name="Thread" component={ThreadScreen} options={({ route }) => ({ title: route.params.label })} />
+            <Stack.Screen name="Thread" component={ThreadScreen} getId={({ params }) => threadInstanceId(params)} options={({ route }) => ({ title: route.params.label })} />
             <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />

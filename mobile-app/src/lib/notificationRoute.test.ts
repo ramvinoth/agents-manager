@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { matchDecision, notificationTarget } from "./notificationRoute.ts"
+import { matchDecision, notificationTarget, threadInstanceId } from "./notificationRoute.ts"
 
 test("card, note and screen win over a session", () => {
   assert.deepEqual(notificationTarget({ card: 12, session: "s" }), { to: "card", id: 12 })
@@ -47,4 +47,10 @@ test("matchDecision falls back to the same session and kind, else -1", () => {
   assert.equal(matchDecision(queue, { kind: "question", ref: "gone", session: "b" }), 4)
   assert.equal(matchDecision(queue, { kind: "red", ref: "gone", session: "" }), -1)
   assert.equal(matchDecision(queue, { kind: "plan", ref: "x", session: "a" }), -1)
+})
+
+test("threadInstanceId: same chat by path or session id, different chats differ", () => {
+  assert.equal(threadInstanceId({ path: "projects/-x/abc-123.jsonl" }), threadInstanceId({ session: "abc-123" }))
+  assert.notEqual(threadInstanceId({ session: "a" }), threadInstanceId({ session: "b" }))
+  assert.equal(threadInstanceId({ label: "Chat" }), "Chat")
 })
