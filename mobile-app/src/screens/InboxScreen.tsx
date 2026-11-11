@@ -7,7 +7,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type InboxMessage, type OpenDecision, type Session } from "../api/client"
 import {
-  kindLabel, SNOOZE_OPTIONS,
+  kindLabel, senderLabel, SNOOZE_OPTIONS,
   conversationPreview, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending,
@@ -263,6 +263,9 @@ export default function InboxScreen({ navigation, session, title, host, path, is
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
                 decision && m.open ? styles.ibOpenDecision : null]}
             >
+              {!item.mine ? (
+                <Text style={[styles.ibKind, { color: t.textMuted }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
+              ) : null}
               {decision ? (
                 <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>
                   {kindLabel(m.kind).toUpperCase()}{badge ? ` · ${badge}` : ""}

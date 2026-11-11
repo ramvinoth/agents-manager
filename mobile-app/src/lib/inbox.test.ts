@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -98,3 +98,8 @@ eq("timeline shape", tl.map((x) => (x.type === "day" ? x.label : `${x.m.id}${x.m
 
 console.log(`\ninbox: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)
+
+eq("senderLabel: session title, system, owner",
+  [senderLabel(M({ id: 1, sender_type: "session", sender_id: "a" }), { a: "Trader" }), senderLabel(M({ id: 1, sender_type: "session", sender_id: "abcdefghij" })),
+   senderLabel(M({ id: 1, sender_type: "system" })), senderLabel(M({ id: 1, sender_type: "user" }))],
+  ["Trader", "abcdefgh", "Harman", "You"])

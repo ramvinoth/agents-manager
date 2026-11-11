@@ -134,6 +134,14 @@ export type ThreadItem =
   | { type: "day"; key: string; label: string }
   | { type: "msg"; key: string; m: InboxMessage; mine: boolean }
 
+/** Who sent a message, as a short label: a session shows its title
+ *  (`labels`: session id → title), the server is "Harman", the owner is "You". */
+export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}): string {
+  if (m.sender_type === "session") return labels[m.sender_id] || (m.sender_id || "").slice(0, 8)
+  if (m.sender_type === "system") return "Harman"
+  return "You"
+}
+
 /** A mailbox as a chat thread: oldest first, a day separator whenever the
  *  day changes, each message marked mine (the owner wrote it → right-hand
  *  bubble) or theirs. `dayOf` turns an epoch-seconds time into the day label
