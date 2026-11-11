@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { matchDecision, notificationTarget, threadInstanceId } from "./notificationRoute.ts"
+import { matchDecision, notificationTarget, suppressForeground, threadInstanceId } from "./notificationRoute.ts"
 
 test("card, note and screen win over a session", () => {
   assert.deepEqual(notificationTarget({ card: 12, session: "s" }), { to: "card", id: 12 })
@@ -53,4 +53,14 @@ test("threadInstanceId: same chat by path or session id, different chats differ"
   assert.equal(threadInstanceId({ path: "projects/-x/abc-123.jsonl" }), threadInstanceId({ session: "abc-123" }))
   assert.notEqual(threadInstanceId({ session: "a" }), threadInstanceId({ session: "b" }))
   assert.equal(threadInstanceId({ label: "Chat" }), "Chat")
+})
+
+test("suppressForeground silences only a turn push for the focused chat", () => {
+  const open = { name: "Thread", params: { path: "projects/-x/abc.jsonl" } }
+  assert.equal(suppressForeground({ session: "abc" }, open), true)
+  assert.equal(suppressForeground({ session: "other" }, open), false)
+  assert.equal(suppressForeground({ session: "abc", decision: "plan" }, open), false)
+  assert.equal(suppressForeground({ session: "abc", card: 3 }, open), false)
+  assert.equal(suppressForeground({ session: "abc" }, { name: "Home" }), false)
+  assert.equal(suppressForeground({ session: "abc" }, undefined), false)
 })

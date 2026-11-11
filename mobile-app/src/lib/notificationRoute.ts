@@ -68,3 +68,16 @@ export function threadInstanceId(p: { path?: string; session?: string; label?: s
   const fromPath = p.path ? (p.path.split("/").pop() || "").replace(/\.jsonl$/, "") : ""
   return fromPath || p.session || p.label || "thread"
 }
+
+/** A push about the chat already on screen is noise: the user sees the message
+ *  arrive. Only a plain turn push (no card/decision/inbox payload) for the
+ *  focused Thread is silenced; everything else still banners. */
+export function suppressForeground(
+  data: Record<string, unknown>,
+  current: { name?: string; params?: { path?: string; session?: string; label?: string } } | undefined,
+): boolean {
+  if (current?.name !== "Thread" || !current.params) return false
+  const t = notificationTarget(data)
+  if (!t || t.to !== "thread") return false
+  return threadInstanceId(current.params) === t.session
+}

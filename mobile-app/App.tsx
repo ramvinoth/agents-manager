@@ -13,8 +13,8 @@ import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { hasServer, loadConfig, token } from "./src/state/config"
 import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
-import { registerForPush, onNotificationTap } from "./src/lib/notify"
-import { notificationTarget, threadInstanceId } from "./src/lib/notificationRoute"
+import { registerForPush, onNotificationTap, setForegroundSuppressor } from "./src/lib/notify"
+import { notificationTarget, suppressForeground, threadInstanceId } from "./src/lib/notificationRoute"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
@@ -198,6 +198,7 @@ export default function App() {
   // Route notification taps to the chat they belong to (foreground/background AND
   // cold start). Set up once; teardown on unmount.
   useEffect(() => onNotificationTap(openFromNotification), [])
+  useEffect(() => setForegroundSuppressor((data) => suppressForeground(data, navigationRef.isReady() ? navigationRef.getCurrentRoute() as any : undefined)), [])
 
   useEffect(() => {
     if (!ready) return
