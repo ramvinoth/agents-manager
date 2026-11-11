@@ -6,10 +6,11 @@ import time
 import uuid as uuid_mod
 from pathlib import Path
 from urllib.parse import parse_qs
-from orchestrator import agenttemplates, chatplugins, db, discussion
+from orchestrator import agenttemplates, chatplugins, db, discussion, history
+from orchestrator.history import HistoryView
 from orchestrator.config import (
     CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, agent_plugin_dir, agent_plugin_names,
-    find_tool_call, read_back, split_lines, template_plugin_dir,
+    find_tool_call, read_back_f, split_lines, template_plugin_dir,
 )
 from orchestrator.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from orchestrator.codex import codex_fork, codex_restore, start_codex_new
@@ -47,63 +48,91 @@ class SessionsMixin:
             if full_path is None:
                 self.send_error(404, "Session not found")
                 return
-        else:
-            full_path = self.resolve_session(rel_path)
-            if full_path is None:
-                return
-
-        # Non-Claude lines are normalised to the Claude schema so the frontend
-        # parser renders them unchanged. Byte offsets stay on the RAW file.
-        def emit(lines):
-            return normalize_lines(agent, lines) if agent != "claude" else lines
-
-        q = parse_qs(query)
-        if "find" in q and agent == "claude":
-            # ?find=card:<id> | tool:<tool_use_id> — the call that raised a
-            # decision, even when it is far above the loaded history.
-            kind, _, val = q["find"][0].partition(":")
-            if kind == "card" and val.isdigit():
-                hit = find_tool_call(full_path, "card_id", int(val))
-            elif kind == "tool" and val:
-                hit = find_tool_call(full_path, "id", val)
-            else:
-                self.send_error(400, "find takes card:<id> or tool:<id>")
-                return
-            self.send_json({"hit": hit})
-            return
-        if not any(k in q for k in ("tail", "before", "from")):
-            if agent != "claude":
+            q = parse_qs(query)
+            if not any(k in q for k in ("tail", "before", "from")):
                 self.send_error(400, "This agent's sessions require tail/from/before")
                 return
-            self.serve_raw_file(full_path)
+            # Lines are normalised to the Claude schema so the frontend parser
+            # renders them unchanged. Byte offsets stay on the RAW file.
+            with open(full_path, "rb") as f:
+                size = f.seek(0, 2)
+                self._serve_window(f, q, size, lambda v: v, lambda off: off,
+                                   lambda lines: normalize_lines(agent, lines))
             return
+        full_path = self.resolve_session(rel_path)
+        if full_path is None:
+            return
+        q = parse_qs(query)
+        # A Claude chat reads as one file: the rows its trims dropped
+        # (orchestrator.history) followed by the live transcript.
+        with HistoryView(full_path) as view:
+            if "find" in q:
+                # ?find=card:<id> | tool:<tool_use_id> — the call that raised a
+                # decision, even when it is far above the loaded history.
+                kind, _, val = q["find"][0].partition(":")
+                if kind == "card" and val.isdigit():
+                    hit = find_tool_call(view, "card_id", int(val))
+                elif kind == "tool" and val:
+                    hit = find_tool_call(view, "id", val)
+                else:
+                    self.send_error(400, "find takes card:<id> or tool:<id>")
+                    return
+                if hit:
+                    hit["offset"] = history.encode(view.gen, hit["offset"])
+                self.send_json({"hit": hit})
+                return
+            if not any(k in q for k in ("tail", "before", "from")):
+                self.serve_raw_file(view)
+                return
 
-        size = full_path.stat().st_size
+            def to_v(off):
+                v = history.decode(view.gen, off)
+                return v if v is not None and view.at_line_start(min(v, view.size)) else None
+            self._serve_window(view, q, view.size, lambda v: history.encode(view.gen, v), to_v,
+                               lambda lines: lines)
+
+    def _serve_window(self, f, q, size, enc, dec, emit):
+        """?from= / ?tail= / ?before= over an open file of `size` bytes. enc/dec
+        map file offsets to the ones clients hold; dec returns None for an
+        offset from before a trim, answered with an empty page that makes
+        both clients reload (from: size 0 < their offset; before: no lines)."""
         try:
             if "from" in q:
-                start = max(0, min(int(q["from"][0]), size))
+                start = dec(int(q["from"][0]))
+                if start is None:
+                    off = int(q["from"][0])
+                    self.send_json({"start": off, "end": off, "size": 0, "lines": []})
+                    return
+                start = max(0, min(start, size))
                 length = min(size - start, MAX_POLL_BYTES)
-                with open(full_path, "rb") as f:
-                    f.seek(start)
-                    data = f.read(length)
+                f.seek(start)
+                data = f.read(length)
                 if start + length < size:
                     # Capped read: cut at the last newline so offsets stay on
                     # line boundaries for the next poll.
                     nl = data.rfind(b"\n")
                     data = data[:nl + 1] if nl >= 0 else b""
                 lines, end = split_lines(data, start)
-                self.send_json({"start": start, "end": end, "size": size, "lines": emit(lines)})
+                self.send_json({"start": enc(start), "end": enc(end), "size": enc(size), "lines": emit(lines)})
             elif "tail" in q:
                 n = max(1, min(int(q["tail"][0]), 5000))
-                start, data = read_back(full_path, size, n)
+                start, data = read_back_f(f, size, n)
                 lines, end = split_lines(data, start)
-                self.send_json({"start": start, "end": end, "size": size, "lines": emit(lines)})
+                self.send_json({"start": enc(start), "end": enc(end), "size": enc(size), "lines": emit(lines)})
             else:  # before
-                end_off = max(0, min(int(q["before"][0]), size))
                 n = max(1, min(int((q.get("lines") or ["300"])[0]), 5000))
-                start, data = read_back(full_path, end_off, n)
+                end_off = dec(int(q["before"][0]))
+                if end_off is None:
+                    # A trim moved the history under this offset. An empty page that
+                    # keeps start == before: "nothing yet", not "top of chat"; the
+                    # client's next tail poll sees the stale offset and reloads.
+                    off = int(q["before"][0])
+                    self.send_json({"start": off, "end": off, "size": enc(size), "lines": []})
+                    return
+                end_off = max(0, min(end_off, size))
+                start, data = read_back_f(f, end_off, n)
                 lines, _ = split_lines(data, start)
-                self.send_json({"start": start, "end": end_off, "size": size, "lines": emit(lines)})
+                self.send_json({"start": enc(start), "end": enc(end_off), "size": enc(size), "lines": emit(lines)})
         except ValueError:
             self.send_error(400, "Bad query parameter")
 
@@ -469,18 +498,19 @@ class SessionsMixin:
         existed = db.loop_delete(lid)
         self.send_json({"deleted": bool(existed)})
 
-    def serve_raw_file(self, full_path):
+    def serve_raw_file(self, f):
+        """The whole history: an open HistoryView, streamed."""
         self.send_response(200)
         self.send_header("Content-Type", "application/jsonl")
-        self.send_header("Content-Length", str(full_path.stat().st_size))
+        self.send_header("Content-Length", str(f.size))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        with open(full_path, "rb") as f:
-            while True:
-                chunk = f.read(65536)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+        f.seek(0)
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            self.wfile.write(chunk)
 
     def resolve_session_quiet(self, rel_path):
         """Like resolve_session but returns None without sending an error."""
@@ -1181,42 +1211,6 @@ class SessionsMixin:
                 skipped.append(os.path.basename(path))
         return {"restored": restored, "skipped": skipped,
                 "backup": str(bkdir) if restored else None}
-
-    # ------------------------------------------------------------------ #
-    # Session backup management                                           #
-    # ------------------------------------------------------------------ #
-
-    def _g_session_backups(self, req):
-        """GET /api/session-backups?session=<id> — list available backups."""
-        from orchestrator.sessions import list_backups
-        session_id = (req.query.get("session") or [""])[0]
-        if not session_id:
-            self.send_json({"error": "session parameter required"}, status=400)
-            return
-        self.send_json(list_backups(session_id))
-
-    def _p_session_backup_restore(self, req):
-        """POST /api/session/backup-restore — restore a session from a backup."""
-        from orchestrator.sessions import restore_session
-        body = self.read_body() or {}
-        session_id = body.get("session", "")
-        backup_id = body.get("backup_id")
-        if not session_id or not backup_id:
-            self.send_json({"error": "session and backup_id required"}, status=400)
-            return
-        try:
-            backup_id = int(backup_id)
-        except (TypeError, ValueError):
-            self.send_json({"error": "backup_id must be an integer"}, status=400)
-            return
-        try:
-            path = restore_session(session_id, backup_id)
-            self.send_json({"ok": True, "restored_path": path,
-                            "size": os.path.getsize(path)})
-        except (ValueError, FileNotFoundError) as e:
-            self.send_json({"error": str(e)}, status=404)
-        except Exception as e:
-            self.send_json({"error": str(e)}, status=500)
 
 
 def start_new_session(body):

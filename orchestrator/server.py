@@ -427,7 +427,6 @@ class SessionViewerHandler(
         "/api/market/mcp/signin": "_g_market_mcp_signin",
         "/api/session-summary": "_g_session_summary",
         "/api/session-detail": "_g_session_detail",
-        "/api/session-backups": "_g_session_backups",
         "/api/skill": "_g_skill",
         "/api/session-meta": "_g_session_meta",
         "/api/projects": "_g_projects",
@@ -544,7 +543,6 @@ class SessionViewerHandler(
         "/api/mcp/delete": "_p_mcp_delete",
         "/api/session/fork": "_p_session_fork",
         "/api/session/restore": "_p_session_restore",
-        "/api/session/backup-restore": "_p_session_backup_restore",
         "/api/session/delete": "_p_session_delete",
         "/api/session/rename": "_p_session_rename",
         "/api/session/seen": "_p_session_seen",
@@ -614,7 +612,7 @@ class SessionViewerHandler(
     # POSTs that change what the chat list shows: once one is handled, every
     # live-events subscriber is told to refetch the list (orchestrator.events).
     LIST_MUTATIONS = frozenset({
-        "/api/session/fork", "/api/session/restore", "/api/session/backup-restore",
+        "/api/session/fork", "/api/session/restore",
         "/api/session/delete", "/api/session/rename", "/api/session/seen",
         "/api/session-meta",
     })

@@ -108,56 +108,6 @@ def session_tokens_purge_stale(live_session_ids, max_age_secs):
         return len(cur.fetchall())
 
 
-# --------------------------------------------------------------------------- #
-# Session backups                                                              #
-# --------------------------------------------------------------------------- #
-
-def backup_create(session_id, backup_path, original_bytes, trimmed_bytes=None,
-                  reason="auto_trim"):
-    """Record a new session backup. Returns the row dict."""
-    with postgres.cursor() as cur:
-        cur.execute(
-            "INSERT INTO session_backups(session_id, backup_path, original_bytes, "
-            "trimmed_bytes, reason) VALUES(%s,%s,%s,%s,%s) RETURNING *",
-            (session_id, backup_path, original_bytes, trimmed_bytes, reason),
-        )
-        return dict(cur.fetchone())
-
-
-def backup_list(session_id):
-    """List all backups for a session, newest first."""
-    with postgres.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM session_backups WHERE session_id = %s ORDER BY created_at DESC",
-            (session_id,),
-        )
-        return [dict(r) for r in cur.fetchall()]
-
-
-def backup_get(backup_id):
-    """Get a single backup by id."""
-    with postgres.cursor() as cur:
-        cur.execute("SELECT * FROM session_backups WHERE id = %s", (backup_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def backup_set_trimmed(backup_id, trimmed_bytes):
-    """Record the session file's size after an auto-trim on its backup row."""
-    with postgres.cursor() as cur:
-        cur.execute("UPDATE session_backups SET trimmed_bytes = %s WHERE id = %s",
-                    (trimmed_bytes, backup_id))
-
-
-def backup_delete(backup_id):
-    """Delete a backup row (caller is responsible for deleting the file)."""
-    with postgres.cursor() as cur:
-        cur.execute("DELETE FROM session_backups WHERE id = %s RETURNING backup_path",
-                    (backup_id,))
-        row = cur.fetchone()
-        return row["backup_path"] if row else None
-
-
 # ---------------------------------------------------------------------------
 # Agent templates — curated session presets
 # ---------------------------------------------------------------------------

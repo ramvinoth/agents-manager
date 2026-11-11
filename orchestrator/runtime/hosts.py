@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from orchestrator.config import CLAUDE_DIR, transcript_path
+from orchestrator.history import HistoryView
 from orchestrator.remote import (
     remote_capabilities,
     remote_extract_cwd,
@@ -212,8 +213,9 @@ class LocalHost(Host):
         hit = LOCAL_SUMMARY_CACHE.get(key, st.st_mtime, st.st_size)
         if hit is not None:
             return hit
-        with open(full, "r", errors="replace") as f:
-            data = compute_session_summary(f, extract_cwd(full))
+        # The whole history: rows its trims dropped, then the live transcript.
+        with HistoryView(full) as view:
+            data = compute_session_summary(view.lines(), extract_cwd(full))
         LOCAL_SUMMARY_CACHE.put(key, st.st_mtime, st.st_size, data)
         return data
 

@@ -1,6 +1,7 @@
 """What a run starts with: permission MCP config, run settings, authority level, system-prompt context."""
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -55,7 +56,7 @@ def _write_perm_mcp_config():
     return path
 
 
-def _run_settings(provider_env=None):
+def _run_settings(provider_env=None, history_hook=False):
     """The `--settings` JSON every driven claude run starts with.
 
     `permissions.allow` pre-approves the viewer's own MCP tools (`mcp__viewer__*`,
@@ -70,8 +71,16 @@ def _run_settings(provider_env=None):
     call still carries the per-run token and is scoped server-side by level.
 
     provider_env (Agent mode) becomes the `env` block that points the harness at a
-    custom endpoint; see start_claude_run for why it must travel via --settings."""
+    custom endpoint; see start_claude_run for why it must travel via --settings.
+
+    history_hook (local runs, which trim their transcript after a compaction)
+    adds the PreCompact hook that snapshots the transcript first, so the rows
+    the trim drops reach orchestrator.history's archive and stay browsable."""
     settings = {"permissions": {"allow": ["mcp__viewer__*"]}}
+    if history_hook:
+        script = Path(__file__).resolve().parent.parent / "history.py"
+        cmd = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(script))}"
+        settings["hooks"] = {"PreCompact": [{"hooks": [{"type": "command", "command": cmd}]}]}
     if provider_env:
         penv = {k: str(v) for k, v in provider_env.items()}
         # Clear any inherited small-fast model so background calls don't leak to

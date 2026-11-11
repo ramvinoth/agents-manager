@@ -9,7 +9,7 @@ import threading
 import time
 import traceback
 
-from orchestrator import db, inference_health, procctl, project_plugins, resume
+from orchestrator import db, history, inference_health, procctl, project_plugins, resume
 from orchestrator.agents import agent_env
 from orchestrator.browser import ensure_mcp_browser
 from orchestrator.config import (
@@ -22,6 +22,7 @@ from orchestrator.config import (
     claude_version_gate,
     invalidate_claude_bin_cache,
     session_plugin_dirs,
+    transcript_path,
 )
 from orchestrator.login import auth_status
 from orchestrator.remote import remote_claude_bin
@@ -42,6 +43,23 @@ from orchestrator.runtime.titles import push_label
 # short when --resume first parses a multi-GB transcript; our own stdio servers
 # answer in well under a second, so this only ever waits on a blocked loader.
 MCP_CONNECT_TIMEOUT_MS = "120000"
+
+
+def _finish_history(session_id):
+    """Fold what this run's trims dropped into the chat's history archive, in a
+    thread (a chat's first fold copies its whole old transcript: seconds). Only
+    snapshots from before now are settled, so the next run's are left alone."""
+    live = transcript_path(session_id)
+    if not live:
+        return
+    cutoff = time.time_ns()
+
+    def fold():
+        try:
+            history.finish_run(live, before_ns=cutoff)
+        except Exception as e:
+            print(f"  ⚠ history fold {session_id[:8]} failed: {type(e).__name__}: {e}", flush=True)
+    threading.Thread(target=fold, daemon=True, name="history-fold").start()
 
 
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
@@ -147,7 +165,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if not remote else ""
     if watch_url:
         provider_env = {**provider_env, **inference_health.WATCHED_ENV}
-    run_settings = _run_settings(provider_env)
+    run_settings = _run_settings(provider_env, history_hook=not remote)
     settings_path = None
     if remote:
         cmd += ["--settings", json.dumps(run_settings)]
@@ -215,6 +233,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # viewerperm "failed" and every tool call died with "approve not found".
             # An owner-set MCP_TIMEOUT still wins.
             env.setdefault("MCP_TIMEOUT", MCP_CONNECT_TIMEOUT_MS)
+            if not remote:
+                # After each compaction the CLI rewrites the transcript down to
+                # what a resume needs, so a long chat resumes in a second instead
+                # of re-parsing gigabytes; orchestrator.history keeps the rows it
+                # drops for the app (the PreCompact hook in run_settings + the
+                # snapshot below). Remote hosts have no archive, so no trim.
+                env.setdefault(history.GC_ENV, "1")
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
@@ -283,6 +308,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
+                live = transcript_path(session_id)
+                if live:  # belt to the PreCompact hook's braces
+                    history.snapshot(live)
                 proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
@@ -356,6 +384,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     os.unlink(settings_path)
                 except OSError:
                     pass
+            if not remote:
+                _finish_history(session_id)
             try:
                 if stderr_buf and stderr_buf[0]:
                     tail = stderr_buf[0]

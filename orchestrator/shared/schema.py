@@ -405,16 +405,6 @@ def init_db():
               outcome    TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS session_backups (
-              id              SERIAL PRIMARY KEY,
-              session_id      TEXT NOT NULL,
-              backup_path     TEXT NOT NULL,
-              original_bytes  BIGINT NOT NULL,
-              trimmed_bytes   BIGINT,
-              reason          TEXT NOT NULL DEFAULT 'auto_trim',
-              created_at      TIMESTAMPTZ DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_sb_session ON session_backups(session_id);
             CREATE TABLE IF NOT EXISTS skills_learned (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
