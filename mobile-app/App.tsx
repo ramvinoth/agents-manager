@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useSyncExternalStore } from "react"
+import { CallProvider } from "./src/lib/CallProvider"
+import { callSession, showCallPill } from "./src/lib/callSession"
+import CallPill from "./src/components/CallPill"
 import { ActivityIndicator, Linking, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
@@ -84,6 +87,20 @@ const Stack = createNativeStackNavigator<RootStackParamList>()
 
 // Ref to the navigation tree so notification taps (which fire OUTSIDE React,
 // from the native module) can navigate without a screen in scope.
+/** Records the focused screen for analytics and tells the call pill which route is showing. */
+function trackRoute() {
+  const name = navigationRef.getCurrentRoute()?.name
+  recordScreen(name)
+  callSession.setRoute(name)
+}
+
+/** The in-call pill, tapping it returns to the live call screen. */
+function CallPillHost() {
+  const state = useSyncExternalStore(callSession.subscribe, callSession.get)
+  if (!showCallPill(state)) return null
+  return <CallPill onOpen={(label) => navigationRef.navigate("Call", { label })} />
+}
+
 export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 
 // A tap can fire BEFORE the navigation tree mounts — this is the norm on a cold
@@ -221,11 +238,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        <CallProvider>
         <NavigationContainer
           theme={navTheme}
           ref={navigationRef}
-          onReady={() => { flushPendingNav(); startUsageReporting(); recordScreen(navigationRef.getCurrentRoute()?.name) }}
-          onStateChange={() => recordScreen(navigationRef.getCurrentRoute()?.name)}
+          onReady={() => { flushPendingNav(); startUsageReporting(); trackRoute() }}
+          onStateChange={trackRoute}
         >
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
@@ -283,6 +301,8 @@ export default function App() {
             />
           </Stack.Navigator>
         </NavigationContainer>
+        <CallPillHost />
+        </CallProvider>
         <UndoToast />
         <ActionSheetHost />
       </SafeAreaProvider>

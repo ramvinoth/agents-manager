@@ -703,6 +703,9 @@ export function buildScreenStyles(t: Theme) {
     // CallScreen (call) — the full-screen voice call. Safe-area insets and the
     // phase-coloured status dot stay inline: they change at runtime.
     callPage: { flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "space-between" },
+    callMinimize: { position: "absolute", left: 12, width: 44, height: 44, alignItems: "center", justifyContent: "center", zIndex: 1 },
+    callPill: { position: "absolute", left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: t.success, paddingHorizontal: 16, paddingVertical: 8 },
+    callPillText: { color: t.onAccent, fontSize: 14, fontWeight: "600" },
     callIdentity: { alignItems: "center", gap: 10, paddingHorizontal: 24 },
     callAvatar: { width: 112, height: 112, borderRadius: 56, backgroundColor: t.surface, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: t.accent, marginBottom: 8 },
     callName: { color: t.text, fontSize: 24, fontWeight: "700" },

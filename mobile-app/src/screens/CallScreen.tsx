@@ -1,108 +1,42 @@
 /**
  * CallScreen — a WhatsApp-style voice CALL with Harman.
  *
- * CallKit shows the system call UI, and the conversation keeps running with the
- * screen locked or the app backgrounded. `useAssistantTurn` owns the listen /
- * think / speak loop against the fast call brain — the only additions here are
- * the CallKit lifecycle (via `callManager`) and a call-styled UI that shows the
- * last thing heard and the last reply.
- *
- * Flow on mount: start the CallKit call → start the listen loop. CallKit's
- * didActivateAudioSession hands the audio session to our expo-av coordinator.
- * Ending (in-app End, Recents, or the LOCK SCREEN) stops the loop, releases
- * audio, and pops the screen.
+ * A pure view of the live call owned by CallProvider (src/lib/CallProvider.tsx),
+ * which runs the CallKit lifecycle and the listen / think / speak loop above the
+ * navigator. Minimize (chevron) leaves the screen WITHOUT hanging up so the rest
+ * of the app stays usable; End hangs up and the screen closes itself.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react"
+import React, { useEffect, useRef } from "react"
 import { Text, View } from "react-native"
 import { Pressable } from "../components/Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { callManager } from "../lib/callManager"
-import { useAssistantTurn } from "../lib/useAssistantTurn"
-import { stopSpeaking } from "../lib/voice"
+import { useCall } from "../lib/CallProvider"
+import { fmtElapsed } from "../lib/callSession"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Call">
 
-/** mm:ss elapsed since the call connected. */
-function fmtElapsed(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${m}:${s.toString().padStart(2, "0")}`
-}
-
 export default function CallScreen({ route, navigation }: Props) {
-  const { path, label } = route.params
+  const { path, label: requested } = route.params
   const styles = useStyles()
   const t = useTheme()
   const insets = useSafeAreaInsets()
-  // Barge-in "Harman, end the call" reaches hangUp via this ref (hangUp is defined
-  // below the hook, so the hook gets a stable indirection instead of the closure).
-  const hangUpRef = useRef<null | (() => void)>(null)
-  const { phase, model, heard, reply, error, startHandsFree, stopHandsFree } = useAssistantTurn(path, {
-    onEndCall: () => hangUpRef.current?.(),
-  })
+  const { active, label: liveLabel, phase, model, heard, reply, error, muted, elapsed, join, hangUp, toggleMute } = useCall()
+  const wasActive = useRef(false)
 
-  const [muted, setMuted] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-  const endedRef = useRef(false)
+  // Opening the screen joins the live call, or starts one if none is running.
+  useEffect(() => { join(requested, path) }, [join, requested, path])
+  const label = liveLabel || requested
 
-  /** Tear the call down exactly once: stop the loop + playback, end the CallKit
-   *  call, and leave the screen. Safe to call from a button or a CallKit event. */
-  const hangUp = useCallback(async () => {
-    if (endedRef.current) return
-    endedRef.current = true
-    await stopHandsFree()
-    await stopSpeaking().catch(() => {})
-    callManager.endCall()
-    if (navigation.canGoBack()) navigation.goBack()
-  }, [stopHandsFree, navigation])
-  hangUpRef.current = hangUp
-
-  // Start the CallKit call + hands-free loop on mount; tear down on unmount.
+  // The call ended (End, CallKit, spoken) -> leave the screen. Minimizing never ends it.
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      await callManager.startCall(label, {
-        onEnd: () => {
-          // System / lock-screen End button → tear down through the same path.
-          hangUp()
-        },
-        onMuted: (m) => setMuted(m),
-      })
-      if (cancelled) return
-      await startHandsFree()
-    })()
-    return () => {
-      cancelled = true
-      // Unmount safety: ensure everything is released even if we didn't go through
-      // hangUp (e.g. a hardware back). endCall/stop are idempotent.
-      if (!endedRef.current) {
-        stopHandsFree()
-        stopSpeaking().catch(() => {})
-        callManager.endCall()
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Call timer — ticks once connected (phase leaves the initial idle).
-  useEffect(() => {
-    const id = setInterval(() => setElapsed((e) => e + 1), 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  function toggleMute() {
-    const next = !muted
-    setMuted(next)
-    callManager.setMuted(next)
-    // With the mic muted, pause the listen loop; resume when unmuted.
-    if (next) stopHandsFree()
-    else startHandsFree()
-  }
+    if (active) wasActive.current = true
+    else if (wasActive.current && navigation.canGoBack()) navigation.goBack()
+  }, [active, navigation])
 
   const statusLine =
     phase === "denied" ? "Microphone access denied"
@@ -121,6 +55,14 @@ export default function CallScreen({ route, navigation }: Props) {
 
   return (
     <View style={[styles.callPage, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 }]}>
+      <Pressable
+        testID="call-minimize"
+        accessibilityLabel="Minimize call"
+        onPress={() => navigation.goBack()}
+        style={[styles.callMinimize, { top: insets.top + 8 }]}
+      >
+        <Icon name="chevronDown" size={28} color={t.text} />
+      </Pressable>
       {/* Caller identity + live status. */}
       <View style={styles.callIdentity}>
         <View style={styles.callAvatar}>
