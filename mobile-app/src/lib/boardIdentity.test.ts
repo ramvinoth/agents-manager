@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, posix, resolve } from "node:path"
 import { test } from "node:test"
 import { CommonActions, StackRouter } from "@react-navigation/routers"
 import ts from "typescript"
@@ -80,7 +80,6 @@ function screen(initial: Route) {
     react: { ...react, default: react },
     // Screens press through components/Tracked (counted taps); here it is the plain element.
     "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity", useSeen: () => {} },
-    "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native": { ...native, Platform: { OS: "ios" }, Dimensions: { get: () => ({ width: 400 }) }, Animated: { Value: class {}, View: "Animated.View" }, PanResponder: { create: (handlers: any) => ({ panHandlers: handlers }) }, Alert: { alert: (...args: any[]) => alerts.push(args) } },
     "@react-navigation/native": { useFocusEffect: (fn: Function) => effect(passive, () => focused ? fn() : undefined, [fn, focused]) },
     "@react-navigation/elements": { useHeaderHeight: () => 40 },
@@ -118,14 +117,30 @@ function screen(initial: Route) {
     ...Object.fromEntries(["MessageActions", "CapabilitiesDrawer", "QuestionCard", "PlanCard", "RedApprovalCard", "Icon", "HeaderButton"].map(n => [`../components/${n}`, { default: n }])),
     "../components/ThreadItems": { ItemView: "ItemView", PinnedBanner: "PinnedBanner", WorkingBubble: "WorkingBubble" },
   }
-  const source = readFileSync(resolve(dirname(process.argv[1]), "../screens/ThreadScreen.tsx"), "utf8")
-  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
-  const exports: { default?: Function } = {}
-  new Function("require", "exports", "setTimeout", "clearTimeout", "setInterval", "clearInterval", js)(
-    (name: string) => { assert.ok(name in modules, `Unexpected dependency ${name}`); return modules[name] }, exports,
-    (fn: Function) => { timers.set(++timerId, fn); return timerId }, (id: number) => timers.delete(id),
-    (fn: Function) => { intervals.set(++timerId, fn); return timerId }, (id: number) => intervals.delete(id),
-  )
+  // Stub keys are written as ThreadScreen imports them; resolve every import to
+  // its src/-relative id so the hooks split out of the screen run as real code
+  // through the same stubs.
+  const stubs = new Map(Object.entries(modules).map(([k, v]) => [k.startsWith(".") ? posix.normalize(posix.join("screens", k)) : k, v]))
+  const real = new Set(["lib/useThreadTranscript", "lib/useBoardSwipe", "components/ComposerSuggestions"])
+  const src = resolve(dirname(process.argv[1]), "..")
+  const loaded = new Map<string, any>()
+  const load = (id: string, file: string) => {
+    const js = ts.transpileModule(readFileSync(resolve(src, file), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText
+    const out: Record<string, any> = {}
+    loaded.set(id, out)
+    new Function("require", "exports", "setTimeout", "clearTimeout", "setInterval", "clearInterval", js)(
+      (name: string) => {
+        const dep = name.startsWith(".") ? posix.normalize(posix.join(posix.dirname(id), name)) : name
+        if (stubs.has(dep)) return stubs.get(dep)
+        assert.ok(real.has(dep), `Unexpected dependency ${name} from ${id}`)
+        return loaded.get(dep) ?? load(dep, [`${dep}.ts`, `${dep}.tsx`].find(f => existsSync(resolve(src, f)))!)
+      }, out,
+      (fn: Function) => { timers.set(++timerId, fn); return timerId }, (id: number) => timers.delete(id),
+      (fn: Function) => { intervals.set(++timerId, fn); return timerId }, (id: number) => intervals.delete(id),
+    )
+    return out
+  }
+  const exports: { default?: Function } = load("screens/ThreadScreen", "screens/ThreadScreen.tsx")
   const navigation = { isFocused: () => focused, setOptions: (value: any) => { options = value }, navigate: (...args: any[]) => navigations.push(args) }
   const render = (next = route) => { route = next; cursor = 0; tree = exports.default!({ route, navigation }); flush(layout); return tree }
   const commit = () => { flush(passive) }
