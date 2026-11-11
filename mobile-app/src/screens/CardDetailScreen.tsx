@@ -433,7 +433,9 @@ export default function CardDetailScreen({ route, navigation }: Props) {
             the card resolves to no board, this becomes the attach-to-project
             picker instead — a card is never left without a way to move it. */}
         <View>
-          {columns.length ? (
+          {loading && !columns.length ? (
+            <Text style={styles.cdSectionLabel}>MOVE TO…</Text>
+          ) : columns.length ? (
             <>
               <Text style={styles.cdSectionLabel}>MOVE TO</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cdChips}>
