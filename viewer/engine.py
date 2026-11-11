@@ -36,8 +36,9 @@ from viewer.remote import (
 _HOME_ENC = str(Path.home()).replace("/", "-")
 
 
-from viewer import db, procctl, inference_health, orglogic, project_plugins, resume
+from viewer import db, history, procctl, inference_health, orglogic, project_plugins, resume
 from viewer import live as live_events  # `live` is a local name in several functions
+from viewer.history import HistoryView
 from viewer.sessions import compute_session_summary, last_cwd_in_file
 
 
@@ -1017,7 +1018,7 @@ def _write_perm_mcp_config():
     return path
 
 
-def _run_settings(provider_env=None):
+def _run_settings(provider_env=None, history_hook=False):
     """The `--settings` JSON every driven claude run starts with.
 
     `permissions.allow` pre-approves the viewer's own MCP tools (`mcp__viewer__*`,
@@ -1032,8 +1033,16 @@ def _run_settings(provider_env=None):
     call still carries the per-run token and is scoped server-side by level.
 
     provider_env (Agent mode) becomes the `env` block that points the harness at a
-    custom endpoint; see start_claude_run for why it must travel via --settings."""
+    custom endpoint; see start_claude_run for why it must travel via --settings.
+
+    history_hook (local runs, which trim their transcript after a compaction)
+    adds the PreCompact hook that snapshots the transcript first, so the rows
+    the trim drops reach viewer.history's archive and stay browsable."""
     settings = {"permissions": {"allow": ["mcp__viewer__*"]}}
+    if history_hook:
+        script = Path(__file__).resolve().parent / "history.py"
+        cmd = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(script))}"
+        settings["hooks"] = {"PreCompact": [{"hooks": [{"type": "command", "command": cmd}]}]}
     if provider_env:
         penv = {k: str(v) for k, v in provider_env.items()}
         # Clear any inherited small-fast model so background calls don't leak to
@@ -1551,6 +1560,23 @@ def _integrations_summary():
         return ""
 
 
+def _finish_history(session_id):
+    """Fold what this run's trims dropped into the chat's history archive, in a
+    thread (a chat's first fold copies its whole old transcript: seconds). Only
+    snapshots from before now are settled, so the next run's are left alone."""
+    live = transcript_path(session_id)
+    if not live:
+        return
+    cutoff = time.time_ns()
+
+    def fold():
+        try:
+            history.finish_run(live, before_ns=cutoff)
+        except Exception as e:
+            print(f"  ⚠ history fold {session_id[:8]} failed: {type(e).__name__}: {e}", flush=True)
+    threading.Thread(target=fold, daemon=True, name="history-fold").start()
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -1654,7 +1680,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if not remote else ""
     if watch_url:
         provider_env = {**provider_env, **inference_health.WATCHED_ENV}
-    run_settings = _run_settings(provider_env)
+    run_settings = _run_settings(provider_env, history_hook=not remote)
     settings_path = None
     if remote:
         cmd += ["--settings", json.dumps(run_settings)]
@@ -1716,6 +1742,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                        "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
                 env.pop(_k, None)
+            if not remote:
+                # After each compaction the CLI rewrites the transcript down to
+                # what a resume needs, so a long chat resumes in a second instead
+                # of re-parsing gigabytes; viewer.history keeps the rows it
+                # drops for the app (the PreCompact hook in run_settings + the
+                # snapshot below). Remote hosts have no archive, so no trim.
+                env.setdefault(history.GC_ENV, "1")
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
@@ -1784,6 +1817,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                             rperm_env["VIEWER_KANBAN_BASE"] = base
                 proc = RemoteProc(host, cmd, cwd, env=rperm_env)
             else:
+                live = transcript_path(session_id)
+                if live:  # belt to the PreCompact hook's braces
+                    history.snapshot(live)
                 proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
@@ -1857,6 +1893,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     os.unlink(settings_path)
                 except OSError:
                     pass
+            if not remote:
+                _finish_history(session_id)
             try:
                 if stderr_buf and stderr_buf[0]:
                     tail = stderr_buf[0]
@@ -2517,8 +2555,9 @@ class LocalHost(Host):
         hit = LOCAL_SUMMARY_CACHE.get(key, st.st_mtime, st.st_size)
         if hit is not None:
             return hit
-        with open(full, "r", errors="replace") as f:
-            data = compute_session_summary(f, extract_cwd(full))
+        # The whole history: rows its trims dropped, then the live transcript.
+        with HistoryView(full) as view:
+            data = compute_session_summary(view.lines(), extract_cwd(full))
         LOCAL_SUMMARY_CACHE.put(key, st.st_mtime, st.st_size, data)
         return data
 
