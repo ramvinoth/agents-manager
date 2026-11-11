@@ -55,11 +55,11 @@ class TestPermissionDeniedHint:
 
     def test_tcc_folder_names_the_switch(self, monkeypatch):
         from pathlib import Path
-        from orchestrator import engine
-        monkeypatch.setattr(engine.sys, "platform", "darwin")
-        monkeypatch.setattr(engine.sys, "executable", "/opt/py/bin/python3")
-        monkeypatch.setattr(engine, "_responsible_app", lambda: None)
-        msg = engine._permission_denied_hint(Path.home() / "Downloads")
+        from orchestrator.runtime import hosts
+        monkeypatch.setattr(hosts.sys, "platform", "darwin")
+        monkeypatch.setattr(hosts.sys, "executable", "/opt/py/bin/python3")
+        monkeypatch.setattr(hosts, "_responsible_app", lambda: None)
+        msg = hosts._permission_denied_hint(Path.home() / "Downloads")
         assert "~/Downloads" in msg and "Privacy & Security" in msg
         # the actionable fact is WHICH binary needs the grant — it must name the
         # live interpreter path, not a hardcoded product name the list can't show.
@@ -67,35 +67,35 @@ class TestPermissionDeniedHint:
 
     def test_tcc_folder_names_the_wrapping_app(self, monkeypatch):
         from pathlib import Path
-        from orchestrator import engine
-        monkeypatch.setattr(engine.sys, "platform", "darwin")
-        monkeypatch.setattr(engine, "_responsible_app",
+        from orchestrator.runtime import hosts
+        monkeypatch.setattr(hosts.sys, "platform", "darwin")
+        monkeypatch.setattr(hosts, "_responsible_app",
                             lambda: ("Harman", "/Applications/Harman.app"))
-        msg = engine._permission_denied_hint(Path.home() / "Desktop")
+        msg = hosts._permission_denied_hint(Path.home() / "Desktop")
         # under the launcher the grant is charged to the app, not the interpreter
         assert "“Harman”" in msg and "/Applications/Harman.app" in msg
         assert "Python" not in msg
 
     def test_responsible_app_reads_the_parent_bundle(self, monkeypatch):
-        from orchestrator import engine
+        from orchestrator.runtime import hosts
         class R: stdout = "/Users/x/Applications/Harman.app/Contents/MacOS/Harman\n"
-        monkeypatch.setattr(engine.subprocess, "run", lambda *a, **k: R)
-        assert engine._responsible_app() == ("Harman", "/Users/x/Applications/Harman.app")
+        monkeypatch.setattr(hosts.subprocess, "run", lambda *a, **k: R)
+        assert hosts._responsible_app() == ("Harman", "/Users/x/Applications/Harman.app")
         R.stdout = "/bin/zsh\n"
-        assert engine._responsible_app() is None
+        assert hosts._responsible_app() is None
 
     def test_other_paths_stay_plain(self, monkeypatch):
         from pathlib import Path
-        from orchestrator import engine
-        monkeypatch.setattr(engine.sys, "platform", "darwin")
-        assert engine._permission_denied_hint(Path("/root")) == "Permission denied"
-        assert engine._permission_denied_hint(Path.home() / "srv" / "Downloads") == "Permission denied"
+        from orchestrator.runtime import hosts
+        monkeypatch.setattr(hosts.sys, "platform", "darwin")
+        assert hosts._permission_denied_hint(Path("/root")) == "Permission denied"
+        assert hosts._permission_denied_hint(Path.home() / "srv" / "Downloads") == "Permission denied"
 
     def test_not_a_mac_stays_plain(self, monkeypatch):
         from pathlib import Path
-        from orchestrator import engine
-        monkeypatch.setattr(engine.sys, "platform", "linux")
-        assert engine._permission_denied_hint(Path.home() / "Downloads") == "Permission denied"
+        from orchestrator.runtime import hosts
+        monkeypatch.setattr(hosts.sys, "platform", "linux")
+        assert hosts._permission_denied_hint(Path.home() / "Downloads") == "Permission denied"
 
 
 def test_idle_timeout_waits_while_owner_is_deciding():

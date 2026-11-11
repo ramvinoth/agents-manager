@@ -17,7 +17,7 @@ import sys
 import time
 
 from orchestrator import audit, db, decisions, inbox, questions
-from orchestrator.engine import _push_label, pending_approvals_all_public
+from orchestrator.engine import push_label, pending_approvals_all_public
 
 DEFAULT_CAP = 3
 MAX_CAP = 20
@@ -134,7 +134,7 @@ def open_items():
                 | {r["session_id"] for r in crows if r.get("session_id")}
                 | {(r.get("detail") or {}).get("session") for r in rrows} - {None, ""}):
         try:
-            labels[sid] = _push_label(sid, "")
+            labels[sid] = push_label(sid, "")
         except Exception:
             labels[sid] = ""
     items = decisions.open_decisions(qrows, prows, arows, labels, now, crows, rrows)["decisions"]

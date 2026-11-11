@@ -14,7 +14,7 @@ from orchestrator.config import (
 from orchestrator.adapters import list_sessions_local, normalize_lines, resolve_agent_session
 from orchestrator.codex import codex_fork, codex_restore, start_codex_new
 from orchestrator.engine import (
-    _push_label, extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
+    push_label, extract_cwd, get_host, plugin_description, resolve_level, start_claude_run,
     start_copilot_new,
 )
 from orchestrator.loops import USER_ORIGIN, build_schedule
@@ -516,7 +516,7 @@ class SessionsMixin:
             # A thread opened from a push knows only the id: give it the
             # chat's name so the header settles on the first read.
             try:
-                r["title"] = _push_label(sid)
+                r["title"] = push_label(sid)
             except Exception:
                 pass
         else:

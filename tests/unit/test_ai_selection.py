@@ -378,16 +378,17 @@ def test_full_model_id_reaches_cli_command():
 
 @pytest.mark.parametrize("override,expected", [("", "session-model"), ("other", "other-default")])
 def test_real_loop_launch_uses_provider_associated_model(monkeypatch, tmp_path, override, expected):
-    from orchestrator import ai, db, engine
+    from orchestrator import ai, db
+    from orchestrator.runtime import scheduler
     root = tmp_path / "projects"; root.mkdir()
     transcript = root / "s.jsonl"; transcript.write_text('{}\n')
-    monkeypatch.setattr(engine, "CLAUDE_DIR", root)
-    monkeypatch.setattr(engine, "extract_cwd", lambda _: str(tmp_path))
+    monkeypatch.setattr(scheduler, "CLAUDE_DIR", root)
+    monkeypatch.setattr(scheduler, "extract_cwd", lambda _: str(tmp_path))
     monkeypatch.setattr(db, "session_meta_get", lambda _: ai.meta_fields(choice("p", {"kind": "id", "id": "session-model"})))
     monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "https://example.invalid", "model": pid + "-default",
         "modelLimits": {pid + "-default": {"override": 242000}}})
-    launch = Mock(return_value=True); monkeypatch.setattr(engine, "start_claude_run", launch)
-    assert engine.run_loop_iteration("s", "projects/s.jsonl", "hello", provider=override)
+    launch = Mock(return_value=True); monkeypatch.setattr(scheduler, "start_claude_run", launch)
+    assert scheduler.run_loop_iteration("s", "projects/s.jsonl", "hello", provider=override)
     env = launch.call_args.kwargs["provider_env"]
     assert env["ANTHROPIC_MODEL"] == expected
     assert ("CLAUDE_CODE_MAX_CONTEXT_TOKENS" in env) == bool(override)

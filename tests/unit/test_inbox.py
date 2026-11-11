@@ -275,8 +275,8 @@ def test_session_message_push_opens_its_mailbox(monkeypatch):
 # ── _wake_session: a live run gets the message mid-turn, not at turn end ──
 
 def test_wake_steers_into_a_running_turn(monkeypatch):
-    from orchestrator import engine
-    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    from orchestrator import config, engine
+    monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     steered, started = [], []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: steered.append(t) or "steered")
     monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
@@ -285,8 +285,8 @@ def test_wake_steers_into_a_running_turn(monkeypatch):
 
 
 def test_wake_resumes_when_the_run_ended_before_the_steer(monkeypatch):
-    from orchestrator import engine
-    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    from orchestrator import config, engine
+    monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     started = []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: None)   # run just finished
     monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
@@ -420,8 +420,8 @@ def _sessions(tmp_path, monkeypatch, titles):
     for sid in titles:
         (d / f"{sid}.jsonl").write_text("")
     monkeypatch.setattr(config, "CLAUDE_DIR", tmp_path)
-    monkeypatch.setattr(engine, "CHAT_JOBS", {})
-    monkeypatch.setattr(engine, "_session_title", lambda sid: (titles.get(sid, ""), ""))
+    monkeypatch.setattr(config, "CHAT_JOBS", {})
+    monkeypatch.setattr(engine, "session_title", lambda sid: (titles.get(sid, ""), ""))
 
 
 def test_resolve_full_id_prefix_and_title(tmp_path, monkeypatch):

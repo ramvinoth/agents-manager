@@ -75,7 +75,7 @@ def actor_names(elements, name_of):
 
 
 def session_name(sid):
-    explicit, first = engine._session_title(sid)
+    explicit, first = engine.session_title(sid)
     return explicit or first
 
 

@@ -3,9 +3,7 @@ import json
 
 from psycopg2.extras import Json
 
-from orchestrator.identity.repository import owner_user_id
 from orchestrator.shared import postgres
-
 
 # ---- session tokens (survive a server restart) --------------------------------
 # The per-run perm/kanban tokens live in the server's in-memory CHAT_JOBS, which

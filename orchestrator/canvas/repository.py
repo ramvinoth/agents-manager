@@ -1,5 +1,4 @@
 """The shared project canvas and the legacy per-session canvases."""
-from psycopg2.extras import Json
 
 from orchestrator.shared import postgres
 

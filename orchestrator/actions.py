@@ -697,7 +697,7 @@ def _session_level_set(a):
 
 def _system_preamble_set(a):
     """Set the global system-awareness preamble prepended to EVERY session's
-    system prompt (engine.append_system_prompt). Empty string disables it.
+    system prompt (--append-system-prompt in runtime/runners/claude.py). Empty string disables it.
 
     Red + manager (orglogic): rewriting this injects instructions fleet-wide into
     every future session, so an agent's attempt queues for the owner — the same

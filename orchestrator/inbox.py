@@ -386,19 +386,19 @@ def resolve_session(ref):
     run or local transcript with that exact id; a unique id prefix; a unique
     exact (case-insensitive) title."""
     from orchestrator import engine
-    from orchestrator.config import CLAUDE_DIR, transcript_path
+    from orchestrator.config import CHAT_JOBS, CHAT_LOCK, CLAUDE_DIR, transcript_path
     ref = str(ref or "").strip()
     if not ref:
         return None, "no recipient session given"
-    with engine.CHAT_LOCK:
-        live = list(engine.CHAT_JOBS)
+    with CHAT_LOCK:
+        live = list(CHAT_JOBS)
     if ref in live or transcript_path(ref):
         return ref, None
     ids = set(live) | {p.stem for p in CLAUDE_DIR.glob("*/*.jsonl")}
     hits = sorted(i for i in ids if i.startswith(ref)) if len(ref) >= 6 else []
     if not hits:
         want = ref.casefold()
-        hits = sorted(i for i in ids if engine._session_title(i)[0].strip().casefold() == want)
+        hits = sorted(i for i in ids if engine.session_title(i)[0].strip().casefold() == want)
     if len(hits) == 1:
         return hits[0], None
     if hits:
@@ -430,8 +430,8 @@ def _push_owner(title, body, data):
 
 def _label(session_id):
     try:
-        from orchestrator.engine import _push_label
-        return _push_label(session_id, "")
+        from orchestrator.engine import push_label
+        return push_label(session_id, "")
     except Exception:
         return session_id[:12]
 
@@ -545,8 +545,9 @@ def _wake_session(session_id, prompt):
     how = "failed"
     try:
         from orchestrator import engine
-        with engine.CHAT_LOCK:
-            job = engine.CHAT_JOBS.get(session_id)
+        from orchestrator.config import CHAT_JOBS, CHAT_LOCK
+        with CHAT_LOCK:
+            job = CHAT_JOBS.get(session_id)
             running = bool(job and job.get("running"))
             host = (job or {}).get("host", "local")
         if running:

@@ -15,7 +15,6 @@ SOURCES = ("orchestrator", "web/src", "mobile-app/src")
 SUFFIXES = (".py", ".ts", ".tsx")
 
 OVERSIZED = {
-    "orchestrator/engine.py": 2678,
     "orchestrator/browser.py": 1407,
     "orchestrator/remote.py": 1398,
     "orchestrator/routes/sessions.py": 1375,

@@ -90,7 +90,7 @@ _RED_ACTIONS = {
     # owner's call.
     "restart_now",
     # rewriting the global system preamble injects instructions into EVERY future
-    # session's system prompt (engine.append_system_prompt) — fleet-wide reach, the
+    # session's system prompt (--append-system-prompt in runtime/runners/claude.py) — fleet-wide reach, the
     # same "overwrites what the whole team relies on" class as skill_promote. An
     # agent's attempt queues for the owner; the owner at the UI self-approves.
     "system_preamble_set",

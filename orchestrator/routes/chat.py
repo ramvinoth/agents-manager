@@ -7,7 +7,7 @@ from orchestrator.config import (
 )
 from orchestrator.adapters import resolve_agent_session
 from orchestrator.engine import (
-    _pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
+    pi_session_uuid, codex_session_meta, copilot_session_meta, decide_permission, enqueue_chat, extract_cwd, interrupt_chat, pending_approvals_public, pi_session_cwd, pi_session_provider_model, register_permission, start_claude_run, start_codex_run, start_copilot_run, start_pi_run, steer_chat,
 )
 from orchestrator.remote import (
     remote_codex_meta, remote_extract_cwd, remote_resolve,
@@ -85,7 +85,7 @@ class ChatMixin:
                 session_id = full_path.stem
                 cwd = pi_session_cwd(full_path)
                 provider, pimodel = pi_session_provider_model(full_path)
-                if not start_pi_run(session_id, _pi_session_uuid(session_id), message, cwd, provider, pimodel):
+                if not start_pi_run(session_id, pi_session_uuid(session_id), message, cwd, provider, pimodel):
                     self.send_json({"error": "A message is already being processed for this session"}, status=409)
                     return
                 self.send_json({"started": True, "session": session_id})

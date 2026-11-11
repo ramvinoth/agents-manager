@@ -35,7 +35,7 @@ def interrupt(proc):
     interruptible_kwargs(), and share the server's console). A child that
     cannot be interrupted is terminated instead. Never raises.
 
-    proc is a Popen, or any Popen-like object (engine.RemoteProc) whose
+    proc is a Popen, or any Popen-like object (runtime.process.RemoteProc) whose
     signal methods do their own thing."""
     try:
         proc.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)

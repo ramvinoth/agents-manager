@@ -270,8 +270,8 @@ def start_custom_run(session_id, preset_id, message, cwd, host="local", mode="",
             # Background push, mirroring the claude runner's finish hook.
             try:
                 from orchestrator.push import notify_all, push_preview
-                from orchestrator.engine import _push_label
-                label = _push_label(session_id, cwd)
+                from orchestrator.engine import push_label
+                label = push_label(session_id, cwd)
                 if rc == 0 and last_result:
                     notify_all(label, push_preview(last_result),
                                data={"session": session_id, "host": host})

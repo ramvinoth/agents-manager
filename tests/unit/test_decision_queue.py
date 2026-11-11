@@ -172,7 +172,7 @@ class TestRoute:
         # holds its references. The cap is the default (3) unless a test sets it.
         monkeypatch.setattr(vqueue, "cap", lambda: vqueue.DEFAULT_CAP)
         monkeypatch.setattr(vqueue, "pending_approvals_all_public", lambda: arows)
-        monkeypatch.setattr(vqueue, "_push_label",
+        monkeypatch.setattr(vqueue, "push_label",
                             labeler or (lambda sid, cwd="": ""))
 
     def test_lists_all_three_sources(self, monkeypatch):

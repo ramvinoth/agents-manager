@@ -1,7 +1,7 @@
 """Unit tests for the automation master switch AND the loop-control mode.
 
 The scheduler has TWO unattended paths and TWO facts gated inside it, both enforced in
-`engine.loop_scheduler` at one point:
+`runtime.scheduler.loop_scheduler` at one point:
 
 - the **master switch** (`orchestrator.automation_enabled`) is the runtime halt on
   everything autonomous: off, Harman's manager tick does not run and no agent-origin
@@ -27,7 +27,8 @@ scheduler body is the only way to catch someone later moving a launch above a ga
 """
 import pytest
 
-from orchestrator import board_wake, engine, orchestrator, orglogic
+from orchestrator import board_wake, orchestrator, orglogic
+from orchestrator.runtime import scheduler
 
 
 class _StopAfterOnePass(Exception):
@@ -100,7 +101,7 @@ def fdb(monkeypatch):
     """One fake Postgres shared by both modules the switch spans."""
     f = FakeDB()
     monkeypatch.setattr(orchestrator, "db", f)
-    monkeypatch.setattr(engine, "db", f)
+    monkeypatch.setattr(scheduler, "db", f)
     # The scheduler pass also runs board_wake.sweep() under 'harman'/'both'. Until
     # 2026-09-20 that module kept the REAL db here, so every run of this file
     # stamped the production sweep clock and queued real card wakes (11 sweeps'
@@ -118,12 +119,12 @@ def _one_pass(monkeypatch, launched):
         if calls["n"] > 1:
             raise _StopAfterOnePass()
 
-    monkeypatch.setattr(engine.time, "sleep", fake_sleep)
+    monkeypatch.setattr(scheduler.time, "sleep", fake_sleep)
     # Force the hourly retention purge to run this pass (a stale module global from
     # an earlier test would otherwise skip it); the fake's purge is a no-op.
-    monkeypatch.setattr(engine, "_last_purge", 0.0)
+    monkeypatch.setattr(scheduler, "_last_purge", 0.0)
     with pytest.raises(_StopAfterOnePass):
-        engine.loop_scheduler(lambda *a, **k: launched.append(a))
+        scheduler.loop_scheduler(lambda *a, **k: launched.append(a))
 
 
 @pytest.fixture
@@ -133,7 +134,7 @@ def due_loop(monkeypatch, fdb):
     switch; a test that wants an agent loop overrides `loops[0]["origin"]`."""
     fdb.loops = [{"id": "l1", "session": "sid", "path": "p.jsonl", "prompt": "go",
                   "interval": 60, "nextRun": 0, "enabled": True, "origin": "user"}]
-    monkeypatch.setattr(engine, "CHAT_JOBS", {})
+    monkeypatch.setattr(scheduler, "CHAT_JOBS", {})
     return fdb
 
 
@@ -329,8 +330,8 @@ class TestReapingIsUngated:
     def test_reaping_still_runs_while_paused(self, monkeypatch, fdb):
         """Pausing must not strand session tokens: a finished job's credential is
         still expired while off, or "paused" would mean "holding live secrets"."""
-        monkeypatch.setattr(engine, "CHAT_JOBS", {
+        monkeypatch.setattr(scheduler, "CHAT_JOBS", {
             "old": {"running": False, "finished": 0.0},
         })
         _one_pass(monkeypatch, [])
-        assert fdb.tokens_deleted == ["old"] and engine.CHAT_JOBS == {}
+        assert fdb.tokens_deleted == ["old"] and scheduler.CHAT_JOBS == {}

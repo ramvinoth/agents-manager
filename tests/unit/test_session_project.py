@@ -14,7 +14,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from orchestrator import engine, remote
+from orchestrator import remote
+from orchestrator.runtime import hosts
 
 CWD = "/work/Case A - Land 23"
 
@@ -32,8 +33,8 @@ class TestLocalSessionProject(unittest.TestCase):
     def _project(self, records):
         with tempfile.TemporaryDirectory() as tmp:
             root = _transcript(tmp, records)
-            with patch.object(engine, "CLAUDE_DIR", pathlib.Path(root)):
-                return engine.LocalHost().list_sessions()[0]["project"]
+            with patch.object(hosts, "CLAUDE_DIR", pathlib.Path(root)):
+                return hosts.LocalHost().list_sessions()[0]["project"]
 
     def test_a_folder_with_spaces_and_dashes_keeps_its_name(self):
         self.assertEqual(self._project([{"type": "user", "cwd": CWD, "message": {"content": "hi"}}]), CWD)

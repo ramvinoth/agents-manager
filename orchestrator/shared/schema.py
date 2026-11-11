@@ -621,7 +621,7 @@ def init_db():
               $${"mode": "user"}$$::jsonb)
               ON CONFLICT (key) DO NOTHING;
             -- System-awareness preamble prepended to EVERY session's system prompt
-            -- (engine.append_system_prompt). Without it a session sees the raw
+            -- (--append-system-prompt in runtime/runners/claude.py). Without it a session sees the raw
             -- mcp__viewer__* tool list but is never told it is a node in the Harman
             -- orchestration system or how the steering rules gate its power. Stored
             -- here (not a code constant) so it is editable at runtime with no deploy;

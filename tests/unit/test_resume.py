@@ -135,29 +135,29 @@ def test_the_cap_ask_quotes_the_last_error(store):
 def test_a_capped_run_does_not_also_push_a_generic_error(monkeypatch):
     """At the cap the owner is asked in the inbox; the finalizer must know, so
     it skips the vaguer 'The run ended with an error.' push."""
-    from orchestrator import engine
-    monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
+    from orchestrator.runtime import chat
+    monkeypatch.setattr(chat, "RESUME_SETTLE", 0)
     monkeypatch.setattr(resume, "resume_one", lambda row, reason="": False)
     monkeypatch.setattr(db, "inflight_run_get",
                         lambda sid, started: dict(_row(sid), resumes=resume.MAX_RESUMES))
     job = {"started": 5.0, "returncode": -1, "stderr": "x"}
-    assert engine._resume_cut_turn("s", job, []) is False and job["owner_told"]
+    assert chat._resume_cut_turn("s", job, []) is False and job["owner_told"]
 
 
 def test_engine_resumes_a_run_that_died_mid_turn(monkeypatch):
     """The finalizer's hand-off: the run's own row (with its leftovers) goes to
     resume_one; a row a newer run already replaced is left alone."""
-    from orchestrator import engine
-    monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
+    from orchestrator.runtime import chat
+    monkeypatch.setattr(chat, "RESUME_SETTLE", 0)
     got = []
     monkeypatch.setattr(resume, "resume_one", lambda row, reason="": got.append(row) or True)
     job = {"started": 5.0, "returncode": -15}
     monkeypatch.setattr(db, "inflight_run_get",
                         lambda sid, started: _row(sid) if started == 5.0 else None)
-    assert engine._resume_cut_turn("s", job, ["queued"]) is True
+    assert chat._resume_cut_turn("s", job, ["queued"]) is True
     assert got[0]["session_id"] == "s" and got[0]["queue"] == ["queued"]
     job["started"] = 6.0
-    assert engine._resume_cut_turn("s", job, []) is False
+    assert chat._resume_cut_turn("s", job, []) is False
 
 
 def test_clients_fold_the_resume_prompt_by_its_opening():
@@ -192,8 +192,11 @@ def test_every_harness_cut_by_a_restart_is_resumed_at_boot(monkeypatch, tmp_path
     import threading
     import time
     import orchestrator.push
+    import subprocess
     from orchestrator import ai, config, customrun, engine, turn
     from orchestrator.config import CHAT_JOBS
+    from orchestrator.runtime import chat
+    from orchestrator.runtime.runners import codex, copilot, pi
 
     # Durable store, faked with the real semantics: start upserts, clear only
     # removes the row of the run that recorded it.
@@ -217,12 +220,12 @@ def test_every_harness_cut_by_a_restart_is_resumed_at_boot(monkeypatch, tmp_path
     monkeypatch.setattr(db, "pending_question_get_open", lambda sid: None)
     monkeypatch.setattr(questions, "get_open_plan", lambda sid: None)
     monkeypatch.setattr(db, "session_meta_get", lambda sid: {"sid": sid})
-    monkeypatch.setattr(engine, "RESUME_SETTLE", 0)
+    monkeypatch.setattr(chat, "RESUME_SETTLE", 0)
     monkeypatch.setattr(orchestrator.push, "notify_all", lambda *a, **k: None)
 
     # The runs: every spawn blocks mid-turn until `gate` fires.
     gate, ended = threading.Event(), []
-    monkeypatch.setattr(engine.subprocess, "Popen", lambda cmd, **kw: _Running(gate))
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: _Running(gate))
 
     def completion(*a):
         gate.wait(5)
@@ -230,12 +233,14 @@ def test_every_harness_cut_by_a_restart_is_resumed_at_boot(monkeypatch, tmp_path
     monkeypatch.setattr(customrun, "_chat_completion", completion)
     monkeypatch.setattr(customrun, "transcript_path", lambda sid: None)
     monkeypatch.setattr(customrun, "CLAUDE_DIR", tmp_path)
-    real_end = engine.end_oneshot_inflight
+    real_end = chat.end_oneshot_inflight
 
     def end(sid, job):
         real_end(sid, job)
         ended.append(sid)
-    monkeypatch.setattr(engine, "end_oneshot_inflight", end)
+    # customrun looks it up on the engine facade at call time; the runners import it by name.
+    for owner in (engine, codex, copilot, pi):
+        monkeypatch.setattr(owner, "end_oneshot_inflight", end)
     cwd = str(tmp_path)
     preset = {"baseUrl": "http://endpoint.invalid", "model": "local-27b"}
     sids = ["claude-1", "custom-1", "codex-1", "copilot-1", "pi-1"]
@@ -302,13 +307,13 @@ def test_oneshot_run_end_settles_before_clearing_a_failed_turn(monkeypatch):
     SIGTERM: wait RESUME_SETTLE before clearing, so a server that goes down
     meanwhile leaves the row for boot. A clean exit or the owner's stop clears
     at once."""
-    from orchestrator import engine
+    from orchestrator.runtime import chat
     slept, cleared = [], []
-    monkeypatch.setattr(engine.time, "sleep", slept.append)
+    monkeypatch.setattr(chat.time, "sleep", slept.append)
     monkeypatch.setattr(db, "inflight_run_clear", lambda sid, started: cleared.append((sid, started)))
-    engine.end_oneshot_inflight("a", {"started": 1.0, "returncode": 0})
+    chat.end_oneshot_inflight("a", {"started": 1.0, "returncode": 0})
     assert slept == [] and cleared == [("a", 1.0)]
-    engine.end_oneshot_inflight("b", {"started": 2.0, "returncode": -15})
-    assert slept == [engine.RESUME_SETTLE] and cleared[-1] == ("b", 2.0)
-    engine.end_oneshot_inflight("c", {"started": 3.0, "returncode": -1, "interrupted": True})
-    assert slept == [engine.RESUME_SETTLE] and cleared[-1] == ("c", 3.0)
+    chat.end_oneshot_inflight("b", {"started": 2.0, "returncode": -15})
+    assert slept == [chat.RESUME_SETTLE] and cleared[-1] == ("b", 2.0)
+    chat.end_oneshot_inflight("c", {"started": 3.0, "returncode": -1, "interrupted": True})
+    assert slept == [chat.RESUME_SETTLE] and cleared[-1] == ("c", 3.0)
