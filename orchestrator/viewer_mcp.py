@@ -24,7 +24,7 @@ resumes the session with the answer; a second "ask" tool would be two question s
 that drift. See ORCHESTRATOR_MCP.md §8.
 
 Speaks newline-delimited JSON-RPC on stdout; prints NOTHING to stdout except protocol
-messages. Spawned by start_claude_run (engine.py) via the shared --mcp-config, with
+messages. Spawned by start_claude_run (runtime/runners/claude.py) via the shared --mcp-config, with
 the session + token + viewer base passed in the environment.
 """
 import json

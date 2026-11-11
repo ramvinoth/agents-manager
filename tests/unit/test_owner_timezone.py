@@ -13,7 +13,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROBE = """
 import json
-from orchestrator.engine import owner_time_line
+from orchestrator.runtime.run_config import owner_time_line
 from orchestrator.viewer_mcp import with_local_times
 from orchestrator.workspace import event_time
 print(json.dumps({

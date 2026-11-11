@@ -153,7 +153,7 @@ def validate_session_credential(session_id, token):
     Either per-run token authenticates. `perm_token` and `kanban_token` are two
     secrets for ONE principal: both are minted by the same start_claude_run, for
     the same session, and shipped in the same env to the same child process
-    (engine.py ~1109-1199). They are not separate authority scopes — authority is
+    (runtime/runners/claude.py, the env block in run()). They are not separate authority scopes — authority is
     the session's level, identical whichever token is presented — so treating
     them as one credential keeps the promise that a caller is resolved exactly
     once, and avoids two near-identical validators drifting apart.

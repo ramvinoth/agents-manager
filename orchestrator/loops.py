@@ -1,6 +1,6 @@
 """orchestrator.loops — pure utility functions for the loop/job scheduler.
 
-The actual loop_scheduler and run_loop_iteration live in engine.py.
+The actual loop_scheduler and run_loop_iteration live in orchestrator/runtime/scheduler.py.
 This module exists so pure functions (parse_interval, cron_next_run)
 can be unit-tested without importing the full engine.
 

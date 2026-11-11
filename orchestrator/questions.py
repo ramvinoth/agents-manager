@@ -11,7 +11,7 @@ next heartbeat) and is answered later by resuming the session (routes/chat.py
 are consumed first-writer-wins at the moment of acceptance (orchestrator.decisions),
 before any delivery, so two surfaces racing on the same question cannot both win.
 Works in every permission mode, local and remote. The engine drives this; see
-engine.py `_await_question_answer`.
+orchestrator/runtime/permissions.py `_await_question_answer`.
 
 This module is host-agnostic: `questions_from_input` is a pure parser, and the DB
 wrappers carry no HTTP or threading knowledge.

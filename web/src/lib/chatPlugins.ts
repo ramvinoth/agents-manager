@@ -1,7 +1,7 @@
 /** Where a chat's plugins apply. The engine passes them (Harman's catalog plugins
  *  and the chat's own extras) as --plugin-dir on LOCAL Claude runs only, so the
  *  Plugins tab and "This chat" scope exist only there. Mirrors the server: the
- *  same rule lives in orchestrator/engine.py (`if not remote`) and
+ *  same rule lives in orchestrator/runtime/runners/claude.py (`if not remote`) and
  *  orchestrator/routes/capabilities.py (merge only for host == "local", agent claude). */
 
 export type PluginScope = { host: string; agent: string; session?: string | null }

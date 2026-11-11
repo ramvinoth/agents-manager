@@ -7,7 +7,7 @@ forward that to the viewer backend, which surfaces an Allow/Deny prompt in the U
 and blocks until the user decides; the decision comes back as
 `{"behavior":"allow"|"deny", ...}` (the contract confirmed against claude 2.1.220).
 
-Spawned by `start_claude_run` (engine.py) via `--mcp-config`, with the session,
+Spawned by `start_claude_run` (runtime/runners/claude.py) via `--mcp-config`, with the session,
 port and a per-run token passed in the environment. Speaks newline-delimited
 JSON-RPC on stdio; must print NOTHING to stdout except protocol messages.
 """

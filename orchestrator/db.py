@@ -38,10 +38,8 @@ from orchestrator.board.repository import (  # noqa: F401
     board_column_create,
     board_column_delete,
     board_column_ensure,
-    board_column_get,
     board_column_names,
     board_column_update,
-    board_columns_ensure,
     board_columns_list,
     card_ask_set,
     card_comment_add,
@@ -97,7 +95,6 @@ from orchestrator.identity.repository import (  # noqa: F401
     verify_user,
 )
 from orchestrator.integrations.repository import (  # noqa: F401
-    LOCAL_DISK_KEY,
     drive_client_delete,
     drive_client_get,
     drive_client_set,
@@ -135,7 +132,6 @@ from orchestrator.knowledge.repository import (  # noqa: F401
     notes_delete_for_session,
 )
 from orchestrator.messaging.repository import (  # noqa: F401
-    INBOX_KINDS,
     add_push_token,
     all_push_tokens,
     inbox_archive_for_session,
@@ -209,13 +205,10 @@ from orchestrator.runtime.repository import (  # noqa: F401
 from orchestrator.shared.postgres import (  # noqa: F401
     DATABASE_URL,
     close_pool,
-    default_dsn,
 )
 from orchestrator.shared.schema import (  # noqa: F401
-    LIVE_TABLES,
     SCHEMA_VERSION,
     init_db,
-    migrate_legacy_files,
 )
 from orchestrator.shared.settings import (  # noqa: F401
     retention_config,

@@ -195,7 +195,7 @@ class SessionsMixin:
         if "enabled" in body:
             # Pause/resume. nextRun is deliberately left untouched: a resumed loop
             # that is already overdue fires at most ONCE (loop_scheduler's "paused
-            # means paused, not queued" — engine.py), never a burst of the runs it
+            # means paused, not queued" — runtime/scheduler.py), never a burst of the runs it
             # missed while off.
             fields["enabled"] = bool(body["enabled"])
         updated = db.loop_update(lid, fields)

@@ -12,7 +12,7 @@
  * deliberately confined to this file. Verified against 12 real ExitPlanMode
  * results in Claude CLI session transcripts: every approved one begins
  * "User has approved your plan." A declined one is the user's own feedback text
- * (orchestrator/engine.py, _await_plan_decision). If the CLI ever rewords its message
+ * (orchestrator/runtime/permissions.py, _await_plan_decision). If the CLI ever rewords its message
  * we fall back to the neutral "decided" — the badge degrades, the collapse does
  * not. Same class of heuristic as ANSWER_PREFIX in thread.ts.
  *
