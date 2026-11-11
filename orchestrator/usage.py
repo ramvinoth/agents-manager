@@ -68,10 +68,16 @@ def report(rows, feedback, days, limit=25):
            used, ever — on screen, ignored: candidates to remove, merge or move;
     cold   controls used before the window and not in it — something changed
            (a control is cold OR dead, never both);
+    gone   controls the app no longer shows: last seen `_GONE_AFTER` before
+           their screen was last seen (a newer build dropped them). They are
+           left out of dead and cold (hot and totals keep their real uses), which would otherwise name buttons that
+           no longer exist for the rest of the window;
     screens  screen/dialog opens in the window.
     Web and phone rows stay apart (`client`): one name on both is two controls.
     """
     ctl = {}
+    last_seen = {}          # control key -> newest "seen"
+    surface_seen = {}       # (client, surface) -> newest "seen" of any control
     screens = []
     for r in rows:
         key = (r["client"], r["surface"], r["element"])
@@ -91,12 +97,18 @@ def report(rows, feedback, days, limit=25):
             c["uses_before"] += r["n_before"]
         elif r["kind"] == "seen":
             c["seen"] += r["n"]
+            ts = r.get("last_ts") or 0
+            last_seen[key] = ts
+            surface_seen[key[:2]] = max(surface_seen.get(key[:2], 0), ts)
+    gone_keys = {k for k, ts in last_seen.items() if ts < surface_seen[k[:2]] - _GONE_AFTER}
+    gone = [ctl[k] for k in gone_keys]
     controls = list(ctl.values())
+    shown = [c for k, c in ctl.items() if k not in gone_keys]
     hot = sorted((c for c in controls if c["uses"]), key=lambda c: -c["uses"])[:limit]
-    dead = sorted((c for c in controls if not c["uses"] and not c["uses_before"]
+    dead = sorted((c for c in shown if not c["uses"] and not c["uses_before"]
                    and c["seen"] >= _DEAD_MIN_SEEN),
                   key=lambda c: -c["seen"])[:limit]
-    cold = sorted((c for c in controls if not c["uses"] and c["uses_before"]),
+    cold = sorted((c for c in shown if not c["uses"] and c["uses_before"]),
                   key=lambda c: -c["uses_before"])[:limit]
     totals = {"controls": len(controls), "uses": sum(c["uses"] for c in controls)}
     totals.update((f, sum(c[f] for c in controls)) for f in _USE_FIELD.values())
@@ -105,6 +117,8 @@ def report(rows, feedback, days, limit=25):
         "hot": hot,
         "dead": dead,
         "cold": cold,
+        "gone": sorted(({"client": c["client"], "surface": c["surface"], "element": c["element"]}
+                        for c in gone), key=lambda c: (c["client"], c["surface"], c["element"]))[:limit],
         "screens": sorted(screens, key=lambda s: -s["opens"])[:limit],
         "feedback": feedback,
         "totals": totals,
@@ -114,3 +128,10 @@ def report(rows, feedback, days, limit=25):
 # Seen this many times with zero taps before a control counts as dead: below
 # it, "never used" is as likely to be "barely shown".
 _DEAD_MIN_SEEN = 20
+
+# A control last seen this long before its own screen was last seen is gone
+# from the app. Long enough that a control shown only in some states (select
+# mode, an empty list) is not mistaken for removed; short enough that a build
+# that drops a button clears it from dead within a day. Measured 2026-11-11:
+# removed buttons sat 17 h behind their screen, a state-dependent one 1 h.
+_GONE_AFTER = 12 * 3600

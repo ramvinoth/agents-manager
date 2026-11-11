@@ -93,3 +93,21 @@ def test_report_counts_every_gesture_as_a_use_and_flags_phone_dead_controls():
 def test_report_empty():
     r = usage.report([], [], 7)
     assert r["hot"] == r["dead"] == r["cold"] == r["screens"] == [] and r["days"] == 7
+
+
+def test_report_drops_controls_a_newer_build_removed_from_dead_and_cold():
+    day = 86400
+    rows = [
+        dict(_row("seen", "chips", n=400), last_ts=NOW - day),          # build dropped it
+        dict(_row("seen", "legacy", n=30), last_ts=NOW - day),
+        _row("tap", "legacy", n=0, n_before=4),                          # would read as cold
+        _row("seen", "search", n=400),                                    # still on screen, never used
+        dict(_row("seen", "bulk", n=25), last_ts=NOW - 3600),             # state-dependent, still there
+        dict(_row("seen", "other", n=40, surface="inbox"), last_ts=NOW - 3 * day),  # its screen is stale too
+    ]
+    r = usage.report(rows, [], 30)
+    assert [c["element"] for c in r["dead"]] == ["search", "other", "bulk"]
+    assert r["cold"] == []
+    assert r["gone"] == [{"client": "web", "surface": "kanban", "element": "chips"},
+                         {"client": "web", "surface": "kanban", "element": "legacy"}]
+    assert r["totals"]["controls"] == 5
