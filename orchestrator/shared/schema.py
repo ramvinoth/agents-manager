@@ -408,6 +408,17 @@ def init_db():
               status         TEXT NOT NULL DEFAULT 'proposed',
               created_at     DOUBLE PRECISION NOT NULL
             );
+            -- One row per skill name. Re-promoting a skill used to INSERT a new
+            -- row each time (8 rows for one skill). Collapse old duplicates onto
+            -- the FIRST row (it holds the original provenance), keeping 'active'
+            -- if any duplicate was active, then let the index enforce it.
+            UPDATE skills_learned k SET status = 'active'
+             WHERE k.status <> 'active' AND EXISTS (
+               SELECT 1 FROM skills_learned d
+                WHERE d.name = k.name AND d.id > k.id AND d.status = 'active');
+            DELETE FROM skills_learned a USING skills_learned b
+             WHERE a.name = b.name AND a.id > b.id;
+            CREATE UNIQUE INDEX IF NOT EXISTS skills_learned_name ON skills_learned(name);
             CREATE TABLE IF NOT EXISTS agent_templates (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,

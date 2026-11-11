@@ -157,7 +157,6 @@ from orchestrator.ops.repository import (  # noqa: F401
     restart_requests_set_status,
     skill_learned_list,
     skill_learned_record,
-    skill_learned_set_status,
     ui_events_insert,
     ui_events_purge,
     ui_feedback_list,

@@ -722,14 +722,10 @@ def _skill_write(a):
     if not skills.valid_name(name):
         return {"error": "Bad skill name"}
     path = skills.write_skill(name, a.get("content", ""))
-    existing = [s for s in db.skill_learned_list(status="proposed") if s.get("name") == name]
-    if existing:
-        for s in existing:
-            db.skill_learned_set_status(s["id"], "active")
-        rec = existing[0]
-    else:
-        rec = db.skill_learned_record(name, path=str(path), origin_card=a.get("card"),
-                                      origin_session=a.get("session"), status="active")
+    # The ledger upserts by name: a pending proposal row flips to active, a
+    # re-promoted skill keeps its one row (and its original provenance).
+    rec = db.skill_learned_record(name, path=str(path), origin_card=a.get("card"),
+                                  origin_session=a.get("session"), status="active")
     return {"promoted": True, "path": str(path), "skill": rec["id"]}
 
 

@@ -41,10 +41,18 @@ def audit_list(limit=100, actor=None, action=None, *, before_id=None, result=Non
 
 def skill_learned_record(name, path="", origin_card=None, origin_session=None,
                          status="proposed"):
+    """One row per skill name. A later write keeps the first row's provenance
+    (who learned it, from which card), takes the new status — except that a
+    pending re-proposal never demotes a skill that is already active — and
+    keeps the old path when the new one is empty."""
     with postgres.cursor() as cur:
         cur.execute(
             "INSERT INTO skills_learned(name, path, origin_card, "
-            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *",
+            "origin_session, status, created_at) VALUES(%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (name) DO UPDATE SET "
+            "status = CASE WHEN EXCLUDED.status = 'proposed' "
+            "AND skills_learned.status = 'active' THEN 'active' ELSE EXCLUDED.status END, "
+            "path = COALESCE(NULLIF(EXCLUDED.path, ''), skills_learned.path) RETURNING *",
             (name, path, origin_card, origin_session, status, postgres.now()),
         )
         return dict(cur.fetchone())
@@ -60,15 +68,6 @@ def skill_learned_list(status=None):
         return [dict(r) for r in cur.fetchall()]
 
 
-def skill_learned_set_status(skill_id, status):
-    with postgres.cursor() as cur:
-        cur.execute("UPDATE skills_learned SET status = %s WHERE id = %s RETURNING *",
-                    (status, skill_id))
-        row = cur.fetchone()
-    return dict(row) if row else None
-
-
-# Product usage (ui_events) ----------------------------------------------------
 
 def ui_events_insert(actor, events):
     """Append a validated batch (orchestrator.usage.clean_events) for one actor.
