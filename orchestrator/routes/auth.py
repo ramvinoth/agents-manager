@@ -12,8 +12,9 @@ from orchestrator.login import (
     CODEX_LOGIN, COPILOT_LOGIN, LOGIN, _codex_logged_in, _copilot_logged_in, auth_status,
 )
 from orchestrator.remote import (
-    SSH, remote_agents_status, remote_install_agent, save_browser_mcp_all, test_host_config,
+    SSH, remote_agents_status, remote_install_agent, test_host_config,
 )
+from orchestrator.agents import save_browser_mcp_all
 
 
 # --- Per-IP sign-in throttle -------------------------------------------------

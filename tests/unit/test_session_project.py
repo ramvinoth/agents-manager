@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from orchestrator import remote
+from orchestrator.remote import sessions as remote_sessions
 from orchestrator.runtime import hosts
 
 CWD = "/work/Case A - Land 23"
@@ -56,7 +57,7 @@ class TestRemoteSessionProject(unittest.TestCase):
             captured["script"] = script
             return "[]"
 
-        with patch.object(remote, "remote_run_python", run):
+        with patch.object(remote_sessions, "remote_run_python", run):
             remote.remote_list_sessions("h")
         with tempfile.TemporaryDirectory() as home:
             _transcript(os.path.join(home, ".claude"), [{"type": "user", "cwd": CWD}])

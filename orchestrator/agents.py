@@ -13,7 +13,10 @@ live in server.py, which has the SSH helpers.
 import os
 import posixpath
 import shlex
+import json
 import shutil
+from pathlib import Path
+from orchestrator import toml
 
 # Ordered: Claude first (default/baseline), then the file-JSONL agents.
 # "enabled": False hides an agent everywhere in the UI (picker, install/login,
@@ -156,3 +159,54 @@ def local_install_argv(a):
 
 def local_agents_status():
     return [agent_public(a, is_installed_local(a)) for a in ENABLED_AGENTS]
+
+
+def save_browser_mcp_all(config, name="playwright"):
+    """Write an MCP server into EVERY installed agent's config, in its native
+    format (Claude/Pi JSON, Codex TOML). Local only. Backs each file up first."""
+    cfg = {k: v for k, v in config.items() if v not in (None, "", [], {})}
+    results = {}
+
+    def backup(p):
+        if p.exists():
+            try:
+                shutil.copy2(p, str(p) + ".bak-viewer")
+            except Exception:
+                pass
+
+    if is_installed_local(AGENTS_BY_ID["claude"]):
+        try:
+            p = Path.home() / ".claude.json"
+            data = json.loads(p.read_text()) if p.exists() else {}
+            backup(p)
+            data.setdefault("mcpServers", {})[name] = cfg
+            p.write_text(json.dumps(data, indent=2))
+            results["claude"] = "ok"
+        except Exception as e:
+            results["claude"] = f"error: {e}"
+
+    if is_installed_local(AGENTS_BY_ID["codex"]):
+        try:
+            p = Path.home() / ".codex" / "config.toml"
+            data = toml.loads(p.read_text()) if p.exists() else {}
+            backup(p)
+            data.setdefault("mcp_servers", {})[name] = cfg
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(toml.dumps(data))
+            results["codex"] = "ok"
+        except Exception as e:
+            results["codex"] = f"error: {e}"
+
+    if is_installed_local(AGENTS_BY_ID["pi"]):
+        try:
+            p = Path.home() / ".pi" / "agent" / "mcp.json"
+            data = json.loads(p.read_text()) if p.exists() else {}
+            backup(p)
+            data.setdefault("mcpServers", {})[name] = cfg
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, indent=2))
+            results["pi"] = "ok"
+        except Exception as e:
+            results["pi"] = f"error: {e}"
+
+    return {"saved": [a for a, r in results.items() if r == "ok"], "results": results}
