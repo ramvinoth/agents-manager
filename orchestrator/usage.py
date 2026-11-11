@@ -57,7 +57,7 @@ def clean_events(raw, client, now=None):
     return out, dropped + max(0, len(raw) - MAX_BATCH)
 
 
-def report(rows, feedback, days, limit=25):
+def report(rows, feedback, days, limit=25, now=None):
     """Shape db.ui_usage_rows into the digest an agent acts on.
 
     A control's `uses` are its taps, long-presses and swipes together (each is
@@ -68,16 +68,17 @@ def report(rows, feedback, days, limit=25):
            used, ever — on screen, ignored: candidates to remove, merge or move;
     cold   controls used before the window and not in it — something changed
            (a control is cold OR dead, never both);
-    gone   controls the app no longer shows: last seen `_GONE_AFTER` before
-           their screen was last seen (a newer build dropped them). They are
-           left out of dead and cold (hot and totals keep their real uses), which would otherwise name buttons that
-           no longer exist for the rest of the window;
+    stale  controls not on screen for `_STALE_AFTER`: a newer build removed
+           them, or they sit in a menu or state nobody opened lately — the
+           report cannot tell which, so it claims neither. They are left out
+           of dead and cold (hot and totals keep their real uses), which would
+           otherwise name removed buttons for the rest of the window;
     screens  screen/dialog opens in the window.
     Web and phone rows stay apart (`client`): one name on both is two controls.
     """
+    now = time.time() if now is None else now
     ctl = {}
     last_seen = {}          # control key -> newest "seen"
-    surface_seen = {}       # (client, surface) -> newest "seen" of any control
     screens = []
     for r in rows:
         key = (r["client"], r["surface"], r["element"])
@@ -99,11 +100,9 @@ def report(rows, feedback, days, limit=25):
             c["seen"] += r["n"]
             ts = r.get("last_ts") or 0
             last_seen[key] = ts
-            surface_seen[key[:2]] = max(surface_seen.get(key[:2], 0), ts)
-    gone_keys = {k for k, ts in last_seen.items() if ts < surface_seen[k[:2]] - _GONE_AFTER}
-    gone = [ctl[k] for k in gone_keys]
+    stale_keys = {k for k, ts in last_seen.items() if ts < now - _STALE_AFTER}
     controls = list(ctl.values())
-    shown = [c for k, c in ctl.items() if k not in gone_keys]
+    shown = [c for k, c in ctl.items() if k not in stale_keys]
     hot = sorted((c for c in controls if c["uses"]), key=lambda c: -c["uses"])[:limit]
     dead = sorted((c for c in shown if not c["uses"] and not c["uses_before"]
                    and c["seen"] >= _DEAD_MIN_SEEN),
@@ -117,8 +116,7 @@ def report(rows, feedback, days, limit=25):
         "hot": hot,
         "dead": dead,
         "cold": cold,
-        "gone": sorted(({"client": c["client"], "surface": c["surface"], "element": c["element"]}
-                        for c in gone), key=lambda c: (c["client"], c["surface"], c["element"]))[:limit],
+        "stale": [{"client": k[0], "surface": k[1], "element": k[2]} for k in sorted(stale_keys)][:limit],
         "screens": sorted(screens, key=lambda s: -s["opens"])[:limit],
         "feedback": feedback,
         "totals": totals,
@@ -129,9 +127,9 @@ def report(rows, feedback, days, limit=25):
 # it, "never used" is as likely to be "barely shown".
 _DEAD_MIN_SEEN = 20
 
-# A control last seen this long before its own screen was last seen is gone
-# from the app. Long enough that a control shown only in some states (select
-# mode, an empty list) is not mistaken for removed; short enough that a build
-# that drops a button clears it from dead within a day. Measured 2026-11-11:
-# removed buttons sat 17 h behind their screen, a state-dependent one 1 h.
-_GONE_AFTER = 12 * 3600
+# Not on screen this long, a control is left out of dead and cold. A gap
+# relative to its screen was tried first (2026-11-11) and misread the side
+# menu's items as removed after one night unopened; only the clock is honest.
+# Three days lets a removed button fall out of dead soon after a build ships
+# while a menu used every few days still counts.
+_STALE_AFTER = 3 * 86400

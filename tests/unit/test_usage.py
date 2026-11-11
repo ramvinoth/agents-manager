@@ -95,19 +95,20 @@ def test_report_empty():
     assert r["hot"] == r["dead"] == r["cold"] == r["screens"] == [] and r["days"] == 7
 
 
-def test_report_drops_controls_a_newer_build_removed_from_dead_and_cold():
+def test_report_leaves_controls_off_screen_for_days_out_of_dead_and_cold():
     day = 86400
     rows = [
-        dict(_row("seen", "chips", n=400), last_ts=NOW - day),          # build dropped it
-        dict(_row("seen", "legacy", n=30), last_ts=NOW - day),
+        dict(_row("seen", "chips", n=400), last_ts=NOW - 4 * day),      # a build dropped it
+        dict(_row("seen", "legacy", n=30), last_ts=NOW - 4 * day),
         _row("tap", "legacy", n=0, n_before=4),                          # would read as cold
-        _row("seen", "search", n=400),                                    # still on screen, never used
-        dict(_row("seen", "bulk", n=25), last_ts=NOW - 3600),             # state-dependent, still there
-        dict(_row("seen", "other", n=40, surface="inbox"), last_ts=NOW - 3 * day),  # its screen is stale too
+        _row("seen", "search", n=400),                                    # on screen, never used
+        # the side menu, unopened overnight while its screen stayed in use: still there
+        dict(_row("seen", "menu-agents", n=25, surface="chats"), last_ts=NOW - 13 * 3600),
+        _row("seen", "menu-button", n=900, surface="chats"),
     ]
-    r = usage.report(rows, [], 30)
-    assert [c["element"] for c in r["dead"]] == ["search", "other", "bulk"]
+    r = usage.report(rows, [], 30, now=NOW)
+    assert [c["element"] for c in r["dead"]] == ["menu-button", "search", "menu-agents"]
     assert r["cold"] == []
-    assert r["gone"] == [{"client": "web", "surface": "kanban", "element": "chips"},
-                         {"client": "web", "surface": "kanban", "element": "legacy"}]
+    assert r["stale"] == [{"client": "web", "surface": "kanban", "element": "chips"},
+                          {"client": "web", "surface": "kanban", "element": "legacy"}]
     assert r["totals"]["controls"] == 5
