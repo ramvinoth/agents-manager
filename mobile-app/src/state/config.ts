@@ -37,6 +37,7 @@ const PREFS_KEY = "composerPrefs"
 const THEME_KEY = "themePref"
 const NOTIFY_KEY = "notifyEveryReply"
 const DRAFTS_KEY = "composerDrafts"
+const PROFILE_CARDS_KEY = "profileOpenCards"
 
 export type ThemePref = "system" | "light" | "dark"
 
@@ -51,6 +52,9 @@ let _drafts: Record<string, string> = {}
 let _prefs: { mode: string; model: string } = { mode: "default", model: "default" }
 let _theme: ThemePref = "system"
 let _notify = true
+// Which Session Profile cards are expanded. Global (not per session): the card
+// you reach for is a habit of the reader, not a property of one chat.
+let _profileCards: Record<string, boolean> = { behaviour: true, model: true }
 
 // Tiny pub-sub so a theme change repaints the whole tree without prop-drilling.
 const _themeListeners = new Set<() => void>()
@@ -112,6 +116,12 @@ export async function loadConfig(): Promise<void> {
       _drafts = JSON.parse((await SecureStore.getItemAsync(DRAFTS_KEY)) || "{}")
     } catch {
       _drafts = {}
+    }
+    try {
+      const pc = JSON.parse((await SecureStore.getItemAsync(PROFILE_CARDS_KEY)) || "null")
+      if (pc && typeof pc === "object" && !Array.isArray(pc)) _profileCards = pc
+    } catch {
+      /* defaults stand */
     }
   } catch {
     _servers = EMPTY_STATE
@@ -276,6 +286,21 @@ export async function setComposerPrefs(p: Partial<{ mode: string; model: string 
     await SecureStore.setItemAsync(PREFS_KEY, JSON.stringify(_prefs))
   } catch {
     /* best-effort */
+  }
+}
+
+/** Session Profile cards the reader keeps open, remembered across visits so a
+ *  card you always expand (Automation) stays expanded. */
+export function profileOpenCards(): Record<string, boolean> {
+  return _profileCards
+}
+
+export async function setProfileOpenCards(v: Record<string, boolean>): Promise<void> {
+  _profileCards = v
+  try {
+    await SecureStore.setItemAsync(PROFILE_CARDS_KEY, JSON.stringify(v))
+  } catch {
+    /* best-effort; in-memory state still holds this session */
   }
 }
 

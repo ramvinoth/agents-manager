@@ -19,7 +19,7 @@ import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
 import { groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
-import { notifyEveryReply, setNotifyEveryReply } from "../state/config"
+import { notifyEveryReply, profileOpenCards, setNotifyEveryReply, setProfileOpenCards } from "../state/config"
 import { useTheme } from "../lib/useTheme"
 import Avatar from "../components/Avatar"
 import Icon from "../components/Icon"
@@ -126,10 +126,10 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     }).catch(e => { if (alive) setAIErrorText(aiError(e)) })
     return () => { alive = false }
   }, [sessionId, path, host, agent])
-  // Which collapsible cards are open. Behaviour + Model open by default (the
-  // knobs you actually turn); Persona / Automation / Stats collapsed (reference /
-  // occasional). Stable order + icons = muscle memory.
-  const [open, setOpen] = useState<Record<string, boolean>>({ behaviour: true, model: true })
+  // Which collapsible cards are open, remembered across visits (config.ts):
+  // usage showed the owner re-expanding Automation on nearly every visit while
+  // the default-open cards went untouched. Stable order + icons = muscle memory.
+  const [open, setOpen] = useState<Record<string, boolean>>(profileOpenCards)
   // Git status for the session's working dir (repo·branch·remote·ahead/behind).
   // null until loaded; {repo:false} when the cwd isn't a git repo (card hidden).
   const [cwd, setCwd] = useState("")
@@ -139,7 +139,11 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   // so there is one CRUD surface, not two. null until the cwd is known + loaded.
   const [caps, setCaps] = useState<Capabilities | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }))
+  const toggle = (k: string) => setOpen((o) => {
+    const next = { ...o, [k]: !o[k] }
+    void setProfileOpenCards(next)
+    return next
+  })
 
   // Load jobs + stats once (meta loads with Trust above). A missing session
   // (fresh chat with no path yet) simply shows empty fields — everything still
