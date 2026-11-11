@@ -38,6 +38,7 @@ const THEME_KEY = "themePref"
 const NOTIFY_KEY = "notifyEveryReply"
 const DRAFTS_KEY = "composerDrafts"
 const PROFILE_CARDS_KEY = "profileOpenCards"
+const CHAT_FILTERS_KEY = "chatFilters"
 
 export type ThemePref = "system" | "light" | "dark"
 
@@ -55,6 +56,7 @@ let _notify = true
 // Which Session Profile cards are expanded. Global (not per session): the card
 // you reach for is a habit of the reader, not a property of one chat.
 let _profileCards: Record<string, boolean> = { behaviour: true, model: true }
+let _chatFilters: Record<string, unknown> = {}
 
 // Tiny pub-sub so a theme change repaints the whole tree without prop-drilling.
 const _themeListeners = new Set<() => void>()
@@ -122,6 +124,12 @@ export async function loadConfig(): Promise<void> {
       if (pc && typeof pc === "object" && !Array.isArray(pc)) _profileCards = pc
     } catch {
       /* defaults stand */
+    }
+    try {
+      const cf = JSON.parse((await SecureStore.getItemAsync(CHAT_FILTERS_KEY)) || "null")
+      if (cf && typeof cf === "object" && !Array.isArray(cf)) _chatFilters = cf
+    } catch {
+      /* no remembered filters */
     }
   } catch {
     _servers = EMPTY_STATE
@@ -332,5 +340,20 @@ export async function setNotifyEveryReply(v: boolean): Promise<void> {
     await SecureStore.setItemAsync(NOTIFY_KEY, v ? "1" : "0")
   } catch {
     /* best-effort */
+  }
+}
+
+/** The chat-list filter the reader last chose, per server and host (raw; the
+ *  chat list validates it with lib/chatList defaultFilter). */
+export function chatFilterFor(key: string): unknown {
+  return _chatFilters[key]
+}
+
+export async function setChatFilterFor(key: string, v: unknown): Promise<void> {
+  _chatFilters = { ..._chatFilters, [key]: v }
+  try {
+    await SecureStore.setItemAsync(CHAT_FILTERS_KEY, JSON.stringify(_chatFilters))
+  } catch {
+    /* best-effort; in-memory state still holds this session */
   }
 }

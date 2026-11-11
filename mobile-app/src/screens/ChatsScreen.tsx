@@ -5,7 +5,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
-import { activeServerId, setToken } from "../state/config"
+import { activeServerId, chatFilterFor, setChatFilterFor, setToken } from "../state/config"
 import { offlineCache } from "../api/offlineCache"
 import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
@@ -13,7 +13,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, chatProjects, filterLabel, projectName, visibleChats, type ChatFilter } from "../lib/chatList"
+import { activity, chatProjects, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
 import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -81,14 +81,30 @@ export default function ChatsScreen({ navigation }: Props) {
 
   // The search box's filter menu: Unread, Starred, or one project. One filter
   // at a time; the active one shows as a pill under the box with a clear ✕.
+  // Project filtering is the default: the last choice is remembered per server
+  // and host ("Show all" included), and a first visit lands on the newest
+  // project (lib/chatList defaultFilter). Applied once per server|host, after
+  // the first list arrives, so it never fights the user's own pick.
+  const filterKey = `${activeServerId()}|${host}`
+  const appliedKey = useRef("")
+  useEffect(() => {
+    if (!sessions.length || appliedKey.current === filterKey) return
+    appliedKey.current = filterKey
+    setFilter(defaultFilter(chatFilterFor(filterKey), sessions))
+  }, [sessions, filterKey])
+  function chooseFilter(f: ChatFilter) {
+    setFilter(f)
+    void setChatFilterFor(filterKey, toStored(f))
+  }
+
   function openFilter() {
-    const pick = (f: ChatFilter) => ({ text: filterLabel(f), onPress: () => setFilter(f) })
+    const pick = (f: ChatFilter) => ({ text: filterLabel(f), onPress: () => chooseFilter(f) })
     showActions("Show only", [
       pick({ kind: "unread" }),
       pick({ kind: "starred" }),
       ...chatProjects(sessions.filter((s) => !!s.archived === showArchived)).slice(0, 12)
-        .map((p) => ({ text: `Project: ${projectName(p)}`, onPress: () => setFilter({ kind: "project", project: p }) })),
-      ...(filter ? [{ text: "Show all chats", onPress: () => setFilter(null) }] : []),
+        .map((p) => ({ text: `Project: ${projectName(p)}`, onPress: () => chooseFilter({ kind: "project", project: p }) })),
+      ...(filter ? [{ text: "Show all chats", onPress: () => chooseFilter(null) }] : []),
     ])
   }
 
@@ -383,7 +399,7 @@ export default function ChatsScreen({ navigation }: Props) {
               {filter ? (
                 <View style={styles.filterPillRow}>
                   <TouchableOpacity testID="chats-filter-clear" accessibilityLabel={`Clear filter ${filterLabel(filter)}`}
-                    style={[styles.filterChip, styles.filterChipActive, styles.filterPill]} onPress={() => setFilter(null)}>
+                    style={[styles.filterChip, styles.filterChipActive, styles.filterPill]} onPress={() => chooseFilter(null)}>
                     <Text style={[styles.filterChipText, styles.filterChipTextActive]} numberOfLines={1}>{filterLabel(filter)}</Text>
                     <Icon name="close" size={14} color={t.onAccent} />
                   </TouchableOpacity>

@@ -43,3 +43,31 @@ export function visibleChats(chats: Session[], opts: { archived: boolean; query:
     (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)) &&
     (!f || (f.kind === "unread" ? !!s.unread : f.kind === "starred" ? !!s.favorite : s.project === f.project))))
 }
+
+/** The filter the Chats tab remembers per server and host. "all" is the owner's
+ *  explicit "Show all chats", kept apart from "never chose" (undefined). */
+export type StoredFilter = { kind: "unread" } | { kind: "starred" } | { kind: "project"; project: string } | { kind: "all" }
+
+export function toStored(f: ChatFilter): StoredFilter {
+  return f ?? { kind: "all" }
+}
+
+function isStored(v: unknown): v is StoredFilter {
+  const k = (v as { kind?: unknown } | null)?.kind
+  return k === "all" || k === "unread" || k === "starred" ||
+    (k === "project" && typeof (v as { project?: unknown }).project === "string")
+}
+
+/** The filter the Chats tab opens with. Project filtering is the default: the
+ *  project the owner last picked, while it still has chats, else the project
+ *  with the newest message. An explicit "all", unread or starred choice stands. */
+export function defaultFilter(stored: unknown, chats: Session[]): ChatFilter {
+  const live = chats.filter((s) => !s.archived)
+  if (isStored(stored)) {
+    if (stored.kind === "all") return null
+    if (stored.kind !== "project") return stored
+    if (live.some((s) => s.project === stored.project)) return stored
+  }
+  const newest = chatProjects(live)[0]
+  return newest ? { kind: "project", project: newest } : null
+}

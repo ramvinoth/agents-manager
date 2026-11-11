@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chatProjects, filterLabel, orderChats, visibleChats } from "./chatList.ts"
+import { chatProjects, defaultFilter, filterLabel, orderChats, toStored, visibleChats } from "./chatList.ts"
 
 const chat = (id: string, last_message: number, favorite = false) => ({ id, path: id, last_message, favorite })
 
@@ -40,4 +40,26 @@ test("projects menu: distinct, newest activity first; labels use the folder name
   assert.deepEqual(chatProjects(pool), ["/w/sift", "/w/harman"])
   assert.equal(filterLabel({ kind: "project", project: "/w/sift/" }), "sift")
   assert.equal(filterLabel(null), "")
+})
+
+test("default filter: the newest project when nothing was chosen", () => {
+  assert.deepEqual(defaultFilter(undefined, pool), { kind: "project", project: "/w/sift" })
+  assert.deepEqual(defaultFilter({ kind: "bogus" }, pool), { kind: "project", project: "/w/sift" })
+  assert.equal(defaultFilter(undefined, [chat("x", 1)]), null) // no chat has a project
+  assert.equal(defaultFilter(undefined, []), null)
+})
+
+test("default filter: a remembered choice stands; a project with no live chats falls back", () => {
+  assert.deepEqual(defaultFilter({ kind: "project", project: "/w/harman" }, pool), { kind: "project", project: "/w/harman" })
+  assert.equal(defaultFilter({ kind: "all" }, pool), null)
+  assert.deepEqual(defaultFilter({ kind: "starred" }, pool), { kind: "starred" })
+  // only an archived chat is left in /w/old: fall back to the newest live project
+  const withOld = [...pool, { id: "e", path: "e", project: "/w/old", last_message: 99, archived: true }]
+  assert.deepEqual(defaultFilter({ kind: "project", project: "/w/old" }, withOld), { kind: "project", project: "/w/sift" })
+  assert.deepEqual(defaultFilter({ kind: "project", project: 7 }, pool), { kind: "project", project: "/w/sift" })
+})
+
+test("stored form: clearing the filter is remembered as all", () => {
+  assert.deepEqual(toStored(null), { kind: "all" })
+  assert.deepEqual(toStored({ kind: "unread" }), { kind: "unread" })
 })
