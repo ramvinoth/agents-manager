@@ -295,3 +295,12 @@ def test_bridge_start_message_seeds_history():
     assert seen and seen[0][0] == {"role": "user", "content": "earlier"}
     phone.inbox.put((OP_CLOSE, b""))
     th.join(2)
+
+
+def test_speaker_tag_stripped_from_eager_and_committed():
+    from orchestrator.fishcall import TurnTaker
+    t = TurnTaker()
+    a = t.on_asr({"type": "eager_end_of_turn", "turn_index": 0, "text": "<|speaker:0|>hello there"})
+    assert a == [("think", 0, "hello there", True)]
+    b = t.on_asr({"type": "committed", "turn_index": 0, "text": "<|speaker:0|> hello there", "user_turn": True})
+    assert ("heard", "hello there") in b

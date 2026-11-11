@@ -25,6 +25,7 @@ TurnTaker is the pure state machine (unit-tested); run_bridge wires sockets
 and threads, with the dialer and brain injectable so tests need no network.
 """
 
+import re
 import json
 import struct
 import threading
@@ -38,6 +39,7 @@ PHONE_RATE = 16000          # what the phone sends
 VOICE_RATE = 24000          # what TTS sends back
 READ_TIMEOUT = 10           # ASR read tick; an idle tick sends keepalive (Fish closes at 30 s idle)
 ASR_RECONNECT = 1012        # Fish "service restart": dial again
+ACK_LINE = "One sec, checking."
 READ_ONLY_TOOLS = frozenset({"board_status", "card_detail"})
 
 
@@ -63,6 +65,14 @@ class NeedsCommit(Exception):
 
 
 # ------------------------------------------------------------ turn taking
+
+_TAG = re.compile(r"<\|[^|>]*\|>")
+
+
+def clean_text(raw):
+    """ASR text without its <|speaker:0|> style tags (Fish prefixes them)."""
+    return _TAG.sub("", raw or "").strip()
+
 
 class TurnTaker:
     """Decides, from Fish ASR events and brain results, what to do next.
@@ -91,7 +101,7 @@ class TurnTaker:
                 return [("barge",)]
             return []
         if kind == "eager_end_of_turn":
-            text = (ev.get("text") or "").strip()
+            text = clean_text(ev.get("text"))
             if not text or turn in self.committed:
                 return []
             self.current = turn
@@ -104,7 +114,7 @@ class TurnTaker:
                 return []
             return [("cancel", turn)]
         if kind == "committed":
-            text = (ev.get("text") or "").strip()
+            text = clean_text(ev.get("text"))
             if ev.get("user_turn") is False or not text:
                 return []
             self.current = turn
@@ -183,6 +193,7 @@ class Bridge:
     def __init__(self, phone, dial, brain, key, asr_url, tts_url, tts_model, voice_id="",
                  history=None, speakable=lambda s: s):
         self.phone, self.dial, self.brain = phone, dial, brain
+        self.say_lock = threading.Lock()
         self.key, self.asr_url, self.tts_url = key, asr_url, tts_url
         self.tts_model, self.voice_id, self.speakable = tts_model, voice_id, speakable
         self.history = list(history or [])
@@ -228,11 +239,21 @@ class Bridge:
                 self._asr_send({"type": "agent_speaking", "speaking": False})
             # "cancel": the stale answer is dropped by TurnTaker; nothing to close
 
+    def _ack(self, turn):
+        with self.lock:
+            live = self.turns.current == turn and not self.turns.speaking
+        if live:
+            self._say(ACK_LINE)
+
     def _think(self, turn, text, eager):
+        acked = []
         def runner(name, args, ctx):
             if eager and name not in READ_ONLY_TOOLS:
                 raise NeedsCommit(name)
             from orchestrator.callbrain import run_tool
+            if not eager and not acked:
+                acked.append(1)   # no dead air: say so while the tool runs, keep listening
+                threading.Thread(target=self._ack, args=(turn,), daemon=True).start()
             return run_tool(name, args, ctx)
         with self.lock:
             history = list(self.history)
@@ -253,6 +274,13 @@ class Bridge:
 
     def _speak(self, reply):
         self.tell("reply", text=reply)
+        self._say(reply)
+
+    def _say(self, reply):
+        with self.say_lock:       # an acknowledgement finishes before the real answer starts
+            self._say_locked(reply)
+
+    def _say_locked(self, reply):
         self._asr_send({"type": "agent_speaking", "speaking": True})
         self._asr_send({"type": "context_add", "items": [{"role": "assistant", "text": reply[:2000]}]})
         words = self.speakable(reply)
