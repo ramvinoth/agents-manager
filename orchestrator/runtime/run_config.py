@@ -11,6 +11,21 @@ from orchestrator import db, orglogic
 from orchestrator.config import CHAT_JOBS, CHAT_LOCK, PORT
 
 
+# The tool each server must list, or every driven run breaks (maintenance preflight checks it).
+REQUIRED_MCP_TOOLS = {"viewerperm": "approve", "viewer": "card_list"}
+
+
+def perm_mcp_servers():
+    """The mcpServers entries every driven claude run loads. The scripts live in the
+    package root (orchestrator/), not beside this module in orchestrator/runtime/ —
+    resolving them from here once pointed every run at missing files, so every
+    permission prompt failed ("mcp__viewerperm__approve not found")."""
+    pkg = Path(__file__).resolve().parent.parent
+    py = sys.executable or "python3"
+    return {"viewerperm": {"command": py, "args": [str(pkg / "permission_mcp.py")]},
+            "viewer": {"command": py, "args": [str(pkg / "viewer_mcp.py")]}}
+
+
 def _write_perm_mcp_config():
     """Write (idempotently) the --mcp-config that registers BOTH viewer MCP servers:
     'viewerperm' (permission_mcp.py) and 'viewer' (viewer_mcp.py). Additive —
@@ -20,17 +35,7 @@ def _write_perm_mcp_config():
     reachable; the server resolves the caller to at least 'ic' and scopes each write by
     the session's responsibility level — it never fails auth for a run with no role."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
-    # The MCP scripts live in the package root (orchestrator/), not beside this
-    # module in orchestrator/runtime/ — resolving them from here once pointed every
-    # run at missing files, so every permission prompt failed ("mcp__viewerperm__approve not found").
-    pkg = Path(__file__).resolve().parent.parent
-    perm = str(pkg / "permission_mcp.py")
-    viewer_mcp = str(pkg / "viewer_mcp.py")
-    py = sys.executable or "python3"
-    cfg = {"mcpServers": {
-        "viewerperm": {"command": py, "args": [perm]},
-        "viewer": {"command": py, "args": [viewer_mcp]},
-    }}
+    cfg = {"mcpServers": perm_mcp_servers()}
     # One shared file, rewritten by every run start, read by every claude child
     # some time after spawn. An in-place open(path, "w") truncates first, so a
     # child reading during a concurrent start sees "" or a prefix and dies with

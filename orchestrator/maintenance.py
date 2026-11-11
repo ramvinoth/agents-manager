@@ -143,13 +143,28 @@ def preflight():
         log.seek(0)
         tail = log.read().decode(errors="replace")[-1500:]
     if ok:
-        return ok, "spare answered GET / 200"
+        return _mcp_preflight(env)
     if exit_code is None:
         why = (f"spare was still running but did not answer GET / within {PREFLIGHT_TIMEOUT}s "
                f"(load average {os.getloadavg()[0]:.0f} on {os.cpu_count()} cores)")
     else:
         why = f"spare exited with code {exit_code} before answering"
     return ok, f"{why}\n{tail.strip()}"
+
+
+def _mcp_preflight(env):
+    """GET / proves the web app boots, not that a chat can call a tool: check the
+    stdio MCP servers every driven run loads, from the code on disk."""
+    try:
+        r = subprocess.run([sys.executable, "-m", "orchestrator.runtime.mcp_selfcheck"],
+                           cwd=str(config.STATIC_DIR), env=env, capture_output=True,
+                           text=True, timeout=PREFLIGHT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"mcp self-check did not finish within {PREFLIGHT_TIMEOUT}s"
+    out = (r.stdout + r.stderr).strip()[-1500:]
+    if r.returncode:
+        return False, f"spare answered GET / 200, but chat MCP servers fail:\n{out}"
+    return True, f"spare answered GET / 200; {out}"
 
 
 def run_window(trigger, quiet_cap=QUIET_CAP, check=None, leave=None, sleep=time.sleep):
