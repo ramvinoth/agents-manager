@@ -304,3 +304,10 @@ def test_speaker_tag_stripped_from_eager_and_committed():
     assert a == [("think", 0, "hello there", True)]
     b = t.on_asr({"type": "committed", "turn_index": 0, "text": "<|speaker:0|> hello there", "user_turn": True})
     assert ("heard", "hello there") in b
+
+
+def test_default_voice_is_pinned_so_ack_and_reply_match():
+    from orchestrator import config
+    assert config.FISH_VOICE_ID
+    a, b = fishcall.tts_start(config.FISH_VOICE_ID), fishcall.tts_start(config.FISH_VOICE_ID)
+    assert a["request"]["reference_id"] == b["request"]["reference_id"] == config.FISH_VOICE_ID

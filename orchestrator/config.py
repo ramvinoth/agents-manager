@@ -212,7 +212,10 @@ LFM3_SERVICE_URL = os.environ.get("HARMAN_LFM3_URL", "")
 CALL_ENGINE = os.environ.get("HARMAN_CALL_ENGINE", "")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
 FISH_TTS_MODEL = os.environ.get("FISH_TTS_MODEL", "s2.1-pro-free")
-FISH_VOICE_ID = os.environ.get("FISH_VOICE_ID", "")
+# Pinned on purpose: with no reference_id Fish picks a different voice per TTS session
+# (measured 101-207 Hz pitch on one sentence), so the "checking" ack and the answer
+# sounded like two people. Default is a public Fish library voice; override via env.
+FISH_VOICE_ID = os.environ.get("FISH_VOICE_ID") or "933563129e564b19a115bedd57b7406a"
 FISH_ASR_URL = os.environ.get("FISH_ASR_URL", "wss://api.fish.audio/v1/asr/realtime")
 FISH_TTS_URL = os.environ.get("FISH_TTS_URL", "wss://api.fish.audio/v1/tts/live")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
