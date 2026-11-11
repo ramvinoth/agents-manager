@@ -17,7 +17,7 @@ from orchestrator.shared import settings
 # NO bump here — they self-heal on every boot. Bump this ONLY when an ORDERED or
 # destructive step is added to _run_migrations() below. The stamp lives in the
 # settings table (app_meta), so there is no separate schema_version table.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _run_migrations(prev):
@@ -97,6 +97,22 @@ def _run_migrations(prev):
             cur.execute("UPDATE inbox_messages SET status = 'read', updated_at = %s "
                         "WHERE recipient_type = 'session' AND status = 'sent' "
                         "AND created_at < %s", (postgres.now(), postgres.now() - 86400))
+    if prev < 6:
+        # One row per skill name. Re-promoting a skill used to INSERT a new row
+        # each time (8 rows for one skill). Collapse duplicates onto the FIRST
+        # row (it holds the original provenance), keeping 'active' if any
+        # duplicate was active, then let the unique index enforce it —
+        # ops.repository.skill_learned_record upserts ON CONFLICT (name).
+        with postgres.cursor() as cur:
+            cur.execute("""
+                UPDATE skills_learned k SET status = 'active'
+                 WHERE k.status <> 'active' AND EXISTS (
+                   SELECT 1 FROM skills_learned d
+                    WHERE d.name = k.name AND d.id > k.id AND d.status = 'active');
+                DELETE FROM skills_learned a USING skills_learned b
+                 WHERE a.name = b.name AND a.id > b.id;
+                CREATE UNIQUE INDEX IF NOT EXISTS skills_learned_name ON skills_learned(name);
+            """)
 
 
 def init_db():
@@ -408,17 +424,6 @@ def init_db():
               status         TEXT NOT NULL DEFAULT 'proposed',
               created_at     DOUBLE PRECISION NOT NULL
             );
-            -- One row per skill name. Re-promoting a skill used to INSERT a new
-            -- row each time (8 rows for one skill). Collapse old duplicates onto
-            -- the FIRST row (it holds the original provenance), keeping 'active'
-            -- if any duplicate was active, then let the index enforce it.
-            UPDATE skills_learned k SET status = 'active'
-             WHERE k.status <> 'active' AND EXISTS (
-               SELECT 1 FROM skills_learned d
-                WHERE d.name = k.name AND d.id > k.id AND d.status = 'active');
-            DELETE FROM skills_learned a USING skills_learned b
-             WHERE a.name = b.name AND a.id > b.id;
-            CREATE UNIQUE INDEX IF NOT EXISTS skills_learned_name ON skills_learned(name);
             CREATE TABLE IF NOT EXISTS agent_templates (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
