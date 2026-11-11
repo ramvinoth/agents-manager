@@ -14,10 +14,7 @@ LIMIT = 1200
 SOURCES = ("orchestrator", "web/src", "mobile-app/src")
 SUFFIXES = (".py", ".ts", ".tsx")
 
-OVERSIZED = {
-    "orchestrator/browser.py": 1407,
-    "mobile-app/src/lib/styles.ts": 1451,
-}
+OVERSIZED: dict[str, int] = {}
 
 
 def _sizes():

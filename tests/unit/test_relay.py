@@ -17,7 +17,7 @@ import nacl.bindings as nb
 import pytest
 
 from orchestrator import relay, wsclient
-from orchestrator.browser import WSServer
+from orchestrator.wsserver import WSServer
 
 
 # ---- the phone's half of the channel, written independently -----------------

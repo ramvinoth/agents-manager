@@ -156,7 +156,7 @@ class VoiceMixin:
         mode=wakeguard: barge-in while Harman speaks. The device sends
         echo-cancelled windows; only "Harman …" matters (AEC already removed
         Harman's own voice), and the tail after the wake word is the command."""
-        from orchestrator.browser import WSServer
+        from orchestrator.wsserver import WSServer
         speaker_id = (req.query.get("speaker_id") or ["default"])[0]
         wakeguard_mode = (req.query.get("mode") or ["call"])[0] == "wakeguard"
         ws = WSServer.upgrade(self)

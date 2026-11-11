@@ -498,7 +498,7 @@ def serve_ws(handler):
     thread PooledHTTPServer gives every WS_PATHS connection; a second small
     thread reads the client's watch frames and notices the close (a frame
     over WATCH_FRAME_MAX ends the connection)."""
-    from orchestrator.browser import WSServer
+    from orchestrator.wsserver import WSServer
     ws = WSServer.upgrade(handler)
     if not ws:
         return

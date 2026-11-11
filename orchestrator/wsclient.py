@@ -1,7 +1,7 @@
 """orchestrator.wsclient — the one outbound (client-role) WebSocket implementation.
 
 Used by orchestrator.relay (the encrypted phone relay). Client-role means every outgoing frame is masked (RFC 6455 5.1);
-orchestrator.browser.WSServer is the server-role side and CDP's WSConn is a
+orchestrator.wsserver.WSServer is the server-role side and CDP's WSConn is a
 text-only client sized for that one call site.
 
 Frames are parsed WITHOUT consuming the buffer until a whole frame is present,

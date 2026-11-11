@@ -274,7 +274,7 @@ class CanvasBoardMixin:
         cid = self._canvas_from_query(req)
         if cid is None:
             return
-        from orchestrator.browser import WSServer
+        from orchestrator.wsserver import WSServer
         ws = WSServer.upgrade(self)
         if not ws:
             return

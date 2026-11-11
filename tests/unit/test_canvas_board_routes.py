@@ -63,7 +63,7 @@ def _frame(payload, mask=b"\x01\x02\x03\x04"):
 def test_ws_recv_unmasks_and_refuses_an_oversized_frame_before_reading_it():
     import socket
     import pytest
-    from orchestrator.browser import WSServer
+    from orchestrator.wsserver import WSServer
     a, b = socket.socketpair()
     try:
         ws = WSServer(a)

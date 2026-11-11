@@ -4,8 +4,9 @@ import threading
 import traceback
 from orchestrator import config, db, events
 from orchestrator.browser import (
-    browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws, serve_terminal_ws,
+    browser_input, browser_install, browser_install_xvfb, browser_start, browser_status, browser_stop, browser_tab_action, browser_tabs, serve_browser_ws,
 )
+from orchestrator.terminal import serve_terminal_ws
 
 
 class PanelsMixin:

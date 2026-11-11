@@ -14,7 +14,7 @@ class LiveMixin:
         if req.principal["kind"] != "app":  # agents read through MCP, not a socket
             self.send_json({"error": "not allowed"}, status=403)
             return
-        from orchestrator.browser import WSServer
+        from orchestrator.wsserver import WSServer
         ws = WSServer.upgrade(self)
         if not ws:
             return
