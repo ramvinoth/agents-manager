@@ -453,16 +453,6 @@ def init_db():
               outcome    TEXT NOT NULL DEFAULT '',
               created_at DOUBLE PRECISION NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS session_backups (
-              id              SERIAL PRIMARY KEY,
-              session_id      TEXT NOT NULL,
-              backup_path     TEXT NOT NULL,
-              original_bytes  BIGINT NOT NULL,
-              trimmed_bytes   BIGINT,
-              reason          TEXT NOT NULL DEFAULT 'auto_trim',
-              created_at      TIMESTAMPTZ DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_sb_session ON session_backups(session_id);
             CREATE TABLE IF NOT EXISTS skills_learned (
               id             SERIAL PRIMARY KEY,
               name           TEXT NOT NULL,
@@ -2352,49 +2342,6 @@ def skill_learned_set_status(skill_id, status):
                     (status, skill_id))
         row = cur.fetchone()
     return dict(row) if row else None
-
-
-# --------------------------------------------------------------------------- #
-# Session backups                                                              #
-# --------------------------------------------------------------------------- #
-
-def backup_create(session_id, backup_path, original_bytes, trimmed_bytes=None,
-                  reason="auto_trim"):
-    """Record a new session backup. Returns the row dict."""
-    with _db() as cur:
-        cur.execute(
-            "INSERT INTO session_backups(session_id, backup_path, original_bytes, "
-            "trimmed_bytes, reason) VALUES(%s,%s,%s,%s,%s) RETURNING *",
-            (session_id, backup_path, original_bytes, trimmed_bytes, reason),
-        )
-        return dict(cur.fetchone())
-
-
-def backup_list(session_id):
-    """List all backups for a session, newest first."""
-    with _db() as cur:
-        cur.execute(
-            "SELECT * FROM session_backups WHERE session_id = %s ORDER BY created_at DESC",
-            (session_id,),
-        )
-        return [dict(r) for r in cur.fetchall()]
-
-
-def backup_get(backup_id):
-    """Get a single backup by id."""
-    with _db() as cur:
-        cur.execute("SELECT * FROM session_backups WHERE id = %s", (backup_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def backup_delete(backup_id):
-    """Delete a backup row (caller is responsible for deleting the file)."""
-    with _db() as cur:
-        cur.execute("DELETE FROM session_backups WHERE id = %s RETURNING backup_path",
-                    (backup_id,))
-        row = cur.fetchone()
-        return row["backup_path"] if row else None
 
 
 # ---------------------------------------------------------------------------
