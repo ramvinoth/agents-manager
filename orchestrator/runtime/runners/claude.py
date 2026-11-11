@@ -38,6 +38,11 @@ from orchestrator.runtime.run_config import (
 )
 from orchestrator.runtime.titles import push_label
 
+# MCP connect timeout (ms) handed to every driven claude. Claude's default is too
+# short when --resume first parses a multi-GB transcript; our own stdio servers
+# answer in well under a second, so this only ever waits on a blocked loader.
+MCP_CONNECT_TIMEOUT_MS = "120000"
+
 
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
@@ -204,6 +209,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                        "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
                 env.pop(_k, None)
+            # Give MCP servers time to connect on a big resume: claude parses the
+            # whole transcript on the same event loop that times out MCP connects,
+            # so a multi-GB session (measured 2026-11-10: 2.8 GB, ~45 s) marked
+            # viewerperm "failed" and every tool call died with "approve not found".
+            # An owner-set MCP_TIMEOUT still wins.
+            env.setdefault("MCP_TIMEOUT", MCP_CONNECT_TIMEOUT_MS)
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
                 env["VIEWER_PERM_PORT"] = str(PORT)
@@ -254,12 +265,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     pass
                 # Ship the perm-tool env into the remote shell so its permission_mcp
                 # can reach the viewer directly at its tailnet address.
-                rperm_env = None
+                rperm_env = {"MCP_TIMEOUT": env["MCP_TIMEOUT"]}
                 if perm_token:
                     from orchestrator.remote import viewer_tailnet_base
                     base = viewer_tailnet_base(PORT)
-                    rperm_env = {"VIEWER_PERM_SESSION": session_id,
-                                 "VIEWER_PERM_TOKEN": perm_token}
+                    rperm_env.update({"VIEWER_PERM_SESSION": session_id,
+                                      "VIEWER_PERM_TOKEN": perm_token})
                     if base:
                         rperm_env["VIEWER_PERM_BASE"] = base
                     # Same reach-back for the kanban tool on the remote host.

@@ -186,6 +186,18 @@ class TestPermMcpConfigWrite:
             t.join()
         assert invalid == []
 
+    def test_every_registered_mcp_script_exists(self, tmp_path, monkeypatch):
+        """Regression for 2026-11-10: the engine split moved run_config into
+        orchestrator/runtime/ and the script paths followed it to files that do
+        not exist, so every driven claude died on its first permission prompt."""
+        import json
+        monkeypatch.setattr(run_config.tempfile, "gettempdir", lambda: str(tmp_path))
+        with open(run_config._write_perm_mcp_config()) as f:
+            servers = json.load(f)["mcpServers"]
+        assert set(servers) == {"viewerperm", "viewer"}
+        for name, spec in servers.items():
+            assert os.path.isfile(spec["args"][0]), f"{name}: {spec['args'][0]} missing"
+
     def test_leaves_no_temp_file_beside_the_config(self, tmp_path, monkeypatch):
         monkeypatch.setattr(run_config.tempfile, "gettempdir", lambda: str(tmp_path))
         path = run_config._write_perm_mcp_config()

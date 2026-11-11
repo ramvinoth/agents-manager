@@ -20,8 +20,12 @@ def _write_perm_mcp_config():
     reachable; the server resolves the caller to at least 'ic' and scopes each write by
     the session's responsibility level — it never fails auth for a run with no role."""
     path = os.path.join(tempfile.gettempdir(), "agents_viewerperm_mcp.json")
-    perm = str(Path(__file__).parent / "permission_mcp.py")
-    viewer_mcp = str(Path(__file__).parent / "viewer_mcp.py")
+    # The MCP scripts live in the package root (orchestrator/), not beside this
+    # module in orchestrator/runtime/ — resolving them from here once pointed every
+    # run at missing files, so every permission prompt failed ("mcp__viewerperm__approve not found").
+    pkg = Path(__file__).resolve().parent.parent
+    perm = str(pkg / "permission_mcp.py")
+    viewer_mcp = str(pkg / "viewer_mcp.py")
     py = sys.executable or "python3"
     cfg = {"mcpServers": {
         "viewerperm": {"command": py, "args": [perm]},
