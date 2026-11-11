@@ -1,7 +1,7 @@
 ------------------------------ MODULE Maintenance ------------------------------
 (* The hourly maintenance restart window: orchestrator/maintenance.py.
    One action per step the real code takes between yield points; the oracle
-   (tests/unit/test_maintenance_oracle.py) replays every edge of TLC's state
+   (tests/unit/test_maintenance_oracle.py) replays random walks of TLC's state
    graph against the real module, so this spec has to stay the code's twin.
 
    Fixed = FALSE models the code before 2026-11-10, Fixed = TRUE the code now.
