@@ -17,7 +17,6 @@ SUFFIXES = (".py", ".ts", ".tsx")
 OVERSIZED = {
     "orchestrator/browser.py": 1407,
     "orchestrator/routes/sessions.py": 1369,
-    "mobile-app/src/screens/ThreadScreen.tsx": 1536,
     "mobile-app/src/lib/styles.ts": 1451,
 }
 

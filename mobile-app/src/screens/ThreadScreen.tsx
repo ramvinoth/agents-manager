@@ -6,7 +6,6 @@ import {
   Dimensions,
   FlatList,
   KeyboardAvoidingView,
-  PanResponder,
   Platform,
   ScrollView,
   Text,
@@ -14,30 +13,27 @@ import {
   View,
 } from "react-native"
 import { TouchableOpacity, useSeen } from "../components/Tracked"
-import { recordSwipe } from "../lib/usageReporter"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
-import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk, type SlashCommand } from "../api/client"
-import { EMPTY_WINDOW, hasOlder, prependOlder, type TranscriptWindow } from "../lib/transcriptWindow"
-import { fmtDate, groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
-import { matchCommands, slashTerm } from "../lib/slash"
-import { applyMention, hashTerm } from "../lib/fileMention"
+import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk } from "../api/client"
+import { useThreadTranscript } from "../lib/useThreadTranscript"
+import { fmtDate, itemPreview, itemUuid, type ThreadItem } from "../lib/thread"
+import ComposerSuggestions, { useComposerCompletion } from "../components/ComposerSuggestions"
 import { ensurePermission } from "../lib/notify"
-import { activeServerId, composerPrefs, draftFor, setDraft } from "../state/config"
-import { offlineCache } from "../api/offlineCache"
+import { composerPrefs, draftFor, setDraft } from "../state/config"
 import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
-import { isTransportError, userError } from "../lib/errors"
+import { userError } from "../lib/errors"
 import { fileLinkPath } from "../lib/fileLink"
 import { downloadAndShare } from "../lib/fileDownloadNative"
 import { fsScope, HOST_LOCATION } from "../lib/location"
 import { FileLinkContext } from "../components/Markdown"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
-import { completesBoardSwipe, shouldClaimBoardSwipe } from "../lib/gestures"
+import { useBoardSwipe } from "../lib/useBoardSwipe"
 import { attachMessage, pickImage, uploadImage } from "../lib/attach"
 import MessageActions, { type MsgTarget } from "../components/MessageActions"
 import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
@@ -56,14 +52,11 @@ import { speak, stopSpeaking } from "../lib/voice"
 import { splitThinking } from "../lib/thinking"
 import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
 import { liveEvents } from "../api/events"
-import { openThreadPage } from "../api/threadOpen"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 
 // Sentinel appended to the list while a run is in flight (see WorkingBubble).
 const WORKING = { kind: "working" as const, id: "__working__" }
-// Transcript lines per read: the opening tail and each older page.
-const PAGE_LINES = 400
 type ListItem = ThreadItem | typeof WORKING
 
 // A WhatsApp-style thread for one agent session. Each agent exchange shows its
@@ -72,29 +65,12 @@ type ListItem = ThreadItem | typeof WORKING
 // permission-mode + model dropdown, and in-thread Allow/Deny cards.
 export default function ThreadScreen({ route, navigation }: Props) {
   const { host, path, label, agent = "claude", starting, session } = route.params
-  const [items, setItems] = useState<ThreadItem[]>([])
-  const [loading, setLoading] = useState(true)
-  // Paging older history in from the top of the (inverted) list: "loading"
-  // shows a spinner there, "error" a tap-to-retry row (onEndReached won't refire
-  // until the content grows, so a failed page needs an explicit retry).
-  const [older, setOlder] = useState<"idle" | "loading" | "error">("idle")
-  const loadingMoreRef = useRef(false)
   // Seed the composer from a persisted per-session draft so unsent text survives
   // navigating back and app restarts. Keyed by path (existing chats).
   const [input, setInput] = useState(() => draftFor(path || ""))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  // The transcript on screen is the device's saved copy, not a live read.
-  const [fromCache, setFromCache] = useState(false)
   const { online } = useReachability()
-  // Back online while showing the saved copy → swap in the live transcript.
-  // (An idle thread has no refresh loop of its own; any request anywhere — the
-  // Chats list, the inbox badge — flips `online`.) Declared before reload, so read
-  // through a ref.
-  const reloadRef = useRef<() => unknown>(() => {})
-  useEffect(() => {
-    if (online && fromCache) reloadRef.current()
-  }, [online, fromCache])
   // The server's explicit AI configuration wins at launch; these are only the
   // composer's own picks. Never coerce a full model ID against a catalog.
   const sendPrefs = () => {
@@ -133,8 +109,11 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // What the agent is doing right now (last streamed tool) — drives the header
   // subtitle and the live "working on it" bubble.
   const [activity, setActivity] = useState("")
+  const {
+    items, loading, setLoading, older, fromCache, reload, poll, pollGrew, loadMore,
+    addUserBubble, dropUserBubble, clearUserBubbles, showStarting,
+  } = useThreadTranscript({ host, path, session, online, setError, setActivity })
   // Slash-command autocomplete + live queue contents.
-  const [commands, setCommands] = useState<SlashCommand[]>([])
   const [queueList, setQueueList] = useState<string[]>([])
   const [msgAction, setMsgAction] = useState<MsgTarget | null>(null)
   const [reading, setReading] = useState(false)
@@ -152,24 +131,16 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [searchAt, setSearchAt] = useState(-1)
   // RHS capabilities drawer (skills + MCP tools)
   const [capDrawerOpen, setCapDrawerOpen] = useState(false)
-  const boardOpening = useRef(false)
-  const transcriptRef = useRef<View>(null)
-  const transcriptBounds = useRef({ left: 0, width: 0 })
-  const boundsGeneration = useRef(0)
-  const boardSwipeCancelled = useRef(false)
-  const measureTranscript = useCallback(() => {
-    const generation = ++boundsGeneration.current
-    transcriptRef.current?.measureInWindow((left, _top, width) => {
-      if (generation === boundsGeneration.current && width > 0) transcriptBounds.current = { left, width }
-    })
-  }, [])
-  const openBoard = useCallback(() => {
-    if (!isCurrentThread() || boardOpening.current || !navigation.isFocused()) return
-    boardOpening.current = true
+  const openBoardRoute = useCallback(() => {
+    if (!isCurrentThread()) return
     // Unsent chats have no board context yet; preserve the project-picker fallback.
     if (sessionId) navigation.navigate("Kanban", { session: sessionId, title: label })
     else navigation.navigate("Org")
   }, [navigation, sessionId, label, isCurrentThread])
+  const { openBoard, boxProps: boardSwipeBox } = useBoardSwipe({
+    open: openBoardRoute, enabled: !capDrawerOpen && !msgAction,
+    isFocused: () => navigation.isFocused(), lifetime: routeLifetime,
+  })
   const openNotes = useCallback(() => {
     if (sessionId) navigation.navigate("Notes", { session: sessionId, title: label })
     else navigation.navigate("Notes")
@@ -181,35 +152,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
     if (sessionId) navigation.navigate("Inbox", { session: sessionId, host, path, title: label })
     else navigation.navigate("Inbox")
   }, [navigation, sessionId, host, path, label])
-  const boardSwipeState = useRef({ openBoard, enabled: true })
-  boardSwipeState.current = { openBoard, enabled: !capDrawerOpen && !msgAction }
-  useFocusEffect(useCallback(() => {
-    boardOpening.current = false
-    return () => { boardSwipeCancelled.current = true }
-  }, [routeLifetime]))
-  const boardPan = useRef(PanResponder.create({
-    // Bubble phase only: nested code/table scrolling keeps its own responder.
-    onMoveShouldSetPanResponder: (_event, g) =>
-      boardSwipeState.current.enabled && navigation.isFocused()
-      && !boardOpening.current && !boardSwipeCancelled.current
-      // g.x0 is only assigned on grant, so during should-set it is still 0;
-      // the touch's start point has to be derived from the current position.
-      && shouldClaimBoardSwipe({
-        ...transcriptBounds.current, x0: g.moveX - g.dx, dx: g.dx, dy: g.dy,
-        touches: g.numberActiveTouches,
-      }),
-    onPanResponderMove: (_event, g) => {
-      if (g.numberActiveTouches !== 1) boardSwipeCancelled.current = true
-    },
-    onPanResponderRelease: (_event, g) => {
-      if (!boardSwipeCancelled.current && boardSwipeState.current.enabled
-        && completesBoardSwipe(g)) {
-        recordSwipe("swipe-board")
-        boardSwipeState.current.openBoard()
-      }
-    },
-    onPanResponderTerminate: () => { boardSwipeCancelled.current = true },
-  })).current
   useSeen("swipe-board", undefined, true)
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
@@ -218,49 +160,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [scrollDate, setScrollDate] = useState("")
   const dateOpacity = useRef(new Animated.Value(0)).current
   const dateHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const slashMatches = useMemo(() => matchCommands(slashTerm(input), commands), [input, commands])
-  // "#word" at the caret searches the session's project (lib/fileMention.ts);
-  // picking a hit swaps it for @path, which Claude Code inlines.
-  const [caret, setCaret] = useState<number | null>(null)
-  // Set only right after a pick to place the caret past the mention; left
-  // uncontrolled otherwise so iOS typing never fights a stale selection.
-  const [placeCaret, setPlaceCaret] = useState<number | null>(null)
-  const [fileHits, setFileHits] = useState<{ path: string; dir: boolean }[]>([])
-  const hash = useMemo(() => (caret === null ? null : hashTerm(input, caret)), [input, caret])
-  const hashQuery = hash?.query ?? null
-  useEffect(() => {
-    if (hashQuery === null || !cwd) {
-      setFileHits([])
-      return
-    }
-    let live = true
-    const timer = setTimeout(() => {
-      api.fsSearch(host, cwd, hashQuery)
-        .then((r) => { if (live) setFileHits(r.results || []) })
-        .catch(() => { if (live) setFileHits([]) })
-    }, 150)
-    return () => { live = false; clearTimeout(timer) }
-  }, [hashQuery, cwd, host])
-  const fileMatches = slashMatches.length || !hash ? [] : fileHits
-  // iOS can answer the pick with a change event still carrying the pre-pick
-  // text (the keyboard committing as the row is tapped); that echo would undo
-  // the mention. Until the user's next real edit, the old text maps back to
-  // the picked one.
-  const pickEcho = useRef<{ from: string; to: string } | null>(null)
-  const onComposerText = (text: string) => {
-    const echo = pickEcho.current
-    pickEcho.current = null
-    setInput(echo && text === echo.from ? echo.to : text)
-  }
-  const pickFile = (p: string) => {
-    if (!hash || caret === null) return
-    const r = applyMention(input, hash, caret, p)
-    pickEcho.current = { from: input, to: r.text }
-    setInput(r.text)
-    setCaret(r.caret)
-    setPlaceCaret(r.caret)
-    setFileHits([])
-  }
+  const completion = useComposerCompletion({ input, setInput, host, cwd })
   // Id of the most recent agent exchange — its steps default to expanded so the
   // current turn is visible without a tap; older exchanges stay collapsed. Keyed
   // by id (not list index) because the inverted render reorders indices.
@@ -304,11 +204,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<ListItem>>(null)
   // stop() for the live run's refresh loop (startPoll), null when none runs.
   const pollRef = useRef<(() => void) | null>(null)
-  const localId = useRef(0)
-  // Optimistic user bubbles (fresh send + steer) that the server transcript may
-  // not have caught up to yet. reload() keeps re-appending these until the server
-  // shows them, so a steered message can't flash-and-vanish mid-run.
-  const pendingSteers = useRef<{ kind: "user"; id: string; text: string }[]>([])
   // --- Autoscroll model: an INVERTED list --------------------------------------
   // Newest-first with `inverted`: item 0 sits at the bottom and new items prepend
   // at offset 0, so "stay on the latest" is the list's resting state and reading
@@ -317,154 +212,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // `distanceFromBottom` (0 = pinned to newest) just drives that button.
   const distanceFromBottom = useRef(0)
 
-  // The transcript lines currently rendered and the byte range they cover. A
-  // full reload() replaces the window with the latest tail; poll() appends only
-  // what the file gained since `end`, so a running turn costs bytes proportional
-  // to its new output; loadMore() prepends the page before `start`.
-  const loadedRef = useRef<TranscriptWindow>(EMPTY_WINDOW)
-
-  const reload = useCallback(async () => {
-    if (!path) {
-      // Opened by session id alone (a push tap): the effect below resolves the
-      // path and keeps the spinner up until it does.
-      if (!session) setLoading(false)
-      return [] as ReturnType<typeof groupThread>
-    }
-    // First open: a short shared read (the Chats row already started it on
-    // press-in), and the saved copy paints at once while it is in flight.
-    const first = loadedRef.current.path !== path
-    let landed = false
-    if (first) {
-      offlineCache.loadThread(activeServerId(), host, path).then((saved) => {
-        if (saved && !landed && loadedRef.current.path !== path) {
-          render(saved)
-          setLoading(false)
-        }
-      })
-    }
-    try {
-      const page = first ? await openThreadPage(host, path) : await api.sessionReadPage(host, path, PAGE_LINES)
-      landed = true
-      loadedRef.current = { path, lines: page.lines, start: page.start, end: page.end }
-      setOlder("idle")
-      setFromCache(false)
-      setError("")
-      offlineCache.saveThread(activeServerId(), host, path, page.lines)
-      return render(page.lines)
-    } catch (e) {
-      landed = true
-      // Unreachable: show the saved copy (if any) under the offline banner,
-      // instead of an error in place of the conversation.
-      if (isTransportError(e)) {
-        if (loadedRef.current.path !== path) {
-          const saved = await offlineCache.loadThread(activeServerId(), host, path)
-          if (saved) {
-            setFromCache(true)
-            return render(saved)
-          }
-        }
-      } else {
-        setError(userError(e, "this chat"))
-      }
-      return [] as ReturnType<typeof groupThread>
-    } finally {
-      setLoading(false)
-    }
-  }, [host, path])
-  reloadRef.current = reload
-
-  // Incremental refresh for the live-run poll. Falls back to a full reload when
-  // there's no baseline for this path or the file shrank (rewritten/trimmed).
-  const poll = useCallback(async () => {
-    const loaded = loadedRef.current
-    if (!path || loaded.path !== path) return reload()
-    try {
-      const page = await api.sessionReadFrom(host, path, loaded.end)
-      if (loadedRef.current !== loaded) return // a full reload landed meanwhile
-      if (page.size < loaded.end) return reload()
-      if (!page.lines.length) return // nothing new — skip the re-parse/re-render
-      const lines = [...loaded.lines, ...page.lines]
-      loadedRef.current = { ...loaded, lines, end: page.end }
-      offlineCache.saveThread(activeServerId(), host, path, lines)
-      return render(lines)
-    } catch {
-      /* transient; the next tick retries */
-    }
-  }, [host, path, reload])
-
-  function render(lines: string[]) {
-    const next = groupThread(parseTranscript(lines))
-    // A steered message gets an optimistic bubble immediately, but the server
-    // may not have written it into the transcript yet — so a naive setItems(next)
-    // here would wipe it (it flashes then vanishes). Keep any pending optimistic
-    // bubbles the server hasn't caught up to yet; drop each one once a matching
-    // user turn appears. Match by COUNT, not set-membership: send the same text
-    // twice and each server turn consumes exactly ONE pending bubble (a Set would
-    // drop both on the first match, losing a real duplicate). The transcript user
-    // turns don't echo our client id, so text-with-count is the best identity we
-    // have here.
-    const serverTextCounts = new Map<string, number>()
-    for (const it of next) {
-      if (it.kind === "user") {
-        const txt = (it as { text: string }).text
-        serverTextCounts.set(txt, (serverTextCounts.get(txt) || 0) + 1)
-      }
-    }
-    pendingSteers.current = pendingSteers.current.filter((b) => {
-      const n = serverTextCounts.get(b.text) || 0
-      if (n > 0) {
-        serverTextCounts.set(b.text, n - 1) // this server turn consumes this bubble
-        return false
-      }
-      return true // not caught up yet — keep the optimistic bubble
-    })
-    const merged =
-      pendingSteers.current.length > 0 ? [...next, ...pendingSteers.current] : next
-    setItems(merged)
-    // Track the newest tool call so the header/working bubble can name it.
-    const last = next[next.length - 1]
-    if (last && last.kind === "exchange") {
-      const tools = last.steps.filter((b) => b.kind === "tool")
-      const newest = tools[tools.length - 1]
-      if (newest && newest.kind === "tool") setActivity(newest.name)
-    }
-    return next
-  }
-
-  // Lazy-load older history when the user scrolls to the TOP of the (inverted)
-  // list: prepend the page just before the window's first byte;
-  // maintainVisibleContentPosition keeps the current rows anchored. A page of
-  // only tool results can group into no new rows, and onEndReached refires only
-  // when the content grows, so keep paging (bounded) until a row appears.
-  const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || !path || !hasOlder(loadedRef.current, path)) return
-    loadingMoreRef.current = true
-    setOlder("loading")
-    try {
-      const rows = (lines: string[]) => groupThread(parseTranscript(lines)).length
-      const before = rows(loadedRef.current.lines)
-      let grew = false
-      for (let i = 0; i < 5 && !grew && hasOlder(loadedRef.current, path); i++) {
-        const page = await api.sessionReadBefore(host, path, loadedRef.current.start, PAGE_LINES)
-        const next = prependOlder(loadedRef.current, path, page)
-        if (!next) return // a reload replaced the window meanwhile
-        loadedRef.current = next
-        grew = rows(next.lines) > before
-      }
-      render(loadedRef.current.lines)
-    } catch {
-      render(loadedRef.current.lines) // keep any pages that did arrive
-      setOlder("error")
-    } finally {
-      loadingMoreRef.current = false
-      setOlder((o) => (o === "loading" ? "idle" : o))
-    }
-  }, [host, path])
-
   useFocusEffect(
     useCallback(() => {
-      // Switching sessions: don't carry optimistic bubbles from a prior thread.
-      pendingSteers.current = []
+      clearUserBubbles()
       // Same chat as before (back from a sub-screen): catch up incrementally and
       // keep any history already paged in. Otherwise load the latest tail.
       poll()
@@ -509,10 +259,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   useEffect(() => {
     if (path || !starting) return
     setSessionId(starting.session)
-    setLoading(false)
     setBusy(true)
-    pendingSteers.current = [{ kind: "user", id: "local-start", text: starting.message }]
-    setItems([...pendingSteers.current])
+    showStarting(starting.message)
     // The name was stored by the server at creation — nothing to save here.
     resolveSessionPath(() => api.resolve(starting.session, host))
       .then((found) => {
@@ -563,14 +311,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
   useEffect(() => {
     ensurePermission().catch(() => {})
   }, [])
-
-  // Slash commands are host-scoped and rarely change — fetch once per thread.
-  useEffect(() => {
-    api
-      .commands(host)
-      .then((c) => setCommands(Array.isArray(c) ? c : []))
-      .catch(() => {})
-  }, [host])
 
   // WhatsApp-style header: the session name (tap it to open the session's
   // profile/settings page) with a live "typing…" subtitle while the agent
@@ -686,24 +426,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
     listRef.current?.scrollToOffset({ offset: 0, animated: true })
   }, [])
 
-  function addUserBubble(text: string): string {
-    // Append in natural order; the list is `inverted`, so this lands at offset 0
-    // (the bottom) and the viewport follows it automatically. No scroll call.
-    const id = `local-${++localId.current}`
-    // Remember it so a poll reload (which rebuilds from the server transcript)
-    // re-appends it until the server has persisted this user turn.
-    pendingSteers.current = [...pendingSteers.current, { kind: "user", id, text }]
-    setItems((it) => [...it, { kind: "user", id, text }])
-    return id
-  }
-
-  /** Drop an optimistic bubble that failed to send (from both the list and the
-   *  pending-steers set) so it doesn't get re-appended by the next reload. */
-  function dropUserBubble(id: string) {
-    pendingSteers.current = pendingSteers.current.filter((b) => b.id !== id)
-    setItems((it) => it.filter((m) => !(m.kind === "user" && m.id === id)))
-  }
-
   /** Follow a live run until it ends. The server's live-events stream says
    *  when this run's transcript grew (fetch just the new bytes) or its state
    *  moved (status + transcript); while the stream is down — another host's
@@ -714,12 +436,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
     pollRef.current?.()
     let done = false
     let lastStatus = ""
-    // Serialized: a slow status+read never overlaps the next, so setItems can't race.
-    const pollOnce = serialize(async () => {
-      const before = loadedRef.current
-      await poll()
-      return loadedRef.current !== before
-    })
+    // Serialized: a slow status+read never overlaps the next, so renders can't race.
+    const pollOnce = serialize(pollGrew)
     const tick = serialize(async () => {
       if (done) return false
       try {
@@ -1130,24 +848,9 @@ export default function ThreadScreen({ route, navigation }: Props) {
           screen's — keeping the button clear of the composer + run bar, whose
           combined height varies (Working…/Stop, errors, permission cards). */}
       <View
-        ref={transcriptRef}
         testID="thread-viewport"
         style={{ flex: 1 }}
-        onLayout={() => {
-          transcriptBounds.current = { left: 0, width: 0 }
-          boardSwipeCancelled.current = true
-          measureTranscript()
-        }}
-        onTouchStart={(event) => {
-          if (event.nativeEvent.touches.length === 1) boardSwipeCancelled.current = false
-          else boardSwipeCancelled.current = true
-          // A layout pass while another screen covers this one (the keyboard
-          // opening there resizes our KeyboardAvoidingView) measures a view with
-          // no window as zero width, which disables the edge swipe until the next
-          // layout. A touch proves the view is on screen, so measure again now.
-          measureTranscript()
-        }}
-        {...boardPan.panHandlers}
+        {...boardSwipeBox}
       >
       {/* Pinned banner: tap jumps to the current pin, tap again cycles (WhatsApp style). */}
       {pinnedItems.length ? (
@@ -1369,58 +1072,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
           </View>
         ) : null}
 
-        {/* Slash-command autocomplete — appears while typing "/foo". */}
-        {slashMatches.length ? (
-          <View testID="slash-list" style={styles.slashList}>
-            <ScrollView keyboardShouldPersistTaps="always" style={{ maxHeight: 190 }}>
-              {slashMatches.map((c) => (
-                <TouchableOpacity
-                  key={c.name}
-                  testID={`slash-${c.name}`}
-                  style={styles.slashRow}
-                  onPress={() => setInput(`/${c.name} `)}
-                >
-                  <Text style={styles.slashName}>/{c.name}</Text>
-                  {c.description ? (
-                    <Text style={styles.slashDesc} numberOfLines={1}>
-                      {c.description}
-                    </Text>
-                  ) : null}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        {fileMatches.length ? (
-          <View testID="file-mention-list" style={styles.slashList}>
-            <ScrollView keyboardShouldPersistTaps="always" style={{ maxHeight: 190 }}>
-              {fileMatches.map((f) => {
-                const cut = f.path.lastIndexOf("/") + 1
-                return (
-                  <TouchableOpacity
-                    key={f.path}
-                    testID={`file-mention-${f.path}`}
-                    style={[styles.slashRow, { flexDirection: "row", alignItems: "center", gap: 8 }]}
-                    onPress={() => pickFile(f.path)}
-                  >
-                    <Icon name={f.dir ? "folder" : "file"} size={15} color={t.textMuted} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.slashName} numberOfLines={1}>
-                        {f.path.slice(cut) + (f.dir ? "/" : "")}
-                      </Text>
-                      {cut ? (
-                        <Text style={styles.slashDesc} numberOfLines={1}>
-                          {f.path.slice(0, cut)}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </TouchableOpacity>
-                )
-              })}
-            </ScrollView>
-          </View>
-        ) : null}
+        <ComposerSuggestions {...completion} />
 
         {/* Queued messages. Tap the chip to pull it back into the composer —
             it un-queues and the text is restored (never discarded). The revert
@@ -1461,13 +1113,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
             placeholder={busy ? "Steer or queue a follow-up…" : "Message the agent…"}
             placeholderTextColor={t.textMuted}
             value={input}
-            onChangeText={onComposerText}
-            onSelectionChange={(e) => {
-              const { start, end } = e.nativeEvent.selection
-              setCaret(start === end ? start : null)
-              setPlaceCaret(null)
-            }}
-            selection={placeCaret === null ? undefined : { start: placeCaret, end: placeCaret }}
+            {...completion.inputProps}
             multiline
           />
 
