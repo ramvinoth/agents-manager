@@ -1,11 +1,13 @@
-"""Tests for the Integrations catalog (orchestrator.integrations, pure) and its
+"""Tests for the Integrations catalog (orchestrator.integrations.catalog, pure) and its
 routes (orchestrator.routes.integrations). No Postgres, no network: db helpers and
 drive_oauth.start are faked; the catalog functions take plain dicts."""
 import json
 
 import pytest
 
-from orchestrator import cloudauth, db, drive_oauth, integrations as I, server
+from orchestrator import cloudauth, db, drive_oauth, server
+from orchestrator.integrations import catalog as I
+from orchestrator.shared import settings as shared_settings
 from orchestrator.routes.integrations import IntegrationsMixin
 from orchestrator.routes.drives import DrivesMixin
 
@@ -179,8 +181,10 @@ def rows(monkeypatch):
     monkeypatch.setattr(db, "drive_delete", lambda did: r.pop(did, None) is not None)
     monkeypatch.setattr(db, "drive_clients_load", lambda: {})
     settings = {}
-    monkeypatch.setattr(db, "setting_get", lambda k, d=None: settings.get(k, d))
-    monkeypatch.setattr(db, "setting_set", settings.__setitem__)
+    # Callers read settings through the db facade; repositories through shared.settings.
+    for mod in (db, shared_settings):
+        monkeypatch.setattr(mod, "setting_get", lambda k, d=None: settings.get(k, d))
+        monkeypatch.setattr(mod, "setting_set", settings.__setitem__)
     r.settings = settings
     return r
 

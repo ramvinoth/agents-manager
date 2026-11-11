@@ -1,17 +1,17 @@
 """orchestrator.routes.integrations — IntegrationsMixin: the Integrations page and
 the agent-facing mail/calendar routes.
 
-The page is one GET (integrations.view: providers → client setup, services,
+The page is one GET (catalog.view: providers → client setup, services,
 connected accounts with per-service state) plus the owner actions: save or
 forget a provider's OAuth client, connect
 (create the account row if needed and start a consent that adds a service),
 switch a granted service on/off, and — via the existing /api/drives/delete —
-disconnect. Every decision about state lives in orchestrator.integrations; this
+disconnect. Every decision about state lives in orchestrator.integrations.catalog; this
 module maps HTTP onto it.
 
 The mail/calendar routes are what the MCP gmail_* / calendar_* tools call,
 and what the app's Calendar screen calls. Each resolves its account with
-integrations.pick_connection — so a service the owner switched off is refused
+catalog.pick_connection — so a service the owner switched off is refused
 here, at the one place every caller passes. An AGENT's call also names the
 operation (read, draft, create…), which the owner allows per account; the
 owner acting in the app is bounded by the vendor grant alone.
@@ -22,12 +22,13 @@ the vendor through ONE proxy route (api_call), which adds the credential, pins
 the host and checks the owner's read/change switch.
 
 Local disk: the owner's rules for what agents may touch on this machine
-(integrations.local_*), stored in one setting and enforced by routes.fs.
+(catalog.local_*), stored in one setting and enforced by routes.fs.
 """
 import json
 import secrets
 
-from orchestrator import cloudauth, db, drive_oauth, integrations, workspace
+from orchestrator import cloudauth, db, drive_oauth, workspace
+from orchestrator.integrations import catalog
 from orchestrator import drives as drives_mod
 from orchestrator.drives import ADAPTERS, DriveError
 from orchestrator.routes import require_human
@@ -47,12 +48,12 @@ class IntegrationsMixin:
         """The owner's page view; an agent (MCP principal) gets agent_view —
         what it may use, not how the owner set it up."""
         if (getattr(req, "principal", None) or {}).get("kind") == "mcp":
-            self.send_json(integrations.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
+            self.send_json(catalog.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
             return
-        self.send_json(dict(integrations.view(
+        self.send_json(dict(catalog.view(
             list(db.drives_load().values()), db.drive_clients_load(),
             drive_oauth.redirect_uri_for(self.request_origin())),
-            local=integrations.local_view(db.local_disk_rules())))
+            local=catalog.local_view(db.local_disk_rules())))
 
     def _p_integrations_connect(self, req):
         """Body: {service, connection?, op?}. Without `connection` a new account row
@@ -68,9 +69,9 @@ class IntegrationsMixin:
         op = (body.get("op") or "").strip() or None
         created = False
         try:
-            svc = integrations.service(sid)
+            svc = catalog.service(sid)
             if op:
-                integrations.op_spec(sid, op)
+                catalog.op_spec(sid, op)
             if cid:
                 conn = db.drive_get(cid)
                 if conn is None:
@@ -78,14 +79,14 @@ class IntegrationsMixin:
                 if conn["kind"] != svc["provider"]:
                     raise DriveError("%s belongs to another provider" % cid, 400)
             else:
-                integrations.consent_scopes(None, sid)   # refuse an unavailable service before creating a row
+                catalog.consent_scopes(None, sid)   # refuse an unavailable service before creating a row
                 cid = "dr-" + secrets.token_hex(4)
-                db.drive_upsert(cid, {"label": integrations.provider(svc["provider"])["label"],
+                db.drive_upsert(cid, {"label": catalog.provider(svc["provider"])["label"],
                                       "kind": svc["provider"], "config": {},
                                       "status": "active", "hidden": False})
                 created = True
             r = drive_oauth.start(cid, self.request_origin(), sid, op)
-        except (DriveError, integrations.IntegrationError) as e:
+        except (DriveError, catalog.IntegrationError) as e:
             if created:
                 db.drive_delete(cid)   # a refused consent (no client set up) must not leave an empty account behind
             self._err(e)
@@ -107,35 +108,35 @@ class IntegrationsMixin:
         try:
             old = db.drive_get(cid) if cid else None
             if cid and (old is None or old["kind"] != pid):
-                raise integrations.IntegrationError("Unknown %s account %r" % (pid, cid), 404)
-            method, url, headers, data, fields = integrations.verify_request(pid, body.get("token"), body.get("fields"))
+                raise catalog.IntegrationError("Unknown %s account %r" % (pid, cid), 404)
+            method, url, headers, data, fields = catalog.verify_request(pid, body.get("token"), body.get("fields"))
             token = body["token"].strip()
-            headers = cloudauth.authorize(integrations.provider(pid), token, fields, method, url, headers, data,
+            headers = cloudauth.authorize(catalog.provider(pid), token, fields, method, url, headers, data,
                                           drives_mod._http)
             status, _, raw = drives_mod._http(method, url, headers, data, timeout=20)
             if not 200 <= status < 300:
-                raise integrations.IntegrationError(
+                raise catalog.IntegrationError(
                     "%s refused this token (HTTP %d) — check it was copied whole and has not expired"
-                    % (integrations.provider(pid)["label"], status), 400)
+                    % (catalog.provider(pid)["label"], status), 400)
             try:
                 reply = json.loads(raw or b"{}")
             except ValueError:
                 reply = raw.decode("utf-8", "replace")
-            problem = integrations.verify_problem(pid, reply)
+            problem = catalog.verify_problem(pid, reply)
             if problem:
-                raise integrations.IntegrationError(problem, 400)
+                raise catalog.IntegrationError(problem, 400)
         except cloudauth.AuthError as e:
             self.send_json({"error": str(e)}, status=e.status)
             return
-        except (DriveError, integrations.IntegrationError) as e:
+        except (DriveError, catalog.IntegrationError) as e:
             self._err(e)
             return
-        cfg = integrations.token_config(pid, token, integrations.account_from(pid, reply, fields), fields)
+        cfg = catalog.token_config(pid, token, catalog.account_from(pid, reply, fields), fields)
         if old is not None:
             keep = old.get("config") or {}
             cfg.update({k: keep[k] for k in ("off", "ops") if k in keep})
         db.drive_upsert(cid or "dr-" + secrets.token_hex(4), {
-            "label": integrations.provider(pid)["label"], "kind": pid, "status": "active", "hidden": False,
+            "label": catalog.provider(pid)["label"], "kind": pid, "status": "active", "hidden": False,
             "config": cfg})
         self._g_integrations(req)
 
@@ -153,20 +154,20 @@ class IntegrationsMixin:
         try:
             conn = db.drive_get(b.get("connection") or "")
             if conn is None:
-                raise integrations.IntegrationError("Unknown connection %r — see integrations_list" % b.get("connection"), 404)
+                raise catalog.IntegrationError("Unknown connection %r — see integrations_list" % b.get("connection"), 404)
             sid = conn["kind"] + ".api"
-            op = integrations.api_request(conn, b.get("method"), b.get("path"), b.get("body"))[0]
-            if agent and op == "change" and integrations.op_state(conn, sid, op) == "off":
+            op = catalog.api_request(conn, b.get("method"), b.get("path"), b.get("body"))[0]
+            if agent and op == "change" and catalog.op_state(conn, sid, op) == "off":
                 self._org_send(req, "integration_api_call", {
                     "connection": conn["id"], "method": b.get("method"), "path": b.get("path"),
                     "body": b.get("body"), "reason": b.get("reason")})
                 return
-            integrations.pick_connection([conn], sid, conn["id"], op if agent else None)
+            catalog.pick_connection([conn], sid, conn["id"], op if agent else None)
             out = actions.integration_call(conn, b.get("method"), b.get("path"), b.get("body"))
         except cloudauth.AuthError as e:
             self.send_json({"error": str(e)}, status=e.status)
             return
-        except (DriveError, integrations.IntegrationError) as e:
+        except (DriveError, catalog.IntegrationError) as e:
             self._err(e)
             return
         self.send_json(out)
@@ -219,15 +220,15 @@ class IntegrationsMixin:
             self.send_json({"error": "Unknown connection %r" % cid}, status=404)
             return
         try:
-            if integrations.service(sid)["provider"] != conn["kind"]:
-                raise integrations.IntegrationError("%s is not a %s service" % (sid, conn["kind"]), 400)
-            if integrations.state(conn, sid) not in ("on", "off"):
-                raise integrations.IntegrationError(
-                    "%s has not been granted on this account — connect it first" % integrations.service(sid)["label"], 409)
-        except integrations.IntegrationError as e:
+            if catalog.service(sid)["provider"] != conn["kind"]:
+                raise catalog.IntegrationError("%s is not a %s service" % (sid, conn["kind"]), 400)
+            if catalog.state(conn, sid) not in ("on", "off"):
+                raise catalog.IntegrationError(
+                    "%s has not been granted on this account — connect it first" % catalog.service(sid)["label"], 409)
+        except catalog.IntegrationError as e:
             self._err(e)
             return
-        db.drive_upsert(cid, dict(conn, config=integrations.with_service(conn.get("config"), sid, bool(body.get("on")))))
+        db.drive_upsert(cid, dict(conn, config=catalog.with_service(conn.get("config"), sid, bool(body.get("on")))))
         self._g_integrations(req)
 
     def _p_integrations_op(self, req):
@@ -241,14 +242,14 @@ class IntegrationsMixin:
         sid, op, on = body.get("service") or "", body.get("op") or "", bool(body.get("on"))
         try:
             if conn is None:
-                raise integrations.IntegrationError("Unknown connection %r" % body.get("connection"), 404)
-            if integrations.service(sid)["provider"] != conn["kind"]:
-                raise integrations.IntegrationError("%s is not a %s service" % (sid, conn["kind"]), 400)
-            if on and integrations.op_state(conn, sid, op) == "grant":
-                raise integrations.IntegrationError("%s needs a new grant — connect it first"
-                                                    % integrations.OP_LABELS.get(op, op), 409)
-            cfg = integrations.with_op(conn.get("config"), sid, op, on)
-        except integrations.IntegrationError as e:
+                raise catalog.IntegrationError("Unknown connection %r" % body.get("connection"), 404)
+            if catalog.service(sid)["provider"] != conn["kind"]:
+                raise catalog.IntegrationError("%s is not a %s service" % (sid, conn["kind"]), 400)
+            if on and catalog.op_state(conn, sid, op) == "grant":
+                raise catalog.IntegrationError("%s needs a new grant — connect it first"
+                                                    % catalog.OP_LABELS.get(op, op), 409)
+            cfg = catalog.with_op(conn.get("config"), sid, op, on)
+        except catalog.IntegrationError as e:
             self._err(e)
             return
         db.drive_upsert(conn["id"], dict(conn, config=cfg))
@@ -262,7 +263,7 @@ class IntegrationsMixin:
             return
         body = self.read_body() or {}
         conn = db.drive_get(body.get("connection") or "")
-        if conn is None or conn["kind"] not in integrations.FILES_SERVICE:
+        if conn is None or conn["kind"] not in catalog.FILES_SERVICE:
             self.send_json({"error": "Unknown files connection %r" % body.get("connection")}, status=404)
             return
         root = (body.get("root") or "/").strip()
@@ -289,8 +290,8 @@ class IntegrationsMixin:
             return
         body = self.read_body() or {}
         try:
-            rules = integrations.local_set(body.get("roots"), body.get("ops"))
-        except integrations.IntegrationError as e:
+            rules = catalog.local_set(body.get("roots"), body.get("ops"))
+        except catalog.IntegrationError as e:
             self._err(e)
             return
         db.local_disk_set(rules)
@@ -302,18 +303,18 @@ class IntegrationsMixin:
         """The vendor client for this call. An agent (MCP principal) must hold
         the owner's leave for `op`; a human is bounded by the grant alone."""
         agent = (getattr(req, "principal", None) or {}).get("kind") == "mcp"
-        conn = integrations.pick_connection(list(db.drives_load().values()), sid, cid or None,
+        conn = catalog.pick_connection(list(db.drives_load().values()), sid, cid or None,
                                             op if agent else None)
         cls = workspace.Gmail if sid == "google.gmail" else workspace.Calendar
-        if not agent and integrations.op_state(conn, sid, op) == "grant":
-            raise integrations.IntegrationError(
-                "%s needs a new grant — connect it in Integrations" % integrations.OP_LABELS.get(op, op), 403)
+        if not agent and catalog.op_state(conn, sid, op) == "grant":
+            raise catalog.IntegrationError(
+                "%s needs a new grant — connect it in Integrations" % catalog.OP_LABELS.get(op, op), 403)
         return cls(conn)
 
     def _ws(self, req, sid, cid, op, fn):
         try:
             self.send_json(fn(self._account(req, sid, cid, op)))
-        except (DriveError, integrations.IntegrationError) as e:
+        except (DriveError, catalog.IntegrationError) as e:
             self._err(e)
         except ValueError:
             self.send_json({"error": "limit must be a number"}, status=400)

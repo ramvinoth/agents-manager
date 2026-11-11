@@ -13,6 +13,7 @@ from contextlib import contextmanager
 import pytest
 
 from orchestrator import db
+from orchestrator.shared import postgres
 
 
 class _FakeCursor:
@@ -37,14 +38,14 @@ class _FakeCursor:
 
 @pytest.fixture
 def cursor(monkeypatch):
-    """Swap orchestrator.db._db for a context manager yielding a scriptable fake cursor."""
+    """Swap orchestrator.shared.postgres.cursor for a context manager yielding a scriptable fake cursor."""
     cur = _FakeCursor()
 
     @contextmanager
     def fake_db():
         yield cur
 
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     return cur
 
 

@@ -19,7 +19,8 @@ import urllib.parse
 
 import pytest
 
-from orchestrator import drive_oauth, drives, integrations
+from orchestrator import drive_oauth, drives
+from orchestrator.integrations import catalog
 from orchestrator.drives import DriveError
 
 ORIGIN = "https://life.example.test"
@@ -111,7 +112,7 @@ def test_redirect_uri_is_the_callback_on_the_requesting_origin():
 def test_build_auth_url_has_all_params_and_no_secret():
     client = {"client_id": "CID", "client_secret": "CS"}
     url = drive_oauth._build_auth_url("google", client, CALLBACK, "STATE-XYZ", "CHALL",
-                                     integrations.consent_scopes(None, "google.drive"))
+                                     catalog.consent_scopes(None, "google.drive"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert q["client_id"] == "CID"
     assert q["redirect_uri"] == CALLBACK
@@ -128,14 +129,14 @@ def test_build_auth_url_has_all_params_and_no_secret():
 
 def test_build_auth_url_speaks_each_vendors_offline_dialect():
     url = drive_oauth._build_auth_url("dropbox", {"client_id": "K"}, CALLBACK, "S", "C",
-                                      integrations.consent_scopes(None, "dropbox.files"))
+                                      catalog.consent_scopes(None, "dropbox.files"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert url.startswith("https://www.dropbox.com/oauth2/authorize?")
     assert q["token_access_type"] == "offline" and "access_type" not in q
     assert q["redirect_uri"] == CALLBACK
     assert "files.content.write" in q["scope"]
     url = drive_oauth._build_auth_url("onedrive", {"client_id": "E"}, CALLBACK, "S", "C",
-                                      integrations.consent_scopes(None, "onedrive.files"))
+                                      catalog.consent_scopes(None, "onedrive.files"))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
     assert url.startswith("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?")
     assert "offline_access" in q["scope"] and "access_type" not in q
@@ -361,8 +362,8 @@ def test_adding_gmail_asks_for_it_on_top_of_what_the_account_holds(env, monkeypa
     cfg = env["db"].rows["drive1"]["config"]
     assert cfg["refresh_token"] == "RT-OLD"          # Google omits it on re-consent; keep ours
     assert cfg["account"] == "ram@example.test"      # from the id_token, no extra API call
-    assert integrations.state(env["db"].rows["drive1"], "google.gmail") == "on"
-    assert integrations.state(env["db"].rows["drive1"], "google.drive") == "on"
+    assert catalog.state(env["db"].rows["drive1"], "google.gmail") == "on"
+    assert catalog.state(env["db"].rows["drive1"], "google.drive") == "on"
 
 
 def test_unticked_permission_fails_the_flow_but_keeps_the_grant(env, monkeypatch):
@@ -371,7 +372,7 @@ def test_unticked_permission_fails_the_flow_but_keeps_the_grant(env, monkeypatch
     _redirect(r["pending"], code="C", good_state=True)
     st = drive_oauth.status(r["pending"])
     assert st["status"] == "failed" and "Gmail" in st["error"]
-    assert integrations.state(env["db"].rows["drive1"], "google.gmail") == "grant"
+    assert catalog.state(env["db"].rows["drive1"], "google.gmail") == "grant"
 
 
 def test_service_of_another_provider_is_400(env):

@@ -9,6 +9,7 @@ from threading import RLock
 import pytest
 
 from orchestrator import providers
+from orchestrator.shared import postgres
 from orchestrator.routes.providers import ProvidersMixin
 
 
@@ -273,7 +274,7 @@ def test_cas_locks_before_compare_and_merge(monkeypatch, defaults):
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     result = db.ai_defaults_cas(4, choice()) if defaults else db.session_ai_cas("s", 4, {"provider": ""})
     sql = [c.args[0] for c in cur.execute.call_args_list]
     assert "FOR UPDATE" in sql[1]
@@ -293,7 +294,7 @@ def test_stale_cas_does_not_update(monkeypatch, defaults):
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     result = db.ai_defaults_cas(4, choice()) if defaults else db.session_ai_cas("s", 4, {})
     assert result is None
     assert not any(c.args[0].startswith("UPDATE") for c in cur.execute.call_args_list)
@@ -399,7 +400,7 @@ def test_legacy_default_write_updates_locked_canonical_record(monkeypatch):
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     db.provider_upsert("new", {"model": "m", "isDefault": True}, default_change=True)
     calls = cur.execute.call_args_list
     assert "FOR UPDATE" in calls[1].args[0]
@@ -416,7 +417,7 @@ def test_connection_save_without_default_flag_never_changes_defaults(monkeypatch
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     db.provider_upsert("p", {"model": "m"})
     assert not any("settings" in c.args[0] for c in cur.execute.call_args_list)
 

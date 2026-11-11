@@ -30,7 +30,8 @@ import threading
 import time
 import urllib.parse
 
-from orchestrator import db, integrations
+from orchestrator import db
+from orchestrator.integrations import catalog
 from orchestrator.drives import ADAPTERS, DriveError, _http, _vendor_client
 
 CALLBACK_PATH = "/api/drive/oauth/callback"
@@ -52,10 +53,10 @@ _BROWSER_HTML = ("<html><head><title>Harman</title>"
 def available_vendors():
     """The providers with a built consent flow — the set the UI may offer for
     connecting a new account. A provider ships by adding an
-    integrations.PROVIDERS entry; nothing else changes. API-token providers
+    catalog.PROVIDERS entry; nothing else changes. API-token providers
     (Cloudflare, Hetzner…) have no consent — they connect through
     /api/integrations/token."""
-    return frozenset(pid for pid, p in integrations.PROVIDERS.items() if p["via"] == "oauth")
+    return frozenset(pid for pid, p in catalog.PROVIDERS.items() if p["via"] == "oauth")
 
 
 def _pkce():
@@ -79,7 +80,7 @@ def redirect_uri_for(origin):
 
 def _build_auth_url(kind, client, redirect_uri, state, challenge, scope):
     """The consent URL the browser opens. Pure (no I/O)."""
-    v = integrations.PROVIDERS[kind]
+    v = catalog.PROVIDERS[kind]
     q = {
         "client_id": client["client_id"],
         "redirect_uri": redirect_uri,
@@ -120,14 +121,14 @@ def start(drive_id, origin, service=None, op=None):
     kind = drive["kind"]
     if kind not in available_vendors():
         raise DriveError("No OAuth flow built for %r" % kind, 501)
-    service = service or integrations.FILES_SERVICE[kind]
+    service = service or catalog.FILES_SERVICE[kind]
     try:
-        if integrations.service(service)["provider"] != kind:
-            raise integrations.IntegrationError("%s is not a %s service" % (service, kind), 400)
-        scope = integrations.consent_scopes(drive, service, op)
-    except integrations.IntegrationError as e:
+        if catalog.service(service)["provider"] != kind:
+            raise catalog.IntegrationError("%s is not a %s service" % (service, kind), 400)
+        scope = catalog.consent_scopes(drive, service, op)
+    except catalog.IntegrationError as e:
         raise DriveError(str(e), e.status)
-    client = _vendor_client(kind, public=integrations.PROVIDERS[kind]["public"])  # 403 with guidance if unset
+    client = _vendor_client(kind, public=catalog.PROVIDERS[kind]["public"])  # 403 with guidance if unset
 
     verifier, challenge = _pkce()
     state = secrets.token_urlsafe(16)
@@ -201,7 +202,7 @@ def _exchange(p):
     (runs in the viewer — the token never touches the browser). A public
     client proves itself with the PKCE verifier alone; a confidential one adds
     its secret."""
-    v = integrations.PROVIDERS[p["kind"]]
+    v = catalog.PROVIDERS[p["kind"]]
     form = {
         "code": p["code"],
         "client_id": p["client"]["client_id"],
@@ -249,15 +250,15 @@ def _store(p, tokens):
     drive = db.drive_get(p["drive_id"])
     if drive is None:
         raise DriveError("Connection vanished during OAuth", 404)
-    cfg = integrations.with_service(drive.get("config"), p["service"], True)
+    cfg = catalog.with_service(drive.get("config"), p["service"], True)
     if p.get("op"):
-        cfg = integrations.with_op(cfg, p["service"], p["op"], True)
+        cfg = catalog.with_op(cfg, p["service"], p["op"], True)
     cfg.pop("expired", None)
     cfg.update({
         "access_token": tokens.get("access_token"),
         "refresh_token": tokens.get("refresh_token") or cfg.get("refresh_token"),
         "token_expiry": int(time.time()) + int(tokens.get("expires_in", 3600)),
-        "scopes": integrations.parse_granted(tokens.get("scope"), p["scope"].split()),
+        "scopes": catalog.parse_granted(tokens.get("scope"), p["scope"].split()),
     })
     row = {"label": drive["label"], "kind": drive["kind"], "config": cfg,
            "status": drive.get("status") or "active",
@@ -272,12 +273,12 @@ def _store(p, tokens):
     if account:
         cfg["account"] = account
     db.drive_upsert(p["drive_id"], row)
-    missing = (set(integrations.service(p["service"])["scopes"])
-               | set(integrations.op_spec(p["service"], p["op"])["scopes"] if p.get("op") else ())
+    missing = (set(catalog.service(p["service"])["scopes"])
+               | set(catalog.op_spec(p["service"], p["op"])["scopes"] if p.get("op") else ())
                ) - set(cfg["scopes"])
     if missing:
         raise DriveError("%s was not granted — tick every permission on the consent screen "
-                         "and try again" % integrations.service(p["service"])["label"], 403)
+                         "and try again" % catalog.service(p["service"])["label"], 403)
 
 
 def _page(title, msg):
@@ -297,7 +298,7 @@ def callback(query):
         return _page("Connection didn't complete",
                      "This sign-in link is not for a connection that is still waiting. "
                      "Go back to Harman and click Add again.")
-    label = integrations.service(p["service"])["label"]
+    label = catalog.service(p["service"])["label"]
     error = (query.get("error") or [None])[0]
     code = (query.get("code") or [None])[0]
     if error:

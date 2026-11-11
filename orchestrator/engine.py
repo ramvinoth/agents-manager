@@ -1543,9 +1543,9 @@ def _integrations_summary():
     folders), so an agent knows its integrations natively. Built per run from
     the same rules the routes enforce; a failure never blocks the turn."""
     try:
-        from orchestrator import integrations
-        return integrations.agent_summary(
-            integrations.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
+        from orchestrator.integrations import catalog
+        return catalog.agent_summary(
+            catalog.agent_view(list(db.drives_load().values()), db.local_disk_rules()))
     except Exception as e:
         print(f"[engine] integrations summary failed: {e}", flush=True)
         return ""

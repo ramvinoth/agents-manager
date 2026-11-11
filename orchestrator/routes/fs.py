@@ -7,7 +7,8 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from orchestrator import db, integrations
+from orchestrator import db
+from orchestrator.integrations import catalog
 from orchestrator.drives import DriveError, adapter_for
 from orchestrator.filesearch import search as search_project
 from orchestrator.engine import (
@@ -119,18 +120,18 @@ def _agent_refusal(req, kind, ref, path, op):
     if (getattr(req, "principal", None) or {}).get("kind") != "mcp":
         return None
     if kind == "local":
-        if integrations.local_allows(db.local_disk_rules(), _local_real(path), op, _local_real):
+        if catalog.local_allows(db.local_disk_rules(), _local_real(path), op, _local_real):
             return None
         return ("The owner has not allowed agents to %s %s on this machine — "
                 "ask them to add it under Integrations → Local disk"
-                % (integrations.OP_LABELS[op].lower(), path or "~"))
+                % (catalog.OP_LABELS[op].lower(), path or "~"))
     if kind == "drive":
         drive = db.drive_get(ref)
-        sid = integrations.FILES_SERVICE.get((drive or {}).get("kind"))
-        if drive is None or sid is None or integrations.op_state(drive, sid, op) == "on":
+        sid = catalog.FILES_SERVICE.get((drive or {}).get("kind"))
+        if drive is None or sid is None or catalog.op_state(drive, sid, op) == "on":
             return None   # unknown drive: adapter_for answers the 404
         return ("The owner has not allowed agents to %s on this drive — they allow it in Integrations"
-                % integrations.OP_LABELS[op].lower())
+                % catalog.OP_LABELS[op].lower())
     return None
 
 

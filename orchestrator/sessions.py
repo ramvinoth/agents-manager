@@ -373,20 +373,14 @@ def auto_trim_session(session_path):
         new_size = p.stat().st_size
         _log.info("auto_trim_session: %s trimmed %.1f MB → %.1f MB (%d lines kept)",
                    p.name, size / 1024 / 1024, new_size / 1024 / 1024, len(kept))
-        # Update the backup row with the trimmed size
+        # Record the trimmed size on the backup taken just before the trim.
         try:
             from orchestrator import db
-            session_id = _session_id_from_path(p)
-            rows = db.backup_list(session_id)
+            rows = db.backup_list(_session_id_from_path(p))
             if rows:
-                latest = rows[0]
-                db.backup_create.__wrapped__ if hasattr(db.backup_create, '__wrapped__') else None
-                # Update trimmed_bytes on the latest backup row
-                with db._db() as cur:
-                    cur.execute("UPDATE session_backups SET trimmed_bytes = %s WHERE id = %s",
-                                (new_size, latest["id"]))
+                db.backup_set_trimmed(rows[0]["id"], new_size)
         except Exception:
-            pass  # non-critical metadata update
+            _log.warning("auto_trim_session: could not record trimmed size for %s", p.name, exc_info=True)
     except Exception:
         _log.exception("auto_trim_session failed for %s", session_path)
 

@@ -6,7 +6,7 @@ refresh and 401-retry as the file adapters — speaking one REST dialect and
 returning small, model-friendly dicts (an agent reads these as tool output, so
 bodies are plain text, capped, and headers are the handful a human would look
 at). Which connection to use and whether the owner turned the service on is
-decided by orchestrator.integrations; this module only talks to the vendor.
+decided by orchestrator.integrations.catalog; this module only talks to the vendor.
 
 Deliberately absent: sending mail, and telling guests about event changes. A
 draft lands in the owner's Gmail Drafts and the owner presses Send; an event

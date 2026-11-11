@@ -212,7 +212,7 @@ def project_entry(row):
     outcome = row.get("outcome")
     category, result_label, explanation = _OUTCOMES.get(outcome, _OTHER) if isinstance(outcome, str) else _OTHER
     timestamp = row.get("created_at")
-    # ECMAScript Date range, seconds (db._now). Excludes NaN, infinities and
+    # ECMAScript Date range, seconds (postgres.now). Excludes NaN, infinities and
     # corrupted huge integers before float conversion; no truthy bool timestamps.
     if type(timestamp) not in (int, float) or not 0 <= timestamp <= 8_640_000_000_000 or not math.isfinite(timestamp):
         timestamp = None

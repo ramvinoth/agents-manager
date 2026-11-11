@@ -31,7 +31,7 @@ FOLDER = "application/vnd.google-apps.folder"
 
 class _FakeDriveDB:
     """In-memory stand-in for the drives table: drive_get (adapter_for) and
-    drive_upsert (a token refresh persisting back). Rows mirror db._drive_row's
+    drive_upsert (a token refresh persisting back). Rows mirror integrations.repository._drive_row's
     shape; the upsert records the call so a test can assert a refresh saved."""
 
     def __init__(self, rows):

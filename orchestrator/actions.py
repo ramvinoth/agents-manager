@@ -737,9 +737,10 @@ def integration_call(conn, method, path, body):
     """One vendor API call on a token connection — the proxy route's direct
     path and the approved red action share it. A 401 marks the token expired
     so the owner sees it on the account and replaces it."""
-    from orchestrator import drives, integrations
-    status, out = integrations.api_call(conn, method, path, body, drives._http)
-    if status == 401 and not integrations.expired(conn):
+    from orchestrator import drives
+    from orchestrator.integrations import catalog
+    status, out = catalog.api_call(conn, method, path, body, drives._http)
+    if status == 401 and not catalog.expired(conn):
         db.drive_upsert(conn["id"], dict(conn, config=dict(conn.get("config") or {}, expired=True)))
     return {"status": status, "body": out}
 
@@ -748,14 +749,15 @@ def _integration_api_call(a):
     # Runs only after the owner approved this one change (it is red); the
     # account's change switch stays off. The connection is re-read here: it may
     # have been disconnected while the approval waited.
-    from orchestrator import cloudauth, integrations
+    from orchestrator import cloudauth
+    from orchestrator.integrations import catalog
     from orchestrator.drives import DriveError
     conn = db.drive_get(a.get("connection") or "")
     if conn is None:
         return {"error": "That account is no longer connected"}
     try:
         return integration_call(conn, a.get("method"), a.get("path"), a.get("body"))
-    except (cloudauth.AuthError, DriveError, integrations.IntegrationError) as e:
+    except (cloudauth.AuthError, DriveError, catalog.IntegrationError) as e:
         return {"error": str(e)}
 
 

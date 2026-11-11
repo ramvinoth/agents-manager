@@ -14,7 +14,8 @@ the file browser with no other change.
 """
 import secrets
 
-from orchestrator import db, drive_oauth, integrations
+from orchestrator import db, drive_oauth
+from orchestrator.integrations import catalog
 from orchestrator.drives import DriveError
 
 def _public_view(d):
@@ -34,8 +35,8 @@ def _public_view(d):
 
 
 def _is_drive(d):
-    files = integrations.FILES_SERVICE.get(d.get("kind"))
-    return not integrations.granted(d) or bool(files and integrations.usable(d, files))
+    files = catalog.FILES_SERVICE.get(d.get("kind"))
+    return not catalog.granted(d) or bool(files and catalog.usable(d, files))
 
 
 class DrivesMixin:

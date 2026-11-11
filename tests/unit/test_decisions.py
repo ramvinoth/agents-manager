@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import pytest
 
 from orchestrator import db
+from orchestrator.shared import postgres
 
 
 class RecordingCursor:
@@ -30,7 +31,7 @@ def cursor(monkeypatch):
     def transaction():
         yield cur
 
-    monkeypatch.setattr(db, "_db", transaction)
+    monkeypatch.setattr(postgres, "cursor", transaction)
     return cur
 
 

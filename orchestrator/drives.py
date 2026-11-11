@@ -74,7 +74,8 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-from orchestrator import db, integrations, push
+from orchestrator import db, push
+from orchestrator.integrations import catalog
 
 # Every drive byte passes through the viewer's memory — a single download is
 # resp.read() and a zip is built in a BytesIO (no vendor has a generic
@@ -210,7 +211,7 @@ class OAuthAccount:
         self.config = drive.get("config") or {}
 
     def _provider(self):
-        return integrations.PROVIDERS[self.kind]
+        return catalog.PROVIDERS[self.kind]
 
     def _client(self):
         return _vendor_client(self.kind, public=self._provider()["public"])
@@ -1010,8 +1011,8 @@ def adapter_for(drive_id):
     cls = ADAPTERS.get(drive["kind"])
     if cls is None:
         raise DriveError(f"No adapter for drive kind {drive['kind']!r}", 501)
-    files = integrations.FILES_SERVICE.get(drive["kind"])
-    if files and integrations.granted(drive) and not integrations.usable(drive, files):
+    files = catalog.FILES_SERVICE.get(drive["kind"])
+    if files and catalog.granted(drive) and not catalog.usable(drive, files):
         raise DriveError("Files is not turned on for this %s account — turn it on in Integrations"
-                         % integrations.PROVIDERS[drive["kind"]]["label"], 403)
+                         % catalog.PROVIDERS[drive["kind"]]["label"], 403)
     return cls(drive)
