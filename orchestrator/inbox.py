@@ -475,8 +475,9 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
     is a session, so the chat's lifecycle carries it), then:
       - recipient is a session: wake it — queued into a running turn, or a
         fresh resumed turn with the message as its prompt (best-effort);
-      - recipient is the owner: push the phones (a session writing to the
-        owner is news; the owner writing to a session is not).
+      - recipient is the owner: push the phones. Nothing else pushes: the owner
+        writing to a session is not news to them (it echoed their own words
+        back), and peer-to-peer traffic is visible in the inbox without a buzz.
     Returns the row, or None on a fatal failure (which is logged, not raised).
     """
     try:
@@ -510,9 +511,6 @@ def deliver_message(sender_type, sender_id, recipient_type, recipient_id,
                     args=(str(recipient_id),
                           f"[inbox] From {_who(sender_type, sender_id)}:\n{body}"),
                 ).start()
-            _push_owner(f"{_who(sender_type, sender_id)} · inbox",
-                        body.replace("\n", " ")[:180],
-                        {"session": str(recipient_id)})
         elif sender_type == "session":
             # The tap opens this session's mailbox, where the message is.
             _push_owner(f"{_label(sender_id)} · inbox",

@@ -453,3 +453,10 @@ def test_an_agent_reads_only_the_mail_addressed_to_it():
         {"id": 5, "recipient_type": "session", "recipient_id": "s1", "status": "snoozed"},
     ]
     assert inbox.unread_for_session(rows, "s1") == [1]
+
+
+def test_owner_and_peer_messages_to_a_session_never_push(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_message("user", "", "session", "s1", "hi")
+    inbox.deliver_message("session", "s2", "session", "s1", "psst")
+    assert sent == []
