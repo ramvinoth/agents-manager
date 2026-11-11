@@ -433,8 +433,6 @@ def init_db():
             -- An agent = persona + an optional Claude Code plugin (a folder under
             -- orchestrator/agent_plugins, passed as --plugin-dir).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
-            -- Leftovers of the cancelled Map lens (agent lens, project lenses, code_index).
-            ALTER TABLE agent_templates DROP COLUMN IF EXISTS lens;
             -- The Harman authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
@@ -449,8 +447,6 @@ def init_db():
             -- account sees, edits or deletes it. NULL = shared with every account
             -- (the builtins, and agents made before agents had owners).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS owner_user_id INTEGER;
-            ALTER TABLE projects DROP COLUMN IF EXISTS lenses;
-            DROP TABLE IF EXISTS code_index;
             -- ── Stores migrated from the ~/.claude/*.json files ─────────────────
             -- The JSON files used to be the second persistence layer; this closes
             -- that split so Postgres is the single source of truth (and the only

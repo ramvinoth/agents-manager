@@ -22,7 +22,7 @@ Implements [[PRD: <Feature>]]
 ## States — every state the feature can be in, and what moves it between them
 ## Edge cases — empty, huge, offline, concurrent, unauthorized, partial failure
 ## Data — what is stored, where, retention
-## Interfaces — routes / screens / tools touched (real paths from the code map)
+## Interfaces — routes / screens / tools touched (real paths from the code)
 ## Acceptance tests — Given / When / Then, one per behaviour rule
 ## Out of scope
 #spec #feature/<kebab-name>
