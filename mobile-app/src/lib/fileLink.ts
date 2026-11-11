@@ -37,10 +37,3 @@ function normalize(p: string): string {
   }
   return (abs ? "/" : "") + out.join("/")
 }
-
-/** The folder holding `path` and its own name, for finding its entry in a listing. */
-export function splitPath(path: string): { dir: string; name: string } {
-  const i = path.lastIndexOf("/")
-  if (i < 0) return { dir: "~", name: path }
-  return { dir: i === 0 ? "/" : path.slice(0, i), name: path.slice(i + 1) }
-}

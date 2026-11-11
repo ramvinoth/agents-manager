@@ -28,13 +28,6 @@ export function deckSwipe({ dx, dy, vx }: { dx: number; dy: number; vx: number }
   return dx > 0 ? "approve" : "deny"
 }
 
-/** How far into the swipe the card is, -1 (deny) … 1 (approve), for the
- *  stamp's opacity and the card's tilt. */
-export function swipeProgress(dx: number): number {
-  if (!Number.isFinite(dx)) return 0
-  return Math.max(-1, Math.min(1, dx / TRIGGER))
-}
-
 /** A card's ScrollView released past its edge pages the deck: pulled down
  *  past the top → previous card, pushed up past the bottom → next card. A
  *  card shorter than the screen is all edge, so either pull pages it. */

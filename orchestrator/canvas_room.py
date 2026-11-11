@@ -193,10 +193,6 @@ class Registry:
                     if room.idle(now):
                         self._rooms.pop(room.canvas_id, None)
 
-    def flush_all(self):
-        for room in self.loaded():
-            room.flush()
-
     def _ensure_thread(self):
         if self._thread and self._thread.is_alive():
             return

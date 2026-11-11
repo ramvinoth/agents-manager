@@ -1,7 +1,7 @@
 import assert from "node:assert"
 import {
   AUTO_OPEN_AWAY_MS, commentPurpose, commentResolves, deckActions, deckSwipe,
-  overscrollStep, shouldAutoOpenDeck, swipeProgress, verdictColumn,
+  overscrollStep, shouldAutoOpenDeck, verdictColumn,
 } from "./decisionDeck.ts"
 
 let passed = 0
@@ -43,14 +43,6 @@ test("deckSwipe: a mostly vertical drag is a scroll, never a verdict", () => {
 test("deckSwipe: garbage input decides nothing", () => {
   assert.equal(deckSwipe({ dx: NaN, dy: 0, vx: 0 }), null)
   assert.equal(deckSwipe({ dx: Infinity, dy: 0, vx: 0 }), null)
-})
-
-test("swipeProgress: clamps to -1..1", () => {
-  assert.equal(swipeProgress(0), 0)
-  assert.equal(swipeProgress(1000), 1)
-  assert.equal(swipeProgress(-1000), -1)
-  assert.equal(swipeProgress(NaN), 0)
-  assert.ok(swipeProgress(55) > 0 && swipeProgress(55) < 1)
 })
 
 test("overscrollStep: a pull past the top goes back, past the bottom goes on", () => {
