@@ -22,8 +22,8 @@ transcript viewer, browser live-view, file manager, push notifications, direct S
 
 ## Requires this repo's backend change
 
-Auth uses a Bearer token, enabled by the server change in `viewer/server.py`
-(`_auth_token`) and `viewer/routes/auth.py` (signin/signup return the token when
+Auth uses a Bearer token, enabled by the server change in `orchestrator/server.py`
+(`_auth_token`) and `orchestrator/routes/auth.py` (signin/signup return the token when
 `wantToken` is set). Both live in this repo, so client and server ship together.
 
 ## Run it

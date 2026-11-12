@@ -1,4 +1,4 @@
-"""Tests for /api/fs/write (viewer/routes/fs.py) — the JSON single-file write
+"""Tests for /api/fs/write (orchestrator/routes/fs.py) — the JSON single-file write
 the agent MCP's fs_write tool calls, and its lockstep with the MCP tool table.
 
 The multipart upload and this route must land in the same store (_fs_store),
@@ -9,10 +9,10 @@ import base64
 
 import pytest
 
-from viewer import viewer_mcp
-from viewer.routes import fs as fs_routes
-from viewer.routes.fs import FsMixin
-from viewer.server import SessionViewerHandler
+from orchestrator import viewer_mcp
+from orchestrator.routes import fs as fs_routes
+from orchestrator.routes.fs import FsMixin
+from orchestrator.server import SessionViewerHandler
 
 
 class _Handler(FsMixin):

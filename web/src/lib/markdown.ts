@@ -141,7 +141,7 @@ function renderTables(h: string): string {
 }
 
 /** Notes-only syntax: `[[Title#Heading|alias]]` links and `#tags`
- *  (viewer/notelinks.py is the grammar). Off for chat text, where `[[` and
+ *  (orchestrator/notelinks.py is the grammar). Off for chat text, where `[[` and
  *  `#` mean nothing. `resolves` says whether a link target exists, so an
  *  unwritten one renders as a ghost the reader can click to create. */
 export type NoteSyntax = { resolves: (target: string) => boolean }
@@ -212,8 +212,11 @@ function renderInline(text: string, syntax?: NoteSyntax): string {
     if (url.startsWith("#")) return `<a href="${url}">${text}</a>`
     if (/^file:\/\//i.test(url) || !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(url))
       return `<a href="#" class="file-link" data-file="${url}">${text}</a>`
+    const card = /^harman:\/\/card\/(\d+)$/.exec(url)
+    if (card) return `<a href="#" class="card-link" data-card="${card[1]}">${text}</a>`
     return `<a href="#">${text}</a>`
   })
+  h = linkifyCardMentions(h)
   h = h.replace(/^(\s*)[-*] (.+)$/gm, "$1<li>$2</li>")
   h = h.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>")
   h = h.replace(/^\d+\. (.+)$/gm, "<li>$1</li>")
@@ -279,4 +282,14 @@ export function renderMarkdownSegments(text: string, syntax?: NoteSyntax): Markd
  *  metadata Claude reads, not prose to render). Text without one is unchanged. */
 export function stripFrontmatter(text: string): string {
   return text.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "").replace(/^\s+/, "")
+}
+
+/** "Card 460" / "card #460" in prose becomes a link that opens that card, so a
+ *  mention never sends the owner hunting on the board. Anchors and code are
+ *  left alone (already a link, or literal text). */
+function linkifyCardMentions(html: string): string {
+  return html
+    .split(/(<a\b[^>]*>[\s\S]*?<\/a>|<pre[\s\S]*?<\/pre>|<code>[\s\S]*?<\/code>)/)
+    .map((part, i) => i % 2 ? part : part.replace(/\b([Cc]ards? )#?(\d+)\b/g, (_m, word, id) => `<a href="#" class="card-link" data-card="${id}">${word}${id}</a>`))
+    .join("")
 }

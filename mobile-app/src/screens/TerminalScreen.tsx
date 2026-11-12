@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform } from "react-native"
 import { WebView, type WebViewMessageEvent } from "react-native-webview"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
+import { useHost } from "../lib/useHost"
 import { attachTerminal, detachTerminal, sendTerminal } from "../lib/terminalSession"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Terminal">
@@ -130,8 +131,10 @@ const HTML = `<!doctype html><html><head><meta name="viewport" content="width=de
   }
 </script></body></html>`
 
-export default function TerminalScreen({ route }: Props) {
-  const { host } = route.params
+export default function TerminalScreen({ navigation }: Props) {
+  // The machine the app is pointed at (the same one Chats lists).
+  const { host, label } = useHost()
+  useEffect(() => { navigation.setOptions({ title: `Terminal — ${label}` }) }, [navigation, label])
   const webref = useRef<WebView>(null)
   // The per-mount writer identity — used to attach/detach the singleton cleanly.
   const writer = useRef<(b64: string) => void>((b64) => {

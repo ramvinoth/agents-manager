@@ -1,11 +1,11 @@
-"""viewer.toml is the ONE TOML seam (Codex config read/write). It must import
+"""orchestrator.toml is the ONE TOML seam (Codex config read/write). It must import
 on every interpreter the server runs under — the LaunchAgent uses the system
 python 3.9, where stdlib tomllib does not exist. Before this shim, every
 codex path (`/api/capabilities?agent=codex`, session_detail for a Codex
 session, MCP save) raised ModuleNotFoundError in production."""
 from pathlib import Path
 
-from viewer import codex, toml
+from orchestrator import codex, toml
 
 
 def test_round_trip_preserves_nested_tables():

@@ -18,6 +18,11 @@ let ready = false
 // The cold-start notification response is returned persistently by the OS, so we
 // track the last-handled id to avoid re-navigating on a remount.
 let _lastColdId: string | null = null
+// Set by the app shell: true when a push's payload is about what the user is looking at.
+let _suppressForeground: (data: Record<string, unknown>) => boolean = () => false
+export function setForegroundSuppressor(fn: (data: Record<string, unknown>) => boolean): void {
+  _suppressForeground = fn
+}
 
 async function load() {
   if (ready) return Notifications
@@ -27,13 +32,16 @@ async function load() {
       // Show a banner even when the app is foregrounded. iOS 14+/SDK 51 split
       // the old `shouldShowAlert` into `shouldShowBanner` + `shouldShowList`;
       // we set all three so it works across expo-notifications versions.
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
+      handleNotification: async (n: any) => {
+        const quiet = _suppressForeground(n?.request?.content?.data ?? {})
+        return {
+          shouldShowAlert: !quiet,
+          shouldShowBanner: !quiet,
+          shouldShowList: !quiet,
+          shouldPlaySound: !quiet,
+          shouldSetBadge: false,
+        }
+      },
     })
     ready = true // only mark ready AFTER the handler install succeeds, so a
     // transient throw (version skew) doesn't permanently disable notifications.
@@ -54,20 +62,6 @@ export async function ensurePermission(): Promise<boolean> {
     return !!asked.granted
   } catch {
     return false
-  }
-}
-
-/** Fire a local notification. No-ops when unavailable. */
-export async function notify(title: string, body: string): Promise<void> {
-  const N = await load()
-  if (!N) return
-  try {
-    await N.scheduleNotificationAsync({
-      content: { title, body: body.slice(0, 200) },
-      trigger: null, // immediate
-    })
-  } catch {
-    /* notification is best-effort */
   }
 }
 
@@ -122,7 +116,7 @@ export async function unregisterPush(send: (token: string) => Promise<unknown>):
 
 /**
  * Route notification taps to the right chat. The server merges `{session, host}`
- * into every push payload (viewer/push.py:notify_all), so a tap carries enough to
+ * into every push payload (orchestrator/push.py:notify_all), so a tap carries enough to
  * open the exact session. Handles BOTH cases: a tap while the app is
  * running/backgrounded (addNotificationResponseReceivedListener) AND a cold start
  * where the tap launched the app (getLastNotificationResponseAsync). Best-effort:

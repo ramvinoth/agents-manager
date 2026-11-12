@@ -1,6 +1,6 @@
 /**
- * The phone side of the Manager relay's end-to-end channel — the mirror of
- * viewer/relay.py's Channel, pack and unpack. Pure (no sockets, no state
+ * The phone side of the Harman relay's end-to-end channel — the mirror of
+ * orchestrator/relay.py's Channel, pack and unpack. Pure (no sockets, no state
  * outside the object) so it is node-tested against vectors the server made.
  *
  * Handshake: the phone repeats a plaintext {"type":"e2ee_hello","key":<its

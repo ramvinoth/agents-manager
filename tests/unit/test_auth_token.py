@@ -1,7 +1,7 @@
 """Unit tests for request auth-token resolution: the cookie (web UI) vs an
 `Authorization: Bearer <token>` header (non-browser clients like the mobile app).
 Hermetic — binds the real method to a fake request, no server/DB/SSH."""
-from viewer.server import SessionViewerHandler
+from orchestrator.server import SessionViewerHandler
 
 
 def _token(cookie="", authorization=None):

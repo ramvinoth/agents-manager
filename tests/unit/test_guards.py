@@ -2,8 +2,8 @@
 storage: gitops branch/repo/path validation and hostenv key validation."""
 import shlex
 
-from viewer.gitops import REPO_RE, _q_path, valid_branch
-from viewer.hostenv import valid_key
+from orchestrator.gitops import REPO_RE, _q_path, valid_branch
+from orchestrator.hostenv import valid_key
 
 
 class TestValidBranch:

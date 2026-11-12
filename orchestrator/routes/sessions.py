@@ -1,0 +1,894 @@
+"""orchestrator.routes.sessions — read, list, describe, rename and delete chat sessions, and start new ones.
+
+Loops live in routes/loops.py, agent templates in routes/agent_templates.py, fork and restore in
+routes/session_fork.py."""
+import json
+import os
+import re
+import time
+import uuid as uuid_mod
+from pathlib import Path
+from urllib.parse import parse_qs
+from orchestrator import agenttemplates, chatplugins, db, discussion, history
+from orchestrator.history import HistoryView
+from orchestrator.config import (
+    CHAT_JOBS, CLAUDE_DIR, DEFAULT_SESSION, MAX_POLL_BYTES, PROJECTS_CACHE, find_tool_call, read_back_f, split_lines,
+)
+from orchestrator.adapters import list_sessions_local, normalize_lines, resolve_agent_session
+from orchestrator.codex import start_codex_new
+from orchestrator.engine import (
+    push_label, extract_cwd, get_host, resolve_level, start_claude_run,
+    start_copilot_new,
+)
+from orchestrator.loops import USER_ORIGIN, build_schedule
+from orchestrator.remote import (
+    remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
+)
+
+
+class SessionsMixin:
+    def resolve_session(self, rel_path):
+        """Validate and resolve a session path; returns Path or None (error already sent)."""
+        full_path = CLAUDE_DIR.parent / rel_path
+        try:
+            full_path = full_path.resolve()
+            if not str(full_path).startswith(str(CLAUDE_DIR.parent.resolve()) + os.sep):
+                self.send_error(403, "Access denied")
+                return None
+        except Exception:
+            self.send_error(400, "Invalid path")
+            return None
+        if not full_path.is_file():
+            self.send_error(404, "Session not found")
+            return None
+        return full_path
+
+    def serve_session_file(self, rel_path, query, agent="claude"):
+        if agent != "claude":
+            full_path = resolve_agent_session(agent, rel_path)
+            if full_path is None:
+                self.send_error(404, "Session not found")
+                return
+            q = parse_qs(query)
+            if not any(k in q for k in ("tail", "before", "from")):
+                self.send_error(400, "This agent's sessions require tail/from/before")
+                return
+            # Lines are normalised to the Claude schema so the frontend parser
+            # renders them unchanged. Byte offsets stay on the RAW file.
+            with open(full_path, "rb") as f:
+                size = f.seek(0, 2)
+                self._serve_window(f, q, size, lambda v: v, lambda off: off,
+                                   lambda lines: normalize_lines(agent, lines))
+            return
+        full_path = self.resolve_session(rel_path)
+        if full_path is None:
+            return
+        q = parse_qs(query)
+        # A Claude chat reads as one file: the rows its trims dropped
+        # (orchestrator.history) followed by the live transcript.
+        with HistoryView(full_path) as view:
+            if "find" in q:
+                # ?find=card:<id> | tool:<tool_use_id> — the call that raised a
+                # decision, even when it is far above the loaded history.
+                kind, _, val = q["find"][0].partition(":")
+                if kind == "card" and val.isdigit():
+                    hit = find_tool_call(view, "card_id", int(val))
+                elif kind == "tool" and val:
+                    hit = find_tool_call(view, "id", val)
+                else:
+                    self.send_error(400, "find takes card:<id> or tool:<id>")
+                    return
+                if hit:
+                    hit["offset"] = history.encode(view.gen, hit["offset"])
+                self.send_json({"hit": hit})
+                return
+            if not any(k in q for k in ("tail", "before", "from")):
+                self.serve_raw_file(view)
+                return
+
+            def to_v(off):
+                v = history.decode(view.gen, off)
+                return v if v is not None and view.at_line_start(min(v, view.size)) else None
+            self._serve_window(view, q, view.size, lambda v: history.encode(view.gen, v), to_v,
+                               lambda lines: lines)
+
+    def _serve_window(self, f, q, size, enc, dec, emit):
+        """?from= / ?tail= / ?before= over an open file of `size` bytes. enc/dec
+        map file offsets to the ones clients hold; dec returns None for an
+        offset from before a trim, answered with an empty page that makes
+        both clients reload (from: size 0 < their offset; before: no lines)."""
+        try:
+            if "from" in q:
+                start = dec(int(q["from"][0]))
+                if start is None:
+                    off = int(q["from"][0])
+                    self.send_json({"start": off, "end": off, "size": 0, "lines": []})
+                    return
+                start = max(0, min(start, size))
+                length = min(size - start, MAX_POLL_BYTES)
+                f.seek(start)
+                data = f.read(length)
+                if start + length < size:
+                    # Capped read: cut at the last newline so offsets stay on
+                    # line boundaries for the next poll.
+                    nl = data.rfind(b"\n")
+                    data = data[:nl + 1] if nl >= 0 else b""
+                lines, end = split_lines(data, start)
+                self.send_json({"start": enc(start), "end": enc(end), "size": enc(size), "lines": emit(lines)})
+            elif "tail" in q:
+                n = max(1, min(int(q["tail"][0]), 5000))
+                start, data = read_back_f(f, size, n)
+                lines, end = split_lines(data, start)
+                self.send_json({"start": enc(start), "end": enc(end), "size": enc(size), "lines": emit(lines)})
+            else:  # before
+                n = max(1, min(int((q.get("lines") or ["300"])[0]), 5000))
+                end_off = dec(int(q["before"][0]))
+                if end_off is None:
+                    # A trim moved the history under this offset. An empty page that
+                    # keeps start == before: "nothing yet", not "top of chat"; the
+                    # client's next tail poll sees the stale offset and reloads.
+                    off = int(q["before"][0])
+                    self.send_json({"start": off, "end": off, "size": enc(size), "lines": []})
+                    return
+                end_off = max(0, min(end_off, size))
+                start, data = read_back_f(f, end_off, n)
+                lines, _ = split_lines(data, start)
+                self.send_json({"start": enc(start), "end": enc(end_off), "size": enc(size), "lines": emit(lines)})
+        except ValueError:
+            self.send_error(400, "Bad query parameter")
+
+    @staticmethod
+    def message_text(obj):
+        """Plain text of a user message record (for composer prefill)."""
+        content = (obj.get("message") or {}).get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+        return ""
+
+    # ----- Slash commands / projects / session resolution -----
+
+    # ----- Agents (agent templates): shared + the caller's personal ones -----
+
+    def _g_default(self, req):
+        self.send_json({"default": DEFAULT_SESSION})
+
+    # ----- POST route handlers -----
+
+    def session_busy(self, sid):
+        job = CHAT_JOBS.get(sid)
+        return bool(job and job["running"])
+
+    def _p_session_delete(self, req):
+        self.handle_delete_session()
+
+    def _p_session_meta(self, req):
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        full = self.resolve_session_quiet(body.get("session", ""))
+        if not full:
+            self.send_json({"error": "Session not found"}, status=404)
+            return
+        sid = full.stem
+        fields = {}
+        if "goal" in body:
+            fields["goal"] = str(body["goal"]).strip()
+        if "systemPrompt" in body:
+            fields["systemPrompt"] = str(body["systemPrompt"]).strip()
+        if "avatar" in body:
+            # A short emoji/token chosen on the Session profile page. Cap length
+            # so a stray payload can't bloat the persisted meta.
+            fields["avatar"] = str(body["avatar"]).strip()[:16]
+        if "archived" in body:
+            fields["archived"] = bool(body["archived"])
+        if "favorite" in body:
+            fields["favorite"] = bool(body["favorite"])
+        if "pinned" in body:
+            # A list of pinned message uuids. Cap count + id length so a stray
+            # payload can't bloat the persisted meta.
+            fields["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
+        # provider / convMode / effort / model are NOT accepted here: the AI
+        # selection is a revisioned, validated document owned by orchestrator/ai.py
+        # and written only through /api/session/ai (routes/providers.py).
+        if body.keys() & {"provider", "convMode", "effort", "modelSelection"}:
+            self.send_json({"error": "AI settings are saved via /api/session/ai"}, status=400)
+            return
+        meta = db.session_meta_patch(sid, fields) if fields else db.session_meta_get(sid)
+        if "archived" in fields:
+            # A chat's notes and inbox messages live and die with it: archiving
+            # shelves them, unarchiving brings them back (the views read the
+            # shelf flag).
+            db.notes_archive_for_session(sid, fields["archived"])
+            db.inbox_archive_for_session(sid, fields["archived"])
+        self.send_json({"saved": True, "goal": meta.get("goal", ""),
+                        "systemPrompt": meta.get("systemPrompt", ""),
+                        "avatar": meta.get("avatar", ""),
+                        "archived": bool(meta.get("archived", False)),
+                        "favorite": bool(meta.get("favorite", False)),
+                        "pinned": meta.get("pinned", [])})
+
+    # ----- Route tables (path -> handler). One place to see every endpoint. -----
+    def _g_session_meta(self, req):
+        rel = (req.query.get("session") or [""])[0]
+        if req.host != "local":
+            sid = rel.rsplit("/", 1)[-1].replace(".jsonl", "")
+            meta = db.session_meta_get(sid)
+            try:
+                cwd = remote_extract_cwd(req.host, rel)
+            except Exception:
+                cwd = ""
+            self.send_json(dict(self._meta_doc(sid, meta), cwd=cwd))
+            return
+        full = self.resolve_session_quiet(rel)
+        if not full:
+            self.send_json({"error": "Session not found"}, status=404)
+            return
+        sid = full.stem
+        meta = db.session_meta_get(sid)
+        self.send_json(dict(self._meta_doc(sid, meta), cwd=extract_cwd(full)))
+
+    @staticmethod
+    def _meta_doc(sid, meta):
+        """The cheap per-session settings document: stored meta plus the
+        Trust fields (saved permission policy, level override and the level
+        that applies). Trust reads THIS, not /api/session-detail — the detail
+        also summarises the transcript, a full read of a file that can be
+        hundreds of MB (measured 7.7s cold on a 450MB chat)."""
+        return {"session": sid, "goal": meta.get("goal", ""),
+                "systemPrompt": meta.get("systemPrompt", ""),
+                "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
+                "permission_mode": meta.get("permission_mode", ""),
+                "level": meta.get("level", ""),
+                "effective_level": resolve_level(sid)}
+
+    def serve_remote_session_file(self, host, rel_path, q):
+        if not any(k in q for k in ("tail", "before", "from")):
+            self.send_json({"error": "Remote sessions require tail/from/before"}, status=400)
+            return
+        try:
+            r = remote_read_session(host, rel_path, q)
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+            return
+        if r is None:
+            self.send_json({"error": "Session not found on host"}, status=404)
+            return
+        self.send_json(r)
+
+    def _g_projects(self, req):
+        self.serve_projects(req.host)
+
+    def serve_raw_file(self, f):
+        """The whole history: an open HistoryView, streamed."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/jsonl")
+        self.send_header("Content-Length", str(f.size))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        f.seek(0)
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+
+    def resolve_session_quiet(self, rel_path):
+        """Like resolve_session but returns None without sending an error."""
+        try:
+            full_path = (CLAUDE_DIR.parent / rel_path).resolve()
+            if not str(full_path).startswith(str(CLAUDE_DIR.parent.resolve()) + os.sep):
+                return None
+            # A session is a regular file (its .jsonl). A directory under
+            # ~/.claude exists too, but is not a session — and a route that
+            # accepted one would bind real resources (a GPU call slot, a chat
+            # job) to something no transcript can ever be written to.
+            return full_path if full_path.is_file() else None
+        except Exception:
+            return None
+
+    # ----- Helpers -----
+
+    def serve_resolve(self, query, host="local"):
+        """Find the JSONL file for a session id (used after starting a new session)."""
+        q = parse_qs(query)
+        sid = (q.get("id") or [""])[0]
+        if not re.fullmatch(r"[0-9a-fA-F-]{8,40}", sid):
+            self.send_json({"error": "bad id"}, status=400)
+            return
+        job = CHAT_JOBS.get(sid) or {}
+        try:
+            r = get_host(host).resolve(sid)
+        except Exception as e:
+            self.send_json({"found": False, "error": str(e)})
+            return
+        r["running"] = job.get("running", False)
+        if r.get("found"):
+            # A thread opened from a push knows only the id: give it the
+            # chat's name so the header settles on the first read.
+            try:
+                r["title"] = push_label(sid)
+            except Exception:
+                pass
+        else:
+            r["returncode"] = job.get("returncode")
+            r["stderr"] = job.get("stderr", "")
+        self.send_json(r)
+
+    # ----- Sessions -----
+
+    def serve_projects(self, host="local"):
+        """Distinct working directories seen across sessions (for the new-session
+        picker), on whichever host is selected."""
+        now = time.time()
+        cached = PROJECTS_CACHE.get(host)
+        if cached and now - cached["at"] < 60:
+            self.send_json(cached["data"])
+            return
+        try:
+            data = get_host(host).projects()
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+            return
+        PROJECTS_CACHE[host] = {"at": now, "data": data}
+        self.send_json(data)
+
+    def _g_resolve(self, req):
+        self.serve_resolve(req.raw_query, req.host)
+
+    def serve_remote_agent_session(self, host, agent, rel_path, q):
+        if not any(k in q for k in ("tail", "before", "from")):
+            self.send_json({"error": "Remote sessions require tail/from/before"}, status=400)
+            return
+        try:
+            r = remote_read_agent_session(host, agent, rel_path, q)
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+            return
+        if r is None:
+            self.send_json({"error": "Session not found on host"}, status=404)
+            return
+        self.send_json(r)
+
+    def _g_session_summary(self, req):
+        self.serve_session_summary(req.raw_query, req.host)
+
+    def _g_session_detail(self, req):
+        """One composed view of a session for the fleet: meta + capabilities +
+        summary + live run flag, so an agent (or the UI) gets the whole picture in
+        one call. Pure composition — it DELEGATES to the same producers the
+        /api/session-meta, /api/capabilities and /api/session-summary routes use,
+        and re-derives nothing. A failure in one source degrades that section to
+        an {error} rather than failing the whole document. Unread is intentionally
+        NOT here: it is a per-reader list concern computed from the file mtime, and
+        opening the detail is itself the act that clears it.
+
+        Target selection accepts `id` OR `session`: human clients pass `session`
+        (a path, like every other session route), but the MCP transport mirrors the
+        CALLER's own id into `session` as a credential, so an agent naming its target
+        there would always get itself. `id` is untouched by that transport — the same
+        escape hatch chat_status uses — so an agent targets another session by `id`."""
+        raw = (req.query.get("id") or req.query.get("session") or [""])[0]
+        host, agent = req.host, (req.query.get("agent") or ["claude"])[0]
+        if not raw:
+            self.send_json({"error": "No session"}, status=400)
+            return
+        # Normalise to (sid, resolvable path): human clients pass a path, the MCP
+        # passes a bare id. The summary/capabilities producers address the file by
+        # PATH, so a bare id (no slash) is resolved to one first.
+        sid = self.sid_from_path(raw) or raw.rsplit("/", 1)[-1].replace(".jsonl", "")
+        rel = raw
+        if "/" not in raw:
+            try:
+                r = get_host(host).resolve(sid)
+            except Exception as e:
+                self.send_json({"error": f"SSH: {e}"}, status=502)
+                return
+            if not r.get("found"):
+                self.send_json({"error": "Session not found"}, status=404)
+                return
+            rel = r["path"]
+        meta = db.session_meta_get(sid)
+        caps, _ = self.compute_capabilities(host, agent, rel)
+        try:
+            summary = get_host(host).session_summary(rel)
+        except Exception as e:
+            summary = {"error": f"SSH: {e}"}
+        self.send_json({
+            "session": sid, "host": host, "agent": agent,
+            "running": self.session_busy(sid),
+            "meta": {"goal": meta.get("goal", ""), "systemPrompt": meta.get("systemPrompt", ""),
+                     "avatar": meta.get("avatar", ""), "provider": meta.get("provider", ""),
+                     "convMode": meta.get("convMode", "chat"), "effort": meta.get("effort", ""),
+                     "permission_mode": meta.get("permission_mode", ""),
+                     "level": meta.get("level", ""),
+                     "archived": bool(meta.get("archived", False)),
+                     "favorite": bool(meta.get("favorite", False))},
+            # The Manager level this session acts at right now (override → its
+            # agent role → ic), so a client shows the effective value next to
+            # the owner's override without re-deriving the resolution order.
+            "effective_level": resolve_level(sid),
+            "capabilities": caps,
+            "summary": summary,
+        })
+
+    def _p_session_seen(self, req):
+        """Advance the caller's unread cursor on one session (marks it read for
+        THIS reader only). The reader is the resolved principal — stable across a
+        human's devices, distinct per agent — so unread is per-person, not
+        per-device like the seen-map it replaced.
+
+        Target accepts `id` OR `session` for the same reason as session_detail: the
+        MCP transport overwrites `session` with the caller's own id, so an agent
+        marks another session read via `id` (a bare uuid), while human clients pass
+        a `session` path. Only the sid is needed here — no path resolution — so a
+        bare id is used directly."""
+        body = self.read_body() or {}
+        reader = (req.principal or {}).get("actor", "")
+        raw = (body.get("id") or body.get("session") or "").strip()
+        sid = self.sid_from_path(raw) or raw.rsplit("/", 1)[-1].replace(".jsonl", "")
+        if not reader or not sid:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        db.session_seen_set(reader, sid)
+        self.send_json({"seen": True, "session": sid})
+
+    def _p_session_mode(self, req):
+        """Set the permission mode a session's runs start in.
+
+        The stored mode (session_meta.permission_mode) is applied by
+        engine.effective_permission_mode at the start of EVERY run — loop-fired
+        and chat runs alike — overriding what the caller requested. This is how
+        a trusted agent runs its loops without a Bash approval per command.
+
+        Red action: a model's request QUEUES for the owner's approval — an
+        agent never grants itself trust, and the self-mutation rail below
+        refuses even the request when the target is the caller's own session
+        (the owner grants it himself at the UI). The owner at the UI
+        self-approves: he is the one delegating.
+
+        The target travels as `for_session` for the same reason as loop_create:
+        the MCP transport overwrites the body's `session` with the caller's own
+        id, so a target named `session` would always equal the acting session.
+        Human clients pass `session` directly (the transport only mirrors for
+        agent credentials) — and an agent that names no target falls onto the
+        mirrored `session` = itself, which the rail refuses."""
+        body = self.read_body() or {}
+        target = (body.get("for_session") or body.get("session") or "").strip()
+        if not target:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        if self._self_mutation_denied(
+                req, target,
+                what="its own permission mode",
+                reason="a session may not change its own permission mode — ask the owner to set it"):
+            return
+        self._org_send(req, "session_mode_set",
+                       {"session": target, "mode": (body.get("mode") or "").strip(),
+                        "reason": body.get("reason") or ""})
+
+    def _p_session_level(self, req):
+        """Set (or clear, level "") the Manager authority level a session acts at
+        on the board — the org-side twin of _p_session_mode, with the same
+        rails: Red (an agent's request queues for the owner), and a session may
+        never change its own level. `for_session` names the target for the
+        same MCP-mirroring reason documented there."""
+        body = self.read_body() or {}
+        target = (body.get("for_session") or body.get("session") or "").strip()
+        if not target:
+            self.send_json({"error": "session required"}, status=400)
+            return
+        if self._self_mutation_denied(
+                req, target,
+                what="its own authority level",
+                reason="a session may not change its own authority level — ask the owner to set it"):
+            return
+        self._org_send(req, "session_level_set",
+                       {"session": target, "level": (body.get("level") or "").strip(),
+                        "reason": body.get("reason") or ""})
+
+    def handle_delete_session(self):
+        body = self.read_body() or {}
+        host = body.get("host", "local")
+        agent = body.get("agent", "claude")
+        sid = self.sid_from_path(body.get("session", ""))
+        if agent == "codex" and host == "local":
+            full = resolve_agent_session("codex", body.get("session", ""))
+            if not full:
+                self.send_json({"error": "Session not found"}, status=404)
+                return
+            if self.session_busy(full.stem):
+                self.send_json({"error": "A run is in progress for this session"}, status=409)
+                return
+            trash = Path.home() / ".codex" / ".viewer-trash"
+            try:
+                trash.mkdir(parents=True, exist_ok=True)
+                os.rename(full, trash / full.name)
+            except Exception as e:
+                self.send_json({"error": str(e)}, status=500)
+                return
+            db.session_meta_delete(full.stem)
+            discussion.purge_session_notes(full.stem)
+            db.inbox_delete_for_session(full.stem)
+            from orchestrator import questions
+            questions.clear(full.stem)
+            questions.clear_plan(full.stem)
+            self.send_json({"deleted": True, "trash": str(trash / full.name)})
+            return
+        if sid and self.session_busy(sid):
+            self.send_json({"error": "A run is in progress for this session"}, status=409)
+            return
+        if host != "local":
+            r = remote_session_edit(host, "delete", sid)
+            if not r.get("error"):
+                db.loop_delete_for_session(sid)
+                db.session_meta_delete(sid)
+                discussion.purge_session_notes(sid)
+                db.inbox_delete_for_session(sid)
+            self.send_json(r)
+            return
+        full = self.resolve_session_quiet(body.get("session", ""))
+        if not full:
+            self.send_json({"error": "Session not found"}, status=404)
+            return
+        sid = full.stem
+        trash = Path.home() / ".claude" / ".viewer-trash" / full.parent.name
+        try:
+            trash.mkdir(parents=True, exist_ok=True)
+            os.rename(full, trash / full.name)
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
+            return
+        # Drop the session's schedules and meta. job_runs rows are detached
+        # (loop_id -> NULL) by the FK, so the audit history outlives the delete
+        # and is aged out by retention. A running loop can't reach here: the
+        # session_busy guard above 409s while a run is in progress.
+        db.loop_delete_for_session(sid)
+        db.session_meta_delete(sid)
+        discussion.purge_session_notes(sid)
+        db.inbox_delete_for_session(sid)
+        chatplugins.purge(sid)
+        self.send_json({"deleted": True, "trash": str(trash / full.name)})
+
+    def _p_session_rename(self, req):
+        body = self.read_body()
+        if body is None:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+        title = (body.get("title") or "").strip()[:200]
+        if not title:
+            self.send_json({"error": "Empty title"}, status=400)
+            return
+        agent = body.get("agent", "claude")
+        if agent == "codex" and body.get("host", "local") == "local":
+            # Codex rollouts have no title record; keep it in the viewer's own
+            # session_meta and overlay it onto the list (see _g_sessions).
+            full = resolve_agent_session("codex", body.get("session", ""))
+            if not full:
+                self.send_json({"error": "Session not found"}, status=404)
+                return
+            db.session_meta_patch(full.stem, {"title": title})
+            self.send_json({"renamed": True, "title": title})
+            return
+        if body.get("host", "local") != "local":
+            sid = self.sid_from_path(body.get("session", ""))
+            self.send_json(remote_session_edit(body["host"], "rename", sid, title=title))
+            return
+        full = self.resolve_session_quiet(body.get("session", ""))
+        if not full:
+            self.send_json({"error": "Session not found"}, status=404)
+            return
+        # Same record the CLI's /rename writes; appended atomically.
+        rec = {"type": "custom-title", "customTitle": title, "sessionId": full.stem,
+               "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())}
+        try:
+            with open(full, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception as e:
+            self.send_json({"error": str(e)}, status=500)
+            return
+        self.send_json({"renamed": True, "title": title})
+
+    def serve_session_summary(self, query, host="local"):
+        q = parse_qs(query)
+        rel = (q.get("session") or [""])[0]
+        try:
+            data = get_host(host).session_summary(rel)
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+            return
+        self.send_host_result(data, not_found="Session not found")
+
+    # ----- Fork / restore / delete -----
+
+    def _g_sessions(self, req):
+        reader = (req.principal or {}).get("actor", "")
+        agent = (req.query.get("agent") or ["claude"])[0]
+        if agent != "claude":
+            try:
+                sessions = (remote_list_sessions_agent(req.host, agent) if req.host != "local"
+                            else list_sessions_local(agent))
+                # overlay viewer-set titles (rename / new-session name), then the
+                # shared meta/run/harness/unread enrichment every list carries.
+                all_meta = db.session_meta_all()
+                for s in sessions:
+                    t = all_meta.get(s["id"], {}).get("title")
+                    if t:
+                        s["title"] = t
+                self._overlay_meta(sessions, reader, agent)
+                self.send_json(sessions)
+            except Exception as e:
+                self.send_json({"error": f"SSH: {e}"} if req.host != "local" else {"error": str(e)},
+                               status=502 if req.host != "local" else 500)
+            return
+        self.serve_session_list(req.host, reader)
+
+    def _g_session_file(self, req):
+        session_path = req.path[len("/api/session/"):]
+        agent = (req.query.get("agent") or ["claude"])[0]
+        if req.host != "local":
+            if agent != "claude":
+                self.serve_remote_agent_session(req.host, agent, session_path, req.query)
+            else:
+                self.serve_remote_session_file(req.host, session_path, req.query)
+            return
+        self.serve_session_file(session_path, req.raw_query, agent)
+
+    def _p_new_session(self, req):
+        self.handle_new_session(req)
+
+    def handle_new_session(self, req):
+        """Start a brand-new claude session in a given working directory.
+
+        An agent (MCP session_create) may start one too, gated: a name is
+        required (a nameless worker shows as a raw id in every list), it can
+        never start a session in bypass mode — that trust is the owner's to
+        grant through session_mode_set — and it cannot attach `jobs`, which are
+        saved as human-origin loops the automation switch would not stop. Its
+        request then runs through the org gate like every other agent action:
+        at Workspace level it launches; below it, it queues for the owner's
+        approval (with the agent's `reason`) instead of hitting a wall."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self.send_json({"error": "Invalid JSON body"}, status=400)
+            return
+
+        if not (body.get("message") or "").strip():
+            self.send_json({"error": "Empty message"}, status=400)
+            return
+        principal = req.principal
+        tid = str(body.get("template") or "")
+        template = db.agent_template_get(int(tid)) if tid.isdigit() else None
+        if template and not agenttemplates.visible(template, self._template_viewer(req)):
+            self.send_json({"error": "Agent not found"}, status=404)   # someone else's personal agent
+            return
+        if principal["kind"] != "mcp":
+            payload, status = start_new_session(body)
+            self.send_json(payload, status=status)
+            return
+        if not (body.get("title") or "").strip():
+            self.send_json({"error": "A new session needs a title"}, status=400)
+            return
+        if body.get("mode", "acceptEdits") in ("bypass", "bypassPermissions"):
+            self.send_json({"error": "An agent cannot start a session in bypass mode; "
+                                     "ask the owner with session_mode_set"}, status=403)
+            return
+        if body.get("jobs"):
+            # jobs are saved with the HUMAN origin, which the automation switch
+            # never stops; an agent schedules via loop_create.
+            self.send_json({"error": "An agent schedules a new session's work with loop_create"}, status=403)
+            return
+        from orchestrator import actions
+        payload, status = actions.execute(actions.intent("session_create", body, principal["actor"]),
+                                          principal["human_role"], principal["session_level"],
+                                          acting_session=principal["session"])
+        self.send_json(payload, status=400 if status == 200 and payload.get("error") else status)
+
+    def serve_session_list(self, host="local", reader=""):
+        """List all session JSONL files with metadata, on the selected host."""
+        try:
+            sessions = get_host(host).list_sessions()
+            if isinstance(sessions, list):
+                self._overlay_meta(sessions, reader, "claude")
+            self.send_json(sessions)
+        except Exception as e:
+            self.send_json({"error": f"SSH: {e}"}, status=502)
+
+    def _overlay_meta(self, sessions, reader, harness):
+        """Enrich a raw session list in place with the viewer-owned fields the
+        thin list carries: the meta overlay (avatar/archived/favorite/provider),
+        the live run flag, the harness tag, and the reader's unread bit.
+
+        One `session_meta_all` and one `session_seen_get` per list request,
+        joined in memory — not a query per session. `running` reflects THIS
+        viewer process's CHAT_JOBS (jobs it started); it is not a cross-host
+        truth, which is why it is honestly named per-process rather than global.
+        `unread` compares the last visible message (not the file mtime) with the
+        reader's cursor. It is false when `reader` is unknown or has never opened
+        anything, so a listing with no principal is silent rather than lying that
+        everything is unread."""
+        all_meta = db.session_meta_all()
+        seen = db.session_seen_get(reader) if reader else {}
+        # The reader's first cursor marks when unread tracking began for them. A
+        # chat they never opened is unread if it had a message since then (an
+        # agent started it for them); older never-opened chats stay quiet rather
+        # than lighting up the whole backlog.
+        tracked_since = min(seen.values()) if seen else None
+        for s in sessions:
+            meta = all_meta.get(s.get("id"), {})
+            if meta.get("avatar"):
+                s["avatar"] = meta["avatar"]
+            s["archived"] = bool(meta.get("archived", False))
+            s["favorite"] = bool(meta.get("favorite", False))
+            s["provider"] = meta.get("provider", "")
+            # A transcript with no title of its own lists as its short id; the
+            # name given at creation is the better label until it gets one.
+            if meta.get("title") and s.get("title") in ("", (s.get("id") or "")[:8]):
+                s["title"] = meta["title"]
+            s["running"] = self.session_busy(s.get("id"))
+            s["harness"] = harness
+            # Remote listings carry no last_message; their mtime is the best
+            # signal. Every listing leaves here with one, so clients sort and
+            # show the same time unread is judged by.
+            s["last_message"] = s.get("last_message") or s.get("modified")
+            last = seen.get(s.get("id")) or tracked_since
+            s["unread"] = bool(last and s["last_message"] and s["last_message"] > last)
+
+def start_new_session(body):
+    """Launch a new chat from a validated request body → (payload, status).
+
+    One launcher for both callers: the owner's New chat (the route) and an
+    agent's session_create (actions.ACTIONS, run or replayed after the
+    owner approves it)."""
+    message = (body.get("message") or "").strip()
+    mode = body.get("mode", "acceptEdits")
+    model = body.get("model", "")
+    host = body.get("host", "local")
+    if not message:
+        return {"error": "Empty message"}, 400
+    jobs, err = _new_session_jobs(body.get("jobs"), host, body.get("agent", "claude"))
+    if err:
+        return {"error": err}, 400
+    if host != "local":
+        cwd = (body.get("cwd") or "~").strip()   # validated on the remote by claude
+    else:
+        cwd = os.path.expanduser((body.get("cwd") or "~").strip())
+        if not os.path.isdir(cwd):
+            return {"error": f"Not a directory: {cwd}"}, 400
+
+    from orchestrator import ai
+    # Started from an agent: read from the template row, never from the body,
+    # so a client cannot name an arbitrary plugin. Its AI (if it pins one) is
+    # the fallback when the body sends none, ahead of the owner's defaults.
+    template = db.agent_template_get(int(body["template"])) if str(body.get("template") or "").isdigit() else None
+    selection = body.get("ai")
+    if "ai" not in body and body.get("agent", "claude") == "claude":
+        selection = (template or {}).get("ai") or (db.setting_get(ai.DEFAULTS_KEY) or {}).get("selection")
+    if selection is not None:
+        try:
+            selection = ai.validate(selection, host, body.get("agent", "claude"))
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
+    elif "ai" in body:
+        return {"error": "ai must be a selection object"}, 400
+
+    if body.get("agent", "claude") == "codex":
+        if host != "local":
+            return {"error": "New Codex sessions are local-only"}, 400
+        res = start_codex_new(message, cwd, model)
+        if not res:
+            return {"error": "Couldn't start a Codex session (no rollout appeared)"}, 500
+        new_id, rel = res
+        title = (body.get("title") or "").strip()[:200]
+        if title:
+            db.session_meta_patch(new_id, {"title": title})
+        return {"started": True, "session": new_id, "path": rel}, 200
+
+    if body.get("agent", "claude") == "copilot":
+        res = start_copilot_new(message, cwd, host)
+        if not res:
+            return {"error": "Couldn't start a Copilot session (check that Copilot is signed in on this host)"}, 500
+        new_id, rel = res
+        title = (body.get("title") or "").strip()[:200]
+        if title:  # Copilot has no rename convention → store the name in the viewer's meta
+            db.session_meta_patch(new_id, {"title": title})
+        return {"started": True, "session": new_id, "path": rel}, 200
+
+    session_id = str(uuid_mod.uuid4())
+    title = (body.get("title") or "").strip()[:200]
+    # Pre-store system prompt / goal so the very first run already gets them.
+    sp = (body.get("systemPrompt") or "").strip()
+    goal = (body.get("goal") or "").strip()
+    provider = (body.get("provider") or "").strip()
+    effort = (body.get("effort") or "").strip()
+    conv_mode = (body.get("convMode") or "chat").strip()
+    if conv_mode not in ("chat", "agent"):
+        conv_mode = "chat"
+    meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
+            "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+    if title:
+        # The fallback name until the transcript carries its own custom-title
+        # (a remote run gets no --name, and the client's rename can fail).
+        meta["title"] = title
+    # Started from an agent template: its plugin rides on every Claude run
+    # (engine --plugin-dir).
+    if template:
+        meta.update(chatplugins.start_from_template(template, session_id))
+    if selection is not None:
+        meta.update(ai.meta_fields(selection), aiRevision=1)
+    try:
+        resolved = ai.resolve(meta, model, host)
+    except ValueError as exc:
+        return {"error": str(exc)}, 400
+    provider, model, conv_mode, effort = (resolved[k] for k in ("provider", "model", "convMode", "effort"))
+    db.session_meta_set(session_id, meta)
+    # A new custom-provider session (local only).
+    if provider and host == "local":
+        if conv_mode == "agent":
+            # Agent mode: the full harness pointed at the custom endpoint. The
+            # claude CLI creates the transcript (as a normal Claude session).
+            from orchestrator import providers
+            penv = providers.anthropic_env(provider, model=model, preset=resolved["preset"])
+            if not penv:
+                return {"error": "Provider unavailable"}, 502
+            if not start_claude_run(session_id, ["--session-id", session_id], message,
+                                    mode, cwd, "", host, provider_env=penv, effort=effort):
+                return {"error": "Busy"}, 409
+            return _started(session_id, jobs)
+        # Chat mode: the viewer proxies and creates the transcript file itself.
+        from orchestrator.customrun import start_custom_run
+        if not start_custom_run(session_id, provider, message, cwd, host, mode, model=model, preset=resolved["preset"]):
+            return {"error": "Couldn't start the custom-provider session (provider unavailable)"}, 502
+        return _started(session_id, jobs)
+    # The name rides on the run itself (claude --name writes the transcript's
+    # custom-title), so it never depends on a client renaming the chat after
+    # it appears. Local only: a remote host's CLI version is not ours to assume.
+    args = ["--session-id", session_id] + (["--name", title] if title and host == "local" else [])
+    if not start_claude_run(session_id, args, message, mode, cwd, model, host, effort=effort):
+        return {"error": "Busy"}, 409
+    return _started(session_id, jobs)
+
+
+def _new_session_jobs(raw, host, agent):
+    """Validate the scheduled jobs a new chat starts with → ([job], error).
+
+    Checked BEFORE the session starts, so a bad schedule refuses the whole
+    launch instead of leaving a chat that is missing a job its owner asked
+    for. Jobs fire through the local scheduler on Claude sessions only."""
+    if not raw:
+        return [], None
+    if not isinstance(raw, list):
+        return None, "jobs must be a list"
+    if host != "local" or agent != "claude":
+        return None, "Scheduled jobs need a Claude chat on this machine"
+    jobs = []
+    for i, j in enumerate(raw, 1):
+        prompt = (j.get("prompt") or "").strip() if isinstance(j, dict) else ""
+        if not prompt:
+            return None, f"Job {i} has no prompt"
+        sched, err = build_schedule(j.get("cron"), j.get("interval"), j.get("at"))
+        if err:
+            return None, f"Job {i}: {err}"
+        jobs.append((prompt, sched))
+    return jobs, None
+
+
+def _started(session_id, jobs):
+    """Reply to a launched new chat, saving its jobs in the same request.
+
+    The transcript doesn't exist yet, so each job carries the session id and
+    no path; the scheduler resolves the path by id when it fires
+    (run_loop_iteration). Saved here, not by the client after the chat
+    appears, so a job is never lost to the owner leaving the screen."""
+    ids = []
+    for prompt, sched in jobs:
+        lid = uuid_mod.uuid4().hex[:12]
+        db.loop_upsert(lid, {"session": session_id, "path": "", "prompt": prompt,
+                             "runs": 0, "created": time.time(), "enabled": True,
+                             "origin": USER_ORIGIN, "model": "", "provider": "", **sched})
+        ids.append(lid)
+    return {"started": True, "session": session_id, "jobs": ids}, 200

@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import CardMentions from "../components/CardMentions"
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, View } from "react-native"
 import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type InboxMessage, type OpenDecision, type Session } from "../api/client"
 import {
-  kindLabel, SNOOZE_OPTIONS,
-  conversationPreview, groupConversations, inboxScopeFilter, inboxStateBadge,
+  kindLabel, senderColor, senderLabel, SNOOZE_OPTIONS,
+  conversationPreview, conversationBadge, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending,
 } from "../lib/inbox"
@@ -62,6 +64,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const t = useTheme()
   const styles = useStyles()
   const headerHeight = useHeaderHeight()
+  const insets = useSafeAreaInsets()
   const scope = useMemo(() => inboxScopeFilter(session ? { session } : {}), [session])
   const [messages, setMessages] = useState<InboxMessage[]>([])
   const [unread, setUnread] = useState(0)
@@ -261,14 +264,18 @@ export default function InboxScreen({ navigation, session, title, host, path, is
             <View
               testID={`inbox-msg-${m.id}`}
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
+                !item.first ? { marginTop: 4 } : null,
                 decision && m.open ? styles.ibOpenDecision : null]}
             >
+              {!item.mine && item.first ? (
+                <Text style={[styles.ibKind, { color: senderColor(m, t.scheme) }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
+              ) : null}
               {decision ? (
                 <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>
                   {kindLabel(m.kind).toUpperCase()}{badge ? ` · ${badge}` : ""}
                 </Text>
               ) : null}
-              <Text style={styles.bubbleText} selectable>{m.body}</Text>
+              <Text style={styles.bubbleText} selectable><CardMentions text={m.body} /></Text>
               {decision && m.open ? (
                 <View style={styles.ibActions}>
                   <TouchableOpacity
@@ -298,7 +305,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
           )
         }}
       />
-      <View style={styles.composerWrap}>
+      <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 6) }]}>
         <View style={styles.composerBar}>
           <TextInput
             testID="inbox-composer"
@@ -457,6 +464,7 @@ function ConversationList({
         renderItem={({ item: c }) => {
           const s = byId.get(c.session)
           const bold = c.unread > 0
+          const badge = conversationBadge(c)
           return (
             <TouchableOpacity
               testID={`inbox-conv-${c.session}`}
@@ -474,13 +482,9 @@ function ConversationList({
                 <Text style={[styles.chatTime, bold ? styles.chatTimeUnread : null]}>
                   {fmtWaiting(Math.max(0, Date.now() / 1000 - c.at))}
                 </Text>
-                {c.open > 0 ? (
-                  <View style={styles.ibPill}>
-                    <Text style={styles.ibPillText}>needs you</Text>
-                  </View>
-                ) : bold ? (
-                  <View style={styles.ibCountPill}>
-                    <Text style={styles.ibPillText}>{c.unread}</Text>
+                {badge ? (
+                  <View style={c.open > 0 ? styles.ibPill : styles.ibCountPill}>
+                    <Text style={styles.ibPillText}>{badge}</Text>
                   </View>
                 ) : null}
               </View>

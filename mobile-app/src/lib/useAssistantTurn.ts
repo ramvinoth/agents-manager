@@ -26,6 +26,8 @@ import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
 import { callStep, joinSaid } from "./callSegments"
 import { audioSession } from "./audioSessionNative"
+import { startFishCall, type FishCall } from "./fishCall"
+import { fishAudioAvailable, nativeFishAudio } from "./fishNative"
 
 // While the user speaks over Manager (before a command is confirmed), duck the TTS
 // to this fraction of full volume so they can hear themselves. Restored to 1.0 on
@@ -73,6 +75,9 @@ export function useAssistantTurn(
   const listenStopRef = useRef<null | (() => void)>(null)
   const busyRef = useRef(false)
   const handsFreeRef = useRef(false)
+  // Live engine ("fish"): one socket does listening, turn-taking and speech.
+  const liveRef = useRef(false)
+  const fishRef = useRef<FishCall | null>(null)
   // Barge-in: while speaking, a concurrent echo-cancelled wakeguard mic lets
   // "Manager stop / end the call / <new question>" interrupt playback. Kept in a
   // ref so the latest onEndCall is always reachable from the async speak.
@@ -234,6 +239,7 @@ export function useAssistantTurn(
       try {
         const brain = await api.callEngine()
         if (brain.error) throw new Error(brain.error)
+        liveRef.current = brain.engine === "fish" && fishAudioAvailable()
         setModel(brain.model || "")
       } catch (e) {
         setError((e as Error).message)
@@ -244,6 +250,28 @@ export function useAssistantTurn(
       if (!handsFreeRef.current) return
     }
     setPhase("waiting")
+    if (liveRef.current) {
+      try {
+        const call = await startFishCall(api.callLive(path), nativeFishAudio, historyRef.current, {
+          onPhase: setPhase,
+          onHeard: setHeard,
+          onReply: setReply,
+          onFailed: (m) => {
+            fishRef.current = null
+            handsFreeRef.current = false
+            setError(m)
+            setPhase("idle")
+          },
+        })
+        if (handsFreeRef.current) fishRef.current = call
+        else await call.stop()
+      } catch (e) {
+        handsFreeRef.current = false
+        setError((e as Error).message)
+        setPhase("idle")
+      }
+      return
+    }
     listenStopRef.current = await startListening(onListenEvent)
   }, [path, model, onListenEvent])
 
@@ -251,6 +279,9 @@ export function useAssistantTurn(
   const stopHandsFree = useCallback(async () => {
     handsFreeRef.current = false
     listenStopRef.current = null
+    const live = fishRef.current
+    fishRef.current = null
+    await live?.stop()
     await stopListening()
     if (!busyRef.current) setPhase("idle")
   }, [])

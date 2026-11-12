@@ -4,7 +4,7 @@ two near-duplicate loops; _SshPty makes the channel look like a pty process)."""
 import unittest
 from unittest import mock
 
-from viewer import login
+from orchestrator import login
 
 
 class _Chan:

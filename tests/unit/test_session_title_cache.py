@@ -1,11 +1,11 @@
-"""engine._session_title reads a transcript's head once per (mtime, size) —
+"""titles.session_title reads a transcript's head once per (mtime, size) —
 the decision feed calls it for every open decision on a 4 s poll, so an
 uncached parse is an N+1 disk read on a hot path (card #100). A changed
 transcript (a title set later) still refreshes the cached name."""
 import json
 import os
 
-from viewer import engine
+from orchestrator.runtime import titles
 
 
 def _write(path, lines):
@@ -15,24 +15,36 @@ def _write(path, lines):
 def test_title_is_read_once_until_the_transcript_changes(tmp_path, monkeypatch):
     p = tmp_path / "s1.jsonl"
     _write(p, [{"type": "user", "message": {"content": "hello there"}}])
-    monkeypatch.setattr(engine, "transcript_path", lambda sid: p)
-    monkeypatch.setattr(engine, "_TITLE_CACHE", {})
+    monkeypatch.setattr(titles, "transcript_path", lambda sid: p)
+    monkeypatch.setattr(titles, "_TITLE_CACHE", {})
     reads = []
-    real = engine._read_session_title
-    monkeypatch.setattr(engine, "_read_session_title", lambda path: reads.append(path) or real(path))
+    real = titles._read_session_title
+    monkeypatch.setattr(titles, "_read_session_title", lambda path: reads.append(path) or real(path))
 
-    assert engine._session_title("s1") == ("", "hello there")
-    assert engine._session_title("s1") == ("", "hello there")
+    assert titles.session_title("s1") == ("", "hello there")
+    assert titles.session_title("s1") == ("", "hello there")
     assert len(reads) == 1
 
     _write(p, [{"type": "custom-title", "customTitle": "Login fix"}])
     os.utime(p, (p.stat().st_atime, p.stat().st_mtime + 5))
-    assert engine._session_title("s1") == ("Login fix", "")
+    assert titles.session_title("s1") == ("Login fix", "")
     assert len(reads) == 2
 
 
 def test_missing_transcript_is_empty_and_not_cached(tmp_path, monkeypatch):
-    monkeypatch.setattr(engine, "transcript_path", lambda sid: tmp_path / "nope.jsonl")
-    monkeypatch.setattr(engine, "_TITLE_CACHE", {})
-    assert engine._session_title("s2") == ("", "")
-    assert engine._TITLE_CACHE == {}
+    monkeypatch.setattr(titles, "transcript_path", lambda sid: tmp_path / "nope.jsonl")
+    monkeypatch.setattr(titles, "_TITLE_CACHE", {})
+    assert titles.session_title("s2") == ("", "")
+    assert titles._TITLE_CACHE == {}
+
+
+def test_cli_bookkeeping_never_names_a_session(tmp_path):
+    """Card 436: a session resumed with /resume was titled by the CLI's caveat."""
+    p = tmp_path / "s3.jsonl"
+    _write(p, [
+        {"type": "user", "isMeta": True, "message": {"content": "<local-command-caveat>The command below was run"}},
+        {"type": "user", "message": {"content": "<command-name>/resume</command-name>\n<command-args></command-args>"}},
+        {"type": "user", "message": {"content": "<local-command-stdout>This conversation is from a different directory."}},
+        {"type": "user", "message": {"content": [{"type": "text", "text": "  Fix the login bug"}]}},
+    ])
+    assert titles._read_session_title(p) == ("", "Fix the login bug")

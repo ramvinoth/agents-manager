@@ -1,4 +1,4 @@
-"""Tests for viewer.workspace — Gmail/Calendar clients over the shared _http
+"""Tests for orchestrator.workspace — Gmail/Calendar clients over the shared _http
 seam (no network). A fake Google answers the exact URLs the clients build."""
 import datetime
 import base64
@@ -9,8 +9,8 @@ import urllib.parse
 
 import pytest
 
-from viewer import drives, workspace
-from viewer.drives import DriveError
+from orchestrator import drives, workspace
+from orchestrator.drives import DriveError
 
 
 def _b64(s):

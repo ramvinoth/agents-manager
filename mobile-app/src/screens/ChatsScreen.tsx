@@ -5,7 +5,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Session } from "../api/client"
-import { activeServerId, setToken } from "../state/config"
+import { activeServerId, chatFilterFor, setChatFilterFor, setToken } from "../state/config"
 import { offlineCache } from "../api/offlineCache"
 import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
@@ -13,7 +13,8 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createManager, MANAGER_TITLE } from "../lib/manager"
 import type { StartingChat } from "../lib/session"
-import { activity, groupByProject } from "../lib/chatList"
+import { activity, chatRows, isGrouped, NO_PROJECT, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
+import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import HeaderButton from "../components/HeaderButton"
@@ -43,11 +44,6 @@ function relTime(sec?: number): string {
   return `${Math.floor(d / 604800)}w`
 }
 
-function shortProject(p: string): string {
-  const parts = p.split("/").filter(Boolean)
-  return parts.length ? parts[parts.length - 1] : p
-}
-
 /** Stream events after which the chat list may differ. */
 const LIST_EVENTS = new Set(["list-changed", "turn-start", "turn-end", "resync"])
 
@@ -60,8 +56,9 @@ export default function ChatsScreen({ navigation }: Props) {
   const [error, setError] = useState("")
   const { host, label: hostLabel } = useHost()
   const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<"all" | "unread" | "favorites" | "projects">("all")
+  const [filter, setFilter] = useState<ChatFilter>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [grouped, setGrouped] = useState(true)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [actionFor, setActionFor] = useState<Session | null>(null)
   const [selecting, setSelecting] = useState(false)
@@ -78,34 +75,44 @@ export default function ChatsScreen({ navigation }: Props) {
 
   const archivedCount = useMemo(() => sessions.filter((s) => s.archived).length, [sessions])
 
-  // The list is a flat array of rows: either a chat, or (in Projects view) a
-  // collapsible project header. Chips are authoritative — they are NOT gated by
-  // the Projects-tab `project` filter, so "All" always means all chats.
-  type Row = { kind: "chat"; s: Session } | { kind: "header"; project: string; count: number }
-  const rows = useMemo<Row[]>(() => {
-    // Base pool: archived view shows only archived; otherwise hide archived.
-    let pool = sessions.filter((s) => (showArchived ? s.archived : !s.archived))
-    const q = query.trim().toLowerCase()
-    const matchQ = (s: Session) =>
-      !q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)
-    pool = pool.filter(matchQ)
+  // Search + filter, then favorites first, newest message first (lib/chatList).
+  // The archive view shows only archived chats; the main view hides them.
+  const rows = useMemo(
+    () => chatRows(visibleChats(sessions, { archived: showArchived, query, filter }), grouped && !filter && !showArchived, collapsed),
+    [sessions, query, filter, showArchived, grouped, collapsed])
 
-    if (showArchived) return pool.map((s) => ({ kind: "chat", s }))
+  // The search box's filter menu: Unread or Starred (projects are the grouped
+  // headers, and the search box matches project names). One filter
+  // at a time; the active one shows as a pill under the box with a clear ✕.
+  // The last choice is remembered per server and host ("Show all" included)
+  // (lib/chatList defaultFilter). Applied once per server|host, after
+  // the first list arrives, so it never fights the user's own pick.
+  const filterKey = `${activeServerId()}|${host}`
+  const appliedKey = useRef("")
+  useEffect(() => {
+    if (!sessions.length || appliedKey.current === filterKey) return
+    appliedKey.current = filterKey
+    setFilter(defaultFilter(chatFilterFor(filterKey)))
+    setGrouped(isGrouped(chatFilterFor(`${filterKey}|grouped`)))
+  }, [sessions, filterKey])
+  function chooseGrouped(on: boolean) {
+    setGrouped(on)
+    void setChatFilterFor(`${filterKey}|grouped`, on)
+  }
+  function chooseFilter(f: ChatFilter) {
+    setFilter(f)
+    void setChatFilterFor(filterKey, toStored(f))
+  }
 
-    if (filter === "unread") return pool.filter((s) => s.unread).map((s) => ({ kind: "chat", s }))
-    if (filter === "favorites") return pool.filter((s) => s.favorite).map((s) => ({ kind: "chat", s }))
-    if (filter === "projects") {
-      // Collapsible project headers, the newest-message project first (lib/chatList).
-      const out: Row[] = []
-      for (const { project, chats } of groupByProject(pool)) {
-        out.push({ kind: "header", project, count: chats.length })
-        if (!collapsed.has(project)) for (const s of chats) out.push({ kind: "chat", s })
-      }
-      return out
-    }
-    // "all"
-    return pool.map((s) => ({ kind: "chat", s }))
-  }, [sessions, query, filter, showArchived, collapsed])
+  function openFilter() {
+    const pick = (f: ChatFilter) => ({ text: filterLabel(f), onPress: () => chooseFilter(f) })
+    showActions("Show only", [
+      pick({ kind: "unread" }),
+      pick({ kind: "starred" }),
+      { text: grouped ? "Ungroup (flat list)" : "Group by project", onPress: () => chooseGrouped(!grouped) },
+      ...(filter ? [{ text: "Show all chats", onPress: () => chooseFilter(null) }] : []),
+    ])
+  }
 
   async function rename(s: Session, title: string) {
     setSessions((all) => all.map((x) => (x.path === s.path ? { ...x, title } : x))) // optimistic; path is unique, id is not
@@ -254,8 +261,6 @@ export default function ChatsScreen({ navigation }: Props) {
           headerLeft: menuButton,
           headerRight: () => (
             <View style={styles.headerIcons}>
-              <HeaderButton testID="chats-terminal" label="Open terminal" icon="terminal" size={21} color={t.accent}
-                onPress={() => navigation.navigate("Terminal", { host, label: hostLabel })} />
               <HeaderButton testID="new-chat-button" label="New chat" icon="add" size={24} color={t.accent} style={{ marginRight: 4 }}
                 onPress={() => navigation.navigate("NewChat")} />
             </View>
@@ -386,22 +391,24 @@ export default function ChatsScreen({ navigation }: Props) {
                   autoCorrect={false}
                   clearButtonMode="while-editing"
                 />
+                <TouchableOpacity
+                  testID="chats-filter"
+                  accessibilityRole="button"
+                  accessibilityLabel={filter ? `Filter: ${filterLabel(filter)}` : "Filter chats"}
+                  hitSlop={8}
+                  style={styles.searchFilter}
+                  onPress={openFilter}
+                >
+                  <Icon name="filter" size={20} color={filter ? t.accent : t.textMuted} />
+                </TouchableOpacity>
               </View>
-              {/* Filter chips (WhatsApp-style). Hidden while viewing the archive. */}
-              {!showArchived ? (
-                <View style={styles.filterRow}>
-                  {(["all", "unread", "favorites", "projects"] as const).map((f) => (
-                    <TouchableOpacity
-                      key={f}
-                      testID={`chip-${f}`}
-                      style={[styles.filterChip, filter === f ? styles.filterChipActive : null]}
-                      onPress={() => setFilter(f)}
-                    >
-                      <Text style={[styles.filterChipText, filter === f ? styles.filterChipTextActive : null]}>
-                        {f === "all" ? "All" : f === "unread" ? "Unread" : f === "favorites" ? "Favorites" : "Projects"}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+              {filter ? (
+                <View style={styles.filterPillRow}>
+                  <TouchableOpacity testID="chats-filter-clear" accessibilityLabel={`Clear filter ${filterLabel(filter)}`}
+                    style={[styles.filterChip, styles.filterChipActive, styles.filterPill]} onPress={() => chooseFilter(null)}>
+                    <Text style={[styles.filterChipText, styles.filterChipTextActive]} numberOfLines={1}>{filterLabel(filter)}</Text>
+                    <Icon name="close" size={14} color={t.onAccent} />
+                  </TouchableOpacity>
                 </View>
               ) : null}
               {/* Archived reveal row (main view) / back row (archive view). */}
@@ -447,19 +454,21 @@ export default function ChatsScreen({ navigation }: Props) {
           ListEmptyComponent={
             error ? null : (
               <Text style={[styles.hint, { padding: 16 }]}>
-                {online ? `No chats yet on ${hostLabel}.` : "No chats saved on this phone yet. They appear once the server is reachable."}
+                {filter || query.trim()
+                  ? `No chats match${filter ? ` the ${filterLabel(filter)} filter` : ""}${query.trim() ? ` "${query.trim()}"` : ""}.`
+                  : online ? `No chats yet on ${hostLabel}.` : "No chats saved on this phone yet. They appear once the server is reachable."}
               </Text>
             )
           }
           renderItem={({ item: row }) => {
             if (row.kind === "header") {
               const open = !collapsed.has(row.project)
-              const named = row.project !== "No project"
+              const named = row.project !== NO_PROJECT
               return (
                 <View style={styles.projectHeader}>
                   <TouchableOpacity
                     testID={`project-header-${row.project}`}
-                    style={styles.projectHeaderToggle}
+                    style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}
                     onPress={() =>
                       setCollapsed((prev) => {
                         const n = new Set(prev)
@@ -469,15 +478,13 @@ export default function ChatsScreen({ navigation }: Props) {
                     }
                   >
                     <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
-                    <Text style={styles.projectHeaderText} numberOfLines={1}>
-                      {named ? shortProject(row.project) : row.project}
-                    </Text>
+                    <Text style={styles.projectHeaderText} numberOfLines={1}>{named ? projectName(row.project) : row.project}</Text>
                     <Text style={styles.projectHeaderCount}>{row.count}</Text>
                   </TouchableOpacity>
                   {named && (
                     <TouchableOpacity
                       testID={`project-new-chat-${row.project}`}
-                      accessibilityLabel={`New chat in ${shortProject(row.project)}`}
+                      accessibilityLabel={`New chat in ${projectName(row.project)}`}
                       hitSlop={10}
                       onPress={() => navigation.navigate("NewChat", { cwd: row.project })}
                     >
@@ -563,17 +570,6 @@ export default function ChatsScreen({ navigation }: Props) {
                       hitSlop={8}
                     >
                       <Icon name="folder" size={15} color={t.textMuted} />
-                    </TouchableOpacity>
-                    {/* Open this session's inbox (its mailbox) — the same
-                        per-session filtered view as the board's. */}
-                    <TouchableOpacity
-                      testID={`chat-inbox-${item.id}`}
-                      accessibilityLabel="Open inbox"
-                      accessibilityRole="button"
-                      onPress={() => navigation.navigate("Inbox", { session: item.id, host, path: item.path, title: name })}
-                      hitSlop={8}
-                    >
-                      <Icon name="mail" size={15} color={t.textMuted} />
                     </TouchableOpacity>
                   </View>
                 </View>

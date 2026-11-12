@@ -8,7 +8,7 @@ const { signIn } = require("../signin")
 const TABS = ["Chats", "Inbox", "Profile"]
 // Every tab carries the side-menu hamburger on the left.
 const OWN = {
-  Chats: ["menu-button", "new-chat-button", "chats-terminal"],
+  Chats: ["menu-button", "new-chat-button"],
   Inbox: ["menu-button"],
   Profile: ["menu-button"],
 }

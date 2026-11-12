@@ -1,6 +1,6 @@
 /**
  * Job scheduling utilities. Two orthogonal axes, matching the server
- * (viewer/loops.py):
+ * (orchestrator/loops.py):
  *
  *   • interval — "every N seconds", a sliding cadence. Supports ANY value,
  *     including fractional units: 7.5 min → 450s, 7.5 h → 27000s. Clamped to

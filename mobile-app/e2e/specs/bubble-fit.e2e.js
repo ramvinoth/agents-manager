@@ -3,7 +3,7 @@ const { startFixture, SESSION } = require("../thread-board-fixture")
 const { signIn } = require("../signin")
 
 // A long markdown reply (bold lead-ins, nested bullets, a closing paragraph)
-// must stay inside its bubble: the footer (read-aloud + time) sits below the
+// must stay inside its bubble: the footer (the time) sits below the
 // last line of text, never on top of it.
 const REPLY = [
   "The viewer restarted cleanly at 10:43 and this session picked up where it left off.",
@@ -35,7 +35,7 @@ describe("Agent bubble fits its markdown", function () {
     const text = await box(last)
     const bubbles = await $$("~agent-bubble").map(async el => box(el))
     const bubble = bubbles.sort((a, b) => b.y - a.y)[0]   // the newest is lowest on screen
-    const foot = (await $$("~read-aloud").map(async el => box(el))).sort((a, b) => b.y - a.y)[0]
+    const foot = (await $$("~agent-time").map(async el => box(el))).sort((a, b) => b.y - a.y)[0]
     console.log("TEXT", JSON.stringify(text), "BUBBLE", JSON.stringify(bubble), "FOOT", JSON.stringify(foot))
     assert.ok(text.y + text.height <= bubble.y + bubble.height, `text bottom ${text.y + text.height} spills past bubble bottom ${bubble.y + bubble.height}`)
     assert.ok(text.y + text.height <= foot.y + 2, `text bottom ${text.y + text.height} overlaps footer top ${foot.y}`)

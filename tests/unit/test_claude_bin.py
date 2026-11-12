@@ -15,7 +15,7 @@ from pathlib import Path
 def _cm(f):
     return classmethod(lambda cls: f())
 
-from viewer import config
+from orchestrator import config
 
 
 class _Probe:

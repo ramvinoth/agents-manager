@@ -15,7 +15,7 @@
 #   - anything about the actual iOS build
 #
 # CORS: the API sends Access-Control-Allow-Origin:* on JSON responses, and
-# viewer/server.py answers OPTIONS preflights (added for exactly this workflow),
+# orchestrator/server.py answers OPTIONS preflights (added for exactly this workflow),
 # so the browser can call http://localhost:8091 from the :8081 dev origin.
 #
 # Usage:

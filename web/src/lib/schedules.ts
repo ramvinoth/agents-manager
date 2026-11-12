@@ -1,7 +1,7 @@
 // schedules.ts — the Profile screen's scheduling controls as two plain on/off
 // choices ("your schedules", "the agents' schedules") over the server's single
-// loop_control mode (viewer/loops.LOOP_MODES), plus ONE truthful line saying
-// what actually runs. Truth = viewer/engine.fire_due_loops: a mode licenses
+// loop_control mode (orchestrator/loops.LOOP_MODES), plus ONE truthful line saying
+// what actually runs. Truth = orchestrator/runtime/scheduler.fire_due_loops: a mode licenses
 // origins, and the automation master switch additionally halts agent-origin
 // loops — so "agents' schedules on" with automation off still runs nothing.
 // DUPLICATED in mobile-app/src/lib/schedules.ts (the apps share no build) — keep in sync BY HAND

@@ -1,6 +1,6 @@
 /**
- * Where a tapped push goes. The server sets the payload (viewer/inbox.py,
- * viewer/push.py); this maps it to one screen, synchronously, so the tap
+ * Where a tapped push goes. The server sets the payload (orchestrator/inbox.py,
+ * orchestrator/push.py); this maps it to one screen, synchronously, so the tap
  * navigates in the same frame instead of after a network read.
  *
  *   {card}            → that board card
@@ -56,4 +56,28 @@ export function matchDecision(queue: Decision[], want: { kind: string; ref: stri
   }
   if (!want.session) return -1
   return queue.findIndex((d) => d.kind === want.kind && d.session === want.session)
+}
+
+/** Identity of a chat for the Thread route's `getId`. React Navigation's
+ *  `navigate` reuses a mounted route with the same name and merges params, so a
+ *  notification for chat B would re-point the open chat A's screen (keeping A's
+ *  draft and polling). Keying on the chat makes B its own instance while a
+ *  second tap on the SAME chat still reuses it. A transcript path
+ *  (`projects/<dir>/<id>.jsonl`) and a bare session id name the same chat. */
+export function threadInstanceId(p: { path?: string; session?: string; label?: string }): string {
+  const fromPath = p.path ? (p.path.split("/").pop() || "").replace(/\.jsonl$/, "") : ""
+  return fromPath || p.session || p.label || "thread"
+}
+
+/** A push about the chat already on screen is noise: the user sees the message
+ *  arrive. Only a plain turn push (no card/decision/inbox payload) for the
+ *  focused Thread is silenced; everything else still banners. */
+export function suppressForeground(
+  data: Record<string, unknown>,
+  current: { name?: string; params?: { path?: string; session?: string; label?: string } } | undefined,
+): boolean {
+  if (current?.name !== "Thread" || !current.params) return false
+  const t = notificationTarget(data)
+  if (!t || t.to !== "thread") return false
+  return threadInstanceId(current.params) === t.session
 }

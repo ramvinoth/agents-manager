@@ -1,4 +1,4 @@
-"""Unit tests for viewer.sessions and viewer.loops — the I/O-core functions
+"""Unit tests for orchestrator.sessions and orchestrator.loops — the I/O-core functions
 that previously had zero test coverage. Pure-function tests: no simulator,
 no network, no database."""
 import io
@@ -8,13 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from viewer.sessions import (
+from orchestrator.sessions import (
     StatCache,
     compute_session_summary,
     extract_cwd,
     last_cwd_in_file,
 )
-from viewer.loops import parse_interval
+from orchestrator.loops import parse_interval
 
 
 class TestLastCwdInFile(unittest.TestCase):

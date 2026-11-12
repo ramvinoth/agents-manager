@@ -23,7 +23,7 @@ help:  ## List targets
 
 lint:  ## Ruff (real defects only) + Python & JS syntax
 	ruff check .
-	python3 -m py_compile server.py viewer/*.py tests/*.py tests/unit/*.py
+	python3 -m py_compile server.py orchestrator/*.py tests/*.py tests/unit/*.py
 	@for f in tests/*.js; do echo "  node --check $$f"; node --check "$$f" || exit 1; done
 	@echo "lint: OK"
 
@@ -31,7 +31,7 @@ unit:  ## Fast hermetic unit tests (pure functions; no server/DB/SSH)
 	python3 -m pytest tests/unit -q
 
 bootstrap:  ## Idempotent fresh-install: DB tables + seeded config/roles + skills dir
-	python3 -m viewer.bootstrap
+	python3 -m orchestrator.bootstrap
 
 web:  ## Type-check + build the React app (web/ → web/dist)
 	cd web && npm run build

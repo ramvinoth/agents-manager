@@ -1,10 +1,10 @@
-"""Tests for viewer.marketplace (pure, fake fetch) and skills.write_bundle.
+"""Tests for orchestrator.marketplace (pure, fake fetch) and skills.write_bundle.
 No network: every source answer is a canned registry/GitHub shape."""
 import json
 
 import pytest
 
-from viewer import marketplace as M, skills
+from orchestrator import marketplace as M, skills
 
 NPM = {"name": "io.github.acme/notes-mcp", "version": "1.2.0", "description": "Notes",
        "repository": {"url": "https://github.com/acme/notes-mcp"},

@@ -1,5 +1,5 @@
 /** The Agents tab's create/edit form, as pure logic. The server
- *  (viewer/agenttemplates.fields_from) is the one validator; this mirrors its
+ *  (orchestrator/agenttemplates.fields_from) is the one validator; this mirrors its
  *  rules only to keep Save disabled with a reason instead of a round trip. */
 import type { AgentTemplate, AgentTemplateFields, OrgLevel } from "../api/client"
 import type { AISelection } from "./aiSelection"
@@ -7,7 +7,7 @@ import type { NewChatJob } from "./newChat"
 import { TEMPLATE_CATEGORIES } from "./templateCategories.ts"
 import { textFilter } from "./textFilter.ts"
 
-export const NAME_MAX = 80 // viewer/agenttemplates.NAME_MAX
+export const NAME_MAX = 80 // orchestrator/agenttemplates.NAME_MAX
 
 export type AgentDraft = {
   name: string; icon: string; category: string; description: string

@@ -6,7 +6,7 @@ from xml.dom import minidom
 
 import pytest
 
-from viewer import noteexport as ne
+from orchestrator import noteexport as ne
 
 BODY = """Intro with **bold**, *italic*, `code`, [[Plan|the plan]] and [site](https://x.io).
 

@@ -6,7 +6,7 @@
  * The iPhone Camera opens it in the app, which redeems the code
  * (POST /api/auth/pair/redeem) for a token. `url` is a direct address the
  * phone can reach; `relay`/`sid`/`pk` come from the server's relay offer
- * (viewer/relay.py offer()) and let the phone reach a server that has no
+ * (orchestrator/relay.py offer()) and let the phone reach a server that has no
  * public address at all, end-to-end encrypted to `pk`. At least one of the
  * two routes is present; when both are, the phone keeps both.
  *

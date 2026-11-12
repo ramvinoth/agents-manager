@@ -6,7 +6,7 @@ import threading
 import unittest
 from unittest import mock
 
-from viewer import login
+from orchestrator import login
 
 
 class MissingCliTest(unittest.TestCase):

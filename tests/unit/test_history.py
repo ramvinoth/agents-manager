@@ -1,4 +1,4 @@
-"""viewer.history: the rows a transcript trim drops stay browsable.
+"""orchestrator.history: the rows a transcript trim drops stay browsable.
 
 Each test builds a fake projects/<dir>/<sid>.jsonl, snapshots it, then mimics
 the CLI's trim (a NEW file holding a few earlier rows plus new ones, swapped in
@@ -11,8 +11,8 @@ import sys
 
 import pytest
 
-from viewer import history
-from viewer.config import read_back_f, split_lines
+from orchestrator import history
+from orchestrator.config import read_back_f, split_lines
 
 
 def _row(i, kind="user"):
@@ -169,7 +169,7 @@ def test_hook_snapshots_and_never_fails(live):
 
 
 def test_summary_counts_the_whole_history(live):
-    from viewer.sessions import compute_session_summary
+    from orchestrator.sessions import compute_session_summary
     history.snapshot(live)
     _trim(live, keep=[], new=[_row(80)])
     with history.HistoryView(live) as v:

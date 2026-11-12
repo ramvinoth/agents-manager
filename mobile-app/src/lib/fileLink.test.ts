@@ -1,4 +1,4 @@
-import { fileLinkPath, splitPath } from "./fileLink.ts"
+import { fileLinkPath } from "./fileLink.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -25,8 +25,6 @@ eq("javascript", fileLinkPath("javascript:alert(1)", cwd), null)
 eq("protocol-relative", fileLinkPath("//example.com/x", cwd), null)
 eq("anchor", fileLinkPath("#section", cwd), null)
 eq("empty", fileLinkPath("  ", cwd), null)
-eq("split", splitPath("/srv/repo/a.md"), { dir: "/srv/repo", name: "a.md" })
-eq("split root", splitPath("/a.md"), { dir: "/", name: "a.md" })
 
 console.log(`fileLink: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

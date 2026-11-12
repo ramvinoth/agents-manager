@@ -1,5 +1,5 @@
 /**
- * noteLinks.ts — the client half of linked notes (server: viewer/notelinks.py).
+ * noteLinks.ts — the client half of linked notes (server: orchestrator/notelinks.py).
  *
  * The server owns parsing and every tie-break: it ships the graph and the
  * title `index` a [[link]] resolves through. The client mirrors only `norm`,

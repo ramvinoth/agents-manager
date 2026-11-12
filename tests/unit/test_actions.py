@@ -1,4 +1,4 @@
-"""Unit tests for viewer.actions — the action registry and the one gate that runs it.
+"""Unit tests for orchestrator.actions — the action registry and the one gate that runs it.
 
 The point of these tests is the property the previous closure design could not have:
 a Red action is stored as a plain intent and, when approved, **actually executes**.
@@ -7,7 +7,7 @@ out — `execute` is pure policy over a db it only calls, so it needs no Postgre
 """
 import pytest
 
-from viewer import actions, orglogic
+from orchestrator import actions, orglogic
 
 
 class FakeDB:
@@ -21,7 +21,7 @@ class FakeDB:
         self.audit = []          # (actor, action, target, outcome)
         self.approvals = []      # rows opened
         self.cards_moved = []    # proof a handler actually ran
-        self.asks = []           # card_ask_set writes (viewer.asks)
+        self.asks = []           # card_ask_set writes (orchestrator.asks)
         self.loops = {}          # id -> loop row (agent-loop handler surface)
         self.settings = {}       # key -> value (singleton KV handler surface)
 
@@ -111,7 +111,7 @@ def fdb(monkeypatch):
     # boardwatch and discussion each hold their own db reference (one singleton
     # in production); point them at the same fake so _card_delete's and
     # _note_delete's wake-cancel stay in-memory here.
-    from viewer import boardwatch, discussion
+    from orchestrator import boardwatch, discussion
     monkeypatch.setattr(boardwatch, "db", f)
     monkeypatch.setattr(discussion, "db", f)
     return f
@@ -200,7 +200,7 @@ def test_deleting_a_card_cancels_its_pending_board_watch_wake(fdb):
     """A card's wake (bw<id>) is a loose loop row with no FK to the card, so the
     DELETE can't cascade to it. If delete doesn't cancel it, the one-shot fires
     later and burns an agent turn on a card that is gone."""
-    from viewer import boardwatch
+    from orchestrator import boardwatch
     fdb.loop_upsert(boardwatch.wake_id(9), {"session": "s1", "prompt": "[board-watch]"})
     assert boardwatch.wake_id(9) in fdb.loops
     resp, status = actions.execute(
@@ -214,7 +214,7 @@ def test_deleting_a_note_cancels_all_its_discussion_wakes_only(fdb):
     so one note can leave several loose loop rows — none with an FK to the note.
     Delete must clear all of the note's wakes and nothing else: the `:` terminator
     keeps note 12's prefix from also matching note 123's (nd12: vs nd123:)."""
-    from viewer import discussion
+    from orchestrator import discussion
     fdb.loop_upsert(discussion.wake_id(12, "s1"), {"session": "s1", "prompt": "[note]"})
     fdb.loop_upsert(discussion.wake_id(12, "s2"), {"session": "s2", "prompt": "[note]"})
     fdb.loop_upsert(discussion.wake_id(123, "s3"), {"session": "s3", "prompt": "[note]"})

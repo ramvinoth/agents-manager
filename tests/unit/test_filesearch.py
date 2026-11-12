@@ -1,12 +1,12 @@
-"""Tests for viewer/filesearch.py and /api/fs/search — the composer's "#"
+"""Tests for orchestrator/filesearch.py and /api/fs/search — the composer's "#"
 file picker. Local disk is a tmp dir; the remote leg runs the shipped
 script source through a local python (no SSH)."""
 import json
 import subprocess
 import sys
 
-from viewer import filesearch
-from viewer.routes.fs import FsMixin
+from orchestrator import filesearch
+from orchestrator.routes.fs import FsMixin
 
 
 def _tree(root, paths):

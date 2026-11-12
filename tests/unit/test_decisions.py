@@ -3,7 +3,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from viewer import db
+from orchestrator import db
+from orchestrator.shared import postgres
 
 
 class RecordingCursor:
@@ -30,7 +31,7 @@ def cursor(monkeypatch):
     def transaction():
         yield cur
 
-    monkeypatch.setattr(db, "_db", transaction)
+    monkeypatch.setattr(postgres, "cursor", transaction)
     return cur
 
 
@@ -44,6 +45,6 @@ def test_timeout_cleanup_requires_exact_request_identity(cursor):
 
 
 def test_answer_acceptance_is_durable_before_delivery():
-    from viewer import decisions
+    from orchestrator import decisions
     assert callable(decisions.accept_answer)
     assert callable(db.decision_answer_accept)

@@ -339,7 +339,7 @@ export type LoopSchedule = { interval?: number; at?: string }
 export type VisibleTypes = { user: boolean; assistant: boolean; system: boolean; tools: boolean }
 
 // ---- org / Kanban ----------------------------------------------------------
-/** An app sharing a project's folder, opened beside Tasks/Notes/Inbox/Map (viewer/project_plugins.py). */
+/** An app sharing a project's folder, opened beside Tasks/Notes/Inbox/Map (orchestrator/project_plugins.py). */
 export interface ProjectPlugin {
   id: string
   label: string
@@ -359,7 +359,7 @@ export interface OrgProject {
   /** A local project whose folder no longer exists. */
   missing?: boolean
 }
-/** An intake channel (viewer/intake.py): a door from outside onto one board.
+/** An intake channel (orchestrator/intake.py): a door from outside onto one board.
  *  POST to `path` with the channel token → a card there, waking `session_id`. */
 export interface IntakeChannel {
   id: string
@@ -457,7 +457,7 @@ export interface CardComment {
   body: string
   created_at: number
 }
-/** One row of the message ledger (viewer/db `inbox_messages`). The inbox is a
+/** One row of the message ledger (orchestrator/db `inbox_messages`). The inbox is a
  *  DELIVERY SURFACE over the existing decision system, not a second one: a row
  *  can carry a decision (kind question | plan | approval | card | red) whose
  *  open/resolved state the server derives at read time from the live sources
@@ -495,7 +495,7 @@ export type DecisionCap = { cap: number; default: number; max: number }
 
 export type InboxFilter = { session?: string; project?: number; kind?: InboxKind; unread_only?: boolean; archived?: boolean }
 export type CardFilter = { session?: string; project?: number }
-/** A note in the org's knowledge ledger (viewer/db `notes`) — one table shared
+/** A note in the org's knowledge ledger (orchestrator/db `notes`) — one table shared
  *  by the owner and every agent session's note_* MCP tools. */
 export type NoteKind = "note" | "journal" | "meeting" | "idea" | "checklist" | "discussion"
 export interface Note {
@@ -510,12 +510,12 @@ export interface Note {
   created_by: string
   created_at: number
   updated_at: number
-  /** Discussion thread size and last activity (viewer/routes/orchestrator _g_org_notes). */
+  /** Discussion thread size and last activity (orchestrator/routes/orchestrator _g_org_notes). */
   replies?: number
   last_reply_at?: number | null
 }
 /** One comment in a note's discussion thread, nested by the server
- *  (viewer/discussion.thread): `score` is the vote sum, `my_vote` the reader's. */
+ *  (orchestrator/discussion.thread): `score` is the vote sum, `my_vote` the reader's. */
 export interface NoteComment {
   id: number
   note_id: number
@@ -532,7 +532,7 @@ export type NoteCommentSort = "best" | "new" | "old"
 export type NoteFilter = { session?: string; project?: number; archived?: boolean }
 /** A Red action the caller wasn't allowed to self-approve comes back as an OPEN
  *  APPROVAL, not the resource — `{queued, approval}` at status **200** (see
- *  viewer/actions.py execute). Writes whose action is Red are typed `T | Queued`
+ *  orchestrator/actions.py execute). Writes whose action is Red are typed `T | Queued`
  *  so the compiler forces the call site to decide, instead of letting a queued
  *  request read as a completed one. Mirrors mobile-app/src/api/client.ts. */
 export type Queued = { queued: true; approval: number }
@@ -568,7 +568,7 @@ export interface Drive {
 }
 
 /** GET /api/integrations — the whole Integrations page in one response,
- *  built server-side from viewer/integrations.py. No secrets or tokens. */
+ *  built server-side from orchestrator/integrations.py. No secrets or tokens. */
 export type ServiceState = "on" | "off" | "grant" | "unavailable"
 /** One thing agents may do with a service (read, write, delete, draft…). */
 export interface IntegrationOp { id: string; label: string }

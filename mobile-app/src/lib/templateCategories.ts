@@ -1,5 +1,5 @@
 /** Agent template categories: display label and identity tint. The templates
- *  themselves live on the server (viewer/db.py _BUILTIN_TEMPLATES, served by
+ *  themselves live on the server (orchestrator/db.py _BUILTIN_TEMPLATES, served by
  *  /api/agent-templates); the tint is a per-category identity (like an avatar
  *  seed), not a theme role, so it is the same in light and dark. */
 export const TEMPLATE_CATEGORIES: Record<string, { label: string; color: string }> = {

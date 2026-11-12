@@ -1,4 +1,4 @@
-"""Intake channels (viewer/intake.py): a URL + token onto one board.
+"""Intake channels (orchestrator/intake.py): a URL + token onto one board.
 
 Covers the pure shaping (payload → card), the token contract (hash stored,
 constant-time verify, never in a view), delivery through actions.execute
@@ -8,9 +8,9 @@ The db is faked; nothing here touches Postgres or the network.
 """
 import pytest
 
-from viewer import actions, db, intake
-from viewer.routes.intake import IntakeMixin
-from viewer.routes.usage import UsageMixin
+from orchestrator import actions, db, intake
+from orchestrator.routes.intake import IntakeMixin
+from orchestrator.routes.usage import UsageMixin
 
 CH = {"id": "ch_abc", "name": "Website form", "project_id": 15,
       "session_id": "sess-1", "token_hash": intake.hash_token("hin_good")}
@@ -245,7 +245,7 @@ def test_feedback_channel_prefers_the_owners_pick(monkeypatch):
 
 
 def test_feedback_channel_opens_the_built_in_one_on_the_servers_own_project(monkeypatch):
-    from viewer import config
+    from orchestrator import config
     f = FeedbackDB()
     _patch_feedback_db(monkeypatch, f)
     ch = intake.feedback_channel()
@@ -336,7 +336,7 @@ def kdb(monkeypatch):
         (f.card_get(i) for i, k in f.keys.items() if k == key), None))
     monkeypatch.setattr(db, "intake_card_key", lambda card_id, key: f.keys.__setitem__(card_id, key) or True)
     pushes = []
-    from viewer import push
+    from orchestrator import push
     monkeypatch.setattr(push, "notify_all", lambda title, body, data=None: pushes.append((title, body)))
     f.pushes = pushes
     return f

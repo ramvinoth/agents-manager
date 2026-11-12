@@ -1,10 +1,10 @@
-"""Pure scheduling logic for viewer.loops — the one-shot ("at") kind and the
+"""Pure scheduling logic for orchestrator.loops — the one-shot ("at") kind and the
 build_schedule precedence (cron > at > interval). No db, no I/O: `now` is
 injected everywhere.
 """
 from datetime import datetime
 
-from viewer.loops import build_schedule, parse_interval, parse_when
+from orchestrator.loops import build_schedule, parse_interval, parse_when
 
 NOW = 1_799_000_000.0  # arbitrary fixed "now"
 

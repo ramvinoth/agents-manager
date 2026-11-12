@@ -17,7 +17,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # main() needs Postgres and a port; stub both so only the logging/banner path runs.
 BOOT = """
 import threading, sys
-from viewer import server, db
+from orchestrator import server, db
 db.init_db = lambda: None
 db.job_runs_abandon_running = lambda: 0
 server.run_settings_paths_in_use = lambda: set()
@@ -27,7 +27,7 @@ class _Blocking:
     def serve_forever(self): threading.Event().wait()
 server.PooledHTTPServer = _Blocking
 server.loop_scheduler = lambda *a, **k: None
-from viewer import resume
+from orchestrator import resume
 resume.resume_inflight = lambda: []
 server.main()
 """

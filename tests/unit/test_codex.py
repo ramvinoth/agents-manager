@@ -1,10 +1,10 @@
-"""Unit tests for viewer.codex fork/restore cut-point logic. A mismatch here
+"""Unit tests for orchestrator.codex fork/restore cut-point logic. A mismatch here
 truncates the LIVE rollout at the wrong place (data-loss risk), so lock the
 raw-line hashing + user-text extraction."""
 import json
 
-from viewer import adapters
-from viewer.codex import _codex_user_text, _split_codex
+from orchestrator import adapters
+from orchestrator.codex import _codex_user_text, _split_codex
 
 
 class TestCodexUserText:

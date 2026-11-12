@@ -1,5 +1,5 @@
 // The AI selection model — which provider, model, conversation mode and effort
-// a session (or every new chat) runs with. The SERVER owns it (viewer/ai.py):
+// a session (or every new chat) runs with. The SERVER owns it (orchestrator/ai.py):
 // it validates every save against the live provider library and the host's
 // capabilities, and guards concurrent edits with a revision. This module is the
 // client's pure half: the shape, equality, the draft transitions, the labels,

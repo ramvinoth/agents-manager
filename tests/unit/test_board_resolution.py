@@ -1,4 +1,4 @@
-"""The ONE board-resolution rule at the routes (viewer/routes/orchestrator.py).
+"""The ONE board-resolution rule at the routes (orchestrator/routes/orchestrator.py).
 
 A card (or a board view) belongs to a project: an explicit project wins, else
 the session's bound project (kanbanProject in session_meta), else none. The
@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from viewer.routes.orchestrator import OrchestratorMixin
+from orchestrator.routes.orchestrator import OrchestratorMixin
 
 
 class _FakeSelf(OrchestratorMixin):
@@ -62,7 +62,7 @@ class _FakeDB:
 
 @pytest.fixture()
 def db(monkeypatch):
-    from viewer.routes import orchestrator
+    from orchestrator.routes import orchestrator
     fake = _FakeDB()
     monkeypatch.setattr(orchestrator, "db", fake)
     return fake

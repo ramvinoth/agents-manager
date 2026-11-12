@@ -1,5 +1,5 @@
 /**
- * The server's live-events stream (viewer/events.py, WebSocket /api/events/ws)
+ * The server's live-events stream (orchestrator/events.py, WebSocket /api/events/ws)
  * and the refresh loop screens build on it.
  *
  * The stream says WHEN something changed — a run started or ended, a
@@ -32,7 +32,7 @@ export interface WatchSpec {
   path: string
 }
 
-/** The server watches at most this many per client (viewer/events.py WATCH_MAX). */
+/** The server watches at most this many per client (orchestrator/events.py WATCH_MAX). */
 export const WATCH_MAX = 4
 
 /** A frame the screens act on, or null (hello/ping/garbage/unknown types from

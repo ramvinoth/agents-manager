@@ -1,10 +1,10 @@
-"""viewer.maintenance — the hourly maintenance window (Card 133). Storage is
+"""orchestrator.maintenance — the hourly maintenance window (Card 133). Storage is
 faked; preflight and the process exit are injected, so nothing restarts."""
 import datetime
 
 import pytest
 
-from viewer import actions, config, db, inbox, maintenance, orglogic
+from orchestrator import actions, config, db, inbox, maintenance, orglogic
 
 
 @pytest.fixture
@@ -33,6 +33,9 @@ def store(monkeypatch):
     monkeypatch.setattr(maintenance, "supervised", lambda: True)
     monkeypatch.setattr(maintenance, "busy", lambda: 0)
     monkeypatch.setattr(maintenance, "_git_head", lambda: "abc")
+    # raising=False: the same tests run against the pre-fingerprint code (formal/README).
+    monkeypatch.setattr(maintenance, "code_fingerprint", lambda: "abc", raising=False)
+    monkeypatch.setattr(maintenance, "BOOT_CODE", "abc", raising=False)
     return {"settings": settings, "reqs": reqs, "audit": audit, "told": told, "pushed": pushed}
 
 
@@ -167,3 +170,103 @@ def test_boot_waits_for_postgres_still_starting(store, monkeypatch):
     naps = []
     rec = maintenance.finish_after_boot(sleep=naps.append, health=lambda: {"ok": True})
     assert rec and {r["status"] for r in store["reqs"]} == {"done"} and len(naps) == 3   # 2 retries + the HTTP wait
+
+
+# --- Found by TLC in formal/Maintenance.tla (Original.cfg); each fails on the old code. ---
+
+def test_death_between_record_and_mark_never_strands_requests(store, monkeypatch):
+    """The window writes the pending record and marks the rows restarting. Die
+    after the first of the two: the next boot must still close every request."""
+    maintenance.request("a", "s1", "", "x")
+    calls, real_set, real_mark = [], db.setting_set, db.restart_requests_set_status
+
+    class Died(BaseException):
+        pass
+
+    def step(fn, tag):
+        def run(*a):
+            calls.append(tag)
+            if len(calls) == 2:
+                raise Died()
+            return fn(*a)
+        return run
+    monkeypatch.setattr(db, "setting_set", lambda k, v: step(real_set, "record")(k, v)
+                        if k == "maintenance_pending" else real_set(k, v))
+    monkeypatch.setattr(db, "restart_requests_set_status", lambda ids, s: step(real_mark, "mark")(ids, s)
+                        if s == "restarting" else real_mark(ids, s))
+    with pytest.raises(Died):
+        maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    monkeypatch.setattr(db, "setting_set", real_set)
+    monkeypatch.setattr(db, "restart_requests_set_status", real_mark)
+    maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    assert store["reqs"][0]["status"] == "done"
+
+
+def test_code_changed_after_preflight_is_audited_as_unpreflighted(store, monkeypatch):
+    maintenance.request("a", "s1", "", "x")
+    monkeypatch.setattr(maintenance, "code_fingerprint", lambda: "v1", raising=False)
+    maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    monkeypatch.setattr(maintenance, "BOOT_CODE", "v2", raising=False)   # an edit while it was down
+    maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    assert store["audit"][0][3] == "unpreflighted"
+    assert "never preflighted" in store["told"][0][4]
+
+
+def test_preflight_runs_again_when_the_code_changes_under_it(store, monkeypatch):
+    maintenance.request("a", "s1", "", "x")
+    seen = iter(["v1", "v2", "v2", "v2"])
+    monkeypatch.setattr(maintenance, "code_fingerprint", lambda: next(seen), raising=False)
+    checks = []
+    maintenance.run_window("t", check=lambda: (checks.append(1), (True, "ok"))[1], leave=lambda: None)
+    assert len(checks) == 2 and store["settings"]["maintenance_pending"]["code_preflighted"] == "v2"
+
+
+def test_code_that_never_settles_fails_the_window(store, monkeypatch):
+    maintenance.request("a", "s1", "", "x")
+    n = iter(range(100))
+    monkeypatch.setattr(maintenance, "code_fingerprint", lambda: f"v{next(n)}", raising=False)
+    out = maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: pytest.fail("must not exit"))
+    assert out == "preflight_failed" and store["reqs"][0]["status"] == "failed"
+
+
+def test_no_window_opens_until_the_boot_is_closed(store):
+    """A boot inside :50-:59 used to let the first tick restart again."""
+    import threading
+    maintenance.request("a", "s1", "", "x")
+    maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    maintenance.request("b", "s2", "", "y")
+    store["reqs"][1]["created_at"] = maintenance.BOOT_TIME + 1   # genuinely new: waits for a window
+    gate = threading.Event()
+    maintenance.start_boot_finish(sleep=lambda s: gate.wait(5), health=lambda: {"ok": True})
+    try:
+        assert maintenance.tick(_ts(16, 50)) is False
+    finally:
+        gate.set()
+    assert maintenance._running.acquire(timeout=5)
+    maintenance._running.release()
+    assert store["reqs"][0]["status"] == "done"
+
+
+def test_death_while_closing_the_boot_is_finished_by_the_next_one(store, monkeypatch):
+    maintenance.request("a", "s1", "", "x")
+    maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    real = db.audit_append
+
+    def died(*a):
+        raise RuntimeError("killed")
+    monkeypatch.setattr(db, "audit_append", died)
+    with pytest.raises(RuntimeError):
+        maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    monkeypatch.setattr(db, "audit_append", real)
+    assert store["settings"]["maintenance_pending"]     # kept for the next boot
+    maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    assert store["audit"][-1][3] == "restarted" and store["settings"]["maintenance_pending"] is None
+
+
+def test_window_boot_also_closes_requests_filed_after_the_snapshot(store):
+    maintenance.request("a", "s1", "", "x")
+    maintenance.run_window("t", check=lambda: (True, "ok"), leave=lambda: None)
+    maintenance.request("b", "s2", "", "y")    # filed before the exit, so this boot loaded it
+    maintenance.finish_after_boot(sleep=lambda s: None, health=lambda: {"ok": True})
+    assert {r["status"] for r in store["reqs"]} == {"done"}
+    assert sorted(t[3] for t in store["told"]) == ["s1", "s2"]

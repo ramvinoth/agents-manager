@@ -9,7 +9,7 @@ command, and the trust that grants it can only come from the owner:
 - actions.execute: an agent's request QUEUES for the owner (the intent stored
   for replay; nothing written until approval); the owner at the UI self-
   approves and the write lands in session_meta; an invalid mode is rejected.
-- engine.effective_permission_mode: the stored mode OVERRIDES the requested
+- permissions.effective_permission_mode: the stored mode OVERRIDES the requested
   one (loop runs hardcode 'acceptEdits'; the owner's stored call wins); an
   unknown value or a DB hiccup leaves the requested mode untouched, so a
   storage failure can never change a run's security posture on its own.
@@ -27,10 +27,11 @@ policy over a db it only calls, so no Postgres and no network are needed.
 """
 import pytest
 
-from viewer import actions, engine, orglogic, push
-from viewer.routes import orchestrator
-from viewer.routes.orchestrator import OrchestratorMixin
-from viewer.routes.sessions import SessionsMixin
+from orchestrator import actions, orglogic, push
+from orchestrator.runtime import permissions
+from orchestrator.routes import orchestrator
+from orchestrator.routes.orchestrator import OrchestratorMixin
+from orchestrator.routes.sessions import SessionsMixin
 
 
 # ── orglogic: the action's class and scope ─────────────────────────────────
@@ -103,7 +104,7 @@ def test_invalid_mode_is_rejected(adb):
     assert adb.meta == {}
 
 
-# ── engine.effective_permission_mode: stored wins, failures are inert ──────
+# ── permissions.effective_permission_mode: stored wins, failures are inert ──────
 
 class MetaDb:
     def __init__(self, meta=None, raises=False):
@@ -117,30 +118,30 @@ class MetaDb:
 
 
 def test_stored_mode_overrides_the_requested_one(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"permission_mode": "bypass"}}))
-    assert engine.effective_permission_mode("s", "acceptEdits") == "bypass"
+    monkeypatch.setattr(permissions, "db", MetaDb({"s": {"permission_mode": "bypass"}}))
+    assert permissions.effective_permission_mode("s", "acceptEdits") == "bypass"
 
 
 def test_no_stored_mode_keeps_the_requested_one(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({}))
-    assert engine.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
+    monkeypatch.setattr(permissions, "db", MetaDb({}))
+    assert permissions.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
 
 
 def test_an_unknown_stored_value_keeps_the_requested_one(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"permission_mode": "superuser"}}))
-    assert engine.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
+    monkeypatch.setattr(permissions, "db", MetaDb({"s": {"permission_mode": "superuser"}}))
+    assert permissions.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
 
 
 def test_a_db_hiccup_keeps_the_requested_one(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb(raises=True))
-    assert engine.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
+    monkeypatch.setattr(permissions, "db", MetaDb(raises=True))
+    assert permissions.effective_permission_mode("s", "acceptEdits") == "acceptEdits"
 
 
 def test_an_empty_session_id_never_reaches_the_db(monkeypatch):
     def boom(_):
         raise AssertionError("no lookup for an empty session id")
-    monkeypatch.setattr(engine, "db", type("D", (), {"session_meta_get": staticmethod(boom)}))
-    assert engine.effective_permission_mode("", "acceptEdits") == "acceptEdits"
+    monkeypatch.setattr(permissions, "db", type("D", (), {"session_meta_get": staticmethod(boom)}))
+    assert permissions.effective_permission_mode("", "acceptEdits") == "acceptEdits"
 
 
 # ── push.build_payload: the deep-link data must ride the root `body` key ───
@@ -163,21 +164,21 @@ def test_payload_truncates_the_alert_body():
     assert len(p["aps"]["alert"]["body"]) == 300
 
 
-# ── engine._perm_push_body: the owner can judge from the notification ──────
+# ── permissions._perm_push_body: the owner can judge from the notification ──────
 
 def test_bash_preview_collapses_whitespace():
-    assert engine._perm_push_body("Bash", {"command": "git  status &&\n  ls -la"},
+    assert permissions._perm_push_body("Bash", {"command": "git  status &&\n  ls -la"},
                                   "local") == "Approve Bash? — git status && ls -la"
 
 
 def test_long_bash_is_truncated():
-    body = engine._perm_push_body("Bash", {"command": "x" * 120}, "local")
+    body = permissions._perm_push_body("Bash", {"command": "x" * 120}, "local")
     assert body.startswith("Approve Bash? — ") and body.endswith("…")
     assert len(body) < 100
 
 
 def test_remote_host_is_named():
-    assert engine._perm_push_body("Bash", {"command": "ls"}, "suha-ai") == \
+    assert permissions._perm_push_body("Bash", {"command": "ls"}, "suha-ai") == \
         "Approve Bash? — ls (on suha-ai)"
 
 
@@ -185,7 +186,7 @@ def test_non_bash_tools_show_their_identity():
     # The preview names the tool's target (identity fields), never the raw
     # input JSON or its payload (content, message, ...) — that is what the
     # old format leaked to the lock screen (#31/#42).
-    assert engine._perm_push_body("Edit", {"file_path": "/x"}, "local") == \
+    assert permissions._perm_push_body("Edit", {"file_path": "/x"}, "local") == \
         'Approve Edit? — file_path=/x'
 
 

@@ -1,4 +1,4 @@
-/** Realtime invalidation events (server: viewer/live.py, /api/live/ws).
+/** Realtime invalidation events (server: orchestrator/live.py, /api/live/ws).
  *  An event only says "rows in this table changed" — the client refetches
  *  through the ordinary GET routes. These are the pure decisions; the socket
  *  lives in components/useLive.ts (watchLive for the store, useLive for views). */

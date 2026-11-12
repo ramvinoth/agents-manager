@@ -1,10 +1,10 @@
-"""viewer.skills — the skill library as an agent (skill_list / skill_read) sees it.
+"""orchestrator.skills — the skill library as an agent (skill_list / skill_read) sees it.
 
 Disk is the truth for what exists; the ledger only adds provenance. These tests
 pin the three join cases and the frontmatter description read, against a temp
 skills base so no test touches ~/.claude/skills.
 """
-from viewer import skills
+from orchestrator import skills
 
 
 def _write(base, name, description):

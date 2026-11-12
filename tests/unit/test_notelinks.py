@@ -1,6 +1,6 @@
 """notelinks — Obsidian-style [[links]] and #tags derived from note bodies:
 parsing, resolution, the graph, rename rewriting and the vault export. Pure."""
-from viewer import notelinks as nl
+from orchestrator import notelinks as nl
 
 
 def _n(id, title, body="", project_id=1, archived=False, updated_at=0, **kw):

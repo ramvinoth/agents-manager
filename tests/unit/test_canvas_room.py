@@ -1,8 +1,8 @@
-"""viewer.canvas_room: relay without echo, ack/reject, flush retry, idle unload."""
+"""orchestrator.canvas_room: relay without echo, ack/reject, flush retry, idle unload."""
 import json
 import time
 
-from viewer import canvas_room as cr
+from orchestrator import canvas_room as cr
 
 
 def el(i="a", v=1, n=5, **kw):

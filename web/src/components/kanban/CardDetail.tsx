@@ -191,6 +191,31 @@ export function CardDetail({
           <DecisionBar actions={actions} columnName={column?.name} sessionTitle={sessionTitle} busy={busy === "move"} onPick={move} />
         )}
 
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-5 py-2 text-xs" data-testid="card-move-to">
+          <span className="mr-1 font-medium uppercase tracking-wide text-muted-foreground">Move to</span>
+          {columns.length ? columns.map((c) => (
+            <button
+              key={c.id}
+              data-testid={`card-move-${c.id}`}
+              disabled={busy === "move" || c.id === card.column_id}
+              aria-pressed={c.id === card.column_id}
+              onClick={() => move(c.id)}
+              className={`rounded-full border px-2.5 py-1 transition-colors disabled:cursor-default ${c.id === card.column_id ? "border-primary bg-primary/15 text-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"}`}
+            >
+              {c.name}
+            </button>
+          )) : projects.length > 0 ? (
+            <>
+              <span className="text-muted-foreground">Not on a board — attach to:</span>
+              {projects.map((p) => (
+                <button key={p.id} disabled={busy === "move"} onClick={() => attach(p.id)} className="rounded-full border border-border px-2.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50">{p.name}</button>
+              ))}
+            </>
+          ) : (
+            <span className="text-muted-foreground">Not on a board, and no projects exist yet.</span>
+          )}
+        </div>
+
         {error && (
           <div className="flex items-center justify-between gap-2 border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-xs text-destructive">
             <span>{error}</span>
@@ -227,25 +252,6 @@ export function CardDetail({
 
           {/* ── Sidebar: the card's facts ── */}
           <aside className="flex flex-col gap-4 border-t border-border bg-card/40 px-4 py-4 text-xs sm:min-h-0 sm:overflow-y-auto sm:border-t-0 sm:border-l">
-            {!columns.length && projects.length > 0 && (
-              <Field label="Board">
-                <Select value="" onValueChange={(v) => attach(Number(v))} disabled={busy === "move"}>
-                  <SelectTrigger size="sm" className="w-full"><SelectValue placeholder="Attach to a project…" /></SelectTrigger>
-                  <SelectContent>
-                    {projects.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            <Field label="Status">
-              <Select value={card.column_id != null ? String(card.column_id) : ""} onValueChange={(v) => move(Number(v))} disabled={busy === "move" || !columns.length}>
-                <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={columns.length ? "No column" : "Not on a board"} /></SelectTrigger>
-                <SelectContent>
-                  {columns.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-
             <Field label="Session">
               {card.session_id ? (
                 onOpenSession ? (

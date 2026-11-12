@@ -1,12 +1,14 @@
 /**
  * inbox.ts — pure logic for the mobile Inbox screen (mirrors the server's
- * viewer/inbox + routes/inbox contract and the web's lib/inbox.ts). The inbox
+ * orchestrator/inbox + routes/inbox contract and the web's lib/inbox.ts). The inbox
  * is a DELIVERY SURFACE over the existing decision system, not a second one:
  * a row can carry a decision (question | plan | approval | card) whose open
  * state the server DERIVES at read time; the deciding tap stays in the chat.
  * No server/React imports — unit-tested under node like notes.ts.
  */
 import type { InboxFilter, InboxKind, InboxMessage } from "../api/client"
+import { agentNameColor } from "./avatars.ts"
+import type { Scheme } from "./theme.ts"
 export type { InboxFilter, InboxKind, InboxMessage }
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
@@ -113,11 +115,22 @@ export function groupConversations(messages: InboxMessage[], labels: Record<stri
     Number(b.open > 0) - Number(a.open > 0) || b.at - a.at || b.last.id - a.last.id)
 }
 
-/** The conversation row's second line: the last message's first line, with
- *  "You: " when the owner wrote it — the messaging-app convention. */
+/** The conversation row's second line: the last message's first line, led by
+ *  its kind when it is a decision ("Question: …" — what the agent wants, at a
+ *  glance) or "You: " when the owner wrote it — the messaging-app convention. */
 export function conversationPreview(c: Conversation): string {
   const line = messageTitle(c.last, 120) || kindLabel(c.last.kind)
-  return c.last.sender_type === "user" ? `You: ${line}` : line
+  if (c.last.sender_type === "user") return `You: ${line}`
+  const kind = c.last.kind
+  return kind && kind !== "message" && INBOX_KIND_LABEL[kind as InboxKind] ? `${kindLabel(kind)}: ${line}` : line
+}
+
+/** The chip on a conversation row: how many decisions wait on the owner, the
+ *  unread count, or a quiet "snoozed" when the only open ask is on hold. */
+export function conversationBadge(c: Conversation): string | null {
+  if (c.open > 0) return c.open === 1 ? "needs you" : `${c.open} need you`
+  if (c.unread > 0) return String(c.unread)
+  return c.last.snoozed ? "snoozed" : null
 }
 
 /** Search the conversation list: a chat matches by name or by any message in
@@ -132,7 +145,25 @@ export function searchConversations(convs: Conversation[], messages: InboxMessag
 /** One row of a conversation's bubble thread. */
 export type ThreadItem =
   | { type: "day"; key: string; label: string }
-  | { type: "msg"; key: string; m: InboxMessage; mine: boolean }
+  | { type: "msg"; key: string; m: InboxMessage; mine: boolean; first: boolean }
+
+/** Who sent a message, as a short label: a session shows its title
+ *  (`labels`: session id → title), the server is "Harman", the owner is "You". */
+export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}): string {
+  if (m.sender_type === "session") return labels[m.sender_id] || (m.sender_id || "").slice(0, 8)
+  if (m.sender_type === "system") return "Harman"
+  return "You"
+}
+
+/** The colour key for a sender: the session id (same seed as its avatar), so
+ *  the name and the avatar always agree. System and owner get fixed keys. */
+export function senderSeed(m: InboxMessage): string {
+  return m.sender_type === "session" ? m.sender_id : m.sender_type
+}
+
+export function senderColor(m: InboxMessage, scheme: Scheme): string {
+  return agentNameColor(senderSeed(m), scheme)
+}
 
 /** A mailbox as a chat thread: oldest first, a day separator whenever the
  *  day changes, each message marked mine (the owner wrote it → right-hand
@@ -141,11 +172,16 @@ export type ThreadItem =
 export function threadTimeline(messages: InboxMessage[], dayOf: (ts: number) => string): ThreadItem[] {
   const out: ThreadItem[] = []
   let day = ""
+  let prev: InboxMessage | null = null
   const sorted = [...messages].sort((a, b) => a.created_at - b.created_at || a.id - b.id)
   for (const m of sorted) {
     const d = dayOf(m.created_at)
-    if (d !== day) { out.push({ type: "day", key: `day-${m.id}`, label: d }); day = d }
-    out.push({ type: "msg", key: `m-${m.id}`, m, mine: m.sender_type === "user" })
+    if (d !== day) { out.push({ type: "day", key: `day-${m.id}`, label: d }); day = d; prev = null }
+    // `first` = this starts a run from one sender; a group chat names the
+    // sender once per run, not on every bubble.
+    const first = !prev || prev.sender_type !== m.sender_type || prev.sender_id !== m.sender_id
+    out.push({ type: "msg", key: `m-${m.id}`, m, mine: m.sender_type === "user", first })
+    prev = m
   }
   return out
 }

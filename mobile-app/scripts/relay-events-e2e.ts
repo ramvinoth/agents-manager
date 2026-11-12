@@ -3,7 +3,7 @@
  * relay, on this machine, with the phone's own client code.
  *
  *   node (ServerTransport → RelayLink, E2EE) ──ws──> relay Worker (wrangler dev)
- *        <──ws── viewer/relay.py RelayService ──ws──> spare viewer (VIEWER_PREFLIGHT)
+ *        <──ws── orchestrator/relay.py RelayService ──ws──> spare viewer (VIEWER_PREFLIGHT)
  *
  * Checks, all through the relay:
  *   1. /healthz answers (the relayed HTTP path is up).
@@ -91,7 +91,7 @@ function cleanup() {
 }
 
 async function main() {
-  // A throwaway relay identity, in viewer/relay.py identity()'s shape.
+  // A throwaway relay identity, in orchestrator/relay.py identity()'s shape.
   const keys = nacl.box.keyPair()
   const ident = {
     serverId: randomBytes(18).toString("base64url"),
@@ -126,7 +126,7 @@ async function main() {
   const service = start(PY, ["-c", [
     "import json, os, sys",
     `sys.argv = ["relay-e2e", "${VIEWER_PORT}"]`,
-    "from viewer import relay",
+    "from orchestrator import relay",
     `relay.RelayService("${relayUrl}", json.loads(os.environ["E2E_RELAY_IDENT"])).run_forever()`,
   ].join("\n")], ROOT, { ...pyEnv, E2E_RELAY_IDENT: JSON.stringify(ident) })
 

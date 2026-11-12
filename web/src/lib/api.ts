@@ -225,7 +225,7 @@ class ApiClient {
   orgProjectForCwd(body: { host: string; cwd: string; name?: string }) {
     return this.postJSON<OrgProject>("/api/org/project-for-cwd", body)
   }
-  /** The project plugins this server has on (viewer/project_plugins.py). */
+  /** The project plugins this server has on (orchestrator/project_plugins.py). */
   projectPlugins() {
     return this.getStrict<{ plugins: ProjectPlugin[] }>("/api/project-plugins")
   }
@@ -233,7 +233,7 @@ class ApiClient {
   projectPluginOpen(body: { id: string; host: string; cwd: string }) {
     return this.postStrict<{ url: string }>("/api/project-plugins/open", body)
   }
-  /** A shared canvas (viewer/routes/canvas_board.py): the server's scene snapshot,
+  /** A shared canvas (orchestrator/routes/canvas_board.py): the server's scene snapshot,
    *  by project, by canvas id, or by chat (that chat's board project). Live edits
    *  then flow over /api/canvas/ws?canvas=<id>. */
   canvasBoard(by: { project: number } | { id: number } | { session: string }) {
@@ -272,7 +272,7 @@ class ApiClient {
   orgUpdateCard(body: { card_id: number; title?: string; body?: string; column_id?: number; position?: number; project_id?: number }) {
     return this.postJSON<Card>("/api/org/cards/update", body)
   }
-  // `card_delete` is Red (viewer/orglogic): a caller who can't self-approve gets
+  // `card_delete` is Red (orchestrator/orglogic): a caller who can't self-approve gets
   // an approval back, not a deletion — hence the union.
   orgDeleteCard(cardId: number) {
     return this.postJSON<{ deleted?: boolean } | Queued>("/api/org/cards/delete", { card_id: cardId })
@@ -307,7 +307,7 @@ class ApiClient {
   orgNotesExportUrl(project: number): string {
     return `/api/org/notes/export?project=${project}`
   }
-  /** URL of ONE note as a file (viewer/noteexport.py): Markdown, Word or PDF. */
+  /** URL of ONE note as a file (orchestrator/noteexport.py): Markdown, Word or PDF. */
   orgNoteExportUrl(id: number, format: NoteExportFormat): string {
     return `/api/org/note/export?id=${id}&format=${format}`
   }
@@ -436,7 +436,7 @@ class ApiClient {
     return this.postStrict<ModelDiscovery>("/api/providers/models", draft)
   }
 
-  // ---- AI selection (server-owned; viewer/ai.py) ----
+  // ---- AI selection (server-owned; orchestrator/ai.py) ----
   private aiPath(scope: AIScope) {
     return scope.id ? "/api/session/ai" : "/api/ai/defaults"
   }
@@ -723,7 +723,7 @@ class ApiClient {
     )
   }
 
-  // ---- intake channels: outside doors onto a board (viewer/intake.py) ----
+  // ---- intake channels: outside doors onto a board (orchestrator/intake.py) ----
   orgProjects() {
     return this.getJSON<{ projects: OrgProject[] }>("/api/org/projects")
   }

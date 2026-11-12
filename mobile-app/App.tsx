@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useSyncExternalStore } from "react"
+import { CallProvider } from "./src/lib/CallProvider"
+import { callSession, showCallPill } from "./src/lib/callSession"
+import CallPill from "./src/components/CallPill"
 import { ActivityIndicator, Linking, useColorScheme, View } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { StatusBar } from "expo-status-bar"
@@ -13,8 +16,8 @@ import type { Host as HostConfig } from "./src/api/client"
 import { api } from "./src/api/client"
 import { hasServer, loadConfig, token } from "./src/state/config"
 import { recordScreen, startUsageReporting } from "./src/lib/usageReporter"
-import { registerForPush, onNotificationTap } from "./src/lib/notify"
-import { notificationTarget } from "./src/lib/notificationRoute"
+import { registerForPush, onNotificationTap, setForegroundSuppressor } from "./src/lib/notify"
+import { notificationTarget, suppressForeground, threadInstanceId } from "./src/lib/notificationRoute"
 import { pairFromLink } from "./src/state/signin"
 import ServerScreen from "./src/screens/ServerScreen"
 import LoginScreen from "./src/screens/LoginScreen"
@@ -77,13 +80,27 @@ export type RootStackParamList = {
   Audit: undefined
   AuditEntry: { entry: AuditEntry }
   HostEdit: { host?: HostConfig } | undefined
-  Terminal: { host: string; label: string }
+  Terminal: undefined
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
 
 // Ref to the navigation tree so notification taps (which fire OUTSIDE React,
 // from the native module) can navigate without a screen in scope.
+/** Records the focused screen for analytics and tells the call pill which route is showing. */
+function trackRoute() {
+  const name = navigationRef.getCurrentRoute()?.name
+  recordScreen(name)
+  callSession.setRoute(name)
+}
+
+/** The in-call pill, tapping it returns to the live call screen. */
+function CallPillHost() {
+  const state = useSyncExternalStore(callSession.subscribe, callSession.get)
+  if (!showCallPill(state)) return null
+  return <CallPill onOpen={(label) => navigationRef.navigate("Call", { label })} />
+}
+
 export const navigationRef = createNavigationContainerRef<RootStackParamList>()
 
 // A tap can fire BEFORE the navigation tree mounts — this is the norm on a cold
@@ -101,6 +118,9 @@ let pendingTap: PushTap | null = null
 function navToTarget({ data, title }: PushTap): void {
   const target = notificationTarget(data, title)
   if (!target) return
+  // Signed out (Server/Login is the root): a screen pushed over it would load with no session.
+  const root = navigationRef.getRootState()?.routes?.[0]?.name
+  if (root === "Server" || root === "Login") return
   switch (target.to) {
     case "card": return navigationRef.navigate("CardDetail", { id: target.id })
     case "note": return navigationRef.navigate("NoteEditor", { id: target.id })
@@ -198,6 +218,7 @@ export default function App() {
   // Route notification taps to the chat they belong to (foreground/background AND
   // cold start). Set up once; teardown on unmount.
   useEffect(() => onNotificationTap(openFromNotification), [])
+  useEffect(() => setForegroundSuppressor((data) => suppressForeground(data, navigationRef.isReady() ? navigationRef.getCurrentRoute() as any : undefined)), [])
 
   useEffect(() => {
     if (!ready) return
@@ -217,11 +238,12 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        <CallProvider>
         <NavigationContainer
           theme={navTheme}
           ref={navigationRef}
-          onReady={() => { flushPendingNav(); startUsageReporting(); recordScreen(navigationRef.getCurrentRoute()?.name) }}
-          onStateChange={() => recordScreen(navigationRef.getCurrentRoute()?.name)}
+          onReady={() => { flushPendingNav(); startUsageReporting(); trackRoute() }}
+          onStateChange={trackRoute}
         >
           <StatusBar style={scheme === "dark" ? "light" : "dark"} />
           <Stack.Navigator
@@ -237,7 +259,7 @@ export default function App() {
             <Stack.Screen name="Login" component={LoginScreen} options={{ title: "Sign in" }} />
             <Stack.Screen name="Home" component={HomeTabs} options={{ title: "Chats" }} />
             <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: "New chat" }} />
-            <Stack.Screen name="Thread" component={ThreadScreen} options={({ route }) => ({ title: route.params.label })} />
+            <Stack.Screen name="Thread" component={ThreadScreen} getId={({ params }) => threadInstanceId(params)} options={({ route }) => ({ title: route.params.label })} />
             <Stack.Screen name="Call" component={CallScreen} options={{ headerShown: false, gestureEnabled: false }} />
             <Stack.Screen name="SessionProfile" component={SessionProfileScreen} options={{ title: "Session" }} />
             <Stack.Screen name="Capabilities" component={CapabilitiesScreen} options={{ title: "Skills & tools" }} />
@@ -275,10 +297,12 @@ export default function App() {
             <Stack.Screen
               name="Terminal"
               component={TerminalScreen}
-              options={({ route }) => ({ title: `Terminal — ${route.params.label}` })}
+              options={{ title: "Terminal" }}
             />
           </Stack.Navigator>
         </NavigationContainer>
+        <CallPillHost />
+        </CallProvider>
         <UndoToast />
         <ActionSheetHost />
       </SafeAreaProvider>

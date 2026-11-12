@@ -13,7 +13,7 @@
  * src/lib/audioSession.ts (pure state machine) + audioSessionNative.ts (wiring).
  *
  * All audio stays between the app, the user's viewer, and their GPU box — no
- * third party. See viewer/voice.py + deploy/speech_service.py.
+ * third party. See orchestrator/voice.py + deploy/speech_service.py.
  */
 import { Audio } from "expo-av"
 import * as FileSystem from "expo-file-system"

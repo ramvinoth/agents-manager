@@ -1,9 +1,9 @@
-"""Unit tests for viewer.orglogic — the pure org/Kanban logic (no db/server).
+"""Unit tests for orchestrator.orglogic — the pure org/Kanban logic (no db/server).
 
 Covers column ordering (order_column), Manager's Green/Red approval gate (classify_action),
 and the learned-skill dedup (dedupe_skill). Hermetic; runs under `make unit`.
 """
-from viewer import orglogic
+from orchestrator import orglogic
 
 
 def _ids(cards):

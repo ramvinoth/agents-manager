@@ -8,8 +8,8 @@ then unblocks the live waiter or resumes the session, exactly like a pick.
 """
 import pytest
 
-from viewer import decisions, questions
-from viewer.routes.chat import ChatMixin
+from orchestrator import decisions, questions
+from orchestrator.routes.chat import ChatMixin
 
 PENDING = {"tool_use_id": "t1", "questions": [{"header": "Lane", "options": []}],
            "host": "local", "run_id": "r1", "revision": 2}

@@ -1,4 +1,4 @@
-"""Per-chat plugins and extras (viewer.chatplugins + config.session_plugin_dirs).
+"""Per-chat plugins and extras (orchestrator.chatplugins + config.session_plugin_dirs).
 
 A chat's Manager plugins live in session_meta.agentPlugins (its template's
 agentPlugin when it never chose); its own skills/MCP live in a generated plugin
@@ -10,8 +10,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from viewer import chatplugins, config
-from viewer.config import session_plugin_dirs, session_plugins
+from orchestrator import chatplugins, config
+from orchestrator.config import session_plugin_dirs, session_plugins
 
 SID = "0a1b2c3d-1111-2222-3333-444455556666"
 
@@ -19,16 +19,16 @@ SID = "0a1b2c3d-1111-2222-3333-444455556666"
 class TestChatPlugins(unittest.TestCase):
     def setUp(self):
         self.store = {}
-        patch("viewer.db.session_meta_get", side_effect=lambda sid: dict(self.store.get(sid, {}))).start()
-        patch("viewer.db.session_meta_patch",
+        patch("orchestrator.db.session_meta_get", side_effect=lambda sid: dict(self.store.get(sid, {}))).start()
+        patch("orchestrator.db.session_meta_patch",
               side_effect=lambda sid, f: self.store.setdefault(sid, {}).update(f)).start()
         tmp = TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patch.object(config, "CHAT_PLUGINS_DIR", Path(tmp.name) / "chats").start()
         patch.object(config, "TEMPLATE_PLUGINS_DIR", Path(tmp.name) / "templates").start()
         self.templates = {7: {"id": 7, "plugin": "privacy-guard", "plugins": None}}
-        patch("viewer.db.agent_template_get", side_effect=lambda tid: self.templates.get(tid)).start()
-        patch("viewer.db.agent_template_set_plugins",
+        patch("orchestrator.db.agent_template_get", side_effect=lambda tid: self.templates.get(tid)).start()
+        patch("orchestrator.db.agent_template_set_plugins",
               side_effect=lambda tid, names: self.templates[tid].update(plugins=list(names))).start()
         self.addCleanup(patch.stopall)
 

@@ -15,7 +15,7 @@ Decisions locked (2026-08-14): **wide autonomy / narrow gate**, **build a real o
 ## 1. The metaphor, made literal
 
 A company that runs on the software we already own. Nothing here is new capability — it is a
-management discipline layered on the existing viewer APIs (`viewer/routes/sessions.py`,
+management discipline layered on the existing viewer APIs (`orchestrator/routes/sessions.py`,
 `providers.py`, `capabilities.py`).
 
 | Company concept        | Real system object                                             |
@@ -68,7 +68,7 @@ action, blast radius, and rollback in one shot — batched, not drip-fed.
 
 ## 3. Real estate — the perimeter I operate
 
-Authoritative list lives in memory (`ssh-hosts-setup.md`) + `viewer/config.py`. As of charter:
+Authoritative list lives in memory (`ssh-hosts-setup.md`) + `orchestrator/config.py`. As of charter:
 - **HQ**: this dev box (viewer on :8091; `agents.suhai.ai` tunnels here — prod == local).
 - **suha-ai** (4×3090): the model foundry — Qwen LLM (llama-swap :8080), STT/TTS
   (agents-speech :8095, agents-pocket :8097). Consolidated to voice on GPU 2; 0/1/3 free.
@@ -95,7 +95,7 @@ I never assume a host — I read it from config/memory. Off-perimeter = out of b
 ## 6. Where the brain lives (runtime) — TO BUILD
 Decision: **a real orchestrator module in the viewer**, so org state survives restarts.
 Not built yet. Sketch (for the next design doc, not this charter):
-- `viewer/orchestrator.py`: employee registry, task queue, mandate log — persisted like SESSION_META.
+- `orchestrator/orchestrator.py`: employee registry, task queue, mandate log — persisted like SESSION_META.
 - A tick (manager heartbeat) that checks in-flight employees, unblocks/reassigns within Green,
   and parks Red asks for the owner.
 - Read-only status surface in the app (an "Org" view) so the owner sees the company at a glance.
@@ -103,7 +103,7 @@ Not built yet. Sketch (for the next design doc, not this charter):
   PROVIDERS/SECRETS designs), not this file.
 
 ## 7. Open questions (resolve before orchestrator code)
-- Persistence store: reuse SESSION_META/JSON, or the SQLite db (`viewer/db.py`)? (Lean db for a queue.)
+- Persistence store: reuse SESSION_META/JSON, or the SQLite db (`orchestrator/db.py`)? (Lean db for a queue.)
 - Do employees get stable identities across restarts, or is a session the whole identity?
 - Escalation cadence: batch Red asks at loop end, or interrupt immediately for high-severity?
 - Budget guardrails: cap concurrent agent-mode sessions (GPU/token cost) — what's the ceiling?

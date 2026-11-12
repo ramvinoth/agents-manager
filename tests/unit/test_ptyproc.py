@@ -1,4 +1,4 @@
-"""viewer.ptyproc — the one pseudo-terminal seam (stdlib pty on POSIX, ConPTY on
+"""orchestrator.ptyproc — the one pseudo-terminal seam (stdlib pty on POSIX, ConPTY on
 Windows). Every read runs on a thread with a deadline so a regression fails the
 test instead of hanging the suite."""
 import os
@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 
-from viewer import ptyproc
+from orchestrator import ptyproc
 
 POSIX = os.name != "nt"
 

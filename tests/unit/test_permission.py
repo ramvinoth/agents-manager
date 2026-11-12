@@ -1,4 +1,4 @@
-"""Unit tests for the Ask-mode tool-approval flow in viewer.engine:
+"""Unit tests for the Ask-mode tool-approval flow in orchestrator.runtime:
 register_permission (blocks until decided / times out -> deny), decide_permission
 (the UI's Allow/Deny), and pending_approvals_public (drops the internal Event).
 
@@ -8,9 +8,9 @@ import os
 import threading
 import time
 
-import viewer.engine as engine
-from viewer.config import CHAT_JOBS
-from viewer.engine import decide_permission, pending_approvals_public, register_permission
+from orchestrator.runtime import permissions, run_config
+from orchestrator.config import CHAT_JOBS
+from orchestrator.runtime.permissions import decide_permission, pending_approvals_public, register_permission
 
 
 def _fresh_job(sid, token="tok"):
@@ -83,7 +83,7 @@ class TestRegisterPermission:
     def test_default_session_still_asks(self, monkeypatch):
         _fresh_job("s6")
         CHAT_JOBS["s6"]["mode"] = "default"
-        monkeypatch.setattr(engine, "PERM_TIMEOUT", 0.05)
+        monkeypatch.setattr(permissions, "PERM_TIMEOUT", 0.05)
         try:
             res = register_permission("s6", "tok", "Bash", {}, "u6")
             assert res["behavior"] == "deny"
@@ -93,7 +93,7 @@ class TestRegisterPermission:
 
     def test_timeout_denies(self, monkeypatch):
         _fresh_job("s4")
-        monkeypatch.setattr(engine, "PERM_TIMEOUT", 0.05)
+        monkeypatch.setattr(permissions, "PERM_TIMEOUT", 0.05)
         try:
             res = register_permission("s4", "tok", "Bash", {}, "u4")
             assert res["behavior"] == "deny"
@@ -137,18 +137,18 @@ class TestRunSettings:
     denied it. The server registers the tools, so the server declares the rule."""
 
     def test_allow_rule_names_the_registered_mcp_server(self):
-        cfg_path = engine._write_perm_mcp_config()
+        cfg_path = run_config._write_perm_mcp_config()
         import json
         with open(cfg_path) as f:
             servers = json.load(f)["mcpServers"]
-        allow = engine._run_settings()["permissions"]["allow"]
+        allow = run_config._run_settings()["permissions"]["allow"]
         assert allow == [f"mcp__{name}__*" for name in servers if name != "viewerperm"]
 
     def test_default_run_has_no_env_block(self):
-        assert "env" not in engine._run_settings(None)
+        assert "env" not in run_config._run_settings(None)
 
     def test_provider_env_travels_in_the_same_settings(self):
-        s = engine._run_settings({"ANTHROPIC_BASE_URL": "http://x:1", "ANTHROPIC_MODEL": "m"})
+        s = run_config._run_settings({"ANTHROPIC_BASE_URL": "http://x:1", "ANTHROPIC_MODEL": "m"})
         assert s["permissions"]["allow"] == ["mcp__viewer__*"]
         assert s["env"]["ANTHROPIC_BASE_URL"] == "http://x:1"
         assert s["env"]["ANTHROPIC_SMALL_FAST_MODEL"] == "m"
@@ -164,8 +164,8 @@ class TestPermMcpConfigWrite:
 
     def test_reader_never_sees_a_partial_document(self, tmp_path, monkeypatch):
         import json
-        monkeypatch.setattr(engine.tempfile, "gettempdir", lambda: str(tmp_path))
-        path = engine._write_perm_mcp_config()
+        monkeypatch.setattr(run_config.tempfile, "gettempdir", lambda: str(tmp_path))
+        path = run_config._write_perm_mcp_config()
         invalid, stop = [], threading.Event()
 
         def reader():
@@ -180,13 +180,25 @@ class TestPermMcpConfigWrite:
         for t in threads:
             t.start()
         for _ in range(500):
-            engine._write_perm_mcp_config()
+            run_config._write_perm_mcp_config()
         stop.set()
         for t in threads:
             t.join()
         assert invalid == []
 
+    def test_every_registered_mcp_script_exists(self, tmp_path, monkeypatch):
+        """Regression for 2026-11-10: the engine split moved run_config into
+        orchestrator/runtime/ and the script paths followed it to files that do
+        not exist, so every driven claude died on its first permission prompt."""
+        import json
+        monkeypatch.setattr(run_config.tempfile, "gettempdir", lambda: str(tmp_path))
+        with open(run_config._write_perm_mcp_config()) as f:
+            servers = json.load(f)["mcpServers"]
+        assert set(servers) == {"viewerperm", "viewer"}
+        for name, spec in servers.items():
+            assert os.path.isfile(spec["args"][0]), f"{name}: {spec['args'][0]} missing"
+
     def test_leaves_no_temp_file_beside_the_config(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(engine.tempfile, "gettempdir", lambda: str(tmp_path))
-        path = engine._write_perm_mcp_config()
+        monkeypatch.setattr(run_config.tempfile, "gettempdir", lambda: str(tmp_path))
+        path = run_config._write_perm_mcp_config()
         assert sorted(p.name for p in tmp_path.iterdir()) == [os.path.basename(path)]

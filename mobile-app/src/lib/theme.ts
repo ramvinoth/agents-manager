@@ -6,6 +6,7 @@
 export type Scheme = "light" | "dark"
 
 export type Theme = {
+  scheme: Scheme
   bg: string            // screen background
   surface: string       // cards, sheets, composer
   thread: string        // chat wallpaper
@@ -31,6 +32,7 @@ export type Theme = {
 }
 
 export const LIGHT: Theme = {
+  scheme: "light",
   bg: "#fbf7f3",
   surface: "#f4ece4",
   thread: "#efe4d8",
@@ -56,6 +58,7 @@ export const LIGHT: Theme = {
 }
 
 export const DARK: Theme = {
+  scheme: "dark",
   bg: "#1a1613",
   surface: "#241e19",
   thread: "#130f0c",

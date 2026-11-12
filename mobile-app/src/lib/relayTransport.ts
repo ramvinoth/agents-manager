@@ -2,7 +2,7 @@
  * The phone's transport over the Manager relay: one end-to-end encrypted
  * connection per server (relayChannel.ts) multiplexing HTTP requests and
  * WebSockets onto it, plus the choice between a server's direct address and
- * its relay route. The mirror of viewer/relay.py's Connection.
+ * its relay route. The mirror of orchestrator/relay.py's Connection.
  *
  * Pure: the WebSocket constructor, the random source and the reachability
  * probe are injected, so all of it is node-tested against a fake server that

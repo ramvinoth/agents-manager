@@ -3,7 +3,8 @@
 # paramiko backs remote hosts (terminal / files / sessions over SSH); PyJWT
 # signs the APNs token; tomli/tomli-w read and write Codex's config.toml
 # (tomllib is stdlib from 3.11; tomli covers an older distro python3);
-# Pillow renders canvas snapshots (viewer/canvas_render.py); pywinpty is the Windows pseudo-terminal (ConPTY) behind viewer/ptyproc.py.
+# msgpack frames the Fish Audio realtime call sockets (orchestrator/fishcall.py);
+# Pillow renders canvas snapshots (orchestrator/canvas_render.py); pywinpty is the Windows pseudo-terminal (ConPTY) behind orchestrator/ptyproc.py.
 psycopg2-binary
 paramiko
 PyJWT
@@ -11,4 +12,5 @@ tomli; python_version < "3.11"
 tomli-w
 pynacl
 Pillow
+msgpack
 pywinpty; sys_platform == "win32"

@@ -1,4 +1,4 @@
-"""viewer.relay + viewer.wsclient: the encrypted channel, header hygiene, the
+"""orchestrator.relay + orchestrator.wsclient: the encrypted channel, header hygiene, the
 control protocol, and real HTTP/WebSocket round trips through the mux onto a
 throwaway loopback server. Hermetic: no relay, no DB, no network beyond
 127.0.0.1.
@@ -16,8 +16,8 @@ import time
 import nacl.bindings as nb
 import pytest
 
-from viewer import relay, wsclient
-from viewer.browser import WSServer
+from orchestrator import relay, wsclient
+from orchestrator.wsserver import WSServer
 
 
 # ---- the phone's half of the channel, written independently -----------------

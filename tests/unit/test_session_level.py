@@ -5,7 +5,7 @@ Two layers, one each, never duplicated:
 - level (session_level_set) gates the org actions a session asks the server for.
 
 Contracts pinned here:
-- engine.resolve_level: owner's per-chat override → the agent role's level →
+- run_config.resolve_level: owner's per-chat override → the agent role's level →
   'ic'; unknown values and a DB hiccup land on 'ic' (never an escalation).
 - session_level_set: Red + ic scope; an agent's ask queues, the owner's click
   writes; "" clears the override; a bad level is rejected.
@@ -14,7 +14,8 @@ Contracts pinned here:
 """
 import pytest
 
-from viewer import actions, engine, inbox, orglogic
+from orchestrator import actions, inbox, orglogic
+from orchestrator.runtime import run_config
 
 
 class MetaDb:
@@ -30,39 +31,39 @@ class MetaDb:
         return self.templates.get(tid)
 
 
-# ── engine.resolve_level ───────────────────────────────────────────────────
+# ── run_config.resolve_level ───────────────────────────────────────────────────
 
 def test_override_beats_the_role(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"level": "manager", "agentTemplate": 1}},
+    monkeypatch.setattr(run_config, "db", MetaDb({"s": {"level": "manager", "agentTemplate": 1}},
                                              {1: {"level": "lead"}}))
-    assert engine.resolve_level("s") == "manager"
+    assert run_config.resolve_level("s") == "manager"
 
 
 def test_role_level_when_no_override(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"agentTemplate": 1, "level": None}},
+    monkeypatch.setattr(run_config, "db", MetaDb({"s": {"agentTemplate": 1, "level": None}},
                                              {1: {"level": "lead"}}))
-    assert engine.resolve_level("s") == "lead"
+    assert run_config.resolve_level("s") == "lead"
 
 
 def test_plain_chat_is_ic(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({}))
-    assert engine.resolve_level("s") == "ic"
+    monkeypatch.setattr(run_config, "db", MetaDb({}))
+    assert run_config.resolve_level("s") == "ic"
 
 
 def test_unknown_values_fall_to_ic(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"level": "god", "agentTemplate": 9}},
+    monkeypatch.setattr(run_config, "db", MetaDb({"s": {"level": "god", "agentTemplate": 9}},
                                              {9: {"level": "ceo"}}))
-    assert engine.resolve_level("s") == "ic"
+    assert run_config.resolve_level("s") == "ic"
 
 
 def test_deleted_role_falls_to_ic(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb({"s": {"agentTemplate": 9}}))
-    assert engine.resolve_level("s") == "ic"
+    monkeypatch.setattr(run_config, "db", MetaDb({"s": {"agentTemplate": 9}}))
+    assert run_config.resolve_level("s") == "ic"
 
 
 def test_db_hiccup_is_ic(monkeypatch):
-    monkeypatch.setattr(engine, "db", MetaDb(raises=True))
-    assert engine.resolve_level("s") == "ic"
+    monkeypatch.setattr(run_config, "db", MetaDb(raises=True))
+    assert run_config.resolve_level("s") == "ic"
 
 
 # ── session_level_set through execute ──────────────────────────────────────

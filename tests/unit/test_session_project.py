@@ -14,7 +14,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from viewer import engine, remote
+from orchestrator import remote
+from orchestrator.remote import sessions as remote_sessions
+from orchestrator.runtime import hosts
 
 CWD = "/work/Case A - Land 23"
 
@@ -32,8 +34,8 @@ class TestLocalSessionProject(unittest.TestCase):
     def _project(self, records):
         with tempfile.TemporaryDirectory() as tmp:
             root = _transcript(tmp, records)
-            with patch.object(engine, "CLAUDE_DIR", pathlib.Path(root)):
-                return engine.LocalHost().list_sessions()[0]["project"]
+            with patch.object(hosts, "CLAUDE_DIR", pathlib.Path(root)):
+                return hosts.LocalHost().list_sessions()[0]["project"]
 
     def test_a_folder_with_spaces_and_dashes_keeps_its_name(self):
         self.assertEqual(self._project([{"type": "user", "cwd": CWD, "message": {"content": "hi"}}]), CWD)
@@ -55,7 +57,7 @@ class TestRemoteSessionProject(unittest.TestCase):
             captured["script"] = script
             return "[]"
 
-        with patch.object(remote, "remote_run_python", run):
+        with patch.object(remote_sessions, "remote_run_python", run):
             remote.remote_list_sessions("h")
         with tempfile.TemporaryDirectory() as home:
             _transcript(os.path.join(home, ".claude"), [{"type": "user", "cwd": CWD}])

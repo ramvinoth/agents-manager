@@ -1,5 +1,5 @@
-"""viewer.canvas_reconcile: the conflict rule, validation, checksum."""
-from viewer import canvas_reconcile as cr
+"""orchestrator.canvas_reconcile: the conflict rule, validation, checksum."""
+from orchestrator import canvas_reconcile as cr
 
 
 def el(i="a", v=1, n=5, **kw):

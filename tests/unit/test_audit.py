@@ -11,8 +11,9 @@ from urllib.parse import urlparse
 
 import pytest
 
-from viewer import actions, audit, db, server
-from viewer.routes.orchestrator import OrchestratorMixin
+from orchestrator import actions, audit, db, server
+from orchestrator.shared import postgres
+from orchestrator.routes.orchestrator import OrchestratorMixin
 
 
 SECRET = "SENSITIVE_COMMENT_PASSWORD_PROMPT_SENTINEL"
@@ -31,7 +32,7 @@ def no_database(monkeypatch):
     def forbidden():
         raise AssertionError("test attempted to reach the real database")
         yield
-    monkeypatch.setattr(db, "_db", forbidden)
+    monkeypatch.setattr(postgres, "cursor", forbidden)
 
 
 def test_exact_display_contract_and_sensitive_exclusion():
@@ -260,7 +261,7 @@ def sql_store(monkeypatch):
                      [entry[k] if k != "target" else json.dumps(entry[k])
                       for k in ("id", "actor", "action", "target", "outcome", "created_at")])
 
-    monkeypatch.setattr(db, "_db", database)
+    monkeypatch.setattr(postgres, "cursor", database)
     monkeypatch.setattr(db, "card_titles", lambda ids: {})
     monkeypatch.setattr(db, "board_column_names", lambda ids: {})
     yield SimpleNamespace(insert=insert, statements=statements)

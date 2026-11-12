@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from viewer import actions, boardwatch
+from orchestrator import actions, boardwatch
 
 NOW = time.time()
 HUMAN, AGENT = ("owner", ""), ("owner", "ic")

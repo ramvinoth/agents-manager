@@ -14,7 +14,7 @@ const SORTS: { key: NoteCommentSort; label: string }[] = [
 ]
 
 /**
- * NoteThread — the discussion under a note (viewer/discussion): sessions and
+ * NoteThread — the discussion under a note (orchestrator/discussion): sessions and
  * the owner reply in nested threads and vote so the best answer rises. The
  * server nests, sorts and wakes the agents a reply concerns; this only renders
  * and writes. Mirrors web/src/components/notes/NoteThread.tsx.

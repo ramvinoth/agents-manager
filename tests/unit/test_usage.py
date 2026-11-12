@@ -1,5 +1,5 @@
-"""viewer.usage: batch validation and the hot/dead/cold digest (pure, no DB)."""
-from viewer import usage
+"""orchestrator.usage: batch validation and the hot/dead/cold digest (pure, no DB)."""
+from orchestrator import usage
 
 NOW = 1_800_000_000.0
 
@@ -93,3 +93,22 @@ def test_report_counts_every_gesture_as_a_use_and_flags_phone_dead_controls():
 def test_report_empty():
     r = usage.report([], [], 7)
     assert r["hot"] == r["dead"] == r["cold"] == r["screens"] == [] and r["days"] == 7
+
+
+def test_report_leaves_controls_off_screen_for_days_out_of_dead_and_cold():
+    day = 86400
+    rows = [
+        dict(_row("seen", "chips", n=400), last_ts=NOW - 4 * day),      # a build dropped it
+        dict(_row("seen", "legacy", n=30), last_ts=NOW - 4 * day),
+        _row("tap", "legacy", n=0, n_before=4),                          # would read as cold
+        _row("seen", "search", n=400),                                    # on screen, never used
+        # the side menu, unopened overnight while its screen stayed in use: still there
+        dict(_row("seen", "menu-agents", n=25, surface="chats"), last_ts=NOW - 13 * 3600),
+        _row("seen", "menu-button", n=900, surface="chats"),
+    ]
+    r = usage.report(rows, [], 30, now=NOW)
+    assert [c["element"] for c in r["dead"]] == ["menu-button", "search", "menu-agents"]
+    assert r["cold"] == []
+    assert r["stale"] == [{"client": "web", "surface": "kanban", "element": "chips"},
+                          {"client": "web", "surface": "kanban", "element": "legacy"}]
+    assert r["totals"]["controls"] == 5

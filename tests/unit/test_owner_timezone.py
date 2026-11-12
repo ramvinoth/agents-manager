@@ -13,9 +13,9 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROBE = """
 import json
-from viewer.engine import owner_time_line
-from viewer.viewer_mcp import with_local_times
-from viewer.workspace import event_time
+from orchestrator.runtime.run_config import owner_time_line
+from orchestrator.viewer_mcp import with_local_times
+from orchestrator.workspace import event_time
 print(json.dumps({
     "naive": event_time("2026-11-05T09:00:00", False)["dateTime"],
     "zulu": event_time("2026-11-05T09:00:00Z", False)["dateTime"],

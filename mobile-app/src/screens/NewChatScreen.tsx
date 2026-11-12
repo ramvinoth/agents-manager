@@ -26,6 +26,7 @@ import { userError } from "../lib/errors"
 import { describeSchedule } from "../lib/interval"
 import { chatLabel, MODES, modeOf, parseRepo, projectOptions, startBlocker, waitForClone, type NewChatJob } from "../lib/newChat"
 import { useTheme } from "../lib/useTheme"
+import { MONO_FONT } from "../lib/fonts"
 import { useStyles } from "../lib/styles"
 
 type Props = NativeStackScreenProps<RootStackParamList, "NewChat">
@@ -351,7 +352,7 @@ export default function NewChatScreen({ navigation, route }: Props) {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: projects.length ? 8 : 0 }}>
                 <TextInput
                   testID="newchat-cwd"
-                  style={[styles.input, { flex: 1, fontSize: 14, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                  style={[styles.input, { flex: 1, fontSize: 14, fontFamily: MONO_FONT }]}
                   placeholder="~/path/to/project"
                   placeholderTextColor={t.textMuted + "80"}
                   autoCapitalize="none"

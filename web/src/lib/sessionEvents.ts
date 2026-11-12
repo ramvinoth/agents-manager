@@ -1,4 +1,4 @@
-/** The session events channel (server: viewer/events.py, /api/events/ws) as
+/** The session events channel (server: orchestrator/events.py, /api/events/ws) as
  *  the web's run engine (store/runtime.ts) uses it: which frames mean what,
  *  the watch frame naming the open transcript, and which polls the channel
  *  replaces right now. The events say WHEN to fetch; the data still comes

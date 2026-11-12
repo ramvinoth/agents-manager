@@ -1,4 +1,4 @@
-"""The per-chat plugin routes (viewer/routes/capabilities.py) end to end over
+"""The per-chat plugin routes (orchestrator/routes/capabilities.py) end to end over
 the mixin: POST /api/chat/plugin, chat-scoped skill and MCP saves, and the
 capabilities read that merges a chat's plugins.
 
@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from viewer import config
-from viewer.routes import capabilities as cap_routes
-from viewer.routes.capabilities import CapabilitiesMixin
-from viewer.server import SessionViewerHandler
+from orchestrator import config
+from orchestrator.routes import capabilities as cap_routes
+from orchestrator.routes.capabilities import CapabilitiesMixin
+from orchestrator.server import SessionViewerHandler
 
 SID = "0a1b2c3d-1111-2222-3333-444455556666"
 REL = f"projects/-Users-x-proj/{SID}.jsonl"
@@ -50,9 +50,9 @@ class _Req:
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     meta = {}
-    monkeypatch.setattr("viewer.db.session_meta_get", lambda sid: dict(meta.get(sid, {})))
-    monkeypatch.setattr("viewer.db.session_meta_patch", lambda sid, f: meta.setdefault(sid, {}).update(f))
-    monkeypatch.setattr("viewer.db.agent_template_get", lambda tid: None)
+    monkeypatch.setattr("orchestrator.db.session_meta_get", lambda sid: dict(meta.get(sid, {})))
+    monkeypatch.setattr("orchestrator.db.session_meta_patch", lambda sid, f: meta.setdefault(sid, {}).update(f))
+    monkeypatch.setattr("orchestrator.db.agent_template_get", lambda tid: None)
     monkeypatch.setattr(config, "CHAT_PLUGINS_DIR", tmp_path / "chats")
     monkeypatch.setattr(config, "TEMPLATE_PLUGINS_DIR", tmp_path / "templates")
     return meta

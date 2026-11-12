@@ -31,7 +31,7 @@ export type MdBlock =
 // $…$ | \(…\) math | `code` | **bold** | __bold__ | *italic* | _italic_ | [text](href) | url
 const INLINE =
   /\$([^\n$]+?)\$|\\\(([^]+?)\\\)|(`+)([^`]+?)\3|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<!\w)\*([^*\n]+?)\*(?!\w)|(?<!\w)_([^_\n]+?)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/
-// Notes add Obsidian syntax (same grammar as viewer/notelinks.py): [[Target#Heading|alias]]
+// Notes add Obsidian syntax (same grammar as orchestrator/notelinks.py): [[Target#Heading|alias]]
 // and #tag (after a space/"(", not a digit first, so "#42" and "C#" stay text).
 const NOTE_SYNTAX =
   /\[\[([^[\]|#\n]*)(#[^[\]|\n]*)?(\|[^[\]\n]*)?\]\]|(?<![^\s(])#(?![0-9])([^\s!"#$%&'()*+,.:;<=>?@[\]^`{|}~\\]+)/

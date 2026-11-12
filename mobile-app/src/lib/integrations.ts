@@ -1,4 +1,4 @@
-// Integrations — the app half of viewer/integrations.py (twin of web/src/lib/integrations.ts). The server owns
+// Integrations — the app half of orchestrator/integrations.py (twin of web/src/lib/integrations.ts). The server owns
 // the catalog (providers, services, scopes) and every rule; it sends one view
 // (GET /api/integrations) and this module only turns a service's state into
 // the control the owner sees, and runs the consent wait both the

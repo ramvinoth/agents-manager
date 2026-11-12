@@ -1,5 +1,5 @@
 /**
- * notes.ts — pure logic for the Notes surface (mirrors the server's viewer/db
+ * notes.ts — pure logic for the Notes surface (mirrors the server's orchestrator/db
  * notes contract). Templates, the scope rule for a filtered notes VIEW, the
  * sort every notes app uses (pinned first, newest edit next), and the list-row
  * preview derived from a markdown body. No RN imports: unit-tested under node.

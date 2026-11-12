@@ -2,7 +2,7 @@
 deleting escape codes (card 204: Claude Code 2.1.302 draws with cursor moves)."""
 import unittest
 
-from viewer.termscreen import Screen
+from orchestrator.termscreen import Screen
 
 
 def render(data, cols=80, rows=24):

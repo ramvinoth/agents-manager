@@ -10,8 +10,8 @@ import os
 import unittest
 from unittest.mock import patch
 
-from viewer import engine
-from viewer.routes.sessions import SessionsMixin
+from orchestrator.runtime import hosts, titles
+from orchestrator.routes.sessions import SessionsMixin
 
 
 def _iso(epoch):
@@ -21,13 +21,13 @@ def _iso(epoch):
 
 class TestNewer(unittest.TestCase):
     def test_keeps_the_later_message_time(self):
-        t = engine._newer(None, {"type": "user", "timestamp": _iso(100)})
-        self.assertEqual(engine._newer(t, {"type": "assistant", "timestamp": _iso(50)}), 100)
+        t = titles._newer(None, {"type": "user", "timestamp": _iso(100)})
+        self.assertEqual(titles._newer(t, {"type": "assistant", "timestamp": _iso(50)}), 100)
 
     def test_bookkeeping_and_bad_timestamps_do_not_count(self):
         for obj in ({"type": "cost-state"}, {"type": "last-prompt", "timestamp": _iso(999)},
                     {"type": "user", "timestamp": "not a date"}, {"type": "user"}):
-            self.assertEqual(engine._newer(7, obj), 7)
+            self.assertEqual(titles._newer(7, obj), 7)
 
 
 class TestListSessionsLastMessage(unittest.TestCase):
@@ -45,8 +45,8 @@ class TestListSessionsLastMessage(unittest.TestCase):
         import tempfile, pathlib
         with tempfile.TemporaryDirectory() as tmp:
             root = self._write(tmp, records, mtime)
-            with patch.object(engine, "CLAUDE_DIR", pathlib.Path(root)):
-                return engine.LocalHost().list_sessions()[0]
+            with patch.object(hosts, "CLAUDE_DIR", pathlib.Path(root)):
+                return hosts.LocalHost().list_sessions()[0]
 
     def test_bookkeeping_after_the_last_message_is_ignored(self):
         s = self._list([{"type": "user", "timestamp": _iso(1000), "message": {"content": "hi"}},
@@ -68,8 +68,8 @@ class TestListSessionsLastMessage(unittest.TestCase):
 
 class TestOverlayUnread(unittest.TestCase):
     def _unread(self, sessions, seen):
-        with patch("viewer.db.session_meta_all", return_value={}), \
-             patch("viewer.db.session_seen_get", return_value=seen):
+        with patch("orchestrator.db.session_meta_all", return_value={}), \
+             patch("orchestrator.db.session_seen_get", return_value=seen):
             m = SessionsMixin.__new__(SessionsMixin)
             m.session_busy = lambda sid: False
             m._overlay_meta(sessions, "user:r", "claude")

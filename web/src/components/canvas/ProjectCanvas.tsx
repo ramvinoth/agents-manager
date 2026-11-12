@@ -23,7 +23,7 @@ export type Status = "connecting" | "live" | "offline" | "reload"
 
 /**
  * ProjectCanvas — a project's shared canvas (Excalidraw), edited live by every
- * person who has it open. The server is the truth (viewer/canvas_room.py): a
+ * person who has it open. The server is the truth (orchestrator/canvas_room.py): a
  * snapshot over HTTP, then element diffs over one socket; lib/canvasSync holds
  * the protocol logic. Images upload once, before their element is sent.
  * Hosts: CanvasDialog (web) and CanvasEmbed (the phone's WebView).

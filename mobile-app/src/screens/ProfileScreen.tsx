@@ -60,8 +60,8 @@ export default function ProfileScreen({ navigation }: Props) {
   // server is unreachable) — the row renders disabled rather than guessing,
   // because a switch showing "off" that never reached the server would be the
   // one lie this control must not tell.
-  const [orchestrator, setManager] = useState<OrchestratorConfig | null>(null)
-  // The account's server role (viewer/orglogic.HUMAN_ROLES). Only an owner may
+  const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  // The account's server role (orchestrator/orglogic.HUMAN_ROLES). Only an owner may
   // change the server-wide settings below; everyone else is told so up front
   // instead of discovering it from a refusal.
   const [role, setRole] = useState<string | undefined>(undefined)
@@ -73,7 +73,7 @@ export default function ProfileScreen({ navigation }: Props) {
   const [loop, setLoop] = useState<LoopControl | null>(null)
   const [loopBusy, setLoopBusy] = useState(false)
   const [loopErr, setLoopErr] = useState("")
-  // The owner's attention cap (server-owned, viewer.queue).
+  // The owner's attention cap (server-owned, orchestrator.queue).
   const [cap, setCap] = useState<DecisionCap | null>(null)
   const [capErr, setCapErr] = useState("")
   const stepCap = async (by: number) => {
@@ -195,8 +195,8 @@ export default function ProfileScreen({ navigation }: Props) {
       // Deliberately NOT optimistic. Everywhere else a snapped-back switch is a
       // cosmetic annoyance; here it would claim the machine is paused when the
       // request never landed. The switch moves only once the server confirms.
-      const res = await api.orgSetOrchestrator({ automation_enabled: v })
-      // Resuming is Red (viewer/orglogic), so a non-owner's request is QUEUED as
+      const res = await api.orgSetHarman({ automation_enabled: v })
+      // Resuming is Red (orchestrator/orglogic), so a non-owner's request is QUEUED as
       // an approval rather than applied — a 200 that changed nothing. Say so, or
       // the switch snapping back looks like a bug instead of the gate working.
       if (isQueued(res)) {
@@ -234,7 +234,7 @@ export default function ProfileScreen({ navigation }: Props) {
     setPreBusy(true)
     setPreMsg("")
     try {
-      // Manager-scoped AND Red (viewer/orglogic): a non-owner's edit is QUEUED as
+      // Manager-scoped AND Red (orchestrator/orglogic): a non-owner's edit is QUEUED as
       // an approval rather than applied, so say so instead of claiming it saved.
       const res = await api.orgSetSystemPreamble(draft)
       if (isQueued(res)) {

@@ -1,9 +1,9 @@
-"""viewer.live: payload parsing, fan-out, backpressure drop, writer lifecycle."""
+"""orchestrator.live: payload parsing, fan-out, backpressure drop, writer lifecycle."""
 import json
 import threading
 import time
 
-from viewer import live
+from orchestrator import live
 
 
 def test_parse_event_accepts_ours_and_rejects_noise():

@@ -1,5 +1,5 @@
-"""viewer.canvas_summary: what an agent reads — ink groups, workflows, refs, caps."""
-from viewer import canvas_summary as cs
+"""orchestrator.canvas_summary: what an agent reads — ink groups, workflows, refs, caps."""
+from orchestrator import canvas_summary as cs
 
 
 def stroke(i, x, y, pts=((0, 0), (10, 10))):
@@ -65,17 +65,16 @@ def test_refs_resolve_and_flag_missing():
 
 
 def test_refs_of_every_kind_keep_their_id_type():
-    els = [shape("i", 0, 0, link="agents://inbox/41"), shape("f", 0, 100, link="agents://sift/doc-7"),
-           shape("c", 0, 200, link="agents://code/viewer/db.py"), shape("bad", 0, 300, link="agents://card/x1")]
+    els = [shape("i", 0, 0, link="harman://inbox/41"), shape("f", 0, 100, link="harman://sift/doc-7"),
+           shape("bad", 0, 200, link="harman://card/x1")]
     out = cs.summarize(els, resolve=lambda k, i: str(i))
     refs = {r["kind"]: r for r in out["refs"]}
     assert refs["inbox"]["id"] == 41 and refs["sift"]["id"] == "doc-7"
-    assert "code" not in refs                     # the code kind was retired with the Map
     assert "card" not in refs                     # a non-numeric card id is not a ref
 
 
 def test_sift_refs_name_themselves():
-    from viewer.routes import canvas_board as cb
+    from orchestrator.routes import canvas_board as cb
     assert cb.resolver()("sift", "d1") == "d1"
 
 

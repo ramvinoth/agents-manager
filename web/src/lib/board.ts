@@ -1,5 +1,5 @@
 /**
- * board.ts — pure Kanban board logic. Mirrors the server's viewer/orglogic.py so
+ * board.ts — pure Kanban board logic. Mirrors the server's orchestrator/orglogic.py so
  * the client filters/orders/positions cards identically: one canonical `cards`
  * list → any filtered VIEW, columns rendered by position, and fractional indexing
  * so a drag computes a new `position` locally (then POSTs card_move) without
@@ -79,7 +79,7 @@ export function nextPosition(cardsInColumn: Card[], index: number): number {
 
 /**
  * The owner's next moves for a card, derived from WHERE it sits in the
- * pipeline (viewer/orglogic.PIPELINE_COLUMNS, matched by column name so a
+ * pipeline (orchestrator/orglogic.PIPELINE_COLUMNS, matched by column name so a
  * renamed or missing column simply yields no action). The board itself is
  * the source of truth for what columns exist; this only names the handful of
  * transitions that are a human decision rather than bookkeeping:
@@ -119,7 +119,7 @@ export function decisionActions(columns: BoardColumn[], currentColumnId: number 
 }
 
 /**
- * A principal actor string (viewer/server.py: `user:<name>` for a human,
+ * A principal actor string (orchestrator/server.py: `user:<name>` for a human,
  * `session:<title>` for an agent — and `employee:<name>` on audit rows from
  * before the Employees roster retired) rendered for a person: the name alone,
  * plus whether it was a human, an agent, or the reader. "employee:?" was the
@@ -144,7 +144,7 @@ export function formatActor(actor: string | null | undefined, selfUsername?: str
 /**
  * The session that owns a card, found in the session list by id: a card's
  * `session_id` is the transcript's uuid, and a listed session's `path` is
- * `<project-dir>/<uuid>.jsonl` (viewer/routes/sessions.py). Undefined when the
+ * `<project-dir>/<uuid>.jsonl` (orchestrator/routes/sessions.py). Undefined when the
  * card has no session or that session is not on this host's list.
  */
 export function findCardSession<S extends { path: string }>(sessions: S[], sessionId: string | null | undefined): S | undefined {

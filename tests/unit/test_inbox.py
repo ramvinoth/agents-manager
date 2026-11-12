@@ -1,4 +1,4 @@
-"""Unit tests for the pure shaping logic in viewer/inbox.py:
+"""Unit tests for the pure shaping logic in orchestrator/inbox.py:
 - effective_status: a lapsed snooze reads 'sent' again (skipped is never dropped).
 - open_ref_set: decision-queue items collapse to 'kind:ref' match keys.
 - attach_state: a decision row is 'open' only while its durable source is open;
@@ -9,7 +9,7 @@
 No Postgres, no clock: time is injected, and the formatters take plain dicts.
 """
 
-from viewer import inbox
+from orchestrator import inbox
 
 NOW = 1_000_000.0
 
@@ -275,8 +275,8 @@ def test_session_message_push_opens_its_mailbox(monkeypatch):
 # ── _wake_session: a live run gets the message mid-turn, not at turn end ──
 
 def test_wake_steers_into_a_running_turn(monkeypatch):
-    from viewer import engine
-    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    from orchestrator import config, engine
+    monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     steered, started = [], []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: steered.append(t) or "steered")
     monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
@@ -285,12 +285,12 @@ def test_wake_steers_into_a_running_turn(monkeypatch):
 
 
 def test_wake_resumes_when_the_run_ended_before_the_steer(monkeypatch):
-    from viewer import engine
-    monkeypatch.setitem(engine.CHAT_JOBS, "s1", {"running": True, "host": "local"})
+    from orchestrator import config, engine
+    monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     started = []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: None)   # run just finished
     monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
-    monkeypatch.setattr("viewer.config.transcript_path", lambda sid: None)
+    monkeypatch.setattr("orchestrator.config.transcript_path", lambda sid: None)
     inbox._wake_session("s1", "[inbox] wait")
     assert len(started) == 1        # never dropped: a fresh resumed turn carries it
 
@@ -353,7 +353,7 @@ class TestInboxRouteLimit:
     default, never the whole history, and `unread_only=False` means false."""
 
     def _run(self, monkeypatch, principal, query):
-        from viewer.routes import inbox as ri
+        from orchestrator.routes import inbox as ri
         calls = []
         monkeypatch.setattr(ri.queue, "open_items", lambda: [])
         monkeypatch.setattr(ri.queue, "cap", lambda: 3)
@@ -390,7 +390,7 @@ class TestInboxRouteLimit:
 
     def test_agent_count_is_its_own_unread_mail(self, monkeypatch):
         """The agent's `unread` is the mail sent to it, not the owner's badge."""
-        from viewer.routes import inbox as ri
+        from orchestrator.routes import inbox as ri
         sent = {}
         rows = [{"id": 1, "recipient_type": "session", "recipient_id": "s1", "status": "sent"},
                 {"id": 2, "recipient_type": "user", "recipient_id": "", "status": "sent"}]
@@ -414,14 +414,14 @@ C = "65cf166a-e3e9-4b72-8a9e-15f8d8d2dd49"
 
 
 def _sessions(tmp_path, monkeypatch, titles):
-    from viewer import config, engine
+    from orchestrator import config, engine
     d = tmp_path / "-proj"
     d.mkdir()
     for sid in titles:
         (d / f"{sid}.jsonl").write_text("")
     monkeypatch.setattr(config, "CLAUDE_DIR", tmp_path)
-    monkeypatch.setattr(engine, "CHAT_JOBS", {})
-    monkeypatch.setattr(engine, "_session_title", lambda sid: (titles.get(sid, ""), ""))
+    monkeypatch.setattr(config, "CHAT_JOBS", {})
+    monkeypatch.setattr(engine, "session_title", lambda sid: (titles.get(sid, ""), ""))
 
 
 def test_resolve_full_id_prefix_and_title(tmp_path, monkeypatch):
@@ -453,3 +453,10 @@ def test_an_agent_reads_only_the_mail_addressed_to_it():
         {"id": 5, "recipient_type": "session", "recipient_id": "s1", "status": "snoozed"},
     ]
     assert inbox.unread_for_session(rows, "s1") == [1]
+
+
+def test_owner_and_peer_messages_to_a_session_never_push(monkeypatch):
+    sent = _capture_pushes(monkeypatch)
+    inbox.deliver_message("user", "", "session", "s1", "hi")
+    inbox.deliver_message("session", "s2", "session", "s1", "psst")
+    assert sent == []

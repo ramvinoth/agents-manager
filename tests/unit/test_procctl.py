@@ -1,4 +1,4 @@
-"""viewer.procctl — stopping a local child on every platform (card 270).
+"""orchestrator.procctl — stopping a local child on every platform (card 270).
 
 POSIX keeps SIGINT and process-group kills; Windows gets CTRL_BREAK_EVENT for
 a child in its own process group and `taskkill /T` for a tree. The Windows
@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from viewer import procctl
+from orchestrator import procctl
 
 
 class _Fake:

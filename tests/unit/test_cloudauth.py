@@ -1,4 +1,4 @@
-"""Tests for viewer.cloudauth: the credential each vendor expects, added last.
+"""Tests for orchestrator.cloudauth: the credential each vendor expects, added last.
 No network: token exchanges go through a fake `http` seam."""
 import datetime
 import json
@@ -9,7 +9,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from viewer import cloudauth as C
+from orchestrator import cloudauth as C
 
 
 @pytest.fixture(autouse=True)

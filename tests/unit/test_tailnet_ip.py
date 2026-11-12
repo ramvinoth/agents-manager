@@ -7,12 +7,13 @@ address for the viewer" and the banner printed http://:8091/ — and the empty
 result was cached for the life of the process."""
 import pytest
 
-from viewer import remote
+from orchestrator import remote
+from orchestrator.remote import tailnet
 
 
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
-    monkeypatch.setattr(remote, "_viewer_tailnet_ip", None)
+    monkeypatch.setattr(tailnet, "_viewer_tailnet_ip", None)
 
 
 IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
@@ -56,7 +57,7 @@ def test_failed_lookup_is_not_cached():
         return ""
     assert remote.tailnet_ipv4(_run=failing) is None
     monkeypatched_calls = len(calls)
-    assert monkeypatched_calls == len(remote._TAILNET_PROBES)
+    assert monkeypatched_calls == len(tailnet._TAILNET_PROBES)
     assert remote.tailnet_ipv4(_run=lambda cmd: IFCONFIG) == "100.64.0.7"
     # ...and a success IS cached: a later probe that would fail is never asked.
     assert remote.tailnet_ipv4(_run=failing) == "100.64.0.7"

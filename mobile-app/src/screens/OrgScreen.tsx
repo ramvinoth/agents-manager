@@ -14,7 +14,7 @@ import { userError } from "../lib/errors"
 type Props = NativeStackScreenProps<RootStackParamList, "Org">
 
 /**
- * OrgScreen — the org dashboard: projects (each opens its board and code map),
+ * OrgScreen — the org dashboard: projects (each opens its board),
  * the read-only activity log, and the skills the team has learned. Org approvals
  * are decided in the decision queue (board band → cockpit, Inbox), not here, and
  * the automation master switch lives in Profile. Agent authority is set per

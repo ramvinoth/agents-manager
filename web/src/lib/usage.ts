@@ -1,5 +1,5 @@
 // usage.ts — what the owner actually touches in the web app, for the hot/dead
-// control report agents read (server: viewer/usage.py, MCP usage_report).
+// control report agents read (server: orchestrator/usage.py, MCP usage_report).
 //
 // One delegated listener, no per-button wiring: a control's name is the first
 // of data-track, aria-label, title or its visible text; its surface is the open

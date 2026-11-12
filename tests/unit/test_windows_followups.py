@@ -15,25 +15,26 @@ import tempfile
 import unittest
 from unittest import mock
 
-from viewer import browser, db, gitops
+from orchestrator import browser, gitops
+from orchestrator.shared import postgres
 
 
 class DefaultDsnTest(unittest.TestCase):
     def test_posix_uses_the_unix_socket(self):
-        with mock.patch.object(db.os, "name", "posix"):
-            self.assertEqual(db.default_dsn(), "dbname=viewer")
+        with mock.patch.object(postgres.os, "name", "posix"):
+            self.assertEqual(postgres.default_dsn(), "dbname=viewer")
 
     def test_windows_uses_tcp_localhost(self):
-        with mock.patch.object(db.os, "name", "nt"):
-            self.assertEqual(db.default_dsn(), "dbname=viewer host=localhost port=5432")
+        with mock.patch.object(postgres.os, "name", "nt"):
+            self.assertEqual(postgres.default_dsn(), "dbname=viewer host=localhost port=5432")
 
     def test_database_url_still_wins(self):
         # The module-level DSN is read once at import; the unit run sets one.
         env_url = os.environ.get("DATABASE_URL")
         if env_url:
-            self.assertEqual(db.DATABASE_URL, env_url)
+            self.assertEqual(postgres.DATABASE_URL, env_url)
         else:
-            self.assertEqual(db.DATABASE_URL, db.default_dsn())
+            self.assertEqual(postgres.DATABASE_URL, postgres.default_dsn())
 
 
 def _git(cwd, *args):

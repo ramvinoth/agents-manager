@@ -318,7 +318,7 @@ export function SessionList() {
 
 /**
  * A project's "⋯" menu on its tree row: a new chat there, its board, notes
- * ledger, message ledger, code map, and the apps sharing its folder.
+ * ledger, message ledger and the apps sharing its folder.
  */
 function ProjectMenu({
   name,

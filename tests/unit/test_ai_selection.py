@@ -8,8 +8,9 @@ from threading import RLock
 
 import pytest
 
-from viewer import providers
-from viewer.routes.providers import ProvidersMixin
+from orchestrator import providers
+from orchestrator.shared import postgres
+from orchestrator.routes.providers import ProvidersMixin
 
 
 def test_context_window_follows_the_selected_model(monkeypatch):
@@ -50,7 +51,7 @@ def test_draft_endpoint_change_cannot_reuse_saved_secret(monkeypatch):
 def test_queue_closing_race_preserves_launch_provider_and_effort():
     # Execute the actual cleanup continuation branch in isolation, with no process
     # startup. This is the branch reached when queue arrives as stdin closes.
-    from viewer import engine
+    from orchestrator import engine
     tree = ast.parse(inspect.getsource(engine.start_claude_run))
     branch = next(n for n in ast.walk(tree) if isinstance(n, ast.If)
                   and isinstance(n.test, ast.BoolOp)
@@ -73,12 +74,12 @@ def choice(provider="", model=None, effort=""):
 @pytest.mark.parametrize("selected,expected", [(None, "legacy"), ({"kind": "default"}, ""),
     ({"kind": "id", "id": "full/model:v1[1m]"}, "full/model:v1[1m]")])
 def test_builtin_model_semantics(selected, expected):
-    from viewer import ai
+    from orchestrator import ai
     assert ai.resolve(ai.meta_fields(choice(model=selected)), "legacy")["model"] == expected
 
 
 def test_provider_switch_loop_does_not_leak_session_model(monkeypatch):
-    from viewer import ai
+    from orchestrator import ai
     monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "https://example.invalid", "model": pid+"-default"})
     meta = ai.meta_fields(choice("a", {"kind": "id", "id": "a-override"}))
     assert ai.resolve(meta)["model"] == "a-override"
@@ -87,7 +88,7 @@ def test_provider_switch_loop_does_not_leak_session_model(monkeypatch):
 
 
 def test_missing_provider_and_remote_rejected(monkeypatch):
-    from viewer import ai
+    from orchestrator import ai
     monkeypatch.setattr(providers, "get_preset", lambda _: None)
     with pytest.raises(ValueError, match="unavailable"):
         ai.resolve({"provider": "missing"})
@@ -98,7 +99,7 @@ def test_missing_provider_and_remote_rejected(monkeypatch):
 
 
 def test_custom_caps_and_validation(monkeypatch):
-    from viewer import ai
+    from orchestrator import ai
     monkeypatch.setattr(providers, "get_preset", lambda _: {"baseUrl": "https://example.invalid"})
     assert ai.capabilities(provider="p")["efforts"] == [""]
     with pytest.raises(ValueError, match="Effort"):
@@ -115,7 +116,7 @@ def test_agent_cannot_administer_ai_or_secrets(method):
 
 
 def test_draft_keep_remove_replace_and_edited_url(monkeypatch):
-    from viewer.routes.providers import _draft_connection
+    from orchestrator.routes.providers import _draft_connection
     monkeypatch.setattr(providers, "get_preset", lambda _: {"baseUrl": "https://old.invalid", "apiKey": "saved"})
     assert _draft_connection({"id": "p", "baseUrl": "https://old.invalid/", "apiKey": ""})[1] == "saved"
     assert _draft_connection({"id": "p", "baseUrl": "https://new.invalid", "apiKeyAction": "remove"}) == ("https://new.invalid", "")
@@ -123,7 +124,7 @@ def test_draft_keep_remove_replace_and_edited_url(monkeypatch):
 
 
 def test_discovery_redirects_never_forward_secret():
-    from viewer.routes.providers import _NoRedirect
+    from orchestrator.routes.providers import _NoRedirect
     assert _NoRedirect().redirect_request(None, None, 302, "redirect", {}, "https://else.invalid") is None
 
 
@@ -147,8 +148,8 @@ _APP_REQ = SimpleNamespace(principal={"kind": "app", "level": "manager", "actor"
 
 def _create(monkeypatch, tmp_path, body, principal):
     import io, json
-    from viewer import db
-    from viewer.routes import sessions
+    from orchestrator import db
+    from orchestrator.routes import sessions
     monkeypatch.setattr(db, "session_meta_set", lambda *a: None)
     monkeypatch.setattr(db, "setting_get", lambda *a: None)
     audit = Mock(); monkeypatch.setattr(db, "audit_append", audit)
@@ -173,10 +174,10 @@ def test_new_session_title_rides_on_the_run_as_name(monkeypatch, tmp_path):
 def test_new_session_title_is_stored_as_the_fallback_name(monkeypatch, tmp_path):
     """A remote run gets no --name and the client's rename can fail; the name
     given at creation is kept in session_meta so the list still shows it."""
-    from viewer import db
+    from orchestrator import db
     saved = {}
     monkeypatch.setattr(db, "session_meta_set", lambda sid, data: saved.update(data))
-    from viewer.routes import sessions
+    from orchestrator.routes import sessions
     monkeypatch.setattr(sessions, "start_claude_run", Mock(return_value=True))
     import io, json
     raw = json.dumps({"message": "hi", "cwd": str(tmp_path), "title": " RSI "}).encode()
@@ -188,8 +189,8 @@ def test_new_session_title_is_stored_as_the_fallback_name(monkeypatch, tmp_path)
 
 
 def test_list_falls_back_to_the_creation_name_only_for_untitled(monkeypatch):
-    from viewer import db
-    from viewer.routes import sessions
+    from orchestrator import db
+    from orchestrator.routes import sessions
     sid = "abcdef12-0000"
     monkeypatch.setattr(db, "session_meta_all", lambda: {sid: {"title": "RSI"}, "x": {"title": "Old"}})
     monkeypatch.setattr(db, "session_seen_get", lambda r: {})
@@ -218,7 +219,7 @@ def test_agent_session_create_runs_and_is_audited(monkeypatch, tmp_path):
 def test_agent_session_create_below_workspace_queues_for_the_owner(monkeypatch, tmp_path):
     """Below Workspace an agent's ask is not a wall: it waits on the owner's
     decision card, and nothing launches until they approve."""
-    from viewer import actions
+    from orchestrator import actions
     queued = Mock(return_value=({"queued": True, "approval": 7}, 200))
     monkeypatch.setattr(actions, "_queue_for_owner", queued)
     launch, send, _ = _create(monkeypatch, tmp_path, {"title": "Privacy", "reason": "r"},
@@ -229,8 +230,8 @@ def test_agent_session_create_below_workspace_queues_for_the_owner(monkeypatch, 
 
 def test_first_launch_snapshots_ai_and_ignores_stale_client_model(monkeypatch, tmp_path):
     import io, json
-    from viewer import db
-    from viewer.routes import sessions
+    from orchestrator import db
+    from orchestrator.routes import sessions
     saved = {}
     monkeypatch.setattr(db, "session_meta_set", lambda sid, data: saved.update({sid: data}))
     launch = Mock(side_effect=lambda sid, *a, **kw: bool(saved[sid]))
@@ -245,7 +246,7 @@ def test_first_launch_snapshots_ai_and_ignores_stale_client_model(monkeypatch, t
 
 
 def test_canonical_defaults_override_legacy_default_flag(monkeypatch):
-    from viewer import db
+    from orchestrator import db
     monkeypatch.setattr(db, "setting_get", lambda *a: {"revision": 2, "selection": choice("b")})
     monkeypatch.setattr(db, "providers_load", lambda: {"a": {"isDefault": True}, "b": {}})
     assert providers.get_default_id() == "b"
@@ -253,7 +254,7 @@ def test_canonical_defaults_override_legacy_default_flag(monkeypatch):
 
 
 def test_session_write_is_ai_only_and_conflict_is_409(monkeypatch):
-    from viewer import db
+    from orchestrator import db
     monkeypatch.setattr(db, "session_meta_get", lambda _: {"goal": "keep"})
     write = Mock(return_value=None); monkeypatch.setattr(db, "session_ai_cas", write)
     handler = ProvidersMixin(); handler.send_json = Mock()
@@ -266,14 +267,14 @@ def test_session_write_is_ai_only_and_conflict_is_409(monkeypatch):
 @pytest.mark.parametrize("defaults", [True, False])
 def test_cas_locks_before_compare_and_merge(monkeypatch, defaults):
     from contextlib import contextmanager
-    from viewer import db
+    from orchestrator import db
     cur = Mock()
     cur.fetchone.side_effect = ([{"value": {"revision": 4}}] if defaults else
                               [{"data": {"aiRevision": 4, "goal": "keep"}}, {"data": {"aiRevision": 5, "goal": "keep"}}])
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     result = db.ai_defaults_cas(4, choice()) if defaults else db.session_ai_cas("s", 4, {"provider": ""})
     sql = [c.args[0] for c in cur.execute.call_args_list]
     assert "FOR UPDATE" in sql[1]
@@ -287,20 +288,20 @@ def test_cas_locks_before_compare_and_merge(monkeypatch, defaults):
 @pytest.mark.parametrize("defaults", [True, False])
 def test_stale_cas_does_not_update(monkeypatch, defaults):
     from contextlib import contextmanager
-    from viewer import db
+    from orchestrator import db
     cur = Mock()
     cur.fetchone.return_value = {"value": {"revision": 5}, "data": {"aiRevision": 5}}
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     result = db.ai_defaults_cas(4, choice()) if defaults else db.session_ai_cas("s", 4, {})
     assert result is None
     assert not any(c.args[0].startswith("UPDATE") for c in cur.execute.call_args_list)
 
 
 def test_defaults_write_never_touches_sessions(monkeypatch):
-    from viewer import db
+    from orchestrator import db
     monkeypatch.setattr(db, "ai_defaults_cas", lambda rev, sel: {"revision": rev + 1, "selection": sel})
     monkeypatch.setattr(db, "session_meta_patch", Mock(side_effect=AssertionError("Session mutation forbidden")))
     monkeypatch.setattr(db, "session_ai_cas", Mock(side_effect=AssertionError("Session mutation forbidden")))
@@ -314,8 +315,8 @@ def test_defaults_write_never_touches_sessions(monkeypatch):
 @pytest.mark.parametrize("configured", [False, True])
 def test_legacy_create_snapshots_only_configured_defaults(monkeypatch, tmp_path, configured):
     import io, json
-    from viewer import db
-    from viewer.routes import sessions
+    from orchestrator import db
+    from orchestrator.routes import sessions
     selection = choice(model={"kind": "id", "id": "server/model"})
     monkeypatch.setattr(db, "setting_get", lambda *a: {"revision": 1, "selection": selection} if configured else None)
     saved = Mock(); monkeypatch.setattr(db, "session_meta_set", saved)
@@ -330,8 +331,8 @@ def test_legacy_create_snapshots_only_configured_defaults(monkeypatch, tmp_path,
 
 def test_custom_first_launch_receives_exact_model_and_saved_config(monkeypatch, tmp_path):
     import io, json
-    from viewer import db, customrun
-    from viewer.routes import sessions
+    from orchestrator import db, customrun
+    from orchestrator.routes import sessions
     preset = {"baseUrl": "https://example.invalid", "model": "preset-model"}
     monkeypatch.setattr(providers, "get_preset", lambda _: preset)
     saved = {}
@@ -364,7 +365,7 @@ def test_legacy_web_provider_save_preserves_key_and_context(monkeypatch):
 
 
 def test_full_model_id_reaches_cli_command():
-    from viewer import engine
+    from orchestrator import engine
     tree = ast.parse(inspect.getsource(engine.start_claude_run))
     branch = next(n for n in ast.walk(tree) if isinstance(n, ast.If) and any(
         isinstance(c, ast.Constant) and c.value == "--model" for c in ast.walk(n))
@@ -377,16 +378,17 @@ def test_full_model_id_reaches_cli_command():
 
 @pytest.mark.parametrize("override,expected", [("", "session-model"), ("other", "other-default")])
 def test_real_loop_launch_uses_provider_associated_model(monkeypatch, tmp_path, override, expected):
-    from viewer import ai, db, engine
+    from orchestrator import ai, db
+    from orchestrator.runtime import scheduler
     root = tmp_path / "projects"; root.mkdir()
     transcript = root / "s.jsonl"; transcript.write_text('{}\n')
-    monkeypatch.setattr(engine, "CLAUDE_DIR", root)
-    monkeypatch.setattr(engine, "extract_cwd", lambda _: str(tmp_path))
+    monkeypatch.setattr(scheduler, "CLAUDE_DIR", root)
+    monkeypatch.setattr(scheduler, "extract_cwd", lambda _: str(tmp_path))
     monkeypatch.setattr(db, "session_meta_get", lambda _: ai.meta_fields(choice("p", {"kind": "id", "id": "session-model"})))
     monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "https://example.invalid", "model": pid + "-default",
         "modelLimits": {pid + "-default": {"override": 242000}}})
-    launch = Mock(return_value=True); monkeypatch.setattr(engine, "start_claude_run", launch)
-    assert engine.run_loop_iteration("s", "projects/s.jsonl", "hello", provider=override)
+    launch = Mock(return_value=True); monkeypatch.setattr(scheduler, "start_claude_run", launch)
+    assert scheduler.run_loop_iteration("s", "projects/s.jsonl", "hello", provider=override)
     env = launch.call_args.kwargs["provider_env"]
     assert env["ANTHROPIC_MODEL"] == expected
     assert ("CLAUDE_CODE_MAX_CONTEXT_TOKENS" in env) == bool(override)
@@ -394,12 +396,12 @@ def test_real_loop_launch_uses_provider_associated_model(monkeypatch, tmp_path, 
 
 def test_legacy_default_write_updates_locked_canonical_record(monkeypatch):
     from contextlib import contextmanager
-    from viewer import db
+    from orchestrator import db
     cur = Mock(); cur.fetchone.return_value = {"value": {"revision": 7, "selection": choice("old")}}
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     db.provider_upsert("new", {"model": "m", "isDefault": True}, default_change=True)
     calls = cur.execute.call_args_list
     assert "FOR UPDATE" in calls[1].args[0]
@@ -411,12 +413,12 @@ def test_legacy_default_write_updates_locked_canonical_record(monkeypatch):
 
 def test_connection_save_without_default_flag_never_changes_defaults(monkeypatch):
     from contextlib import contextmanager
-    from viewer import db
+    from orchestrator import db
     cur = Mock()
     @contextmanager
     def fake_db():
         yield cur
-    monkeypatch.setattr(db, "_db", fake_db)
+    monkeypatch.setattr(postgres, "cursor", fake_db)
     db.provider_upsert("p", {"model": "m"})
     assert not any("settings" in c.args[0] for c in cur.execute.call_args_list)
 
@@ -433,7 +435,7 @@ def test_discovery_error_never_echoes_credentials(monkeypatch):
 
 
 def test_capability_read_uses_draft_provider_and_preserves_saved_selection(monkeypatch):
-    from viewer import db
+    from orchestrator import db
     monkeypatch.setattr(db, "session_meta_get", lambda _: {})
     handler = ProvidersMixin(); handler.send_json = Mock()
     handler._g_session_ai(SimpleNamespace(query={"id": ["sid"], "provider": ["draft-provider"]}))
@@ -444,8 +446,8 @@ def test_capability_read_uses_draft_provider_and_preserves_saved_selection(monke
 
 def _new_session(monkeypatch, tmp_path, **extra):
     import io, json
-    from viewer import db
-    from viewer.routes import sessions
+    from orchestrator import db
+    from orchestrator.routes import sessions
     loops = {}
     monkeypatch.setattr(db, "session_meta_set", lambda sid, data: None)
     monkeypatch.setattr(db, "setting_get", lambda *a: None)

@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from viewer import server
+from orchestrator import server
 
 
 @pytest.fixture

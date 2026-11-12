@@ -16,7 +16,7 @@ const SORTS: { key: NoteCommentSort; label: string }[] = [
 ]
 
 /**
- * NoteThread — the discussion under a note (viewer/discussion): sessions and
+ * NoteThread — the discussion under a note (orchestrator/discussion): sessions and
  * the owner reply in nested threads and vote so the best answer rises. The
  * server nests and sorts; a reply wakes the note's session and the parent's
  * author, so this view only renders and writes.

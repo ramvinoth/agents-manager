@@ -1,11 +1,11 @@
-"""Note discussions — the message board under every note (viewer/discussion,
+"""Note discussions — the message board under every note (orchestrator/discussion,
 the note_comment / note_vote actions, their routes and MCP tools). Hermetic:
 db, push and the wake are faked at the module seams."""
 import pytest
 
-from viewer import actions, boardwatch, discussion, orglogic, viewer_mcp
-from viewer.routes.orchestrator import OrchestratorMixin
-from viewer.server import SessionViewerHandler
+from orchestrator import actions, boardwatch, discussion, orglogic, viewer_mcp
+from orchestrator.routes.orchestrator import OrchestratorMixin
+from orchestrator.server import SessionViewerHandler
 
 
 def _c(id, parent=None, at=None, score=0, author="session:a"):
@@ -119,7 +119,7 @@ def env(monkeypatch):
     monkeypatch.setattr(discussion, "db", f)
     monkeypatch.setattr(boardwatch, "schedule_once",
                         lambda lid, sid, prompt, origin: wakes.append((lid, sid, origin, prompt)))
-    from viewer import push
+    from orchestrator import push
     monkeypatch.setattr(push, "notify_all", lambda t, b, data=None: pushes.append((t, data)))
     return f, wakes, pushes
 
@@ -226,7 +226,7 @@ class _Req:
 
 def test_routes_stamp_author_and_session_from_the_principal(env, monkeypatch):
     f, _, _ = env
-    import viewer.routes.orchestrator as orch
+    import orchestrator.routes.orchestrator as orch
     monkeypatch.setattr(orch, "db", f)
     h = _Handler({"note_id": 1, "body": "hi", "author": "user:forged", "session_id": "forged"})
     h._p_org_note_comment(_Req(session="s2", actor="session:researcher"))

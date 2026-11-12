@@ -47,7 +47,9 @@ describe("Scheduled jobs — add and edit in a bottom sheet, buttons clear of th
     await tap(`chat-${SESSION}`)
     await tap("header-title")
     await reveal("sp-card-automation")
-    await tap("sp-card-automation")
+    // The open set is remembered across visits (and the keychain can outlive a
+    // reinstall), so only expand Automation if it is still collapsed.
+    if (!(await $("~sp-job-new").isExisting())) await tap("sp-card-automation")
     await reveal("sp-job-new")
     await tap("sp-job-new")
     await $("~job-prompt").waitForDisplayed()

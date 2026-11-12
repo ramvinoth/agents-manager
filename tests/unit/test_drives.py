@@ -1,5 +1,5 @@
 """Unit tests for the cloud-drive spine (Phase 1 of storage integrations):
-- viewer.drives: the plugin-lifecycle gate (adapter_for) — unknown 404,
+- orchestrator.drives: the plugin-lifecycle gate (adapter_for) — unknown 404,
   hidden/paused 403, unknown kind 501 — and the three vendor adapters
   (Google, Dropbox, OneDrive), each driven through the single _http seam by
   an in-memory fake of its REST dialect.
@@ -22,16 +22,16 @@ from pathlib import Path
 
 import pytest
 
-from viewer import drives
-from viewer.drives import ADAPTERS, BaseDrive, DriveError, DropboxDrive, GoogleDrive, OneDriveDrive, adapter_for
-from viewer.routes.fs import _resolve_location
+from orchestrator import drives
+from orchestrator.drives import ADAPTERS, BaseDrive, DriveError, DropboxDrive, GoogleDrive, OneDriveDrive, adapter_for
+from orchestrator.routes.fs import _resolve_location
 
 FOLDER = "application/vnd.google-apps.folder"
 
 
 class _FakeDriveDB:
     """In-memory stand-in for the drives table: drive_get (adapter_for) and
-    drive_upsert (a token refresh persisting back). Rows mirror db._drive_row's
+    drive_upsert (a token refresh persisting back). Rows mirror integrations.repository._drive_row's
     shape; the upsert records the call so a test can assert a refresh saved."""
 
     def __init__(self, rows):
@@ -48,7 +48,7 @@ class _FakeDriveDB:
 
 @pytest.fixture()
 def db(monkeypatch):
-    """Back viewer.drives with the fake db; the fixture holds the rows."""
+    """Back orchestrator.drives with the fake db; the fixture holds the rows."""
     fake = _FakeDriveDB({})
     monkeypatch.setattr(drives, "db", fake)
     return fake
@@ -98,7 +98,7 @@ def test_unknown_kind_is_501(db):
 # --- the interface contract: routes call exactly the nine BaseDrive ops ---
 
 def test_route_call_sites_match_the_interface():
-    fs_src = (Path(__file__).resolve().parents[2] / "viewer" / "routes" / "fs.py").read_text()
+    fs_src = (Path(__file__).resolve().parents[2] / "orchestrator" / "routes" / "fs.py").read_text()
     called = set(re.findall(r"adapter\.(\w+)\(", fs_src))
     implemented = {
         m for m in dir(BaseDrive)

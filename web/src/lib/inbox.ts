@@ -1,6 +1,6 @@
 /**
  * inbox.ts — pure logic for the Inbox surface (mirrors the server's
- * viewer/inbox + routes/inbox contract). The inbox is a DELIVERY SURFACE over
+ * orchestrator/inbox + routes/inbox contract). The inbox is a DELIVERY SURFACE over
  * the existing decision system, not a second one: a row can carry a decision
  * (question | plan | approval | card | red) whose open state the server derives at
  * read time; the deciding tap stays on the per-session routes. No server

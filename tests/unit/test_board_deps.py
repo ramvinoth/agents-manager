@@ -25,8 +25,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from viewer import actions, board_wake, boardwatch, db, loops
-from viewer.config import CHAT_JOBS, CHAT_LOCK
+from orchestrator import actions, board_wake, boardwatch, db, loops
+from orchestrator.shared import postgres
+from orchestrator.config import CHAT_JOBS, CHAT_LOCK
 
 
 # ── db: dependency edges ──────────────────────────────────────────────────
@@ -57,7 +58,7 @@ def test_deps_batch_done_follows_the_name_contract(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(db, "_db", lambda: Conn())
+    monkeypatch.setattr(postgres, "cursor", lambda: Conn())
     out = db.card_deps_batch([1])
     by_id = {d["id"]: d for d in out[1]}
     assert by_id[2]["done"] is True, "'Done' matches by name, case-insensitive"
