@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, conversationBadge, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
+import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, conversationBadge, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderColor, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -110,3 +110,12 @@ eq("conversationBadge: none, needs you, count, unread",
    conversationBadge({ session: "s", name: "n", at: 1, unread: 0, open: 3, last: M({ id: 1 }) }),
    conversationBadge({ session: "s", name: "n", at: 1, unread: 2, open: 0, last: M({ id: 1 }) })],
   [null, "needs you", "3 need you", "2"])
+
+{
+  const a = M({ id: 1, sender_type: "session", sender_id: "x", created_at: 10 })
+  const b = M({ id: 2, sender_type: "session", sender_id: "x", created_at: 11 })
+  const c = M({ id: 3, sender_type: "session", sender_id: "y", created_at: 12 })
+  const msgs = threadTimeline([a, b, c], () => "D").filter((i) => i.type === "msg") as Array<{ first: boolean }>
+  eq("name once per sender run", msgs.map((i) => i.first), [true, false, true])
+  eq("same sender same colour", senderColor(a), senderColor(b))
+}

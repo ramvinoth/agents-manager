@@ -143,7 +143,7 @@ export function searchConversations(convs: Conversation[], messages: InboxMessag
 /** One row of a conversation's bubble thread. */
 export type ThreadItem =
   | { type: "day"; key: string; label: string }
-  | { type: "msg"; key: string; m: InboxMessage; mine: boolean }
+  | { type: "msg"; key: string; m: InboxMessage; mine: boolean; first: boolean }
 
 /** Who sent a message, as a short label: a session shows its title
  *  (`labels`: session id → title), the server is "Harman", the owner is "You". */
@@ -153,6 +153,16 @@ export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}
   return "You"
 }
 
+/** A stable colour per sender (WhatsApp-style name colours), so a group
+ *  thread is scannable at a glance. Same id → same colour, always. */
+const SENDER_COLORS = ["#d97706", "#0d9488", "#7c3aed", "#db2777", "#2563eb", "#65a30d", "#ea580c", "#0891b2"]
+export function senderColor(m: InboxMessage): string {
+  const key = `${m.sender_type}:${m.sender_id}`
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
+  return SENDER_COLORS[h % SENDER_COLORS.length]
+}
+
 /** A mailbox as a chat thread: oldest first, a day separator whenever the
  *  day changes, each message marked mine (the owner wrote it → right-hand
  *  bubble) or theirs. `dayOf` turns an epoch-seconds time into the day label
@@ -160,11 +170,16 @@ export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}
 export function threadTimeline(messages: InboxMessage[], dayOf: (ts: number) => string): ThreadItem[] {
   const out: ThreadItem[] = []
   let day = ""
+  let prev: InboxMessage | null = null
   const sorted = [...messages].sort((a, b) => a.created_at - b.created_at || a.id - b.id)
   for (const m of sorted) {
     const d = dayOf(m.created_at)
-    if (d !== day) { out.push({ type: "day", key: `day-${m.id}`, label: d }); day = d }
-    out.push({ type: "msg", key: `m-${m.id}`, m, mine: m.sender_type === "user" })
+    if (d !== day) { out.push({ type: "day", key: `day-${m.id}`, label: d }); day = d; prev = null }
+    // `first` = this starts a run from one sender; a group chat names the
+    // sender once per run, not on every bubble.
+    const first = !prev || prev.sender_type !== m.sender_type || prev.sender_id !== m.sender_id
+    out.push({ type: "msg", key: `m-${m.id}`, m, mine: m.sender_type === "user", first })
+    prev = m
   }
   return out
 }

@@ -3,11 +3,12 @@ import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshCon
 import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
 import { useHeaderHeight } from "@react-navigation/elements"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type InboxMessage, type OpenDecision, type Session } from "../api/client"
 import {
-  kindLabel, senderLabel, SNOOZE_OPTIONS,
+  kindLabel, senderColor, senderLabel, SNOOZE_OPTIONS,
   conversationPreview, conversationBadge, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending,
@@ -62,6 +63,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const t = useTheme()
   const styles = useStyles()
   const headerHeight = useHeaderHeight()
+  const insets = useSafeAreaInsets()
   const scope = useMemo(() => inboxScopeFilter(session ? { session } : {}), [session])
   const [messages, setMessages] = useState<InboxMessage[]>([])
   const [unread, setUnread] = useState(0)
@@ -261,10 +263,11 @@ export default function InboxScreen({ navigation, session, title, host, path, is
             <View
               testID={`inbox-msg-${m.id}`}
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
+                !item.first ? { marginTop: -4 } : null,
                 decision && m.open ? styles.ibOpenDecision : null]}
             >
-              {!item.mine ? (
-                <Text style={[styles.ibKind, { color: t.textMuted }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
+              {!item.mine && item.first ? (
+                <Text style={[styles.ibKind, { color: senderColor(m), fontWeight: "700" }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
               ) : null}
               {decision ? (
                 <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>
@@ -301,7 +304,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
           )
         }}
       />
-      <View style={styles.composerWrap}>
+      <View style={[styles.composerWrap, { paddingBottom: insets.bottom }]}>
         <View style={styles.composerBar}>
           <TextInput
             testID="inbox-composer"
