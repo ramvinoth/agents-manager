@@ -95,3 +95,12 @@ async function main() {
   console.log(`${passed} passed`)
 }
 void main()
+test("an odd-length audio chunk never splits a sample", async () => {
+  const sizes: number[] = []
+  const r = rig()
+  r.audio.enqueue = (p) => { sizes.push(Buffer.from(p, "base64").length); return true }
+  await startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  r.msg(new Uint8Array([1, 2, 3]).buffer)
+  r.msg(new Uint8Array([4, 5]).buffer)
+  assert.deepStrictEqual(sizes, [2, 2])
+})

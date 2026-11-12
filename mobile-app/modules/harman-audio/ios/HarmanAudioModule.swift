@@ -32,6 +32,7 @@ public class HarmanAudioModule: Module {
   private var pending = 0            // scheduled buffers not yet played out
   private var generation = 0         // bumped by flush so stale completions are ignored
   private let pendingLock = NSLock()
+  private static let playbackRate = 24000.0   // matches the server's TTS rate (fishcall.VOICE_RATE)
 
   public func definition() -> ModuleDefinition {
     Name("HarmanAudio")
@@ -99,8 +100,16 @@ public class HarmanAudioModule: Module {
       self?.handle(buffer: buffer)
     }
 
+    // Fix the playback format BEFORE the engine starts. Reconnecting the player to a new
+    // format on the first enqueue, while the voice-processing engine runs, drops the first
+    // utterance (silence) and garbles the next (white noise).
+    guard let pf = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: HarmanAudioModule.playbackRate,
+                                 channels: 1, interleaved: false) else {
+      throw Exception(name: "HarmanAudio", description: "cannot build playback format")
+    }
+    playbackFormat = pf
     engine.attach(player)
-    engine.connect(player, to: engine.mainMixerNode, format: nil)
+    engine.connect(player, to: engine.mainMixerNode, format: pf)
     engine.prepare()
     try engine.start()
     player.play()

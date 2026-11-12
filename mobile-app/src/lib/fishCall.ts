@@ -94,6 +94,7 @@ export async function startFishCall(
   let rate = 24000
   let queued = false // audio enqueued since the last drain
   let endPending = false // server said audio_end; waiting for the buffer to drain
+  let carry: number | null = null // odd trailing byte of the last audio chunk
   let ping: ReturnType<typeof setInterval> | null = null
   let unFrame: (() => void) | null = null
   let unDrain: (() => void) | null = null
@@ -125,6 +126,7 @@ export async function startFishCall(
     if (!endPending) return
     endPending = false
     queued = false
+    carry = null
     sendJson({ type: "played" })
     h.onPhase("waiting")
   }
@@ -134,7 +136,20 @@ export async function startFishCall(
     if (stopped) return
     const d = ev.data
     if (typeof d !== "string") {
-      const bytes = d instanceof Uint8Array ? d : new Uint8Array(d as ArrayBuffer)
+      let bytes = d instanceof Uint8Array ? d : new Uint8Array(d as ArrayBuffer)
+      // PCM16 samples are 2 bytes: a chunk cut mid-sample would shift every later sample
+      // by one byte (white noise). Carry the odd byte into the next chunk.
+      if (carry !== null) {
+        const joined = new Uint8Array(bytes.byteLength + 1)
+        joined[0] = carry
+        joined.set(bytes, 1)
+        bytes = joined
+        carry = null
+      }
+      if (bytes.byteLength % 2 === 1) {
+        carry = bytes[bytes.byteLength - 1]
+        bytes = bytes.subarray(0, bytes.byteLength - 1)
+      }
       if (bytes.byteLength === 0) return
       if (audio.enqueue(toBase64(bytes), rate)) {
         if (!queued) h.onPhase("speaking")
