@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react"
 import { katexLoaded, loadKatex, renderMarkdownSegments, type NoteSyntax } from "@/lib/markdown"
 import { MermaidDiagram } from "./MermaidDiagram"
 import { useFileLinkOpener } from "./FileLinks"
+import { useCardLinkOpener } from "./CardLinks"
 
 // Cheap pre-check for math delimiters; extractMath decides what really is math.
 const MAYBE_MATH = /\$|\\\(|\\\[/
@@ -26,11 +27,18 @@ export function Markdown({ text, notes }: { text: string; notes?: NoteLinkHandle
   }, [wantsMath])
   const segments = useMemo(() => renderMarkdownSegments(text, notes), [text, notes, mathReady]) // mathReady: re-render once KaTeX lands
   const openFile = useFileLinkOpener()
+  const openCard = useCardLinkOpener()
   function onClick(e: MouseEvent<HTMLDivElement>) {
     const file = (e.target as HTMLElement).closest<HTMLElement>("[data-file]")
     if (file) {
       e.preventDefault()
       if (file.dataset.file) openFile?.(file.dataset.file)
+      return
+    }
+    const card = (e.target as HTMLElement).closest<HTMLElement>("[data-card]")
+    if (card) {
+      e.preventDefault()
+      if (card.dataset.card) openCard?.(Number(card.dataset.card))
       return
     }
     if (!notes) return

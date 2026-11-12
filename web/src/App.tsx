@@ -7,6 +7,7 @@ import { Header } from "@/components/Header"
 import { LeftPanel } from "@/components/LeftPanel"
 import { Transcript } from "@/components/Transcript"
 import { FileLinkProvider } from "@/components/FileLinks"
+import { CardLinkProvider } from "@/components/CardLinks"
 import { Composer } from "@/components/Composer"
 import { PermissionPrompt } from "@/components/PermissionPrompt"
 import { ToolsDialog } from "@/components/ToolsDialog"
@@ -292,6 +293,7 @@ function App() {
   }
 
   return (
+    <CardLinkProvider>
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <Header />
       <div className="flex min-h-0 flex-1">
@@ -473,6 +475,7 @@ function App() {
       <AgentLoginDialog />
       {pairFromLink && !needsAuth && <PairPhoneDialog onClose={() => setPairFromLink(false)} />}
     </div>
+    </CardLinkProvider>
   )
 }
 

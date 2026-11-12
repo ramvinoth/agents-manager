@@ -312,4 +312,5 @@ body {
 }
 .mermaid-dl-menu button:hover { background: var(--accent, #f4f4f5); }
 /* A file an agent linked (lib/fileLink): opens in the preview, not a new tab. */
+.markdown-content a.card-link { text-decoration-style: dotted; cursor: pointer; }
 .markdown-content a.file-link { text-decoration-style: dotted; cursor: pointer; }

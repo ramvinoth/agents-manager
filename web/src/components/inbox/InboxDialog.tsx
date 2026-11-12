@@ -19,6 +19,7 @@ import type { OpenDecision, OrgProject } from "@/lib/types"
 import { queueFrom } from "@/lib/decisions"
 import { DecisionCockpit } from "@/components/kanban/DecisionCockpit"
 import { userError } from "@/lib/errors"
+import { Markdown } from "@/components/Markdown"
 
 const POLL_MS = 60_000  // fallback only: live events refetch on change
 
@@ -386,7 +387,7 @@ function RowDetail({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border p-3">
-        <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{msg.body}</pre>
+        <div className="text-sm leading-relaxed"><Markdown text={msg.body} /></div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
