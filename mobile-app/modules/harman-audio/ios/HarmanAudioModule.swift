@@ -81,13 +81,7 @@ public class HarmanAudioModule: Module {
     // Turn ON hardware echo cancellation on the I/O unit. This is the whole point.
     try input.setVoiceProcessingEnabled(true)
 
-    let inFormat = input.inputFormat(forBus: 0)
-    guard inFormat.sampleRate > 0 else {
-      throw Exception(name: "HarmanAudio", description: "input format unavailable")
-    }
-
-    // The server STT wants 16 kHz mono PCM16. Build a converter from the hardware
-    // format (usually 48 kHz float) to that.
+    // The server STT wants 16 kHz mono PCM16.
     guard let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                         sampleRate: sampleRate,
                                         channels: 1,
@@ -95,11 +89,7 @@ public class HarmanAudioModule: Module {
       throw Exception(name: "HarmanAudio", description: "cannot build output format")
     }
     self.targetFormat = outFormat
-    self.converter = AVAudioConverter(from: inFormat, to: outFormat)
-
-    input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { [weak self] buffer, _ in
-      self?.handle(buffer: buffer)
-    }
+    try installCapture()
 
     // Fix the playback format BEFORE the engine starts. Reconnecting the player to a new
     // format on the first enqueue, while the voice-processing engine runs, drops the first
@@ -123,11 +113,30 @@ public class HarmanAudioModule: Module {
     ) { [weak self] _ in self?.recoverEngine() }
   }
 
+  /// (Re)build the capture tap from the input node's CURRENT hardware format. The format
+  /// read before CallKit activates the session can differ from the one after it, and a tap
+  /// or converter built from the stale one delivers nothing usable (the first utterance).
+  private func installCapture() throws {
+    let input = engine.inputNode
+    let inFormat = input.inputFormat(forBus: 0)
+    guard inFormat.sampleRate > 0, let outFormat = targetFormat else {
+      throw Exception(name: "HarmanAudio", description: "input format unavailable")
+    }
+    input.removeTap(onBus: 0)
+    converter = AVAudioConverter(from: inFormat, to: outFormat)
+    input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { [weak self] buffer, _ in
+      self?.handle(buffer: buffer)
+    }
+  }
+
   private func recoverEngine() {
-    guard running, !engine.isRunning else { return }
-    engine.prepare()
+    guard running else { return }
     do {
-      try engine.start()
+      try installCapture()
+      if !engine.isRunning {
+        engine.prepare()
+        try engine.start()
+      }
       player.play()
     } catch {
       sendEvent("onError", ["message": "audio engine restart failed: \(error.localizedDescription)"])
@@ -176,7 +185,12 @@ public class HarmanAudioModule: Module {
   }
 
   private func handle(buffer: AVAudioPCMBuffer) {
-    guard let converter = self.converter, let outFormat = self.targetFormat else { return }
+    guard let outFormat = self.targetFormat else { return }
+    // Hardware format can change between taps (route change): never convert with a stale one.
+    if converter?.inputFormat != buffer.format {
+      converter = AVAudioConverter(from: buffer.format, to: outFormat)
+    }
+    guard let converter = self.converter else { return }
     let ratio = outFormat.sampleRate / buffer.format.sampleRate
     let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1)
     guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
@@ -191,7 +205,11 @@ public class HarmanAudioModule: Module {
       inStatus.pointee = .haveData
       return buffer
     }
-    if status == .error || outBuf.frameLength == 0 { return }
+    if status == .error {
+      sendEvent("onError", ["message": "capture convert failed: status=\(status.rawValue) in=\(buffer.format.sampleRate)Hz/\(buffer.format.channelCount)ch"])
+      return
+    }
+    if outBuf.frameLength == 0 { return }
 
     guard let ch = outBuf.int16ChannelData else { return }
     let byteCount = Int(outBuf.frameLength) * MemoryLayout<Int16>.size
