@@ -297,7 +297,7 @@ def callback(query):
     if p is None:
         return _page("Connection didn't complete",
                      "This sign-in link is not for a connection that is still waiting. "
-                     "Go back to Harman and click Add again.")
+                     "Go back to Manager and click Add again.")
     label = catalog.service(p["service"])["label"]
     error = (query.get("error") or [None])[0]
     code = (query.get("code") or [None])[0]

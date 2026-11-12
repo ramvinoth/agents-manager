@@ -19,7 +19,7 @@ CHAT_JOB_TTL = 1800  # keep a finished chat job ~30 min for the UI to read final
 SESSION_TOKEN_MAX_AGE = 86400
 
 
-_PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches harman_tick's self-throttle idiom)
+_PURGE_INTERVAL = 3600  # run job-run retention at most hourly (matches orchestrator_tick's self-throttle idiom)
 
 
 CANVAS_TOMBSTONE_TTL = 7 * 86400  # a deleted canvas element is kept a week so a peer offline that long still converges
@@ -37,7 +37,7 @@ def fire_due_loops(launch, now):
     Firing is gated by TWO facts, both read fresh each pass:
       1. the loop_control mode — which ORIGINS are licensed to run;
       2. the automation master switch — a runtime halt on the autonomous side.
-         With it off, agent-origin (harman) loops do not fire; the owner's own
+         With it off, agent-origin (agent) loops do not fire; the owner's own
          (user) loops follow the mode alone, because they are a human's asking —
          the machine being unattended does not pause them. Off, then, means
          exactly "nothing starts without a person asking": no
@@ -140,12 +140,12 @@ def loop_scheduler(launch):
     This thread is the ONLY place work starts without a human asking for it, and it
     carries two INDEPENDENT gates that must not be conflated:
 
-    - scheduled-loop firing is gated by the loop_control mode (user|harman|both|none)
+    - scheduled-loop firing is gated by the loop_control mode (user|agent|both|none)
       — which origins' loops may run (fire_due_loops). The master switch plays no part.
-    - Harman's manager tick is gated ONLY by the automation master switch (read fresh
+    - Manager's manager tick is gated ONLY by the automation master switch (read fresh
       each pass; unreadable → treated as OFF).
 
-    The owner can thus pause Harman's autonomy while their own scheduled loops keep
+    The owner can thus pause Manager's autonomy while their own scheduled loops keep
     running, and vice-versa. Paused means paused, not queued: a loop whose origin is
     disallowed keeps its nextRun untouched, so on resume it fires at most ONCE rather
     than replaying every run that came due in the meantime. Reaping and the retention
@@ -215,14 +215,14 @@ def _scheduler_pass(launch, now):
     except Exception:
         pass
     # The 30-minute board sweep — a safety net for event wakes the action
-    # path missed. Its wakes are harman-origin, so it only runs when the
+    # path missed. Its wakes are agent-origin, so it only runs when the
     # autonomous side may act (master switch ON and the loop mode licenses
-    # harman) — otherwise it would stamp the interval and drop the event
+    # agent) — otherwise it would stamp the interval and drop the event
     # the wakes could never fire. Idle board = zero cost either way.
     try:
         from orchestrator import board_wake
         from orchestrator.orchestrator import automation_enabled, loop_mode
-        autonomous = automation_enabled() and loop_mode() in ("harman", "both")
+        autonomous = automation_enabled() and loop_mode() in ("agent", "both")
         if autonomous:
             board_wake.sweep()
         # Expired asks are always recorded (the session's inbox is the

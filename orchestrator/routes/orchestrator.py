@@ -453,8 +453,8 @@ class OrchestratorMixin:
         self._org_send(req, "restart_now", {"requested_by": req.principal["actor"],
                                             "reason": body.get("reason") or ""})
 
-    # ── Harman autonomous-manager config (owner surface) ─────────────────────
-    def _g_org_harman(self, req):
+    # ── Manager autonomous-manager config (owner surface) ─────────────────────
+    def _g_org_orchestrator(self, req):
         from orchestrator.orchestrator import get_config
         self.send_json(get_config())
 

@@ -60,7 +60,7 @@ export default function ProfileScreen({ navigation }: Props) {
   // server is unreachable) — the row renders disabled rather than guessing,
   // because a switch showing "off" that never reached the server would be the
   // one lie this control must not tell.
-  const [harman, setHarman] = useState<HarmanConfig | null>(null)
+  const [orchestrator, setManager] = useState<OrchestratorConfig | null>(null)
   // The account's server role (orchestrator/orglogic.HUMAN_ROLES). Only an owner may
   // change the server-wide settings below; everyone else is told so up front
   // instead of discovering it from a refusal.
@@ -195,7 +195,7 @@ export default function ProfileScreen({ navigation }: Props) {
       // Deliberately NOT optimistic. Everywhere else a snapped-back switch is a
       // cosmetic annoyance; here it would claim the machine is paused when the
       // request never landed. The switch moves only once the server confirms.
-      const res = await api.orgSetHarman({ automation_enabled: v })
+      const res = await api.orgSetOrchestrator({ automation_enabled: v })
       // Resuming is Red (orchestrator/orglogic), so a non-owner's request is QUEUED as
       // an approval rather than applied — a 200 that changed nothing. Say so, or
       // the switch snapping back looks like a bug instead of the gate working.

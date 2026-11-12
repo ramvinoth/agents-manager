@@ -1,14 +1,14 @@
 import type { OrgLevel } from "../api/client"
 
-/** The Harman authority levels, least → most (orchestrator/orglogic.LEVELS). The keys
+/** The Manager authority levels, least → most (orchestrator/orglogic.LEVELS). The keys
  *  are wire values; a person reads LEVEL_NAME ("ic" is never shown). */
 export const ORG_LEVELS: readonly OrgLevel[] = ["ic", "lead", "manager"]
 
 /** Mirrors orchestrator/orglogic.LEVEL_NAMES — named by reach, never a job title. */
-export const LEVEL_NAME: Record<HarmanLevel, string> = { ic: "Own work", lead: "Workspace", manager: "Organization" }
+export const LEVEL_NAME: Record<OrgLevel, string> = { ic: "Own work", lead: "Workspace", manager: "Organization" }
 
 /** What each level reaches without asking (orchestrator/orglogic). Above it, the ask waits for the owner. */
-export const LEVEL_REACH: Record<HarmanLevel, string> = {
+export const LEVEL_REACH: Record<OrgLevel, string> = {
   ic: "its own cards, notes and messages",
   lead: "also projects, board columns and scheduled loops",
   manager: "also org-wide settings",

@@ -65,8 +65,8 @@ def test_refs_resolve_and_flag_missing():
 
 
 def test_refs_of_every_kind_keep_their_id_type():
-    els = [shape("i", 0, 0, link="harman://inbox/41"), shape("f", 0, 100, link="harman://sift/doc-7"),
-           shape("bad", 0, 200, link="harman://card/x1")]
+    els = [shape("i", 0, 0, link="agents://inbox/41"), shape("f", 0, 100, link="agents://sift/doc-7"),
+           shape("bad", 0, 200, link="agents://card/x1")]
     out = cs.summarize(els, resolve=lambda k, i: str(i))
     refs = {r["kind"]: r for r in out["refs"]}
     assert refs["inbox"]["id"] == 41 and refs["sift"]["id"] == "doc-7"

@@ -57,7 +57,7 @@ PUBLIC_URL = os.environ.get("AGENTS_PUBLIC_URL", "").strip().rstrip("/")
 # reach it from anywhere with no tunnel or open port. Like Paseo, a fresh
 # install ships pointed at the hosted relay but leaves it OFF until the owner
 # switches it on while pairing a phone (persisted in settings; orchestrator/relay.py).
-# HARMAN_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
+# AGENTS_RELAY_URL pins it instead: a wss:// URL = always on to that relay,
 # "off" = never (the owner cannot switch it on from the app).
 DEFAULT_RELAY_URL = "wss://relay.suhai.ai"
 RELAY_ENV = os.environ.get("AGENTS_RELAY_URL", "").strip().rstrip("/")
@@ -223,11 +223,11 @@ SPEECH_TIMEOUT = int(os.environ.get("AGENTS_SPEECH_TIMEOUT", "180"))  # per STT/
 TTS_STREAM_URL = os.environ.get("AGENTS_TTS_STREAM_URL", "")
 # LFM3-Audio speaks the call natively (one model: board tools + spoken audio, see
 # callbrain.lfm3_turn). Empty = the call uses the Qwen brain + Pocket TTS instead.
-LFM3_SERVICE_URL = os.environ.get("HARMAN_LFM3_URL", "")
+LFM3_SERVICE_URL = os.environ.get("AGENTS_LFM3_URL", "")
 # Fish Audio realtime call (orchestrator.fishcall): streaming ASR in, streaming TTS out,
-# the Qwen brain in between. Opt in with HARMAN_CALL_ENGINE=fish + FISH_API_KEY; off by
+# the Qwen brain in between. Opt in with AGENTS_CALL_ENGINE=fish + FISH_API_KEY; off by
 # default so LFM3 / the brain stay the call engine until the owner flips it.
-CALL_ENGINE = os.environ.get("HARMAN_CALL_ENGINE", "")
+CALL_ENGINE = os.environ.get("AGENTS_CALL_ENGINE", "")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
 FISH_TTS_MODEL = os.environ.get("FISH_TTS_MODEL", "s2.1-pro-free")
 # Pinned on purpose: with no reference_id Fish picks a different voice per TTS session

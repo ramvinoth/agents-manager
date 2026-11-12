@@ -94,13 +94,13 @@ Registered automatically per session (see bootstrap). Writes go through db.py; e
 appends to `audit_log`. Manager reads the same tables to monitor.
 
 ## Server (viewer) — new surfaces
-- `orchestrator/orchestrator.py`: the registry + queue + Harman's tick. Employee/project CRUD, assignment,
+- `orchestrator/orchestrator.py`: the registry + queue + Manager's tick. Employee/project CRUD, assignment,
   board/card CRUD (shared by MCP tool + REST), approval queue, audit append.
 - `orchestrator/routes/orchestrator.py`: REST for the app — `/api/org/employees`, `/api/org/projects`,
   `/api/org/boards`, `/api/org/cards`, `/api/org/approvals`, `/api/org/audit`. (Cross-check: no
   duplicate of existing routes — this is net-new surface.)
 - `orchestrator/mcp/kanban_mcp.py`: the MCP server above.
-- Approval gate reuses the charter's Green/Red tiers. Harman auto-resolves Green + logs; Red items
+- Approval gate reuses the charter's Green/Red tiers. Manager auto-resolves Green + logs; Red items
   land on the Approvals page and (only these) notify the owner.
 
 ## App (mobile) — new surfaces

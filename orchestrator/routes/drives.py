@@ -35,6 +35,8 @@ def _public_view(d):
 
 
 def _is_drive(d):
+    if d.get("kind") not in catalog.OFFERED:
+        return False
     files = catalog.FILES_SERVICE.get(d.get("kind"))
     return not catalog.granted(d) or bool(files and catalog.usable(d, files))
 

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from viewer import skills
+from orchestrator import skills
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ class TestBootstrapWiring:
         # The install path is bootstrap, which the container converge script
         # runs on every bundle it installs. If this call is dropped, bundled
         # skills stop reaching environments and nothing else would notice.
-        from viewer import bootstrap
+        from orchestrator import bootstrap
 
         calls = []
         monkeypatch.setattr(bootstrap.db, "init_db", lambda: None)

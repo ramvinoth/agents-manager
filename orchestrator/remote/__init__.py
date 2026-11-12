@@ -10,7 +10,7 @@ from orchestrator.remote.transport import SSH, remote_run_python, remote_run_she
 from orchestrator.remote.agents import (  # noqa: F401
     remote_agents_status, remote_capabilities, remote_claude_bin, remote_codex_bin,
     remote_codex_logged_in, remote_copilot_bin, remote_copilot_logged_in, remote_install_agent,
-    remote_mcp_save, test_host_config,
+    remote_mcp_probe, remote_mcp_save, test_host_config,
 )
 from orchestrator.remote.sessions import (  # noqa: F401
     remote_agent_full_path, remote_codex_meta, remote_extract_cwd, remote_full_path,

@@ -1,34 +1,34 @@
 /**
- * fishNative — binds the native HarmanAudio module (echo-cancelled capture and
+ * fishNative — binds the native AgentsAudio module (echo-cancelled capture and
  * playback on ONE engine) to the FishAudio interface fishCall.ts expects.
  */
-import { HarmanAudio } from "../../modules/harman-audio/src"
+import { AgentsAudio } from "../../modules/agents-audio/src"
 import type { FishAudio } from "./fishCall"
 
 let errorSub: { remove(): void } | null = null
 
-export const fishAudioAvailable = (): boolean => HarmanAudio.isAvailable()
+export const fishAudioAvailable = (): boolean => AgentsAudio.isAvailable()
 
 export const nativeFishAudio: FishAudio = {
   start: async (rate) => {
     // Native capture/engine failures used to vanish; surface them in the device log.
     errorSub?.remove()
-    errorSub = HarmanAudio.addErrorListener((e) => console.warn("[harman-audio]", e.message ?? "unknown error"))
-    await HarmanAudio.start(rate)
+    errorSub = AgentsAudio.addErrorListener((e) => console.warn("[agents-audio]", e.message ?? "unknown error"))
+    await AgentsAudio.start(rate)
   },
   stop: async () => {
     errorSub?.remove()
     errorSub = null
-    await HarmanAudio.stop()
+    await AgentsAudio.stop()
   },
   onFrame: (cb) => {
-    const sub = HarmanAudio.addFrameListener((f) => cb(f.pcm))
+    const sub = AgentsAudio.addFrameListener((f) => cb(f.pcm))
     return () => sub.remove()
   },
   onDrained: (cb) => {
-    const sub = HarmanAudio.addDrainedListener(cb)
+    const sub = AgentsAudio.addDrainedListener(cb)
     return () => sub.remove()
   },
-  enqueue: (pcm, rate) => HarmanAudio.enqueue(pcm, rate),
-  flush: () => HarmanAudio.flushPlayback(),
+  enqueue: (pcm, rate) => AgentsAudio.enqueue(pcm, rate),
+  flush: () => AgentsAudio.flushPlayback(),
 }

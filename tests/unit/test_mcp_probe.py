@@ -1,4 +1,4 @@
-"""Unit tests for viewer.mcp_probe pure helpers.
+"""Unit tests for orchestrator.mcp_probe pure helpers.
 
 Pure only: no network, no subprocess. The transport dispatch itself is verified
 against real servers by hand (see the plan's verification section) — what is
@@ -6,7 +6,7 @@ worth pinning here is the parsing, because that is where a wrong answer would be
 silent: a working server rendered as broken, or an auth prompt rendered as a
 crash.
 """
-from viewer.mcp_probe import (
+from orchestrator.mcp_probe import (
     STATE_AUTH, STATE_FAILED, STATE_OK,
     _auth_hint, _infer_transport, _parse_frame, _rpc_error, _server_info,
     _stdio_command, _tail, _tool_rows, probe,

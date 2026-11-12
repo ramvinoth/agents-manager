@@ -528,7 +528,7 @@ def _who(sender_type, sender_id):
     if sender_type == "user":
         return "You"
     if sender_type == "system":   # the server itself (orchestrator.maintenance)
-        return "Harman"
+        return "Manager"
     return _label(str(sender_id))
 
 

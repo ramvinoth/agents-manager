@@ -37,7 +37,7 @@ class _StopAfterOnePass(Exception):
 
 class FakeDB:
     """In-memory stand-in for orchestrator.db — only the accessors the scheduler and the
-    orchestrator config actually call. `settings` backs the harman config; `loops`
+    orchestrator config actually call. `settings` backs the orchestrator config; `loops`
     backs the schedule. Every write is recorded so a test can assert that a paused
     pass consumed nothing."""
 
@@ -102,7 +102,7 @@ def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(orchestrator, "db", f)
     monkeypatch.setattr(scheduler, "db", f)
-    # The scheduler pass also runs board_wake.sweep() under 'harman'/'both'. Until
+    # The scheduler pass also runs board_wake.sweep() under 'agent'/'both'. Until
     # 2026-09-20 that module kept the REAL db here, so every run of this file
     # stamped the production sweep clock and queued real card wakes (11 sweeps'
     # worth of audit rows for cards 12/14/19 came from pytest, not the server).

@@ -1,4 +1,4 @@
-"""viewer.mcp_probe — ask an MCP server what it actually is.
+"""orchestrator.mcp_probe — ask an MCP server what it actually is.
 
 The RHS panel's MCP list is built by reading config files (engine.capabilities);
 it has never contacted a server. So a server that has been broken for weeks

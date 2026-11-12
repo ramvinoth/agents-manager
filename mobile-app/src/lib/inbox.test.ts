@@ -102,7 +102,7 @@ if (fail) process.exit(1)
 eq("senderLabel: session title, system, owner",
   [senderLabel(M({ id: 1, sender_type: "session", sender_id: "a" }), { a: "Trader" }), senderLabel(M({ id: 1, sender_type: "session", sender_id: "abcdefghij" })),
    senderLabel(M({ id: 1, sender_type: "system" })), senderLabel(M({ id: 1, sender_type: "user" }))],
-  ["Trader", "abcdefgh", "Harman", "You"])
+  ["Trader", "abcdefgh", "Manager", "You"])
 
 eq("conversationBadge: none, needs you, count, unread",
   [conversationBadge({ session: "s", name: "n", at: 1, unread: 0, open: 0, last: M({ id: 1 }) }),

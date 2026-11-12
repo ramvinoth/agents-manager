@@ -793,8 +793,8 @@ def main():
             if ids:
                 print(f"  Resumed {len(ids)} turn(s) cut off by the restart")
         threading.Thread(target=_resume_cut_turns, daemon=True).start()
-        # Outbound to the Harman relay when it is on (the owner's switch, or
-        # HARMAN_RELAY_URL). Never from a preflight spare: the relay keeps ONE
+        # Outbound to the Manager relay when it is on (the owner's switch, or
+        # AGENTS_RELAY_URL). Never from a preflight spare: the relay keeps ONE
         # control socket per server, so a spare would steal the live server's phones.
         from orchestrator import relay
         if relay.start():

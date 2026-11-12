@@ -70,7 +70,7 @@ class TestPermissionDeniedHint:
         from orchestrator.runtime import hosts
         monkeypatch.setattr(hosts.sys, "platform", "darwin")
         monkeypatch.setattr(hosts, "_responsible_app",
-                            lambda: ("Harman", "/Applications/Harman.app"))
+                            lambda: ("Agents", "/Applications/Agents.app"))
         msg = hosts._permission_denied_hint(Path.home() / "Desktop")
         # under the launcher the grant is charged to the app, not the interpreter
         assert "“Agents”" in msg and "/Applications/Agents.app" in msg
@@ -78,9 +78,9 @@ class TestPermissionDeniedHint:
 
     def test_responsible_app_reads_the_parent_bundle(self, monkeypatch):
         from orchestrator.runtime import hosts
-        class R: stdout = "/Users/x/Applications/Harman.app/Contents/MacOS/Harman\n"
+        class R: stdout = "/Users/x/Applications/Agents.app/Contents/MacOS/Agents\n"
         monkeypatch.setattr(hosts.subprocess, "run", lambda *a, **k: R)
-        assert hosts._responsible_app() == ("Harman", "/Users/x/Applications/Harman.app")
+        assert hosts._responsible_app() == ("Agents", "/Users/x/Applications/Agents.app")
         R.stdout = "/bin/zsh\n"
         assert hosts._responsible_app() is None
 

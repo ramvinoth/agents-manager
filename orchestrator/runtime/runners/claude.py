@@ -179,7 +179,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         except Exception as e:
             print(f"[engine] run settings write failed: {e}", flush=True)
 
-    # System prompt = a global Harman system-awareness preamble (so every session
+    # System prompt = a global Manager system-awareness preamble (so every session
     # knows it is a node in the orchestration system and how its mcp__viewer__*
     # power is gated), then the per-session prompt and goal from the viewer's panel.
     # The preamble lives in settings (db, runtime-editable) — empty string disables it.
@@ -213,7 +213,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             env = agent_env()
             # The session's name, for tools that sign their edits with it (a
             # project plugin's MCP server, e.g. Sift's "edited by" line).
-            env["HARMAN_SESSION_LABEL"] = job.get("label") or ""
+            env["AGENTS_SESSION_LABEL"] = job.get("label") or ""
             # CRITICAL: never let the SERVER'S OWN model/provider env leak into the
             # child claude. If the viewer was launched from a shell that exported
             # ANTHROPIC_* or CLAUDE_CODE_MAX_* (e.g. pointing at a LiteLLM proxy),
@@ -347,6 +347,18 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     continue
                 if watch_url:
                     job["model_wait"].update(ev, time.time())
+                # Remember the newest assistant text as it streams. The plan card
+                # needs the text that immediately precedes ExitPlanMode, and the
+                # transcript file is written asynchronously, so reading it back at
+                # approval time can show the PREVIOUS turn's text. The stream is
+                # the only ordering-safe source.
+                if ev.get("type") == "assistant":
+                    blocks = ((ev.get("message") or {}).get("content")) or []
+                    if isinstance(blocks, list):
+                        txt = "\n".join(b.get("text", "") for b in blocks
+                                        if isinstance(b, dict) and b.get("type") == "text").strip()
+                        if txt:
+                            job["last_assistant_text"] = txt
                 if ev.get("type") != "result":
                     continue
                 job["turns"] += 1

@@ -19,7 +19,7 @@ from pathlib import Path
 SKILL_NAME_RE = re.compile(r"[\w-]+$")
 
 # Skills that ship with agents-manager. Each is a directory under
-# viewer/bundled_skills/ containing a SKILL.md, laid out exactly as an installed
+# orchestrator/bundled_skills/ containing a SKILL.md, laid out exactly as an installed
 # skill is — so installing one is a copy, not a transformation.
 BUNDLED_DIR = Path(__file__).parent / "bundled_skills"
 

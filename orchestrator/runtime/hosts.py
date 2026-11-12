@@ -14,6 +14,7 @@ from orchestrator.remote import (
     remote_extract_cwd,
     remote_fs,
     remote_list_sessions,
+    remote_mcp_probe,
     remote_mcp_save,
     remote_projects,
     remote_resolve,
@@ -41,7 +42,7 @@ _TCC_GUARDED = ("Desktop", "Documents", "Downloads")
 
 def _responsible_app():
     """The .app macOS charges this process's privacy grants to: the bundle whose
-    executable is our parent (Harman.app's launcher on an installed Mac). None
+    executable is our parent (Manager.app's launcher on an installed Mac). None
     when the server was started some other way (a terminal, a bare launchd job)."""
     try:
         exe = subprocess.run(["ps", "-o", "comm=", "-p", str(os.getppid())],
@@ -90,6 +91,7 @@ class Host:
     def resolve(self, sid): raise NotImplementedError
     def list_sessions(self): raise NotImplementedError
     def mcp_save(self, name, scope, cfg, cwd, delete): raise NotImplementedError
+    def mcp_probe(self, name, cfg, cwd): raise NotImplementedError
 
 
 class LocalHost(Host):
@@ -341,6 +343,10 @@ class LocalHost(Host):
             return {"error": str(e), "status": 500}
         return {"saved": True, "file": str(path)}
 
+    def mcp_probe(self, name, cfg, cwd):
+        from orchestrator.mcp_probe import probe
+        return probe(name, cfg, cwd)
+
 
 class RemoteHost(Host):
     def __init__(self, hid):
@@ -355,6 +361,9 @@ class RemoteHost(Host):
     def list_sessions(self):               return remote_list_sessions(self.hid)
     def mcp_save(self, name, scope, cfg, cwd, delete):
         return remote_mcp_save(self.hid, name, scope, cfg, cwd, delete)
+
+    def mcp_probe(self, name, cfg, cwd):
+        return remote_mcp_probe(self.hid, name, cfg, cwd)
 
     def resolve(self, sid):
         return remote_resolve(self.hid, sid)

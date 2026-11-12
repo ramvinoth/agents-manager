@@ -2,6 +2,7 @@
 and the skills/MCP capabilities configured there."""
 import json
 import re
+from pathlib import Path
 from orchestrator.agents import ENABLED_AGENTS, agent_public, install_command
 from orchestrator.remote.transport import SSH, _auth_kwargs, remote_run_python, remote_run_shell
 
@@ -291,6 +292,37 @@ def remote_mcp_save(hid, name, scope, cfg, cwd, delete=False):
         return json.loads(txt.strip().splitlines()[-1])
     except Exception:
         return {"error": "remote MCP op failed: " + txt.strip()[-300:]}
+
+
+def remote_mcp_probe(hid, name, cfg, cwd):
+    """Handshake with an MCP server ON the remote host; returns the same dict
+    orchestrator.mcp_probe.probe() does.
+
+    Unlike its neighbours, this does NOT hand-copy the logic into a script
+    string. orchestrator/mcp_probe.py imports stdlib only, so the module's own
+    source is shipped and exec'd: the probe cannot drift from the local one.
+
+    The probe runs on the host, so a server's command, url and any credentials
+    in its config are exercised where they belong; only the result travels back.
+    """
+    try:
+        src = (Path(__file__).resolve().parent.parent / "mcp_probe.py").read_text()
+    except Exception as e:
+        return {"name": name, "transport": "", "state": "failed", "detail": "",
+                "error": f"Cannot read probe module: {e}",
+                "tools": [], "server": {}, "elapsed_ms": 0}
+    # Same json.loads-of-a-repr trick as remote_mcp_save: JSON false/true/null
+    # are not Python literals, so an embedded json.dumps would NameError.
+    params = {"name": name, "config": cfg, "cwd": cwd or ""}
+    hdr = "import json\nP = json.loads(%r)\n" % json.dumps(params)
+    tail = "\nprint(json.dumps(probe(P['name'], P['config'], P['cwd'])))\n"
+    txt = remote_run_python(hid, hdr + src + tail)
+    try:
+        return json.loads(txt.strip().splitlines()[-1])
+    except Exception:
+        return {"name": name, "transport": "", "state": "failed", "detail": "",
+                "error": "remote probe failed: " + txt.strip()[-300:],
+                "tools": [], "server": {}, "elapsed_ms": 0}
 
 
 def test_host_config(cfg):

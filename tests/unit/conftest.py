@@ -16,6 +16,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from orchestrator.integrations import catalog as integrations
 from orchestrator.shared import postgres
 
 

@@ -266,7 +266,7 @@ class CapabilitiesMixin:
         # Models the host's Claude gateway serves, so the picker tracks the
         # gateway instead of a hardcoded alias list. [] (no gateway) leaves the
         # UI on its built-in aliases.
-        from viewer.claude_models import claude_models
+        from orchestrator.claude_models import claude_models
         caps["models"] = claude_models(host)
         # The chat's Manager plugins and its own extras ride --plugin-dir on local
         # claude runs only (engine), from folders the host scanner never reads —

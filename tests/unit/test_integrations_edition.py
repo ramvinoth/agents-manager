@@ -2,7 +2,7 @@
 reachable by an agent, while the local-disk rules still apply."""
 import pytest
 
-from viewer import integrations
+from orchestrator.integrations import catalog as integrations
 
 
 @pytest.fixture(autouse=True)

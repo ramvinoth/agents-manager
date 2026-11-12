@@ -1,4 +1,4 @@
-"""orchestrator.integrations — the catalog of what Harman can connect to, and the
+"""orchestrator.integrations — the catalog of what Manager can connect to, and the
 pure rules that say what a connected account may be used for.
 
 Two nouns:

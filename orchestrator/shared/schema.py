@@ -433,7 +433,7 @@ def init_db():
             -- An agent = persona + an optional Claude Code plugin (a folder under
             -- orchestrator/agent_plugins, passed as --plugin-dir).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS plugin TEXT NOT NULL DEFAULT '';
-            -- The Harman authority level (ic < lead < manager) a chat started
+            -- The Manager authority level (ic < lead < manager) a chat started
             -- from this role acts at on the board (engine.resolve_level).
             ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'ic';
             -- The scheduled jobs a chat started from this agent begins with:
@@ -624,7 +624,7 @@ def init_db():
               ON CONFLICT (key) DO NOTHING;
             -- System-awareness preamble prepended to EVERY session's system prompt
             -- (--append-system-prompt in runtime/runners/claude.py). Without it a session sees the raw
-            -- mcp__viewer__* tool list but is never told it is a node in the Harman
+            -- mcp__viewer__* tool list but is never told it is a node in the Manager
             -- orchestration system or how the steering rules gate its power. Stored
             -- here (not a code constant) so it is editable at runtime with no deploy;
             -- to_jsonb(...::text) makes it a JSON string without escaping the body.
@@ -864,7 +864,7 @@ Full design: docs_read ORCHESTRATOR_MCP.md$n$))
 
 
 # Tables whose writes the live hub (orchestrator/live.py) relays. Each row change
-# NOTIFYs `harman_events` with its keys only — {table, id, op, project_id};
+# NOTIFYs `agents_events` with its keys only — {table, id, op, project_id};
 # clients refetch through the ordinary GET routes, so no row content (and no
 # authorization decision) ever rides the channel. project_id NULL = org-wide.
 LIVE_TABLES = ("cards", "card_comments", "card_deps", "notes", "note_comments",
@@ -1001,11 +1001,11 @@ def migrate_legacy_files():
     if data is not None:
         # Seed only if the row is still the untouched default (no automation flip
         # since install). setting_get returns the seeded default on a fresh DB.
-        cur_cfg = settings.setting_get("harman", {}) or {}
+        cur_cfg = settings.setting_get("orchestrator", {}) or {}
         # Only the master switch survives; the file's other keys fed the retired
         # manager tick (card 146).
         if not cur_cfg.get("automation_enabled") and isinstance(data, dict):
-            settings.setting_set("harman", {"automation_enabled": bool(data.get("automation_enabled"))})
+            settings.setting_set("orchestrator", {"automation_enabled": bool(data.get("automation_enabled"))})
         _retire(p)
 
     # cloud-drive vendor clients -> settings['drive_clients']

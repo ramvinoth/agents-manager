@@ -3,7 +3,7 @@
 Two layers, both standard Claude Code plugins loaded with --plugin-dir (the
 engine reads config.session_plugin_dirs), so there is one loading mechanism:
 
-  - Harman plugins (the catalog, config.agent_plugin_names): the ones shipped
+  - Manager plugins (the catalog, config.agent_plugin_names): the ones shipped
     in orchestrator/agent_plugins. A chat starts with its agent's plugins
     ("included"); the owner may add or remove any of them. A plugin is added or
     removed whole — editing one would change it for every chat that uses it.

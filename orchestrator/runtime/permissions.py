@@ -4,10 +4,11 @@ import re
 import secrets
 import threading
 import time
+from pathlib import Path
 
 from orchestrator import db, orglogic
 from orchestrator import live as live_events  # `live` is a local name in several functions
-from orchestrator.config import CHAT_JOBS, CHAT_LOCK, PERM_TIMEOUT, QUESTION_TIMEOUT
+from orchestrator.config import CHAT_JOBS, CHAT_LOCK, CLAUDE_DIR, PERM_TIMEOUT, QUESTION_TIMEOUT
 from orchestrator.runtime.titles import push_label
 
 
@@ -71,14 +72,73 @@ def _await_question_answer(session_id, tinput, tool_use_id):
     return {"behavior": "deny", "message": answer}
 
 
+def _plan_text(session_id, tinput, live_text="", started=0):
+    """The plan to show in the approval card.
+
+    Older CLIs put the markdown straight in ExitPlanMode's `plan` argument. Newer
+    ones build the plan in a *plan file* and call ExitPlanMode with `{}`, which
+    would leave the card blank.
+
+    Order matters. `live_text` is the assistant text captured from the run's own
+    stream and is the only ordering-safe source: the transcript file is written
+    asynchronously, so reading it back here can return the PREVIOUS turn's text.
+    The file scan stays as the fallback for a plan that arrives without live
+    text. Best-effort throughout; "" is still a valid answer."""
+    if isinstance(tinput, dict):
+        for key in ("plan", "plan_md", "content"):
+            v = tinput.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+    if isinstance(live_text, str) and live_text.strip():
+        return live_text.strip()
+    try:
+        matches = list(CLAUDE_DIR.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            return ""
+        plan_file, last_text = "", ""
+        with open(matches[0], errors="replace") as f:
+            for line in f:
+                if '"plan' not in line and '"text"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pf = (obj.get("attachment") or {}).get("planFilePath")
+                if pf:
+                    plan_file = pf
+                content = (obj.get("message") or {}).get("content")
+                if obj.get("type") == "assistant" and isinstance(content, list):
+                    txt = "\n".join(b.get("text", "") for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text").strip()
+                    if txt:
+                        last_text = txt
+        if plan_file:
+            # Only if it belongs to THIS call: a plan file left over from an
+            # earlier run is exactly the staleness live_text exists to avoid.
+            try:
+                p = Path(plan_file)
+                if p.stat().st_mtime >= started:
+                    body = p.read_text(errors="replace").strip()
+                    if body:
+                        return body
+            except OSError:
+                pass
+        return last_text
+    except Exception:
+        return ""
+
+
 def _await_plan_decision(session_id, tinput, tool_use_id):
     """Block a driven claude's ExitPlanMode until the user approves or denies with
     feedback. Persists a durable pending_plans row so the app renders the plan card
     and it survives restart. approve -> allow; deny -> deny+feedback (agent revises)."""
     from orchestrator import questions
-    plan_md = ""
-    if isinstance(tinput, dict):
-        plan_md = tinput.get("plan") or ""
+    with CHAT_LOCK:
+        _j = CHAT_JOBS.get(session_id) or {}
+        live = _j.get("last_assistant_text", "")
+        started = _j.get("started", 0)
+    plan_md = _plan_text(session_id, tinput, live, started)
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if not job:

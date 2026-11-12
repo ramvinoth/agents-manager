@@ -1,6 +1,6 @@
 """orchestrator.live — invalidation events for the realtime surfaces.
 
-One Postgres LISTEN thread (channel `harman_events`, fed by the row triggers
+One Postgres LISTEN thread (channel `agents_events`, fed by the row triggers
 shared.schema._install_live_triggers installs) plus in-process `publish()` for state that
 lives in memory (the engine's tool-approval registry). Every event is keys
 only — {table, id, op, project_id} — and fans out to every connected client;

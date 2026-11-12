@@ -94,9 +94,9 @@ public class AgentsAudioModule: Module {
     // Fix the playback format BEFORE the engine starts. Reconnecting the player to a new
     // format on the first enqueue, while the voice-processing engine runs, drops the first
     // utterance (silence) and garbles the next (white noise).
-    guard let pf = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: HarmanAudioModule.playbackRate,
+    guard let pf = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: AgentsAudioModule.playbackRate,
                                  channels: 1, interleaved: false) else {
-      throw Exception(name: "HarmanAudio", description: "cannot build playback format")
+      throw Exception(name: "AgentsAudio", description: "cannot build playback format")
     }
     playbackFormat = pf
     engine.attach(player)
@@ -120,7 +120,7 @@ public class AgentsAudioModule: Module {
     let input = engine.inputNode
     let inFormat = input.inputFormat(forBus: 0)
     guard inFormat.sampleRate > 0, let outFormat = targetFormat else {
-      throw Exception(name: "HarmanAudio", description: "input format unavailable")
+      throw Exception(name: "AgentsAudio", description: "input format unavailable")
     }
     input.removeTap(onBus: 0)
     converter = AVAudioConverter(from: inFormat, to: outFormat)

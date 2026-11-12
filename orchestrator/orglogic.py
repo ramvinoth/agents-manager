@@ -1,4 +1,4 @@
-"""orchestrator.orglogic — pure org/Kanban logic for the orchestrator ("Harman").
+"""orchestrator.orglogic — pure org/Kanban logic for the orchestrator ("Manager").
 
 The empire runs on ONE canonical board: a single `cards` list. Every "board" the UI
 shows (per session / project / the CEO dashboard) is that same data through

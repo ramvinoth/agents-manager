@@ -185,7 +185,7 @@ class AuthMixin:
                            status=400)
             return
         code, expires = pairing.create(p["user"]["id"])
-        # `relay` (or null): how a phone reaches this server through the Harman
+        # `relay` (or null): how a phone reaches this server through the Manager
         # relay when it has no direct route — see orchestrator.relay.offer.
         self.send_json({"code": code, "expiresAt": expires, "ttl": pairing.TTL,
                         "publicUrl": PUBLIC_URL, "relay": relay.offer()})

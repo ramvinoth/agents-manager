@@ -17,7 +17,7 @@ test("a server without last_message falls back to modified; input is not mutated
 
 const pool = [
   { id: "a", path: "a", title: "Alpha", project: "/w/sift", last_message: 30, unread: true },
-  { id: "b", path: "b", title: "Beta", project: "/w/harman", last_message: 20, favorite: true },
+  { id: "b", path: "b", title: "Beta", project: "/w/agents", last_message: 20, favorite: true },
   { id: "c", path: "c", title: "Gamma", project: "/w/sift", last_message: 10, archived: true, unread: true },
   { id: "d", path: "d", title: "Delta", last_message: 5 },
 ]
@@ -30,7 +30,7 @@ test("filters: unread, starred, project; archived chats stay out of the main vie
 })
 
 test("search and filter combine; no filter keeps star-first order", () => {
-  assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "harman", filter: null })), ["b"])
+  assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "agents", filter: null })), ["b"])
   assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "alp", filter: { kind: "starred" } })), [])
   assert.deepEqual(ids(visibleChats(pool, { archived: false, query: "", filter: null })), ["b", "a", "d"])
 })
@@ -44,7 +44,7 @@ test("default filter: none unless Unread/Starred was chosen; legacy project filt
   assert.equal(defaultFilter(undefined), null)
   assert.equal(defaultFilter({ kind: "bogus" }), null)
   assert.equal(defaultFilter({ kind: "all" }), null)
-  assert.equal(defaultFilter({ kind: "project", project: "/w/harman" }), null)
+  assert.equal(defaultFilter({ kind: "project", project: "/w/agents" }), null)
   assert.deepEqual(defaultFilter({ kind: "starred" }), { kind: "starred" })
 })
 

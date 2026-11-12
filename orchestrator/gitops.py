@@ -406,7 +406,7 @@ def _discover_child_repo(hid, cwd):
             p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=15)
             rc, out = p.returncode, p.stdout
         else:
-            from viewer.remote import remote_run_shell
+            from orchestrator.remote import remote_run_shell
             rc, out = remote_run_shell(hid, script, timeout=20)
     except (OSError, subprocess.SubprocessError):
         # No bash on this machine (Windows): no discovery, same as no candidate.

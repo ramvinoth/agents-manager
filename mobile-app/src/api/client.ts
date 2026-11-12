@@ -153,7 +153,7 @@ export type McpSignin = { name: string; stage: "idle" | "starting" | "url" | "do
 /** kind "once" = a one-shot that fires at nextRun and then retires; "recurring"
  *  (the default) follows cron or interval. */
 export type Job = { id: string; session: string; prompt: string; interval: number; cron?: string; kind?: "recurring" | "once"; nextRun?: number; runs?: number; enabled?: boolean; provider?: string }
-/** Harman (org) authority, server-enforced on every board/org action whatever the
+/** Manager (org) authority, server-enforced on every board/org action whatever the
  *  harness: ic < lead < manager (orchestrator/orglogic.LEVELS). Separate from the
  *  harness PermissionMode, which gates the CLI's own tools inside a run. */
 export type OrgLevel = "ic" | "lead" | "manager"

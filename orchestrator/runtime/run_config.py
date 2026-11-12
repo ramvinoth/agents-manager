@@ -134,7 +134,7 @@ def run_settings_paths_in_use():
 
 
 def resolve_level(session_id):
-    """The Harman authority level (ic < lead < manager) a session runs at.
+    """The Manager authority level (ic < lead < manager) a session runs at.
 
     One resolution, in order: the owner's per-chat override (session_meta.level,
     set through the Red session_level_set action), then the level of the agent

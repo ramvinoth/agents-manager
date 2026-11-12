@@ -1,4 +1,4 @@
-"""viewer.claude_models — the selectable model list for a Claude session.
+"""orchestrator.claude_models — the selectable model list for a Claude session.
 
 Claude Code has no "list models" command, but when it is pointed at an
 Anthropic-compatible gateway (an LLM proxy, copilot-api, llama-server …) that
@@ -22,7 +22,7 @@ import re
 import time
 import urllib.request
 
-from viewer.remote import remote_run_python
+from orchestrator.remote import remote_run_python
 
 _MODELS_CACHE = {}   # host -> (expires_ts, [{"v","label"}])
 _MODELS_TTL = 600

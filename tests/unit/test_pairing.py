@@ -77,7 +77,7 @@ def test_start_tells_the_qr_the_public_address(monkeypatch):
     """The QR must carry the address a phone can reach (the tunnel), not the
     localhost the customer's browser happens to be on."""
     from orchestrator.routes import auth
-    monkeypatch.setattr(auth, "PUBLIC_URL", "https://harman.example.com")
+    monkeypatch.setattr(auth, "PUBLIC_URL", "https://agents.example.com")
     h = _Handler()
     h._p_auth_pair_start(_Req(APP))
     assert h.sent[0]["publicUrl"] == "https://agents.example.com"

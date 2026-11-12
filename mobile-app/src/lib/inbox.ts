@@ -148,10 +148,10 @@ export type ThreadItem =
   | { type: "msg"; key: string; m: InboxMessage; mine: boolean; first: boolean }
 
 /** Who sent a message, as a short label: a session shows its title
- *  (`labels`: session id → title), the server is "Harman", the owner is "You". */
+ *  (`labels`: session id → title), the server is "Manager", the owner is "You". */
 export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}): string {
   if (m.sender_type === "session") return labels[m.sender_id] || (m.sender_id || "").slice(0, 8)
-  if (m.sender_type === "system") return "Harman"
+  if (m.sender_type === "system") return "Manager"
   return "You"
 }
 
