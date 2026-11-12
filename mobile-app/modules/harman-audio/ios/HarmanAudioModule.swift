@@ -32,6 +32,7 @@ public class HarmanAudioModule: Module {
   private var pending = 0            // scheduled buffers not yet played out
   private var generation = 0         // bumped by flush so stale completions are ignored
   private let pendingLock = NSLock()
+  private var configObserver: NSObjectProtocol?
   private static let playbackRate = 24000.0   // matches the server's TTS rate (fishcall.VOICE_RATE)
 
   public func definition() -> ModuleDefinition {
@@ -114,6 +115,23 @@ public class HarmanAudioModule: Module {
     try engine.start()
     player.play()
     running = true
+    // CallKit activates the audio session AFTER we start on the first call. iOS answers that
+    // route/format change by stopping the engine (and the player with it), which silences
+    // playback and the mic until something restarts it.
+    configObserver = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+    ) { [weak self] _ in self?.recoverEngine() }
+  }
+
+  private func recoverEngine() {
+    guard running, !engine.isRunning else { return }
+    engine.prepare()
+    do {
+      try engine.start()
+      player.play()
+    } catch {
+      sendEvent("onError", ["message": "audio engine restart failed: \(error.localizedDescription)"])
+    }
   }
 
   private func enqueue(base64: String, sampleRate: Double) -> Bool {
@@ -189,6 +207,7 @@ public class HarmanAudioModule: Module {
   private func stop() {
     guard running else { return }
     running = false
+    if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
     pendingLock.lock(); pending = 0; generation += 1; pendingLock.unlock()
     player.stop()
     engine.detach(player)
