@@ -201,6 +201,7 @@ class Bridge:
         self.turns = TurnTaker()
         self.lock = threading.Lock()     # guards turns, history, tts
         self.asr = None
+        self.t0 = time.monotonic()
         self.tts = None
         self.done = threading.Event()
 
@@ -372,6 +373,10 @@ class Bridge:
                     self.done.set()
                     return
                 continue
+            if ev.get("type") in ("user_turn_taken", "eager_end_of_turn", "committed", "turn_resumed"):
+                # Per-turn timing: the gaps between these lines show where a slow reply is lost.
+                print(f"[fishcall] asr {ev.get('type')} turn={ev.get('turn_index')} "
+                      f"reason={ev.get('reason')} t={time.monotonic() - self.t0:.2f}s", flush=True)
             with self.lock:
                 acts = self.turns.on_asr(ev)
             self.act(acts)
