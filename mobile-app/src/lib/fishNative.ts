@@ -5,11 +5,22 @@
 import { HarmanAudio } from "../../modules/harman-audio/src"
 import type { FishAudio } from "./fishCall"
 
+let errorSub: { remove(): void } | null = null
+
 export const fishAudioAvailable = (): boolean => HarmanAudio.isAvailable()
 
 export const nativeFishAudio: FishAudio = {
-  start: (rate) => HarmanAudio.start(rate),
-  stop: () => HarmanAudio.stop(),
+  start: async (rate) => {
+    // Native capture/engine failures used to vanish; surface them in the device log.
+    errorSub?.remove()
+    errorSub = HarmanAudio.addErrorListener((e) => console.warn("[harman-audio]", e.message ?? "unknown error"))
+    await HarmanAudio.start(rate)
+  },
+  stop: async () => {
+    errorSub?.remove()
+    errorSub = null
+    await HarmanAudio.stop()
+  },
   onFrame: (cb) => {
     const sub = HarmanAudio.addFrameListener((f) => cb(f.pcm))
     return () => sub.remove()
