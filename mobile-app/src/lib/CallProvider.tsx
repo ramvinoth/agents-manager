@@ -24,6 +24,9 @@ interface CallApi extends Pick<Turn, "phase" | "model" | "heard" | "reply" | "er
   toggleMute: () => void
 }
 
+const MAX_REDIALS = 3
+const REDIAL_MS = 1500
+
 const CallContext = createContext<CallApi | null>(null)
 
 export function useCall(): CallApi {
@@ -66,6 +69,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; clearInterval(tick) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.active])
+
+  // A live stream that drops (network blip, service hiccup) must not leave a dead
+  // "active" call: redial it a few times, then leave the error for the user.
+  const redialsRef = useRef(0)
+  useEffect(() => {
+    if (!session.active) { redialsRef.current = 0; return }
+    if (turn.phase === "thinking" || turn.phase === "speaking") redialsRef.current = 0
+    if (!turn.error || muted || redialsRef.current >= MAX_REDIALS) return
+    const id = setTimeout(() => { redialsRef.current += 1; startHandsFree() }, REDIAL_MS)
+    return () => clearTimeout(id)
+  }, [session.active, turn.error, turn.phase, muted, startHandsFree])
 
   const toggleMute = useCallback(() => {
     const next = !muted

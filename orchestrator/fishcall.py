@@ -26,6 +26,7 @@ and threads, with the dialer and brain injectable so tests need no network.
 """
 
 import re
+import time
 import json
 import struct
 import threading
@@ -336,11 +337,16 @@ class Bridge:
 
     # -- loops
     def asr_loop(self):
+        last_keepalive = time.monotonic()
         while not self.done.is_set():
+            # Keepalive on the clock, not only on a quiet read: Fish counts client
+            # messages, so a stalled phone mic must never let the stream idle out.
+            if time.monotonic() - last_keepalive >= READ_TIMEOUT:
+                self._asr_send({"type": "keepalive"})
+                last_keepalive = time.monotonic()
             try:
                 op, payload = self.asr.recv()
             except TimeoutError:
-                self._asr_send({"type": "keepalive"})
                 continue
             except Exception:
                 op, payload = OP_CLOSE, b""
