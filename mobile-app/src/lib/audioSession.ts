@@ -40,10 +40,6 @@ export interface AudioBackend {
   requestPermission(): Promise<boolean>
   /** Put the session into record+play mode (the ONE canonical config). */
   setRecordMode(): Promise<void>
-  /** Apply record mode against a session ALREADY activated by CallKit — sets the
-   *  category/mode only, never (re)activates. Optional: backends without CallKit
-   *  can omit it and the coordinator falls back to setRecordMode(). */
-  adoptRecordMode?(): Promise<void>
   /** Create + start a recorder in the already-set record mode. */
   startRecorder(options: unknown): Promise<RecordingHandle>
   /** Start playback of a URL and RESOLVE ONLY when playback has finished AND the
@@ -226,29 +222,6 @@ export class AudioSession {
    *  hands-free window whose recorder the caller constructs). */
   ensureRecordMode(): Promise<void> {
     return this.enqueue(() => this.toRecordMode())
-  }
-
-  /**
-   * Adopt an AVAudioSession that CallKit has just activated
-   * (`didActivateAudioSession`). CallKit owns activation for a call; we only set
-   * OUR record+play mode on top so the hands-free loop can record/play. Never
-   * (re)activates the session — that's CallKit's job — which is what keeps the two
-   * from fighting over the one session. Falls back to setRecordMode() on backends
-   * that don't implement the CallKit-specific path.
-   */
-  adoptActiveSession(): Promise<void> {
-    return this.enqueue(async () => {
-      if (this.state === "playing") {
-        await this.backend.stopPlayback()
-        this.state = "idle"
-      }
-      if (this.backend.adoptRecordMode) {
-        await this.backend.adoptRecordMode()
-      } else {
-        await this.backend.setRecordMode()
-      }
-      this.configured = true
-    })
   }
 
   /** Release everything (screen unmount). Idempotent, awaited. */

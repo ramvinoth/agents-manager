@@ -90,11 +90,6 @@ test("stop sends stop and cleans up", async () => {
   assert.ok(r.log.includes("stop") && (r.sock as any).closed)
   assert.deepStrictEqual(r.fails, [])
 })
-async function main() {
-  for (const t of tests) await t()
-  console.log(`${passed} passed`)
-}
-void main()
 test("an odd-length audio chunk never splits a sample", async () => {
   const sizes: number[] = []
   const r = rig()
@@ -104,3 +99,40 @@ test("an odd-length audio chunk never splits a sample", async () => {
   r.msg(new Uint8Array([4, 5]).buffer)
   assert.deepStrictEqual(sizes, [2, 2])
 })
+test("the server is told to start only after the audio engine is running (turn-1 silence)", async () => {
+  const r = rig()
+  let engineUp = false
+  let release: () => void = () => {}
+  r.audio.start = () => new Promise<void>((res) => { release = () => { engineUp = true; res() } })
+  r.audio.enqueue = () => engineUp
+  const call = startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  await new Promise((res) => setTimeout(res, 5))
+  assert.ok(!r.sent.includes(JSON.stringify({ type: "start", history: [] })), "start sent before the engine was up")
+  release()
+  await call
+  assert.strictEqual(r.sent[0], JSON.stringify({ type: "start", history: [] }))
+})
+test("mic frames are not sent before the server start", async () => {
+  const r = rig()
+  let release: () => void = () => {}
+  r.audio.start = () => new Promise<void>((res) => { release = res })
+  const call = startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  await new Promise((res) => setTimeout(res, 5))
+  r.frame("AAA=")
+  assert.strictEqual(r.sent.length, 0)
+  release()
+  await call
+})
+test("a chunk the engine refuses ends the call loudly instead of vanishing", async () => {
+  const r = rig()
+  r.audio.enqueue = () => false
+  await startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  r.msg(new Uint8Array([1, 2]).buffer)
+  await new Promise((res) => setTimeout(res, 5))
+  assert.strictEqual(r.fails.length, 1)
+})
+async function main() {
+  for (const t of tests) await t()
+  console.log(`${passed} passed`)
+}
+void main()

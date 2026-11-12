@@ -9,17 +9,15 @@
  * for continuous background *recording*; a CallKit call is not.
  *
  * Audio ownership (the one real risk): CallKit owns *activation* of the shared
- * AVAudioSession. Our expo-av `audioSession` must NOT also activate it or the two
- * fight (the classic "recorder not prepared" on turn 2). So on
- * `didActivateAudioSession` we call `audioSession.adoptActiveSession()`, which only
- * sets our record+play mode on top of CallKit's activation.
+ * AVAudioSession. We never touch the session on activation: whichever audio stack
+ * runs the call (the native Fish engine, or the expo-av `audioSession` on the legacy
+ * path) sets its own category when it starts, so there is one writer per path.
  *
  * Scope: OUTGOING, user-initiated calls only (tap the phone icon). No PushKit / no
  * incoming-call path — that would need server VoIP push we don't have.
  */
 import RNCallKeep from "react-native-callkeep"
 import { Platform } from "react-native"
-import { audioSession } from "./audioSessionNative"
 import { stopSpeaking } from "./voice"
 
 // A CallKit call needs a UUID. crypto.randomUUID isn't guaranteed in Hermes, so
@@ -79,8 +77,7 @@ class CallManager {
   }
 
   /**
-   * Start an outgoing call: iOS shows the active-call UI and, on
-   * didActivateAudioSession, we adopt the session for our recorder/player. Returns
+   * Start an outgoing call: iOS shows the active-call UI. Returns
    * the call UUID (or null if unsupported). Wire teardown/mute via `handlers`.
    */
   async startCall(label: string, handlers: CallHandlers): Promise<string | null> {
@@ -90,13 +87,6 @@ class CallManager {
     const uuid = uuidv4()
     this.uuid = uuid
 
-    this.listeners.push(
-      RNCallKeep.addEventListener("didActivateAudioSession", () => {
-        // CallKit activated the shared session; assert OUR record+play mode on top
-        // (never re-activate — that's CallKit's job).
-        audioSession.adoptActiveSession().catch(() => {})
-      })
-    )
     this.listeners.push(
       RNCallKeep.addEventListener("endCall", ({ callUUID }) => {
         if (callUUID.toLowerCase() !== uuid.toLowerCase()) return

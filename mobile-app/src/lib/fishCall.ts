@@ -151,10 +151,13 @@ export async function startFishCall(
         bytes = bytes.subarray(0, bytes.byteLength - 1)
       }
       if (bytes.byteLength === 0) return
-      if (audio.enqueue(toBase64(bytes), rate)) {
-        if (!queued) h.onPhase("speaking")
-        queued = true
+      if (!audio.enqueue(toBase64(bytes), rate)) {
+        // A refused chunk is lost speech; never drop it silently.
+        void fail("Call audio stopped playing.")
+        return
       }
+      if (!queued) h.onPhase("speaking")
+      queued = true
       return
     }
     const e = parseFishEvent(d)
@@ -198,18 +201,21 @@ export async function startFishCall(
     throw e
   })
 
-  sendJson({ type: "start", history })
+  // The engine must be running BEFORE the server may speak: the server starts TTS the
+  // moment it gets "start", and a chunk enqueued into a stopped engine is refused.
+  // Starting the engine first is what makes turn 1 audible.
   unDrain = audio.onDrained(finishPlayback)
-  unFrame = audio.onFrame((b64) => {
-    if (stopped || socket.readyState !== OPEN) return
-    try { socket.send(fromBase64(b64)) } catch { /* closing */ }
-  })
   try {
     await audio.start(MIC_RATE)
   } catch (e) {
     await teardown()
     throw e
   }
+  sendJson({ type: "start", history })
+  unFrame = audio.onFrame((b64) => {
+    if (stopped || socket.readyState !== OPEN) return
+    try { socket.send(fromBase64(b64)) } catch { /* closing */ }
+  })
   ping = timers.setInterval(() => sendJson({ type: "ping" }), PING_MS)
 
   return {

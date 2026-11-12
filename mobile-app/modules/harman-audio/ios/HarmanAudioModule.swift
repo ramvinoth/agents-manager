@@ -15,8 +15,7 @@ import AVFoundation
  *   - start(sampleRate): enable voice processing, install an input tap, begin
  *     emitting "onFrame" events carrying base64 16-bit PCM mono at `sampleRate`.
  *   - stop(): remove the tap and stop the engine.
- * We do NOT call AVAudioSession.setActive(true) — CallKit owns activation (see
- * callManager.ts didActivateAudioSession → audioSession.adoptActiveSession); we
+ * We do NOT call AVAudioSession.setActive(true) — CallKit owns activation; we
  * only set the category to playAndRecord + voiceChat and start the engine, so we
  * cooperate with, rather than fight, the call's session.
  */
@@ -89,7 +88,6 @@ public class HarmanAudioModule: Module {
       throw Exception(name: "HarmanAudio", description: "cannot build output format")
     }
     self.targetFormat = outFormat
-    try installCapture()
 
     // Fix the playback format BEFORE the engine starts. Reconnecting the player to a new
     // format on the first enqueue, while the voice-processing engine runs, drops the first
@@ -100,17 +98,30 @@ public class HarmanAudioModule: Module {
     }
     playbackFormat = pf
     engine.attach(player)
-    engine.connect(player, to: engine.mainMixerNode, format: pf)
-    engine.prepare()
-    try engine.start()
-    player.play()
+    try startGraph()
     running = true
     // CallKit activates the audio session AFTER we start on the first call. iOS answers that
-    // route/format change by stopping the engine (and the player with it), which silences
-    // playback and the mic until something restarts it.
+    // route/format change by stopping the engine (and the player with it); recoverEngine
+    // rebuilds the same graph so playback and the mic come back.
     configObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
     ) { [weak self] _ in self?.recoverEngine() }
+  }
+
+  /// The ONE place the audio graph is (re)built, for first start and for recovery after iOS
+  /// stops the engine: capture tap from the CURRENT hardware format, player wired to the mixer
+  /// with the fixed playback format, engine running, player playing.
+  private func startGraph() throws {
+    try installCapture()
+    guard let pf = playbackFormat else {
+      throw Exception(name: "HarmanAudio", description: "playback format unavailable")
+    }
+    engine.connect(player, to: engine.mainMixerNode, format: pf)
+    if !engine.isRunning {
+      engine.prepare()
+      try engine.start()
+    }
+    player.play()
   }
 
   /// (Re)build the capture tap from the input node's CURRENT hardware format. The format
@@ -132,12 +143,7 @@ public class HarmanAudioModule: Module {
   private func recoverEngine() {
     guard running else { return }
     do {
-      try installCapture()
-      if !engine.isRunning {
-        engine.prepare()
-        try engine.start()
-      }
-      player.play()
+      try startGraph()
     } catch {
       sendEvent("onError", ["message": "audio engine restart failed: \(error.localizedDescription)"])
     }
