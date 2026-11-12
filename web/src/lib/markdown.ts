@@ -212,7 +212,7 @@ function renderInline(text: string, syntax?: NoteSyntax): string {
     if (url.startsWith("#")) return `<a href="${url}">${text}</a>`
     if (/^file:\/\//i.test(url) || !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(url))
       return `<a href="#" class="file-link" data-file="${url}">${text}</a>`
-    const card = /^harman:\/\/card\/(\d+)$/.exec(url)
+    const card = /^agents:\/\/card\/(\d+)$/.exec(url)
     if (card) return `<a href="#" class="card-link" data-card="${card[1]}">${text}</a>`
     return `<a href="#">${text}</a>`
   })
