@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import CardMentions from "../components/CardMentions"
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, RefreshControl, Text, TextInput, View } from "react-native"
 import { TouchableOpacity } from "../components/Tracked"
 import { useFocusEffect } from "@react-navigation/native"
@@ -274,7 +275,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                   {kindLabel(m.kind).toUpperCase()}{badge ? ` · ${badge}` : ""}
                 </Text>
               ) : null}
-              <Text style={styles.bubbleText} selectable>{m.body}</Text>
+              <Text style={styles.bubbleText} selectable><CardMentions text={m.body} /></Text>
               {decision && m.open ? (
                 <View style={styles.ibActions}>
                   <TouchableOpacity

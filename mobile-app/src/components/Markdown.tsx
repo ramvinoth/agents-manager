@@ -1,4 +1,5 @@
 import React, { useContext, useMemo } from "react"
+import CardMentions from "./CardMentions"
 import { Linking, ScrollView, Text, View } from "react-native"
 import { blockGap, parseMarkdown, type MdBlock, type Span } from "../lib/markdown"
 import { texToUnicode } from "../lib/texUnicode"
@@ -121,7 +122,7 @@ function Inline({
               {s.s}
             </Text>
           )
-        return <Text key={i}>{s.s}</Text>
+        return <Text key={i}><CardMentions text={s.s} /></Text>
       })}
     </Text>
   )
