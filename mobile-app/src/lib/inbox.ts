@@ -7,6 +7,8 @@
  * No server/React imports — unit-tested under node like notes.ts.
  */
 import type { InboxFilter, InboxKind, InboxMessage } from "../api/client"
+import { agentNameColor } from "./avatars.ts"
+import type { Scheme } from "./theme.ts"
 export type { InboxFilter, InboxKind, InboxMessage }
 
 export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
@@ -153,14 +155,14 @@ export function senderLabel(m: InboxMessage, labels: Record<string, string> = {}
   return "You"
 }
 
-/** A stable colour per sender (WhatsApp-style name colours), so a group
- *  thread is scannable at a glance. Same id → same colour, always. */
-const SENDER_COLORS = ["#d97706", "#0d9488", "#7c3aed", "#db2777", "#2563eb", "#65a30d", "#ea580c", "#0891b2"]
-export function senderColor(m: InboxMessage): string {
-  const key = `${m.sender_type}:${m.sender_id}`
-  let h = 0
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
-  return SENDER_COLORS[h % SENDER_COLORS.length]
+/** The colour key for a sender: the session id (same seed as its avatar), so
+ *  the name and the avatar always agree. System and owner get fixed keys. */
+export function senderSeed(m: InboxMessage): string {
+  return m.sender_type === "session" ? m.sender_id : m.sender_type
+}
+
+export function senderColor(m: InboxMessage, scheme: Scheme): string {
+  return agentNameColor(senderSeed(m), scheme)
 }
 
 /** A mailbox as a chat thread: oldest first, a day separator whenever the

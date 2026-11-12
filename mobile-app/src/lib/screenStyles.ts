@@ -41,7 +41,7 @@ export function buildScreenStyles(t: Theme) {
     ibRetryText: { color: t.danger },
     ibThread: { flex: 1, backgroundColor: t.thread },
     ibOpenDecision: { borderLeftWidth: 3, borderLeftColor: t.accent },
-    ibKind: { fontSize: 11, fontWeight: "700", letterSpacing: 0.4, marginBottom: 4 },
+    ibKind: { fontSize: 12, fontWeight: "700", letterSpacing: 0.3, marginBottom: 4 },
     ibActions: { flexDirection: "row", gap: 8, marginTop: 10 },
     ibDecideChip: { backgroundColor: t.accent },
     ibDecideText: { color: t.onAccent, fontSize: 13, fontWeight: "700" },

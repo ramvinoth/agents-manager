@@ -117,5 +117,5 @@ eq("conversationBadge: none, needs you, count, unread",
   const c = M({ id: 3, sender_type: "session", sender_id: "y", created_at: 12 })
   const msgs = threadTimeline([a, b, c], () => "D").filter((i) => i.type === "msg") as Array<{ first: boolean }>
   eq("name once per sender run", msgs.map((i) => i.first), [true, false, true])
-  eq("same sender same colour", senderColor(a), senderColor(b))
+  eq("same sender same colour", senderColor(a, "light"), senderColor(b, "light"))
 }

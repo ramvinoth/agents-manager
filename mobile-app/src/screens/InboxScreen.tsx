@@ -263,11 +263,11 @@ export default function InboxScreen({ navigation, session, title, host, path, is
             <View
               testID={`inbox-msg-${m.id}`}
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
-                !item.first ? { marginTop: -4 } : null,
+                !item.first ? { marginTop: 4 } : null,
                 decision && m.open ? styles.ibOpenDecision : null]}
             >
               {!item.mine && item.first ? (
-                <Text style={[styles.ibKind, { color: senderColor(m), fontWeight: "700" }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
+                <Text style={[styles.ibKind, { color: senderColor(m, t.scheme) }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
               ) : null}
               {decision ? (
                 <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>

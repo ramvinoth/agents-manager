@@ -233,8 +233,8 @@ function buildCoreStyles(t: Theme) {
       borderBottomRightRadius: 4,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      marginVertical: 3,
-      marginHorizontal: 10,
+      marginTop: 8,
+      marginHorizontal: 12,
       maxWidth: "82%",
     },
     bubbleAssistant: {
@@ -244,18 +244,18 @@ function buildCoreStyles(t: Theme) {
       borderBottomLeftRadius: 4,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      marginVertical: 3,
-      marginHorizontal: 10,
+      marginTop: 8,
+      marginHorizontal: 12,
       maxWidth: "82%",
     },
-    bubbleText: { fontSize: 15, color: t.text, lineHeight: 20 },
+    bubbleText: { fontSize: 15, color: t.text, lineHeight: 22 },
     systemPill: {
       alignSelf: "center",
       backgroundColor: t.chipBg,
       borderRadius: 10,
-      paddingHorizontal: 10,
+      paddingHorizontal: 12,
       paddingVertical: 4,
-      marginVertical: 6,
+      marginVertical: 8,
       maxWidth: "88%",
     },
     systemText: { fontSize: 12, color: t.textMuted, textAlign: "center" },
@@ -277,7 +277,7 @@ function buildCoreStyles(t: Theme) {
     toolChipText: { fontSize: 12, color: t.text, flexShrink: 1 },
     toolChipTime: { fontSize: 10, color: t.textMuted, marginLeft: 2 },
     // Per-message wall-clock time (WhatsApp-style), bottom-right of a bubble.
-    msgTime: { fontSize: 10, color: t.textMuted, alignSelf: "flex-end", marginTop: 3 },
+    msgTime: { fontSize: 11, color: t.textMuted, alignSelf: "flex-end", marginTop: 4 },
     // Row holding an optional pin glyph + the timestamp, bottom-right of a bubble.
     bubbleMetaRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4 },
     // Pinned-message banner under the chat header.
