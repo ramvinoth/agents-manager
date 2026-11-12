@@ -304,7 +304,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
           )
         }}
       />
-      <View style={[styles.composerWrap, { paddingBottom: insets.bottom }]}>
+      <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 6) }]}>
         <View style={styles.composerBar}>
           <TextInput
             testID="inbox-composer"
