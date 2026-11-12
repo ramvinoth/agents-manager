@@ -331,8 +331,6 @@ class Bridge:
         print(f"[fishcall] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
         if not barged:
             self.tell("audio_end")  # the phone answers "played" once its buffer drains
-        if not barged:
-            self.tell("audio_end")  # the phone answers "played" once its buffer drains
 
     def _stop_voice_locked(self):
         if self.tts is not None:

@@ -199,6 +199,8 @@ def test_bridge_full_turn_streams_voice_and_commits_history():
     asr.push({"type": "committed", "turn_index": 0, "text": "ram"})
     assert wait_for(lambda: "audio_end" in phone.kinds())
     assert phone.audio == [b"PCM"]
+    time.sleep(0.2)
+    assert phone.kinds().count("audio_end") == 1  # a second one made the phone end playback early
     assert {"type": "heard", "text": "ram"} in phone.out
     assert {"type": "reply", "text": "hello ram"} in phone.out
     assert [m for m in ttses[0].sent if m["event"] == "text"][0]["text"] == "hello ram"
