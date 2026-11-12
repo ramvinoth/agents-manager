@@ -295,6 +295,10 @@ class Bridge:
         with self.lock:
             self._stop_voice_locked()
             self.tts = tts
+        chunks = nbytes = 0
+        t0 = time.monotonic()
+        first = None
+        why = "closed"
         try:
             tts.send_bytes(pack(tts_start(self.voice_id)))
             tts.send_bytes(pack({"event": "text", "text": words}))
@@ -308,17 +312,25 @@ class Bridge:
                     continue
                 ev = unpack(payload)
                 if ev.get("event") == "audio" and ev.get("audio"):
+                    if first is None:
+                        first = time.monotonic() - t0
+                    chunks += 1
+                    nbytes += len(ev["audio"])
                     self.phone.send_bytes(ev["audio"])
                 elif ev.get("event") == "finish":
+                    why = ev.get("reason") or "stop"
                     break
-        except Exception:
-            pass                  # closed by a barge-in, or the voice dropped
+        except Exception as e:
+            why = f"dropped: {e}"     # a barge-in closes the socket too; both end up here
         finally:
             with self.lock:
                 barged = self.tts is not tts
                 if not barged:
                     self.tts = None
             tts.close()
+        print(f"[fishcall] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
+        if not barged:
+            self.tell("audio_end")  # the phone answers "played" once its buffer drains
         if not barged:
             self.tell("audio_end")  # the phone answers "played" once its buffer drains
 
