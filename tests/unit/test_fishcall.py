@@ -18,7 +18,6 @@ def test_eager_then_same_commit_speaks_the_ready_reply():
     assert t.brain_done(0, "hi", "hello") == []          # not committed yet: hold it
     acts = t.on_asr({"type": "committed", "turn_index": 0, "text": "hi"})
     assert acts == [("heard", "hi"), ("speak", 0, "hello")]
-    assert t.speaking
 
 
 def test_commit_before_brain_finishes_waits_for_it():
@@ -45,13 +44,11 @@ def test_resumed_turn_drops_the_speculative_answer():
     assert t.on_asr({"type": "turn_resumed", "turn_index": 0}) == []
 
 
-def test_new_turn_while_speaking_is_a_barge():
+def test_new_turn_always_asks_the_voice_to_stop():
     t = TurnTaker()
     t.on_asr({"type": "committed", "turn_index": 0, "text": "hi"})
     t.brain_done(0, "hi", "hello")
-    assert t.on_asr({"type": "user_turn_taken", "turn_index": 1}) == [("barge",)]
-    assert not t.speaking
-    assert t.on_asr({"type": "user_turn_taken", "turn_index": 1}) == []
+    assert t.on_asr({"type": "user_turn_taken", "turn_index": 1}) == [("interrupt",)]
 
 
 def test_old_turn_reply_is_stale_once_a_new_turn_starts():
@@ -205,7 +202,8 @@ def test_bridge_full_turn_streams_voice_and_commits_history():
     assert {"type": "reply", "text": "hello ram"} in phone.out
     assert [m for m in ttses[0].sent if m["event"] == "text"][0]["text"] == "hello ram"
     assert {"type": "agent_speaking", "speaking": True} in asr.sent
-    phone.inbox.put((OP_TEXT, b'{"type":"played"}'))
+    gen = [m for m in phone.out if m["type"] == "audio_end"][0]["gen"]
+    phone.inbox.put((OP_TEXT, json.dumps({"type": "played", "gen": gen}).encode()))
     assert wait_for(lambda: asr.sent[-1] == {"type": "agent_speaking", "speaking": False})
     phone.inbox.put((OP_TEXT, b'{"type":"stop"}'))
     th.join(2)
@@ -313,3 +311,59 @@ def test_default_voice_is_pinned_so_ack_and_reply_match():
     assert config.FISH_VOICE_ID
     a, b = fishcall.tts_start(config.FISH_VOICE_ID), fishcall.tts_start(config.FISH_VOICE_ID)
     assert a["request"]["reference_id"] == b["request"]["reference_id"] == config.FISH_VOICE_ID
+
+
+def make_voice(ttses, told, asr_sent):
+    def dial():
+        t = FakeFish([(OP_BINARY, pack({"event": "audio", "audio": b"PCM"})),
+                      (OP_BINARY, pack({"event": "finish", "reason": "stop"}))])
+        ttses.append(t)
+        return t
+    return fishcall.Voice(dial=dial, tell=lambda kind, **kw: told.append((kind, kw)),
+                          send_audio=lambda b: None, asr_send=asr_sent.append,
+                          speakable=lambda s: s, voice_id="v")
+
+
+def audio_ends(told):
+    return [kw["gen"] for kind, kw in told if kind == "audio_end"]
+
+
+def test_stale_played_does_not_end_speaking_while_the_answer_streams():
+    ttses, told, asr = [], [], []
+    v = make_voice(ttses, told, asr)
+    v.say("one sec", v.current_epoch())
+    ack_gen = audio_ends(told)[0]
+    v.say("the answer", v.current_epoch())
+    answer_gen = audio_ends(told)[1]
+    assert answer_gen != ack_gen
+    v.played(ack_gen)                      # the ack finished draining on the phone: late and stale
+    assert {"speaking": False, "type": "agent_speaking"} not in asr
+    v.played(answer_gen)
+    assert asr[-1] == {"type": "agent_speaking", "speaking": False}
+
+
+def test_played_without_gen_is_accepted():
+    ttses, told, asr = [], [], []
+    v = make_voice(ttses, told, asr)
+    v.say("hi", v.current_epoch())
+    v.played(None)
+    assert asr[-1] == {"type": "agent_speaking", "speaking": False}
+
+
+def test_ack_yields_to_a_busy_voice_and_answer_follows_in_order():
+    ttses, told, asr = [], [], []
+    v = make_voice(ttses, told, asr)
+    v.say("the answer", v.current_epoch())
+    v.say("one sec", v.current_epoch(), only_if_idle=True)   # voice not idle (awaiting played): skipped
+    assert len(ttses) == 1
+
+
+def test_barge_drops_utterances_queued_for_the_old_epoch():
+    ttses, told, asr = [], [], []
+    v = make_voice(ttses, told, asr)
+    old = v.current_epoch()
+    v.say("first", old)
+    assert v.barge() is True
+    v.say("late answer", old)             # the brain finished after the user spoke
+    assert len(ttses) == 1
+    assert v.barge() is False             # nothing left to stop

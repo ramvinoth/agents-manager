@@ -53,10 +53,10 @@ test("audio then audio_end then drain sends played", async () => {
   await startFishCall(r.sock, r.audio, [], r.h, r.timers)
   r.msg('{"type":"ready","sample_rate":24000}')
   r.msg(new Uint8Array([1, 2]).buffer)
-  r.msg('{"type":"audio_end"}')
-  assert.ok(!r.sent.includes('{"type":"played"}'))
+  r.msg('{"type":"audio_end","gen":7}')
+  assert.ok(!r.sent.includes('{"type":"played","gen":7}'))
   r.drain()
-  assert.ok(r.sent.includes('{"type":"played"}'))
+  assert.ok(r.sent.includes('{"type":"played","gen":7}'))
   assert.deepStrictEqual(r.phases, ["waiting", "speaking", "waiting"])
 })
 test("audio_end with nothing queued plays immediately", async () => {

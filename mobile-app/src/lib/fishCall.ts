@@ -51,7 +51,8 @@ const OPEN = 1
 export type FishEvent =
   | { type: "ready"; sampleRate: number }
   | { type: "heard" | "reply"; text: string }
-  | { type: "audio_end" | "barge" | "pong" }
+  | { type: "audio_end"; gen: number | null }
+  | { type: "barge" | "pong" }
   | { type: "error"; message: string }
 
 export function parseFishEvent(raw: unknown): FishEvent | null {
@@ -69,6 +70,7 @@ export function parseFishEvent(raw: unknown): FishEvent | null {
     case "reply":
       return { type: m.type, text: String(m.text ?? "") }
     case "audio_end":
+      return { type: "audio_end", gen: typeof m.gen === "number" ? m.gen : null }
     case "barge":
     case "pong":
       return { type: m.type }
@@ -94,6 +96,7 @@ export async function startFishCall(
   let rate = 24000
   let queued = false // audio enqueued since the last drain
   let endPending = false // server said audio_end; waiting for the buffer to drain
+  let endGen: number | null = null // which utterance that audio_end closed; echoed in played
   let carry: number | null = null // odd trailing byte of the last audio chunk
   let ping: ReturnType<typeof setInterval> | null = null
   let unFrame: (() => void) | null = null
@@ -127,7 +130,7 @@ export async function startFishCall(
     endPending = false
     queued = false
     carry = null
-    sendJson({ type: "played" })
+    sendJson(endGen === null ? { type: "played" } : { type: "played", gen: endGen })
     h.onPhase("waiting")
   }
 
@@ -176,6 +179,7 @@ export async function startFishCall(
         break
       case "audio_end":
         endPending = true
+        endGen = e.gen
         if (!queued) finishPlayback() // nothing was played, so nothing will drain
         break
       case "barge":

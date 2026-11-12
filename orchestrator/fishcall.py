@@ -82,7 +82,7 @@ class TurnTaker:
       ("think", turn, text, eager)  start the brain on `text`
       ("cancel", turn)              drop that turn's speculative answer
       ("speak", turn, reply)        voice `reply`
-      ("barge",)                    the caller cut in: stop the voice now
+      ("interrupt",)                the caller started talking: the voice, if any, must stop
       ("heard", text)               show the caller's committed words
     """
 
@@ -91,16 +91,12 @@ class TurnTaker:
         self.asked = {}           # turn -> text the brain is answering
         self.replies = {}         # turn -> finished reply awaiting commit
         self.committed = {}       # turn -> committed text
-        self.speaking = False
 
     def on_asr(self, ev):
         kind, turn = ev.get("type"), ev.get("turn_index")
         if kind == "user_turn_taken":
             self.current = turn
-            if self.speaking:
-                self.speaking = False
-                return [("barge",)]
-            return []
+            return [("interrupt",)]
         if kind == "eager_end_of_turn":
             text = clean_text(ev.get("text"))
             if not text or turn in self.committed:
@@ -150,11 +146,7 @@ class TurnTaker:
         self.asked.pop(turn, None)  # committed will re-ask
         return []
 
-    def played(self):
-        self.speaking = False
-
     def _speak(self, turn):
-        self.speaking = True
         reply = self.replies.pop(turn)
         self.asked.pop(turn, None)
         return ("speak", turn, reply)
@@ -184,6 +176,139 @@ def close_code(payload):
     return struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1005
 
 
+# ------------------------------------------------------------ the voice
+
+class Voice:
+    """The one owner of what the caller hears.
+
+    Every utterance (the "one sec" line and the real answer alike) is one Fish TTS
+    socket, played strictly in order. A barge-in bumps `epoch`, which cancels the
+    utterance in flight and every one still queued. The phone answers each
+    `audio_end` with `played` carrying the same `gen`; a `played` for anything but
+    the newest utterance is a stale echo of an earlier one and is ignored, so one
+    utterance finishing can never declare the voice over while another is speaking.
+    """
+
+    def __init__(self, dial, tell, send_audio, asr_send, speakable, voice_id):
+        self.dial, self.tell, self.send_audio = dial, tell, send_audio
+        self.asr_send, self.speakable, self.voice_id = asr_send, speakable, voice_id
+        self.lock = threading.Lock()     # guards everything below
+        self.order = threading.Lock()    # one utterance streams at a time
+        self.epoch = 0                   # bumped by every barge
+        self.seq = 0                     # utterance counter, echoed back as `gen`
+        self.pending = 0                 # queued or streaming this epoch
+        self.awaiting = None             # gen the phone has not finished playing yet
+        self.announced = False           # Fish ASR was told agent_speaking=True
+        self.sock = None
+
+    def _busy(self):
+        return self.pending > 0 or self.awaiting is not None
+
+    def _announce(self, speaking):
+        if self.announced != speaking:
+            self.announced = speaking
+            self.asr_send({"type": "agent_speaking", "speaking": speaking})
+
+    def current_epoch(self):
+        with self.lock:
+            return self.epoch
+
+    def say(self, text, epoch, only_if_idle=False):
+        """Voice `text` unless a barge-in has happened since `epoch` was read."""
+        with self.lock:
+            if epoch != self.epoch or (only_if_idle and self._busy()):
+                return
+            self.pending += 1
+        try:
+            with self.order:
+                self._stream(text, epoch)
+        finally:
+            with self.lock:
+                if epoch == self.epoch:
+                    self.pending -= 1
+                    if not self._busy():
+                        self._announce(False)
+
+    def played(self, gen):
+        """The phone finished playing utterance `gen` (None from builds that predate it)."""
+        with self.lock:
+            if self.awaiting is None or (gen is not None and gen != self.awaiting):
+                return
+            self.awaiting = None
+            if not self._busy():
+                self._announce(False)
+
+    def barge(self):
+        """Cut the voice now. True when something was speaking or queued."""
+        with self.lock:
+            was = self._busy()
+            if was:
+                self.epoch += 1
+                self.pending = 0
+                self.awaiting = None
+                sock, self.sock = self.sock, None
+                if sock is not None:
+                    sock.close()
+                self._announce(False)
+            return was
+
+    def _stream(self, text, epoch):
+        with self.lock:
+            if epoch != self.epoch:
+                return
+            self._announce(True)
+        self.asr_send({"type": "context_add", "items": [{"role": "assistant", "text": text[:2000]}]})
+        try:
+            tts = self.dial()
+        except Exception as e:
+            print(f"[fishcall] tts dial failed: {e}", flush=True)
+            self.tell("error", message=dial_error(e, "The voice service is unreachable."))
+            return
+        with self.lock:
+            if epoch != self.epoch:
+                tts.close()
+                return
+            self.sock = tts
+        chunks = nbytes = 0
+        t0 = time.monotonic()
+        first = None
+        why = "closed"
+        try:
+            tts.send_bytes(pack(tts_start(self.voice_id)))
+            tts.send_bytes(pack({"event": "text", "text": self.speakable(text)}))
+            tts.send_bytes(pack({"event": "flush"}))
+            tts.send_bytes(pack({"event": "stop"}))
+            while True:
+                op, payload = tts.recv()
+                if op == OP_CLOSE:
+                    break
+                if op != OP_BINARY:
+                    continue
+                ev = unpack(payload)
+                if ev.get("event") == "audio" and ev.get("audio"):
+                    if first is None:
+                        first = time.monotonic() - t0
+                    chunks += 1
+                    nbytes += len(ev["audio"])
+                    self.send_audio(ev["audio"])
+                elif ev.get("event") == "finish":
+                    why = ev.get("reason") or "stop"
+                    break
+        except Exception as e:
+            why = f"dropped: {e}"     # a barge-in closes the socket too; both end up here
+        with self.lock:
+            barged = epoch != self.epoch
+            if self.sock is tts:
+                self.sock = None
+            if not barged:
+                self.seq += 1
+                gen = self.awaiting = self.seq
+        tts.close()
+        print(f"[fishcall] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
+        if not barged:
+            self.tell("audio_end", gen=gen)  # the phone answers "played" once its buffer drains
+
+
 # ------------------------------------------------------------ the bridge
 
 class Bridge:
@@ -194,16 +319,18 @@ class Bridge:
     def __init__(self, phone, dial, brain, key, asr_url, tts_url, tts_model, voice_id="",
                  history=None, speakable=lambda s: s):
         self.phone, self.dial, self.brain = phone, dial, brain
-        self.say_lock = threading.Lock()
         self.key, self.asr_url, self.tts_url = key, asr_url, tts_url
         self.tts_model, self.voice_id, self.speakable = tts_model, voice_id, speakable
         self.history = list(history or [])
         self.turns = TurnTaker()
-        self.lock = threading.Lock()     # guards turns, history, tts
+        self.lock = threading.Lock()     # guards turns and history
         self.asr = None
         self.t0 = time.monotonic()
-        self.tts = None
         self.done = threading.Event()
+        self.voice = Voice(
+            dial=lambda: dial(tts_url, {"Authorization": "Bearer " + key, "model": tts_model}),
+            tell=self.tell, send_audio=phone.send_bytes, asr_send=self._asr_send,
+            speakable=speakable, voice_id=voice_id)
 
     # -- helpers
     def tell(self, kind, **kw):
@@ -234,18 +361,18 @@ class Bridge:
             elif a[0] == "heard":
                 self.tell("heard", text=a[1])
             elif a[0] == "speak":
-                threading.Thread(target=self._speak, args=(a[2],), daemon=True).start()
-            elif a[0] == "barge":
-                self._stop_voice()
-                self.tell("barge")
-                self._asr_send({"type": "agent_speaking", "speaking": False})
+                args = (a[2], self.voice.current_epoch())
+                threading.Thread(target=self._speak, args=args, daemon=True).start()
+            elif a[0] == "interrupt":
+                if self.voice.barge():
+                    self.tell("barge")
             # "cancel": the stale answer is dropped by TurnTaker; nothing to close
 
-    def _ack(self, turn):
+    def _ack(self, turn, epoch):
         with self.lock:
-            live = self.turns.current == turn and not self.turns.speaking
+            live = self.turns.current == turn
         if live:
-            self._say(ACK_LINE)
+            self.voice.say(ACK_LINE, epoch, only_if_idle=True)
 
     def _think(self, turn, text, eager):
         acked = []
@@ -255,7 +382,7 @@ class Bridge:
             from orchestrator.callbrain import run_tool
             if not eager and not acked:
                 acked.append(1)   # no dead air: say so while the tool runs, keep listening
-                threading.Thread(target=self._ack, args=(turn,), daemon=True).start()
+                threading.Thread(target=self._ack, args=(turn, self.voice.current_epoch()), daemon=True).start()
             return run_tool(name, args, ctx)
         with self.lock:
             history = list(self.history)
@@ -274,77 +401,9 @@ class Bridge:
                 self.history = out.get("history") or history
         self.act(acts)
 
-    def _speak(self, reply):
+    def _speak(self, reply, epoch):
         self.tell("reply", text=reply)
-        self._say(reply)
-
-    def _say(self, reply):
-        with self.say_lock:       # an acknowledgement finishes before the real answer starts
-            self._say_locked(reply)
-
-    def _say_locked(self, reply):
-        self._asr_send({"type": "agent_speaking", "speaking": True})
-        self._asr_send({"type": "context_add", "items": [{"role": "assistant", "text": reply[:2000]}]})
-        words = self.speakable(reply)
-        try:
-            tts = self.dial(self.tts_url, {"Authorization": "Bearer " + self.key, "model": self.tts_model})
-        except Exception as e:
-            print(f"[fishcall] tts dial failed: {e}", flush=True)
-            self.tell("error", message=dial_error(e, "The voice service is unreachable."))
-            return self._voice_over()
-        with self.lock:
-            self._stop_voice_locked()
-            self.tts = tts
-        chunks = nbytes = 0
-        t0 = time.monotonic()
-        first = None
-        why = "closed"
-        try:
-            tts.send_bytes(pack(tts_start(self.voice_id)))
-            tts.send_bytes(pack({"event": "text", "text": words}))
-            tts.send_bytes(pack({"event": "flush"}))
-            tts.send_bytes(pack({"event": "stop"}))
-            while True:
-                op, payload = tts.recv()
-                if op == OP_CLOSE:
-                    break
-                if op != OP_BINARY:
-                    continue
-                ev = unpack(payload)
-                if ev.get("event") == "audio" and ev.get("audio"):
-                    if first is None:
-                        first = time.monotonic() - t0
-                    chunks += 1
-                    nbytes += len(ev["audio"])
-                    self.phone.send_bytes(ev["audio"])
-                elif ev.get("event") == "finish":
-                    why = ev.get("reason") or "stop"
-                    break
-        except Exception as e:
-            why = f"dropped: {e}"     # a barge-in closes the socket too; both end up here
-        finally:
-            with self.lock:
-                barged = self.tts is not tts
-                if not barged:
-                    self.tts = None
-            tts.close()
-        print(f"[fishcall] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
-        if not barged:
-            self.tell("audio_end")  # the phone answers "played" once its buffer drains
-
-    def _stop_voice_locked(self):
-        if self.tts is not None:
-            self.tts.close()
-            self.tts = None
-
-    def _stop_voice(self):
-        with self.lock:
-            self._stop_voice_locked()
-
-    def _voice_over(self):
-        with self.lock:
-            self.turns.played()
-        self._asr_send({"type": "agent_speaking", "speaking": False})
+        self.voice.say(reply, epoch)
 
     # -- loops
     def asr_loop(self):
@@ -419,7 +478,7 @@ class Bridge:
                             with self.lock:
                                 self.history = [m for m in hist if isinstance(m, dict)]
                     elif kind == "played":
-                        self._voice_over()
+                        self.voice.played(msg.get("gen"))
                     elif kind == "stop":
                         break
                     elif kind == "ping":
@@ -428,7 +487,7 @@ class Bridge:
             pass
         finally:
             self.done.set()
-            self._stop_voice()
+            self.voice.barge()
             self._asr_send({"type": "audio_done"})
             if self.asr is not None:
                 self.asr.close()
