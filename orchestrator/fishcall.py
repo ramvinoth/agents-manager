@@ -233,6 +233,7 @@ class Voice:
         """The phone finished playing utterance `gen` (None from builds that predate it)."""
         with self.lock:
             if self.awaiting is None or (gen is not None and gen != self.awaiting):
+                print(f"[fishcall] played ignored: gen={gen} awaiting={self.awaiting}", flush=True)
                 return
             self.awaiting = None
             if not self._busy():
