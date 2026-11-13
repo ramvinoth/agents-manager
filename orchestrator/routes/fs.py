@@ -135,6 +135,10 @@ def _agent_refusal(req, kind, ref, path, op):
     return None
 
 
+# The multipart body is buffered in memory, so cap it. Videos from a phone fit.
+UPLOAD_MAX_BYTES = int(os.environ.get("HARMAN_UPLOAD_MAX_MB", "512")) * 1048576
+
+
 class FsMixin:
     def _drive_target(self, req, body, path, op):
         """The one gate every file route passes before touching a disk.
@@ -567,6 +571,9 @@ class FsMixin:
             return
         try:
             length = int(self.headers.get("Content-Length", 0))
+            if length > UPLOAD_MAX_BYTES:
+                self.send_json({"error": f"Upload too large (limit {UPLOAD_MAX_BYTES // 1048576} MB)"}, status=413)
+                return
             data = self.rfile.read(length)
         except Exception as e:
             self.send_json({"error": str(e)}, status=500)

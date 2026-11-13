@@ -47,9 +47,17 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Harman uses the camera to scan the pairing QR code from your computer.",
+          "cameraPermission": "Harman uses the camera to scan the pairing QR code and to take photos or videos you send to the agent.",
           "microphonePermission": "Harman uses the microphone so you can talk to the agent in voice mode.",
           "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Harman reads your photos and videos so you can send them to the agent.",
+          "cameraPermission": "Harman uses the camera to take photos or videos you send to the agent.",
+          "microphonePermission": "Harman uses the microphone so you can record video with sound to send to the agent."
         }
       ],
       [

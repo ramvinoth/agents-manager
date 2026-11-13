@@ -283,6 +283,8 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS notes_session_idx ON notes(session_id);
             CREATE INDEX IF NOT EXISTS notes_project_idx ON notes(project_id);
+            CREATE INDEX IF NOT EXISTS notes_fts_idx ON notes
+              USING GIN (to_tsvector('english', title || ' ' || body));
             -- The shared project canvas (Excalidraw): one board per project
             -- (or per session for a session scratchpad). Elements are stored
             -- one row each, keyed by the element's own id, so concurrent edits

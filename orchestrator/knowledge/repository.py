@@ -8,6 +8,10 @@ from orchestrator.shared import postgres
 NOTE_KINDS = ("note", "journal", "meeting", "idea", "checklist", "discussion")
 
 
+# Must match the notes_fts_idx expression in shared/schema.py or the GIN index is not used.
+_NOTE_TSV = "to_tsvector('english', title || ' ' || body)"
+
+
 def note_create(title="", body="", kind="note", project_id=None, session_id=None,
                 created_by="", pinned=False):
     with postgres.cursor() as cur:
@@ -21,18 +25,31 @@ def note_create(title="", body="", kind="note", project_id=None, session_id=None
         return dict(cur.fetchone())
 
 
-def note_list(session_id=None, project_id=None, archived=False):
+def note_list(session_id=None, project_id=None, archived=False, q=None, kind=None, pinned=None):
     """Notes narrowed by any combination of filters (AND). `archived` selects
-    the shelf: live notes by default, the archive when True. Pinned first, then
-    most recently edited — the reading order of every notes app."""
+    the shelf: live notes by default, the archive when True. `q` is a full-text
+    search over title and body (Postgres FTS, GIN-indexed) and orders by
+    relevance; without it the order is pinned first, then most recently edited,
+    the reading order of every notes app."""
     clauses, params = ["archived = %s"], [bool(archived)]
     if session_id is not None:
         clauses.append("session_id = %s"); params.append(session_id)
     if project_id is not None:
         clauses.append("project_id = %s"); params.append(project_id)
+    if kind:
+        clauses.append("kind = %s"); params.append(kind)
+    if pinned is not None:
+        clauses.append("pinned = %s"); params.append(bool(pinned))
+    order = "pinned DESC, updated_at DESC, id DESC"
+    select, rank_params = "*", []
+    q = (q or "").strip()
+    if q:
+        clauses.append(f"{_NOTE_TSV} @@ websearch_to_tsquery('english', %s)"); params.append(q)
+        order = f"ts_rank({_NOTE_TSV}, websearch_to_tsquery('english', %s)) DESC, " + order
+        rank_params = [q]
     with postgres.cursor() as cur:
-        cur.execute("SELECT * FROM notes WHERE " + " AND ".join(clauses) +
-                    " ORDER BY pinned DESC, updated_at DESC, id DESC", params)
+        cur.execute(f"SELECT {select} FROM notes WHERE " + " AND ".join(clauses) +
+                    " ORDER BY " + order, params + rank_params)
         return [dict(r) for r in cur.fetchall()]
 
 

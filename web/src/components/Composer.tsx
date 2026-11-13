@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Send, Square, X, Undo2, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal, File, Folder } from "lucide-react"
+import { Send, Square, X, Undo2, CheckCircle2, AlertCircle, Bookmark, Zap, ListPlus, Terminal, File, Folder, Plus, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils"
 import { useStore, useAgentLabel } from "@/store"
 import { DEFAULT_PERM_MODE } from "@/store/chat"
 import { api } from "@/lib/api"
+import { UPLOAD_NAME, UPLOAD_PARENT, UPLOAD_DIR, uniqueName, withAttachments } from "@/lib/attach"
 import { applyMention, hashTerm, type HashTerm } from "@/lib/fileMention"
 import { userHistory, walksHistory, stepHistory, searchHistory } from "@/lib/composerHistory"
 
@@ -167,11 +168,39 @@ export function Composer() {
   const [hash, setHash] = useState<HashTerm | null>(null)
   const [fileHits, setFileHits] = useState<{ path: string; dir: boolean }[]>([])
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState("")
   // Terminal-style history. `recall` is which past message is shown and the draft
   // it replaced; it only counts while the box still holds that message, so any
   // edit (typing, a stash restore, a send) quietly makes the text the new draft.
   const [recall, setRecall] = useState<{ at: number; draft: string } | null>(null)
   const [search, setSearch] = useState<{ query: string; at: number; draft: string } | null>(null)
+
+  // Any file type (video, audio, PDF...). Uploads land in ~/agents-uploads and the
+  // composer gets the server path, which the agent reads with its own file tools.
+  async function attachFiles(files: File[]) {
+    if (!files.length || uploading) return
+    setUploading(true)
+    setUploadError("")
+    try {
+      await api.fsMkdir({ path: UPLOAD_PARENT, name: UPLOAD_NAME }).catch(() => undefined)
+      const paths: string[] = []
+      for (const f of files) {
+        const named = new window.File([f], uniqueName(f.name || "pasted"), { type: f.type })
+        const res = await api.fsUpload(UPLOAD_DIR, [named])
+        const d = await res.json()
+        if (!res.ok || d.error || !d.uploaded?.[0]?.path) throw new Error(d.error || "Upload failed")
+        paths.push(d.uploaded[0].path)
+      }
+      setText((t) => withAttachments(t, paths))
+      taRef.current?.focus()
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed")
+    } finally {
+      setUploading(false)
+    }
+  }
   const turns = useStore((s) => s.turns)
   const history = useMemo(() => userHistory(turns), [turns])
   const recalled = !!recall && text === history[recall.at]
@@ -517,9 +546,24 @@ export function Composer() {
         )}
 
         {/* Full-width input box */}
-        <div className="rounded-lg border border-input bg-transparent focus-within:ring-1 focus-within:ring-ring">
+        <div
+          className="rounded-lg border border-input bg-transparent focus-within:ring-1 focus-within:ring-ring"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault()
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return
+            e.preventDefault()
+            void attachFiles(Array.from(e.dataTransfer.files))
+          }}
+        >
           <Textarea
             ref={taRef}
+            onPaste={(e) => {
+              if (!e.clipboardData.files.length) return
+              e.preventDefault()
+              void attachFiles(Array.from(e.clipboardData.files))
+            }}
             value={text}
             onChange={(e) => {
               setText(e.target.value)
@@ -588,6 +632,35 @@ export function Composer() {
         {/* Controls below the box */}
         <div className="mt-2 flex items-center justify-between gap-1">
           <div className="flex items-center gap-1">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              data-testid="composer-file-input"
+              onChange={(e) => {
+                void attachFiles(Array.from(e.target.files ?? []))
+                e.target.value = ""
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              disabled={uploading}
+              title="Attach a photo, video or file (or drop or paste one)"
+              aria-label="Attach a file"
+              data-testid="composer-attach"
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            </Button>
+            {uploadError && (
+              <span role="alert" className="text-xs text-destructive">
+                {uploadError}
+              </span>
+            )}
             <StashButton
               text={text}
               onRestore={(s) => {

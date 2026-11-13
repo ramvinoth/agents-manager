@@ -51,9 +51,12 @@ class FakeDB:
         row = self.notes.get(nid)
         return dict(row) if row else None   # a fresh row, like Postgres
 
-    def note_list(self, session_id=None, project_id=None, archived=False):
+    def note_list(self, session_id=None, project_id=None, archived=False, q=None, kind=None, pinned=None):
         return [n for n in self.notes.values()
                 if n["archived"] == archived
+                and (not kind or n["kind"] == kind)
+                and (pinned is None or n["pinned"] == pinned)
+                and (not q or q.lower() in (n["title"] + " " + n["body"]).lower())
                 and (session_id is None or n["session_id"] == session_id)
                 and (project_id is None or n["project_id"] == project_id)]
 
