@@ -480,6 +480,9 @@ class Bridge:
                                 self.history = [m for m in hist if isinstance(m, dict)]
                     elif kind == "played":
                         self.voice.played(msg.get("gen"))
+                    elif kind == "diag":
+                        print(f"[fishcall] phone t={time.monotonic() - self.t0:.1f}s "
+                              f"{json.dumps({k: v for k, v in msg.items() if k != 'type'})[:200]}", flush=True)
                     elif kind == "stop":
                         break
                     elif kind == "ping":

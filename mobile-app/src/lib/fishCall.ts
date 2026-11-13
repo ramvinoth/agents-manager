@@ -109,6 +109,10 @@ export async function startFishCall(
     }
   }
 
+  // Diagnostics only: one line per playback event, printed by the server beside its own log.
+  let chunks = 0 // audio chunks enqueued since the last audio_end
+  const diag = (ev: string, extra: object = {}) => sendJson({ type: "diag", ev, ...extra })
+
   const teardown = async () => {
     stopped = true
     if (ping) timers.clearInterval(ping)
@@ -158,9 +162,11 @@ export async function startFishCall(
       if (bytes.byteLength === 0) return
       if (!audio.enqueue(toBase64(bytes), rate)) {
         // A refused chunk is lost speech; never drop it silently.
+        diag("enqueue_refused", { chunks })
         void fail("Call audio stopped playing.")
         return
       }
+      chunks += 1
       if (!queued) h.onPhase("speaking")
       queued = true
       idle = false
@@ -183,12 +189,16 @@ export async function startFishCall(
       case "audio_end":
         endPending = true
         endGen = e.gen
+        diag("audio_end", { gen: e.gen, chunks, queued, idle })
+        chunks = 0
         // Nothing queued, or the buffer already drained before this message arrived (short
         // replies finish playing before the server's audio_end lands): no drain event will
         // come, so ack now. Waiting for one would leave the server holding every later turn.
         if (!queued || idle) finishPlayback()
         break
       case "barge":
+        diag("barge", { chunks, queued, idle })
+        chunks = 0
         audio.flush()
         endPending = false
         queued = false
@@ -216,6 +226,7 @@ export async function startFishCall(
   // moment it gets "start", and a chunk enqueued into a stopped engine is refused.
   // Starting the engine first is what makes turn 1 audible.
   unDrain = audio.onDrained(() => {
+    diag("drained", { endPending })
     idle = true
     finishPlayback()
   })
