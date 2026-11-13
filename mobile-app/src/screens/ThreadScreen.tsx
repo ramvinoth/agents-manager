@@ -34,7 +34,7 @@ import { FileLinkContext } from "../components/Markdown"
 import { useTheme } from "../lib/useTheme"
 import { buildReply, quotePreview } from "../lib/quote"
 import { useBoardSwipe } from "../lib/useBoardSwipe"
-import { attachMessage, pickImage, uploadImage } from "../lib/attach"
+import { attachMessage, fileMessage, pickFile, pickMedia, uploadFile, uploadImage, type Picked } from "../lib/attach"
 import MessageActions, { type MsgTarget } from "../components/MessageActions"
 import CapabilitiesDrawer from "../components/CapabilitiesDrawer"
 import { findMatches, stepMatch } from "../lib/search"
@@ -692,21 +692,32 @@ export default function ThreadScreen({ route, navigation }: Props) {
     }
   }
 
-  /** Pick a screenshot, upload it to the host, and reference its path. The chat
-   *  API is text-only, but the agent can Read a file on its own machine. */
-  async function attach() {
+  /** Upload a picked file to the host and reference its path in the draft. The
+   *  chat API is text-only, but the agent can Read a file on its own machine. */
+  async function attachFrom(pick: () => Promise<Picked | null>) {
     setError("")
     try {
-      const picked = await pickImage()
+      const picked = await pick()
       if (!picked) return
       setAttaching(true)
-      const remote = await uploadImage(api, host, picked)
-      setInput((cur) => attachMessage(remote, cur))
+      const isImage = (picked.mime ?? "").startsWith("image/")
+      const remote = isImage ? await uploadImage(api, host, picked) : await uploadFile(api, host, picked)
+      setInput((cur) => (isImage ? attachMessage(remote, cur) : fileMessage(remote, cur)))
     } catch (e) {
-      setError(userError(e, "the image", "upload"))
+      setError(userError(e, "the file", "upload"))
     } finally {
       setAttaching(false)
     }
+  }
+
+  /** The "+" menu: photo or video library, camera, or any file (audio, PDF, ...). */
+  function attach() {
+    Alert.alert("Attach", undefined, [
+      { text: "Photo or video library", onPress: () => void attachFrom(() => pickMedia("library")) },
+      { text: "Take photo or video", onPress: () => void attachFrom(() => pickMedia("camera")) },
+      { text: "Files (audio, PDF, any)", onPress: () => void attachFrom(pickFile) },
+      { text: "Cancel", style: "cancel" },
+    ])
   }
 
   /** Drop a queued message before it runs. */
@@ -1099,12 +1110,12 @@ export default function ThreadScreen({ route, navigation }: Props) {
         <View style={styles.composerBar}>
           <TouchableOpacity
             testID="composer-attach"
-            accessibilityLabel="Attach a file"
+            accessibilityLabel="Attach a photo, video or file"
             style={[styles.circleBtn, styles.gearBtn]}
             onPress={attach}
             disabled={attaching}
           >
-            {attaching ? <ActivityIndicator size="small" /> : <Icon name="attach" size={19} color={t.textMuted} />}
+            {attaching ? <ActivityIndicator size="small" /> : <Icon name="plus" size={21} color={t.textMuted} />}
           </TouchableOpacity>
 
           <TextInput

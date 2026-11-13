@@ -46,9 +46,17 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Manager uses the camera to scan the pairing QR code from your computer.",
+          "cameraPermission": "Manager uses the camera to scan the pairing QR code and to take photos or videos you send to the agent.",
           "microphonePermission": "Manager uses the microphone so you can talk to the agent in voice mode.",
           "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Manager reads your photos and videos so you can send them to the agent.",
+          "cameraPermission": "Manager uses the camera to take photos or videos you send to the agent.",
+          "microphonePermission": "Manager uses the microphone so you can record video with sound to send to the agent."
         }
       ],
       [

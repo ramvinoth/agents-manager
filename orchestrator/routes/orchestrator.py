@@ -179,12 +179,17 @@ class OrchestratorMixin:
     def _g_org_notes(self, req):
         """Notes as a filtered VIEW, the board's rule applied to knowledge: a
         session's notes, a project's notes, or (no filter) everything the caller
-        can see. `archived=1` opens the shelf a chat's archive put them on."""
+        can see. `archived=1` opens the shelf a chat's archive put them on. `q`
+        searches title and body (relevance order); `kind` and `pinned` narrow."""
         session = (req.query.get("session") or [None])[0]
         project = (req.query.get("project") or [None])[0]
-        archived = (req.query.get("archived") or ["0"])[0] in ("1", "true")
+        archived = (req.query.get("archived") or ["0"])[0].lower() in ("1", "true")
+        q = (req.query.get("q") or [""])[0]
+        kind = (req.query.get("kind") or [""])[0]
+        pinned = (req.query.get("pinned") or [None])[0]
         notes = db.note_list(session_id=session, project_id=int(project) if project else None,
-                             archived=archived)
+                             archived=archived, q=q, kind=kind,
+                             pinned=None if pinned is None else pinned.lower() in ("1", "true"))
         # Each row carries its discussion's size and last activity, so a list
         # can show "3 replies · active 2h ago" without a call per note.
         stats = db.note_comment_stats()

@@ -291,10 +291,12 @@ _TOOL_LIST = [
      "description": "The current loop-firing mode (user/agent/both/none): WHICH loop origins may fire right now.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {}}},
     # ── Notes (the knowledge ledger next to the board) ──────────────────────
-    {"name": "note_list", "description": "List notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass session to see one chat's notes, archived=true for the shelf. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
+    {"name": "note_list", "description": "List or SEARCH notes — the durable knowledge ledger next to the board. Defaults to this project's notes; pass q to full-text search title and body (best match first; quotes for phrases, -word to exclude), kind or pinned to narrow, session for one chat's notes, archived=true for the shelf. Rows carry a 200-character preview of the body: read the whole note with `note`. Search before you read the list. Write here what should outlive this conversation: research, decisions taken, journal entries, meeting notes.",
      "inputSchema": {"type": "object", "additionalProperties": True, "properties": {
          "session": {"type": "string"}, "project": {"type": "integer"}, "archived": {"type": "boolean"},
-         **_PAGE_ARGS}}},
+         "q": {"type": "string", "description": "Full-text search over title and body."},
+         "kind": {"type": "string", "description": "note, journal, meeting, idea, checklist or discussion."},
+         "pinned": {"type": "boolean"}, **_PAGE_ARGS}}},
     {"name": "note", "description": "Read one note in full (markdown body).",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
          "id": {"type": "integer"}}}},
