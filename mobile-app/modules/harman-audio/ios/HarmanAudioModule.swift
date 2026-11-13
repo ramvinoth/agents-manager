@@ -142,6 +142,10 @@ public class HarmanAudioModule: Module {
 
   private func recoverEngine() {
     guard running else { return }
+    // iOS stopping the engine drops every scheduled buffer, so nothing is pending any more.
+    // Reset the count and tell JS the buffer is empty, or it waits for a drain that never comes.
+    pendingLock.lock(); pending = 0; generation += 1; pendingLock.unlock()
+    sendEvent("onDrained", [:])
     do {
       try startGraph()
     } catch {
@@ -151,6 +155,11 @@ public class HarmanAudioModule: Module {
 
   private func enqueue(base64: String, sampleRate: Double) -> Bool {
     guard running, let data = Data(base64Encoded: base64), data.count >= 2 else { return false }
+    // A buffer scheduled on a stopped engine or player is accepted and never played. If iOS
+    // stopped either without our config-change observer recovering it, restart before scheduling.
+    if !engine.isRunning || !player.isPlaying {
+      do { try startGraph() } catch { return false }
+    }
     if playbackFormat?.sampleRate != sampleRate {
       guard let f = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
                                   channels: 1, interleaved: false) else { return false }
