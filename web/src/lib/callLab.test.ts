@@ -1,14 +1,11 @@
 import assert from "node:assert/strict"
-import { labStep, labSupported, audioUrl, fmtMs, emptyTurn, median, medianTtfa, labNoteBody, labNoteTitle } from "./callLab.ts"
+import { labStep, audioUrl, fmtMs, emptyTurn, median, medianTtfa, labNoteBody, labNoteTitle } from "./callLab.ts"
 
 assert.deepEqual(labStep({ audio: "a1", next: "n1" }), { kind: "play", audio: "a1", next: "n1" })
 assert.deepEqual(labStep({ reply: "  hi " }), { kind: "text", text: "hi" })
 assert.deepEqual(labStep({ reply: "  " }), { kind: "done" })
 assert.deepEqual(labStep({ audio: "a1" }), { kind: "done" })
 
-assert.equal(labSupported(null), false)
-assert.equal(labSupported({ engine: "fish" }), false)
-assert.equal(labSupported({ engine: "brain", model: "LFM3-Audio" }), true)
 
 assert.equal(audioUrl("projects/a b/x.jsonl", "s&1"), "/api/call/audio?path=projects%2Fa%20b%2Fx.jsonl&id=s%261")
 

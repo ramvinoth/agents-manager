@@ -37,11 +37,7 @@ export function labStep(res: LabAnswer): LabStep {
   return text ? { kind: "text", text } : { kind: "done" }
 }
 
-/** The Fish engine talks over a live socket; every other engine answers typed turns. */
-export function labSupported(e: LabEngine | null): boolean {
-  return !!e && e.engine !== "fish"
-}
-
+/** The phone's audio stream for one segment. */
 export function audioUrl(path: string, id: string): string {
   return `/api/call/audio?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`
 }

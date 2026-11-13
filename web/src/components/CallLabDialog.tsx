@@ -11,7 +11,6 @@ import {
   labNoteBody,
   labNoteTitle,
   labStep,
-  labSupported,
   medianTtfa,
   type LabAnswer,
   type LabEngine,
@@ -26,12 +25,12 @@ type Reply = LabAnswer & { history?: Msg[]; tools?: string[] }
  * CallLabDialog: try the phone call brain from the browser. Type a question,
  * hear the answer and read its time to first audio, stop it mid-answer
  * (barge-in), rate each turn and save the run as a note. It talks to the same
- * /api/call/* endpoints as the phone, so it tests whichever engine the server
- * runs. The live Fish engine needs a microphone stream and stays on the phone.
+ * /api/call/* turn endpoints as the phone, which answer with the LFM3 brain
+ * whatever engine the phone is set to. The live Fish engine needs a microphone
+ * stream, so it can only be tried on the phone.
  */
 export function CallLabDialog({ path, onClose }: { path: string; onClose: () => void }) {
   const [engine, setEngine] = useState<LabEngine | null>(null)
-  const [engineErr, setEngineErr] = useState(false)
   const [text, setText] = useState("")
   const [turns, setTurns] = useState<LabTurn[]>([])
   const [busy, setBusy] = useState(false)
@@ -42,7 +41,7 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
   const cancelled = useRef(false)
 
   useEffect(() => {
-    api.getJSON<LabEngine>("/api/call/engine").then(setEngine).catch(() => setEngineErr(true))
+    api.getJSON<LabEngine>("/api/call/engine").then(setEngine).catch(() => setEngine(null))
     return () => {
       cancelled.current = true
       audio.current?.pause()
@@ -134,9 +133,7 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
         <DialogHeader className="border-b border-border px-5 pt-5 pb-3">
           <DialogTitle>Voice Lab</DialogTitle>
           <DialogDescription>
-            {engineErr ? "Could not read the call engine." : !engine ? "Checking the engine…" : labSupported(engine)
-              ? `Engine: ${engine.engine}${engine.model ? ` · ${engine.model}` : ""}${median !== null ? ` · median first audio ${fmtMs(median)}` : ""}`
-              : "This server runs the live Fish engine, which needs a microphone. Test it on the phone."}
+            {`Typed turns answered by the call brain${engine ? ` · phone engine: ${engine.engine}` : ""}${median !== null ? ` · median first audio ${fmtMs(median)}` : ""}`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
@@ -166,12 +163,12 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
         </div>
         <div className="flex items-center gap-2 border-t border-border px-5 py-3">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()}
-            disabled={!engine || !labSupported(engine)} placeholder="Say something…"
+            placeholder="Say something…"
             className="min-w-0 flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-ring" />
           {busy ? (
             <Button variant="outline" onClick={stop}><Square className="mr-1 size-3.5" />Stop</Button>
           ) : (
-            <Button onClick={ask} disabled={!text.trim() || !engine || !labSupported(engine)}>Send</Button>
+            <Button onClick={ask} disabled={!text.trim()}>Send</Button>
           )}
           <Button variant="outline" onClick={save} disabled={!turns.length || busy || saved === "saving"}>
             {saved === "saving" ? <Loader2 className="size-4 animate-spin" /> : saved === "saved" ? "Saved" : saved === "error" ? "Retry save" : "Save to notes"}
