@@ -65,8 +65,8 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
     el.play().catch(done)
   }), [])
 
-  const ask = useCallback(async () => {
-    const q = text.trim()
+  const ask = useCallback(async (spoken?: string) => {
+    const q = (spoken ?? text).trim()
     if (!q || busy) return
     const id = turns.length + 1
     setTurns((ts) => [...ts, emptyTurn(id, q)])
@@ -107,6 +107,27 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
     setBusy(false)
   }, [text, busy, turns.length, path, patch, playSegment])
 
+  const [listening, setListening] = useState(false)
+  const recog = useRef<{ stop: () => void } | null>(null)
+  const SR = typeof window === "undefined" ? undefined
+    : (window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any }).SpeechRecognition
+      ?? (window as unknown as { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition
+
+  /** Push to talk: the browser transcribes one utterance, then it is sent like a typed turn. */
+  const listen = () => {
+    if (!SR || busy) return
+    if (listening) { recog.current?.stop(); return }
+    const r = new SR()
+    r.lang = "en-US"
+    r.interimResults = false
+    r.onresult = (e: any) => { void ask(String(e.results[0][0].transcript)) }
+    r.onend = () => setListening(false)
+    r.onerror = () => setListening(false)
+    recog.current = r
+    setListening(true)
+    r.start()
+  }
+
   const stop = () => {
     cancelled.current = true
     audio.current?.pause()
@@ -133,7 +154,7 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
         <DialogHeader className="border-b border-border px-5 pt-5 pb-3">
           <DialogTitle>Voice Lab</DialogTitle>
           <DialogDescription>
-            {`Typed turns answered by the call brain${engine ? ` · phone engine: ${engine.engine}` : ""}${median !== null ? ` · median first audio ${fmtMs(median)}` : ""}`}
+            {`Typed or spoken turns answered by the call brain${engine ? ` · phone engine: ${engine.engine}` : ""}${median !== null ? ` · median first audio ${fmtMs(median)}` : ""}`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
@@ -168,7 +189,14 @@ export function CallLabDialog({ path, onClose }: { path: string; onClose: () => 
           {busy ? (
             <Button variant="outline" onClick={stop}><Square className="mr-1 size-3.5" />Stop</Button>
           ) : (
-            <Button onClick={ask} disabled={!text.trim()}>Send</Button>
+            <>
+              {SR && (
+                <Button variant={listening ? "default" : "outline"} onClick={listen} aria-label={listening ? "Stop listening" : "Talk"}>
+                  <Mic className="size-4" />
+                </Button>
+              )}
+              <Button onClick={() => ask()} disabled={!text.trim()}>Send</Button>
+            </>
           )}
           <Button variant="outline" onClick={save} disabled={!turns.length || busy || saved === "saving"}>
             {saved === "saving" ? <Loader2 className="size-4 animate-spin" /> : saved === "saved" ? "Saved" : saved === "error" ? "Retry save" : "Save to notes"}
