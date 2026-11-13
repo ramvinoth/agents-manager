@@ -22,8 +22,8 @@ type Msg = { role: string; content: unknown }
 type Reply = LabAnswer & { history?: Msg[]; tools?: string[] }
 
 /**
- * CallLabDialog: try the phone call brain from the browser. Type a question,
- * hear the answer and read its time to first audio, stop it mid-answer
+ * CallLabDialog: try the phone call brain from the browser. Type or speak (push
+ * to talk, browser speech to text) a question, hear the answer and read its time to first audio, stop it mid-answer
  * (barge-in), rate each turn and save the run as a note. It talks to the same
  * /api/call/* turn endpoints as the phone, which answer with the LFM3 brain
  * whatever engine the phone is set to. The live Fish engine needs a microphone
