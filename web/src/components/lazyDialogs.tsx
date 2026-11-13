@@ -15,6 +15,7 @@ function onDemand<C extends ComponentType<any>>(load: () => Promise<C>) {
 }
 
 export const KanbanDialog = onDemand(() => import("./kanban/KanbanDialog").then((m) => m.KanbanDialog))
+export const CallLabDialog = onDemand(() => import("./CallLabDialog").then((m) => m.CallLabDialog))
 export const NotesDialog = onDemand(() => import("./notes/NotesDialog").then((m) => m.NotesDialog))
 export const InboxDialog = onDemand(() => import("./inbox/InboxDialog").then((m) => m.InboxDialog))
 export const CanvasDialog = onDemand(() => import("./canvas/CanvasDialog").then((m) => m.CanvasDialog))

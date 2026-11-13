@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { ChevronRight, History, Inbox, Minus, Plug, Plus, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
+import { ChevronRight, History, Inbox, Mic, Minus, Plug, Plus, Power, QrCode, Repeat, ScrollText, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { aiError, aiSummary, type AIConfig } from "@/lib/aiSelection"
 import { agentScheduleHint, loopModeFor, scheduleFlags, scheduleSummary } from "@/lib/schedules"
 import type { DecisionCap, LoopMode } from "@/lib/types"
-import { AISelectionDialog, AuditDialog, PairPhoneDialog, IntegrationsDialog } from "@/components/lazyDialogs"
+import { AISelectionDialog, AuditDialog, PairPhoneDialog, IntegrationsDialog, CallLabDialog } from "@/components/lazyDialogs"
 
 function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
   return (
@@ -42,6 +42,8 @@ export function ProfilePanel() {
   const [aiErr, setAiErr] = useState("")
   const [aiOpen, setAiOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
+  const [labOpen, setLabOpen] = useState(false)
+  const sessionPath = useStore((s) => s.currentSessionPath)
   const [integrationsOpen, setIntegrationsOpen] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
   const authUser = useStore((s) => s.authUser)
@@ -256,6 +258,17 @@ export function ProfilePanel() {
         </section>
 
         <section className="py-4">
+          <SectionHeader icon={Mic} title="Voice Lab" />
+          <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
+            <Mic className="size-4 shrink-0 text-muted-foreground" />
+            <button className="min-w-0 flex-1 text-left disabled:opacity-50" disabled={!sessionPath} onClick={() => setLabOpen(true)}>
+              <div className="text-sm font-medium">Try the call voice</div>
+              <div className="truncate text-[11px] text-muted-foreground">{sessionPath ? "Type, listen, time the first sound, rate and save." : "Open a chat first."}</div>
+            </button>
+          </div>
+        </section>
+
+        <section className="py-4">
           <SectionHeader icon={History} title="Activity" />
           <div className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2">
             <History className="size-4 shrink-0 text-muted-foreground" />
@@ -305,6 +318,7 @@ export function ProfilePanel() {
 
       {pairOpen && <PairPhoneDialog onClose={() => setPairOpen(false)} />}
       {integrationsOpen && <IntegrationsDialog onClose={() => setIntegrationsOpen(false)} />}
+      {labOpen && sessionPath && <CallLabDialog path={sessionPath} onClose={() => setLabOpen(false)} />}
       {auditOpen && <AuditDialog selfUsername={authUser?.username} onClose={() => setAuditOpen(false)} />}
       {aiOpen && (
         <AISelectionDialog
