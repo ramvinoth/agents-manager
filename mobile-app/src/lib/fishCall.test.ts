@@ -59,6 +59,16 @@ test("audio then audio_end then drain sends played", async () => {
   assert.ok(r.sent.includes('{"type":"played","gen":7}'))
   assert.deepStrictEqual(r.phases, ["waiting", "speaking", "waiting"])
 })
+test("drain before audio_end still sends played", async () => {
+  const r = rig()
+  await startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  r.msg('{"type":"ready","sample_rate":24000}')
+  r.msg(new Uint8Array([1, 2]).buffer)
+  r.drain() // short reply finished playing before the server's audio_end arrived
+  r.msg('{"type":"audio_end","gen":9}')
+  assert.ok(r.sent.includes('{"type":"played","gen":9}'))
+  assert.deepStrictEqual(r.phases, ["waiting", "speaking", "waiting"])
+})
 test("audio_end with nothing queued plays immediately", async () => {
   const r = rig()
   await startFishCall(r.sock, r.audio, [], r.h, r.timers)

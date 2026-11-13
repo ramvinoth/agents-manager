@@ -95,6 +95,7 @@ export async function startFishCall(
   let stopped = false
   let rate = 24000
   let queued = false // audio enqueued since the last drain
+  let idle = true // the phone buffer is empty: true after a drain, false after an enqueue
   let endPending = false // server said audio_end; waiting for the buffer to drain
   let endGen: number | null = null // which utterance that audio_end closed; echoed in played
   let carry: number | null = null // odd trailing byte of the last audio chunk
@@ -129,6 +130,7 @@ export async function startFishCall(
     if (!endPending) return
     endPending = false
     queued = false
+    idle = true
     carry = null
     sendJson(endGen === null ? { type: "played" } : { type: "played", gen: endGen })
     h.onPhase("waiting")
@@ -161,6 +163,7 @@ export async function startFishCall(
       }
       if (!queued) h.onPhase("speaking")
       queued = true
+      idle = false
       return
     }
     const e = parseFishEvent(d)
@@ -180,12 +183,16 @@ export async function startFishCall(
       case "audio_end":
         endPending = true
         endGen = e.gen
-        if (!queued) finishPlayback() // nothing was played, so nothing will drain
+        // Nothing queued, or the buffer already drained before this message arrived (short
+        // replies finish playing before the server's audio_end lands): no drain event will
+        // come, so ack now. Waiting for one would leave the server holding every later turn.
+        if (!queued || idle) finishPlayback()
         break
       case "barge":
         audio.flush()
         endPending = false
         queued = false
+        idle = true
         h.onPhase("waiting")
         break
       case "error":
@@ -208,7 +215,10 @@ export async function startFishCall(
   // The engine must be running BEFORE the server may speak: the server starts TTS the
   // moment it gets "start", and a chunk enqueued into a stopped engine is refused.
   // Starting the engine first is what makes turn 1 audible.
-  unDrain = audio.onDrained(finishPlayback)
+  unDrain = audio.onDrained(() => {
+    idle = true
+    finishPlayback()
+  })
   try {
     await audio.start(MIC_RATE)
   } catch (e) {
