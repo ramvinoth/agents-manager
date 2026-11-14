@@ -306,9 +306,12 @@ class BreezeTtsSocket:
         while True:
             try:
                 chunk = self.resp.read(4096)
-            except Exception:
-                self.done = True     # a barge-in closed the response: the server dropped it
+            except Exception as e:
+                deliberate = self.resp is None      # close() ran: a barge-in, not a failure
+                self.done = True
                 self.close()
+                if not deliberate:
+                    print(f"[speakrailcall] tts stream broke: {type(e).__name__}", flush=True)
                 return OP_CLOSE, b""
             if not chunk:
                 self.done = True

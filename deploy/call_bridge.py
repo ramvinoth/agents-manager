@@ -42,6 +42,7 @@ import urllib.parse
 
 from aiohttp import (
     ClientConnectionError,
+    ClientConnectionResetError,
     ClientSession,
     ClientTimeout,
     FormData,
@@ -231,10 +232,13 @@ async def tts(req):
         out = web.StreamResponse(status=200)   # 3.14 dropped Response(chunked=)
         out.content_type = resp.headers.get("Content-Type", "audio/pcm")
         await out.prepare(req)
-        async for chunk in resp.content.iter_any():
-            if chunk:
-                await out.write(chunk)
-        await out.write_eof()
+        try:
+            async for chunk in resp.content.iter_any():
+                if chunk:
+                    await out.write(chunk)
+            await out.write_eof()
+        except (ClientConnectionResetError, ConnectionResetError):
+            print("tts: caller closed mid-speech, upstream aborted", file=sys.stderr, flush=True)
     finally:
         # Also the barge-in path: when the caller hangs up mid-speech the write
         # raises, and closing the upstream makes Breeze abort the generation
