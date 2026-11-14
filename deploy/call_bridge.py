@@ -63,7 +63,14 @@ def authorized(req):
         ("Bearer " + TOKEN).encode())
 
 
+@web.middleware
 async def gate(req, handler):
+    # @web.middleware marks the modern (request, handler) contract: aiohttp
+    # 3.14 calls an UNMARKED middleware old-style, as (app, handler), which
+    # bound `req` to the Application and 500'd every request with
+    # AttributeError. The marker is version-proof on 3.14+; on a venv that
+    # predates it the import would fail loudly at startup, which is the
+    # desired failure (an auth gate must never silently not run).
     if not authorized(req):
         return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(req)

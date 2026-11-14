@@ -1,0 +1,13 @@
+# Cloudflare tunnel for call.suhai.ai: the public edge of the box call bridge.
+# Runs ON THE GPU BOX (the bridge's origin), so the path is
+# caller -> Cloudflare -> box cloudflared -> 127.0.0.1:18191, independent of the
+# Mac's network. The credentials JSON (one per tunnel) lives on the box at
+# ~/.cloudflared/ (mode 600); the Bearer gate on the bridge is the auth.
+# Box systemd user unit: harman-call-tunnel.service
+#   ExecStart=/usr/local/bin/cloudflared tunnel --config <this file> run
+tunnel: d15c3e2a-6eea-4377-918c-a0382f0a6c48
+credentials-file: /home/suhai/.cloudflared/harman-call.json
+ingress:
+  - hostname: call.suhai.ai
+    service: http://127.0.0.1:18191
+  - service: http_status:404
