@@ -230,7 +230,9 @@ class Voice:
             return self.epoch
 
     def say(self, text, epoch, only_if_idle=False):
-        """Voice `text` unless a barge-in has happened since `epoch` was read."""
+        """Voice `text` unless a barge-in has happened since `epoch` was read (blank text is never voiced)."""
+        if not (text or "").strip():
+            return
         with self.lock:
             if epoch != self.epoch or (only_if_idle and self._busy()):
                 return
