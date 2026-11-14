@@ -340,6 +340,32 @@ class TestDescribeEngine:
         out = callbrain.describe_engine(None)
         assert out["engine"] == "brain" and "call_brain" in out["error"]
 
+    def test_fish_when_the_key_is_set(self, monkeypatch):
+        monkeypatch.setattr(callbrain, "CALL_ENGINE", "fish")
+        monkeypatch.setattr(callbrain, "FISH_API_KEY", "k")
+        monkeypatch.setattr(callbrain, "FISH_TTS_MODEL", "s2.1-pro-free")
+        monkeypatch.setattr(callbrain, "brain_preset", lambda: self.preset)
+        out = callbrain.engine()
+        assert out == {"engine": "fish", "model": "Fish s2.1-pro-free + Qwen 3.8-27B",
+                       "live": "/api/call/live"}
+
+    def test_speakrail_when_token_and_asr_are_set(self, monkeypatch):
+        monkeypatch.setattr(callbrain, "CALL_ENGINE", "speakrail")
+        monkeypatch.setattr(callbrain, "SPEAKRAIL_TOKEN", "tok")
+        monkeypatch.setattr(callbrain, "SPEAKRAIL_ASR_URL", "ws://box:18191/v1/transcribe")
+        monkeypatch.setattr(callbrain, "brain_preset", lambda: self.preset)
+        out = callbrain.engine()
+        assert out == {"engine": "speakrail", "model": "Breeze + Qwen 3.8-27B",
+                       "live": "/api/call/live"}
+
+    def test_speakrail_stays_off_without_a_token(self, monkeypatch):
+        monkeypatch.setattr(callbrain, "CALL_ENGINE", "speakrail")
+        monkeypatch.setattr(callbrain, "SPEAKRAIL_TOKEN", "")
+        monkeypatch.setattr(callbrain, "SPEAKRAIL_ASR_URL", "")
+        monkeypatch.setattr(callbrain, "LFM3_SERVICE_URL", "")
+        monkeypatch.setattr(callbrain, "brain_preset", lambda: self.preset)
+        assert callbrain.engine() == {"engine": "brain", "model": "Qwen 3.8-27B"}
+
 
 # ------------------------------------------------------- LFM3-Audio engine
 

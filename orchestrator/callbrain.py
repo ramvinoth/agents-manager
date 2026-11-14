@@ -49,6 +49,7 @@ from datetime import datetime
 
 from orchestrator import actions, db, orglogic, providers
 from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY, FISH_TTS_MODEL, LFM3_SERVICE_URL,
+                                 SPEAKRAIL_ASR_URL, SPEAKRAIL_TOKEN,
                                  read_back, split_lines, transcript_path)
 from orchestrator.customrun import chat_completion_message
 
@@ -296,6 +297,12 @@ def engine():
         # Fish listens and speaks over /api/call/live; the call brain still thinks.
         d = describe_engine(brain_preset())
         out = {"engine": "fish", "model": f"Fish {FISH_TTS_MODEL} + {d.get('model', '')}".rstrip(" +"),
+               "live": "/api/call/live"}
+        return {**out, "error": d["error"]} if "error" in d else out
+    if CALL_ENGINE == "speakrail" and SPEAKRAIL_TOKEN and SPEAKRAIL_ASR_URL:
+        # The box's Speakrail engines speak the call (speakrailcall); the brain still thinks.
+        d = describe_engine(brain_preset())
+        out = {"engine": "speakrail", "model": f"Breeze + {d.get('model', '')}".rstrip(" +"),
                "live": "/api/call/live"}
         return {**out, "error": d["error"]} if "error" in d else out
     if LFM3_SERVICE_URL:

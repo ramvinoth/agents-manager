@@ -1,0 +1,14 @@
+[Unit]
+Description=Harman call bridge (Speakrail LFM3 ASR + Breeze TTS for the viewer's live call)
+After=network-online.target
+
+[Service]
+Type=simple
+# The Bearer token lives in a 600 file, never here: a unit file is world-readable.
+EnvironmentFile=-%h/.config/harman-call-bridge.env
+ExecStart=%h/.speakrail/venv/bin/python %h/harman-call-bridge/call_bridge.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

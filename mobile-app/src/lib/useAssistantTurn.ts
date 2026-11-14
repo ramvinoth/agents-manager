@@ -75,7 +75,7 @@ export function useAssistantTurn(
   const listenStopRef = useRef<null | (() => void)>(null)
   const busyRef = useRef(false)
   const handsFreeRef = useRef(false)
-  // Live engine ("fish"): one socket does listening, turn-taking and speech.
+  // Live engines ("fish" / "speakrail"): one socket does listening, turn-taking and speech.
   const liveRef = useRef(false)
   const fishRef = useRef<FishCall | null>(null)
   // Barge-in: while speaking, a concurrent echo-cancelled wakeguard mic lets
@@ -239,7 +239,7 @@ export function useAssistantTurn(
       try {
         const brain = await api.callEngine()
         if (brain.error) throw new Error(brain.error)
-        liveRef.current = brain.engine === "fish" && fishAudioAvailable()
+        liveRef.current = (brain.engine === "fish" || brain.engine === "speakrail") && fishAudioAvailable()
         setModel(brain.model || "")
       } catch (e) {
         setError((e as Error).message)

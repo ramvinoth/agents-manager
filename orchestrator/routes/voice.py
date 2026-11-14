@@ -135,25 +135,32 @@ class VoiceMixin:
                         timeout=SPEECH_TIMEOUT)
 
     def _g_call_live(self, req):
-        """Fish realtime call socket; the protocol is in orchestrator/fishcall.py."""
-        from orchestrator import callbrain, config, fishcall
+        """Live call socket; the protocol is in orchestrator/calllive.py (fish or speakrail provider)."""
+        from orchestrator import callbrain, calllive, config
         from orchestrator.wsserver import WSServer
         path = (req.query.get("path") or [""])[0]
         full = self.resolve_session_quiet(path) if path else None
         if not full:
             self.send_json({"error": "Session required"}, status=400)
             return
-        if callbrain.engine().get("engine") != "fish":
-            self.send_json({"error": "Fish call engine is off"}, status=409)
+        eng = callbrain.engine().get("engine")
+        if eng == "fish":
+            settings = {"key": config.FISH_API_KEY, "asr_url": config.FISH_ASR_URL,
+                        "tts_url": config.FISH_TTS_URL, "tts_model": config.FISH_TTS_MODEL,
+                        "voice_id": config.FISH_VOICE_ID}
+        elif eng == "speakrail":
+            settings = {"key": config.SPEAKRAIL_TOKEN, "asr_url": config.SPEAKRAIL_ASR_URL,
+                        "tts_url": config.SPEAKRAIL_TTS_URL, "tts_model": "", "voice_id": "",
+                        "provider": "speakrail"}
+        else:
+            self.send_json({"error": "Live call engine is off (set HARMAN_CALL_ENGINE to fish or speakrail)"},
+                           status=409)
             return
         ws = WSServer.upgrade(self)
         if not ws:
             return
         try:
-            fishcall.run_bridge(ws, full.stem, req.principal, [], {
-                "key": config.FISH_API_KEY, "asr_url": config.FISH_ASR_URL,
-                "tts_url": config.FISH_TTS_URL, "tts_model": config.FISH_TTS_MODEL,
-                "voice_id": config.FISH_VOICE_ID})
+            calllive.run_bridge(ws, full.stem, req.principal, [], settings)
         finally:
             try:
                 ws.close()

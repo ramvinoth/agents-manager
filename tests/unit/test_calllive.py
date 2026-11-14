@@ -1,12 +1,12 @@
-"""Fish call engine: the turn-taking state machine and a fake-Fish bridge."""
+"""Live call engine (Fish provider): the turn-taking state machine and a fake-Fish bridge."""
 
 import json
 import queue
 import threading
 import time
 
-from orchestrator import fishcall
-from orchestrator.fishcall import NeedsCommit, TurnTaker, pack, unpack
+from orchestrator import calllive
+from orchestrator.calllive import NeedsCommit, TurnTaker, pack, unpack
 from orchestrator.wsclient import OP_BINARY, OP_CLOSE, OP_TEXT
 
 
@@ -81,11 +81,11 @@ def test_deferred_eager_reruns_after_commit():
 def test_asr_config_trims_history_and_keeps_known_fields():
     hist = [{"role": "user", "content": "x" * 3000}, {"role": "tool", "content": "no"},
             {"role": "assistant", "content": "ok"}] + [{"role": "user", "content": str(i)} for i in range(40)]
-    cfg = fishcall.asr_config(hist)
+    cfg = calllive.asr_config(hist)
     assert set(cfg) == {"type", "audio", "turn_detection", "results", "context"}
     assert len(cfg["context"]["history"]) == 32
     assert all(set(m) == {"role", "text"} for m in cfg["context"]["history"])
-    assert len(fishcall.asr_config(hist[:1])["context"]["history"][0]["text"]) == 2000
+    assert len(calllive.asr_config(hist[:1])["context"]["history"][0]["text"]) == 2000
 
 
 def test_msgpack_round_trip_keeps_bytes():
@@ -176,7 +176,7 @@ def make_bridge(brain, tts_frames=None):
 
     phone = FakePhone()
     settings = {"key": "k", "asr_url": "wss://x/asr", "tts_url": "wss://x/tts", "tts_model": "s2.1-pro-free"}
-    th = threading.Thread(target=fishcall.run_bridge,
+    th = threading.Thread(target=calllive.run_bridge,
                           args=(phone, "sid", None, [], settings),
                           kwargs={"dial": dial, "brain": brain, "speakable": lambda s: s}, daemon=True)
     th.start()
@@ -274,7 +274,7 @@ def test_bridge_reports_unreachable_asr():
     def dial(url, headers):
         raise OSError("refused")
 
-    fishcall.run_bridge(phone, "sid", None, [], {"key": "k", "asr_url": "a", "tts_url": "t", "tts_model": "m"},
+    calllive.run_bridge(phone, "sid", None, [], {"key": "k", "asr_url": "a", "tts_url": "t", "tts_model": "m"},
                         dial=dial, brain=lambda *a: None, speakable=lambda s: s)
     assert phone.kinds() == ["error"]
 
@@ -298,7 +298,7 @@ def test_bridge_start_message_seeds_history():
 
 
 def test_speaker_tag_stripped_from_eager_and_committed():
-    from orchestrator.fishcall import TurnTaker
+    from orchestrator.calllive import TurnTaker
     t = TurnTaker()
     a = t.on_asr({"type": "eager_end_of_turn", "turn_index": 0, "text": "<|speaker:0|>hello there"})
     assert a == [("think", 0, "hello there", True)]
@@ -309,7 +309,7 @@ def test_speaker_tag_stripped_from_eager_and_committed():
 def test_default_voice_is_pinned_so_ack_and_reply_match():
     from orchestrator import config
     assert config.FISH_VOICE_ID
-    a, b = fishcall.tts_start(config.FISH_VOICE_ID), fishcall.tts_start(config.FISH_VOICE_ID)
+    a, b = calllive.tts_start(config.FISH_VOICE_ID), calllive.tts_start(config.FISH_VOICE_ID)
     assert a["request"]["reference_id"] == b["request"]["reference_id"] == config.FISH_VOICE_ID
 
 
@@ -319,7 +319,7 @@ def make_voice(ttses, told, asr_sent):
                       (OP_BINARY, pack({"event": "finish", "reason": "stop"}))])
         ttses.append(t)
         return t
-    return fishcall.Voice(dial=dial, tell=lambda kind, **kw: told.append((kind, kw)),
+    return calllive.Voice(dial=dial, tell=lambda kind, **kw: told.append((kind, kw)),
                           send_audio=lambda b: None, asr_send=asr_sent.append,
                           speakable=lambda s: s, voice_id="v")
 

@@ -1,4 +1,4 @@
-"""Fish Audio realtime call engine: the phone's /api/call/live socket.
+"""The live call engine: the phone's /api/call/live socket.
 
 One WebSocket from the phone carries the whole call:
   phone -> server  binary PCM16 mono 16 kHz (20-40 ms chunks), and JSON
@@ -8,11 +8,16 @@ One WebSocket from the phone carries the whole call:
                    ready{sample_rate}, heard{text}, reply{text}, audio_end,
                    barge, error{message}, pong
 
-Behind it the server holds two Fish sockets (msgpack frames):
-  ASR  wss://api.fish.audio/v1/asr/realtime  — streams the caller's audio and
-       decides when they finished a turn (eager_end_of_turn, then committed).
-  TTS  wss://api.fish.audio/v1/tts/live      — one socket per reply; closing
-       it is how a barge-in stops the voice.
+Behind it the server holds an ASR socket and a TTS socket, spoken in one of
+two wire dialects:
+  fish       — the Fish Audio realtime sockets (msgpack frames): ASR wss://.../
+       asr/realtime streams the caller's audio and decides when they finished
+       a turn (eager_end_of_turn, then committed); TTS wss://.../tts/live is
+       one socket per reply; closing it is how a barge-in stops the voice.
+  speakrail  — the GPU box's Speakrail engines via harman-call-bridge: an LFM3
+       live-ASR websocket and a Breeze streaming-HTTP TTS, translated into this
+       same dialect by orchestrator.speakrailcall. Half-duplex (no mid-speech
+       barge-in), because its VAD has no speaker identity.
 The brain in between is callbrain.call_turn (the board tools), unchanged.
 
 Speed: Fish sends an EAGER end-of-turn before it is sure. The brain starts on
@@ -45,12 +50,13 @@ READ_ONLY_TOOLS = frozenset({"board_status", "card_detail"})
 
 
 def dial_error(e, default):
-    """What the phone says when Fish refuses the socket: 402 means the API balance
-    (separate from the app subscription) is empty, 401 a bad key, 429 too many calls."""
+    """What the phone says when the engine refuses the socket: 402 (Fish) means
+    the API balance (separate from the app subscription) is empty, 401 a bad
+    key or token, 429 too many calls."""
     status = getattr(e, "status", None) if isinstance(e, WSHandshakeError) else None
     return {402: "The Fish API balance is empty; top it up to use the call.",
-            401: "The Fish API key was refused.",
-            429: "Fish is busy with too many calls; try again in a moment."}.get(status, default)
+            401: "The call engine's key or token was refused.",
+            429: "The call engine is busy with too many calls; try again in a moment."}.get(status, default)
 
 
 def pack(d):
@@ -181,8 +187,8 @@ def close_code(payload):
 class Voice:
     """The one owner of what the caller hears.
 
-    Every utterance (the "one sec" line and the real answer alike) is one Fish TTS
-    socket, played strictly in order. A barge-in bumps `epoch`, which cancels the
+    Every utterance (the "one sec" line and the real answer alike) is one TTS
+    socket (Fish's live TTS, or the Speakrail/Breeze request), played strictly in order. A barge-in bumps `epoch`, which cancels the
     utterance in flight and every one still queued. The phone answers each
     `audio_end` with `played` carrying the same `gen`; a `played` for anything but
     the newest utterance is a stale echo of an earlier one and is ignored, so one
@@ -233,7 +239,7 @@ class Voice:
         """The phone finished playing utterance `gen` (None from builds that predate it)."""
         with self.lock:
             if self.awaiting is None or (gen is not None and gen != self.awaiting):
-                print(f"[fishcall] played ignored: gen={gen} awaiting={self.awaiting}", flush=True)
+                print(f"[calllive] played ignored: gen={gen} awaiting={self.awaiting}", flush=True)
                 return
             self.awaiting = None
             if not self._busy():
@@ -262,7 +268,7 @@ class Voice:
         try:
             tts = self.dial()
         except Exception as e:
-            print(f"[fishcall] tts dial failed: {e}", flush=True)
+            print(f"[calllive] tts dial failed: {e}", flush=True)
             self.tell("error", message=dial_error(e, "The voice service is unreachable."))
             return
         with self.lock:
@@ -305,7 +311,7 @@ class Voice:
                 self.seq += 1
                 gen = self.awaiting = self.seq
         tts.close()
-        print(f"[fishcall] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
+        print(f"[calllive] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
         if not barged:
             self.tell("audio_end", gen=gen)  # the phone answers "played" once its buffer drains
 
@@ -314,7 +320,8 @@ class Voice:
 
 class Bridge:
     """One live call. `phone` is a server-side socket (recv/send_bytes/
-    send_text/close); `dial(url, headers)` opens a Fish client socket;
+    send_text/close); `dial(url, headers)` opens the provider's ASR/TTS socket
+    (calllive's dialect in either fish or speakrail wire form);
     `brain(text, history, tool_runner)` returns call_turn's dict."""
 
     def __init__(self, phone, dial, brain, key, asr_url, tts_url, tts_model, voice_id="",
@@ -394,7 +401,7 @@ class Bridge:
                 acts = self.turns.brain_deferred(turn, text)
             return self.act(acts)
         except Exception as e:
-            print(f"[fishcall] brain failed: {e}", flush=True)
+            print(f"[calllive] brain failed: {e}", flush=True)
             out = {"reply": "Sorry, I could not think that through. Say it again?", "history": history}
         with self.lock:
             acts = self.turns.brain_done(turn, text, out["reply"])
@@ -410,8 +417,10 @@ class Bridge:
     def asr_loop(self):
         last_keepalive = time.monotonic()
         while not self.done.is_set():
-            # Keepalive on the clock, not only on a quiet read: Fish counts client
-            # messages, so a stalled phone mic must never let the stream idle out.
+            # Keepalive on the clock, not only on a quiet read: the Fish engine
+            # counts client messages, so a stalled phone mic must never let the
+            # stream idle out (the speakrail adapter ignores the message, but the
+            # same tick also bounds how long a dead socket can hang the call).
             if time.monotonic() - last_keepalive >= READ_TIMEOUT:
                 self._asr_send({"type": "keepalive"})
                 last_keepalive = time.monotonic()
@@ -437,7 +446,7 @@ class Bridge:
                 continue
             ev = unpack(payload)
             if ev.get("type") == "error":
-                print(f"[fishcall] asr error: {ev.get('message')}", flush=True)
+                print(f"[calllive] asr error: {ev.get('message')}", flush=True)
                 if not ev.get("recoverable"):
                     self.tell("error", message="The listening service failed.")
                     self.done.set()
@@ -445,7 +454,7 @@ class Bridge:
                 continue
             if ev.get("type") in ("user_turn_taken", "eager_end_of_turn", "committed", "turn_resumed"):
                 # Per-turn timing: the gaps between these lines show where a slow reply is lost.
-                print(f"[fishcall] asr {ev.get('type')} turn={ev.get('turn_index')} "
+                print(f"[calllive] asr {ev.get('type')} turn={ev.get('turn_index')} "
                       f"reason={ev.get('reason')} t={time.monotonic() - self.t0:.2f}s", flush=True)
             with self.lock:
                 acts = self.turns.on_asr(ev)
@@ -455,7 +464,7 @@ class Bridge:
         try:
             self.open_asr()
         except Exception as e:
-            print(f"[fishcall] asr dial failed: {e}", flush=True)
+            print(f"[calllive] asr dial failed: {e}", flush=True)
             self.tell("error", message=dial_error(e, "The listening service is unreachable."))
             return
         self.tell("ready", sample_rate=VOICE_RATE)
@@ -481,7 +490,7 @@ class Bridge:
                     elif kind == "played":
                         self.voice.played(msg.get("gen"))
                     elif kind == "diag":
-                        print(f"[fishcall] phone t={time.monotonic() - self.t0:.1f}s "
+                        print(f"[calllive] phone t={time.monotonic() - self.t0:.1f}s "
                               f"{json.dumps({k: v for k, v in msg.items() if k != 'type'})[:200]}", flush=True)
                     elif kind == "stop":
                         break
@@ -498,13 +507,17 @@ class Bridge:
 
 
 def run_bridge(phone, sid, principal, history, settings, dial=None, brain=None, speakable=None):
-    """Serve one phone call. `settings` = {key, asr_url, tts_url, tts_model, voice_id}."""
+    """Serve one phone call. `settings` = {key, asr_url, tts_url, tts_model, voice_id,
+    provider} — provider "speakrail" (the default is Fish's wire dialect)."""
     if brain is None:
         from orchestrator import callbrain
         def brain(text, hist, runner):
             return callbrain.call_turn(sid, principal, text, hist, tool_runner=runner)
     if speakable is None:
         from orchestrator.speakable import speakable
-    dial = dial or (lambda url, headers: wsclient.dial(url, headers=headers))
+    if dial is None:
+        from orchestrator import speakrailcall
+        dial = speakrailcall.dial if settings.get("provider") == "speakrail" \
+            else (lambda url, headers: wsclient.dial(url, headers=headers))
     Bridge(phone, dial, brain, settings["key"], settings["asr_url"], settings["tts_url"],
            settings["tts_model"], settings.get("voice_id", ""), history, speakable).run()

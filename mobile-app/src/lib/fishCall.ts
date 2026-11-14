@@ -2,8 +2,9 @@
  * fishCall — phone side of the server's live call bridge (/api/call/live).
  *
  * One WebSocket carries everything: mic PCM16 16 kHz up, TTS PCM16 up-rate down,
- * plus small JSON events. Fish does the ASR, turn detection and TTS on the server;
- * the phone only captures, plays, and tells the server when playback has drained.
+ * plus small JSON events. The server's live engine (Fish, or the Speakrail box's
+ * LFM3/Breeze) does the ASR, turn detection and TTS; the phone only captures,
+ * plays, and tells the server when playback has drained.
  * Speech and tool work run concurrently server-side, so the caller can keep talking
  * while a tool runs. Capture and playback share one echo-cancelled engine, which is
  * why barge-in works without a keyword spotter.

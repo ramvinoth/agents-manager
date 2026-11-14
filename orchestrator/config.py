@@ -206,9 +206,13 @@ TTS_STREAM_URL = os.environ.get("HARMAN_TTS_STREAM_URL", "")
 # LFM3-Audio speaks the call natively (one model: board tools + spoken audio, see
 # callbrain.lfm3_turn). Empty = the call uses the Qwen brain + Pocket TTS instead.
 LFM3_SERVICE_URL = os.environ.get("HARMAN_LFM3_URL", "")
-# Fish Audio realtime call (orchestrator.fishcall): streaming ASR in, streaming TTS out,
-# the Qwen brain in between. Opt in with HARMAN_CALL_ENGINE=fish + FISH_API_KEY; off by
-# default so LFM3 / the brain stay the call engine until the owner flips it.
+# Live call engines (orchestrator.calllive): streaming ASR in, streaming TTS out,
+# the Qwen brain in between. HARMAN_CALL_ENGINE picks the provider:
+#   fish      — Fish Audio's realtime sockets (FISH_* below); pays per use.
+#   speakrail — the GPU box's Speakrail engines (LFM3 live ASR + Breeze TTS) through
+#               its harman-call-bridge (deploy/call_bridge.py): one LAN port,
+#               Bearer token; the box owns the reference voice. Free; half-duplex.
+# Empty (the default) keeps LFM3 / the brain as the call engine until the owner flips it.
 CALL_ENGINE = os.environ.get("HARMAN_CALL_ENGINE", "")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "")
 FISH_TTS_MODEL = os.environ.get("FISH_TTS_MODEL", "s2.1-pro-free")
@@ -218,6 +222,11 @@ FISH_TTS_MODEL = os.environ.get("FISH_TTS_MODEL", "s2.1-pro-free")
 FISH_VOICE_ID = os.environ.get("FISH_VOICE_ID") or "933563129e564b19a115bedd57b7406a"
 FISH_ASR_URL = os.environ.get("FISH_ASR_URL", "wss://api.fish.audio/v1/asr/realtime")
 FISH_TTS_URL = os.environ.get("FISH_TTS_URL", "wss://api.fish.audio/v1/tts/live")
+# Speakrail provider: the box's harman-call-bridge (0.0.0.0, Bearer-gated) fronting the
+# box's loopback-only engines. No baked-in address: point these at your box's LAN IP.
+SPEAKRAIL_TOKEN = os.environ.get("SPEAKRAIL_TOKEN", "")
+SPEAKRAIL_ASR_URL = os.environ.get("SPEAKRAIL_ASR_URL", "")
+SPEAKRAIL_TTS_URL = os.environ.get("SPEAKRAIL_TTS_URL", "")
 # Wake-word + speaker verification (/enroll, /segment) live on the sherpa-onnx
 # service (default :8095), which may differ from HARMAN_SPEECH_URL when TTS
 # streaming is pointed at a separate engine (e.g. Pocket on :8097).
