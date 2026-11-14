@@ -119,6 +119,7 @@ _TOOLS = {
     "session_mode_set": ("POST", "/api/session/mode"),
     "session_level_set": ("POST", "/api/session/level"),
     "inbox_send":    ("POST", "/api/inbox/send"),
+    "owner_call_request": ("POST", "/api/owner-call"),
     # ── Canvas: the visual pane beside the chat (your own session's output)
     "canvas_show":   ("POST", "/api/canvas/show"),
     "canvas_read":     ("GET",  "/api/canvas/agent/read"),
@@ -448,6 +449,11 @@ _TOOL_LIST = [
          "to": {"type": "string", "description": "'user' (the owner) or 'session:<id>' (another session: its full id from session_list, an id prefix, or its exact title; an unknown or ambiguous one is refused)."},
          "body": {"type": "string", "description": "The message — self-contained: the recipient has no context beyond this text."},
          "in_reply_to": {"type": "integer", "description": "Inbox message id you are replying to, if any."}}}},
+    {"name": "owner_call_request",
+     "description": "Ring the owner's phone into Harman call mode on a card. ABSOLUTELY LAST RESORT: only when work is blocked on a decision that cannot wait for a normal inbox message or card in Review. Refused outside the owner's waking hours (their time zone), within 2 hours of the last ring, past 3 rings a day, or without a concrete reason and a real card. Needs Workspace level or higher; below that your request is forwarded to the session that created you, who can re-ask with their own reason. Returns {rang:true}, {escalated_to}, or an error saying why not.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "reason"], "properties": {
+         "card_id": {"type": "integer", "description": "The card the call is about; call mode opens on it."},
+         "reason": {"type": "string", "description": "Why this cannot wait, in plain words the owner can judge cold (20+ characters)."}}}},
     # ── Canvas: the project's shared board, where a picture beats prose ─────
     {"name": "canvas_show",
      "description": "Place (or replace, by title) a doc tile on your project's shared canvas, where the owner sees it live and can open it full size. Use it ONLY when a picture beats prose: a flow or architecture you are designing (mermaid), a comparison table or plan you will revise (markdown), a step-by-step walkthrough (slides: markdown split by lines of ---), or a small interactive mock (html: one self-contained page, scripts allowed, sandboxed — no network to the app, no cookies). Never for a simple answer. Re-show the same title to update the tile in place at milestones instead of adding new ones. Max 20 per session, 512 KB each.",

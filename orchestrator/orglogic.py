@@ -218,6 +218,8 @@ _MIN_LEVEL = {
     "note_vote": "ic",             # one vote per voter, reversible — green
     "inbox_send": "ic",           # one's own messages: the ledger next to the notes;
                                   # green — a message is communication, never a mutation
+    "owner_call_request": "ic",   # open to all: ownercall.decide owns the real level rule
+                                  # (a low level escalates to its creator instead of ringing)
     "task_done": "ic",
     "board_list": "ic",
     "card_list": "ic",

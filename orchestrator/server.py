@@ -594,6 +594,7 @@ class SessionViewerHandler(
         "/api/org/loops/delete": "_p_org_loops_delete",
         "/api/org/skills/propose": "_p_org_skills_propose",
         "/api/inbox/send": "_p_inbox_send",
+        "/api/owner-call": "_p_owner_call",
         "/api/canvas/show": "_p_canvas_show",
         "/api/canvas/file": "_p_canvas_file",
         "/api/canvas/agent/patch": "_p_canvas_agent_patch",

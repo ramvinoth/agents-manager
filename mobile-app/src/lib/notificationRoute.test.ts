@@ -64,3 +64,9 @@ test("suppressForeground silences only a turn push for the focused chat", () => 
   assert.equal(suppressForeground({ session: "abc" }, { name: "Home" }), false)
   assert.equal(suppressForeground({ session: "abc" }, undefined), false)
 })
+
+test("an owner call ring opens call mode on its card, ahead of the card screen", () => {
+  assert.deepEqual(notificationTarget({ call: "42" }), { to: "call", cardId: 42 })
+  assert.deepEqual(notificationTarget({ call: 42, card: 7 }), { to: "call", cardId: 42 })
+  assert.equal(notificationTarget({ call: "0" }), null)
+})

@@ -337,6 +337,43 @@ def _inbox_send(a):
     return row or {"error": "send failed"}
 
 
+def _owner_call_request(a):
+    """Ask to ring the owner. ownercall.decide owns the rules (reason, card,
+    level, quiet hours, gap, cap); this only gathers facts and acts on the
+    verdict: ring = time-sensitive push that opens call mode on the card,
+    escalate = inbox message to the session that created the caller."""
+    from datetime import datetime
+    from orchestrator import inbox, ownercall, push
+    from orchestrator.runtime import repository as runtime
+    me = str(a.get("sender_id") or "")
+    card_id = a.get("card_id")
+    reason = str(a.get("reason") or "")
+    parent = ""
+    if me:
+        parent = str((runtime.session_meta_get(me) or {}).get("createdBySession") or "")
+    rings = [float(r["created_at"]) for r in db.audit_list(20, action="owner_call_ring")]
+    verdict = ownercall.decide(datetime.now().astimezone(), a.get("level") or "ic",
+                               reason, card_id, rings, bool(parent))
+    if verdict["verdict"] == "refuse":
+        return {"error": verdict["why"]}
+    if verdict["verdict"] == "escalate":
+        who = inbox._label(me) if me else "A session"
+        row = inbox.deliver_message(
+            "session", me, "session", parent,
+            f"{who} needs the owner on card {card_id} but cannot ring. Reason: {reason}\n"
+            "If it is truly urgent and you are Workspace level or above, call owner_call_request "
+            "with the same card and your own reason.", 0)
+        return {"escalated_to": parent, "message": row}
+    card = db.card_get(int(card_id))
+    if not card:
+        return {"error": f"card {card_id} does not exist"}
+    push.notify_all("Harman needs you now", f"{card.get('title') or 'Card'}: {reason}"[:300],
+                    data={"call": str(int(card_id))}, time_sensitive=True)
+    db.audit_append(a.get("created_by") or me, "owner_call_ring",
+                    {"card": int(card_id), "reason": reason[:200]}, "done")
+    return {"rang": True, "card_id": int(card_id)}
+
+
 def _card_comment(a, *, by_agent=False):
     """Post a comment on a card's discussion thread (db.card_comments).
     The author is stamped by the route from the resolved principal — never
@@ -781,6 +818,7 @@ ACTIONS = {
     "note_comment": _note_comment,
     "note_vote": _note_vote,
     "inbox_send": _inbox_send,
+    "owner_call_request": _owner_call_request,
     "card_dep_add": _card_dep_add,
     "card_dep_remove": _card_dep_remove,
     "task_done": _task_done,

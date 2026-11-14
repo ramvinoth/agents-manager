@@ -100,6 +100,7 @@ _ACTIONS = {
     "note_vote": ("Vote on note comment", None),
     "card_dep_add": ("Add card dependency", ("Card", "card_id", None)),
     "card_dep_remove": ("Remove card dependency", ("Card", "card_id", None)),
+    "owner_call_request": ("Call the owner", ("Card", "card_id", None)),
     "task_done": ("Mark card done", ("Card", "card_id", None)),
     "column_create": ("Create board column", ("Project", "project_id", None)),
     "column_update": ("Update board column", ("Column", "id", None)),

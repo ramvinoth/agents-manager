@@ -122,6 +122,7 @@ function navToTarget({ data, title }: PushTap): void {
   const root = navigationRef.getRootState()?.routes?.[0]?.name
   if (root === "Server" || root === "Login") return
   switch (target.to) {
+    case "call": return navigationRef.navigate("Call", { label: `Card ${target.cardId}` })
     case "card": return navigationRef.navigate("CardDetail", { id: target.id })
     case "note": return navigationRef.navigate("NoteEditor", { id: target.id })
     case "integrations": return navigationRef.navigate("Integrations")

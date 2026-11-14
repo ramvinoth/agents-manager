@@ -100,6 +100,19 @@ class InboxMixin:
                         "sender_type": sender[0], "sender_id": sender[1],
                         "created_by": p["actor"]})
 
+    def _p_owner_call(self, req):
+        """Ask to ring the owner (actions:_owner_call_request). The caller's id and
+        level come from the resolved principal, never the body; ownercall.decide
+        owns the rules (reason, card, level, quiet hours, gap, daily cap)."""
+        from orchestrator import orglogic
+        body = self.read_body() or {}
+        p = req.principal
+        level = orglogic.effective_level(p.get("human_role"), p.get("session_level"))
+        self._org_send(req, "owner_call_request",
+                       {"card_id": body.get("card_id"), "reason": body.get("reason") or "",
+                        "sender_id": p["session"] if p["kind"] == "mcp" else "",
+                        "level": level, "created_by": p["actor"]})
+
     def _g_inbox_cap(self, req):
         """How many decisions the owner sees at once (orchestrator.queue). Any
         resolved caller may read it; only the owner may change it."""

@@ -141,3 +141,10 @@ def test_exact_apns_payload_shape(label_env):
     assert parsed["aps"]["alert"]["body"] == "Approve Bash? — ls"
     assert parsed["aps"]["sound"] == "default"
     assert parsed["body"] == data
+
+
+def test_time_sensitive_flag_only_when_asked():
+    plain = push.build_payload("t", "b", data={"call": "5"})
+    urgent = push.build_payload("t", "b", data={"call": "5"}, time_sensitive=True)
+    assert "interruption-level" not in json.dumps(plain)
+    assert json.loads(json.dumps(urgent))["aps"]["interruption-level"] == "time-sensitive"

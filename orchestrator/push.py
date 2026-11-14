@@ -106,7 +106,7 @@ def _send_one(token, payload, jwt_token):
         return False, str(e)
 
 
-def build_payload(title, body, data=None):
+def build_payload(title, body, data=None, time_sensitive=False):
     """The APNs JSON payload for one notification.
 
     Deep-link contract: expo-notifications 0.28's EXNotificationSerializer
@@ -118,12 +118,16 @@ def build_payload(title, body, data=None):
     """
     payload = {"aps": {"alert": {"title": title, "body": (body or "")[:300]},
                        "sound": "default"}}
+    if time_sensitive:
+        # Breaks through Focus and the scheduled summary; the interruption level
+        # rides in the JSON, so the curl headers stay the same.
+        payload["aps"]["interruption-level"] = "time-sensitive"
     if data:
         payload["body"] = data
     return payload
 
 
-def notify_all(title, body, data=None):
+def notify_all(title, body, data=None, time_sensitive=False):
     """Push to every registered device (the base is single-owner). No-ops when
     unconfigured or no devices. Daemon thread so callers never block on the net."""
     if not _configured():
@@ -136,7 +140,7 @@ def notify_all(title, body, data=None):
             tokens = []
         if not tokens:
             return
-        payload = json.dumps(build_payload(title, body, data))
+        payload = json.dumps(build_payload(title, body, data, time_sensitive))
         try:
             jwt_token = _auth_jwt()
         except Exception:

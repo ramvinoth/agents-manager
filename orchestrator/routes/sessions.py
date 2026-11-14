@@ -683,6 +683,7 @@ class SessionsMixin:
             self.send_json({"error": "An agent schedules a new session's work with loop_create"}, status=403)
             return
         from orchestrator import actions
+        body["createdBySession"] = principal["session"]   # who to escalate to; never client-supplied
         payload, status = actions.execute(actions.intent("session_create", body, principal["actor"]),
                                           principal["human_role"], principal["session_level"],
                                           acting_session=principal["session"])
@@ -810,6 +811,8 @@ def start_new_session(body):
         conv_mode = "chat"
     meta = {"systemPrompt": sp, "goal": goal, "provider": provider,
             "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
+    if body.get("createdBySession"):
+        meta["createdBySession"] = str(body["createdBySession"])
     if title:
         # The fallback name until the transcript carries its own custom-title
         # (a remote run gets no --name, and the client's rename can fail).

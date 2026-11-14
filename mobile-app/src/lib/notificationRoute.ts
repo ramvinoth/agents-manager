@@ -3,6 +3,7 @@
  * orchestrator/push.py); this maps it to one screen, synchronously, so the tap
  * navigates in the same frame instead of after a network read.
  *
+ *   {call}            → call mode, opened for that card (owner_call_request ring)
  *   {card}            → that board card
  *   {note}            → that note
  *   {screen}          → Integrations (an account whose sign-in expired)
@@ -11,6 +12,7 @@
  *   {session, host}   → that chat (the thread resolves id → path itself)
  */
 export type NotificationTarget =
+  | { to: "call"; cardId: number }
   | { to: "card"; id: number }
   | { to: "note"; id: number }
   | { to: "integrations" }
@@ -27,6 +29,8 @@ const posInt = (v: unknown) => {
 /** `title` is the push's own title: for a chat it is the chat's name, shown
  *  in the header until the thread's first read confirms it. */
 export function notificationTarget(data: Record<string, unknown>, title = ""): NotificationTarget | null {
+  const call = posInt(data.call)
+  if (call) return { to: "call", cardId: call }
   const card = posInt(data.card)
   if (card) return { to: "card", id: card }
   const note = posInt(data.note)
