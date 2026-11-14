@@ -1,4 +1,5 @@
 """The Claude Code agent runner."""
+import collections
 import json
 import os
 import re
@@ -62,6 +63,19 @@ def _finish_history(session_id):
     threading.Thread(target=fold, daemon=True, name="history-fold").start()
 
 
+def _fail_note(err, last_lines, tail=5, cap=4000):
+    """The persisted failure note for a dead run: the error plus the last few
+    stream lines. A run has no per-run log, and its transcript is trimmed on
+    the next resume, so without the tail the only record of what a killed run
+    was doing is the one-line log message (2026-11-12: a 30-minute silence
+    killed a live run and left nothing to diagnose)."""
+    note = f"{type(err).__name__}: {err}"
+    lines = list(last_lines)[-tail:]
+    if lines:
+        note += "\nlast stream lines:\n" + "\n".join(lines)
+    return note[-cap:]
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -92,6 +106,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                "provider_env": dict(provider_env) if provider_env else None, "effort": effort,
                "pending_approvals": [], "perm_token": "", "version_gate": "",
                "endpoint_issue": "", "model_wait": inference_health.ModelWait(),
+               # Last raw stream lines, for the failure note: the only
+               # forensics of what a killed run was doing.
+               "last_lines": collections.deque(maxlen=8),
                # The last message sent has had no result yet: a run that ends
                # with this set was cut off mid-turn (resume.was_cut_off).
                "turn_open": True}
@@ -330,6 +347,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
 
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT,
                                           paused=lambda: bool(job.get("pending_approvals"))):
+                # Kept for the failure note (last 8, bounded): what a killed
+                # run was doing, when its own record is already gone.
+                job["last_lines"].append(line[:300].rstrip("\n"))
                 # Provider verdict "this model needs a newer claude CLI" arrives
                 # as an API-error event on the stream. Detect on the raw line
                 # (the code + human sentence survive JSON escaping) so it works
@@ -369,10 +389,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             job["returncode"] = proc.returncode
         except Exception as e:
             job["returncode"] = -1
-            job["stderr"] = f"{type(e).__name__}: {e}"[:500]
             # The job is reaped after CHAT_JOB_TTL; without this line the cause
-            # of an rc=-1 run is gone for good.
+            # of an rc=-1 run is gone for good. The tail of the stream is the
+            # only forensics of what the run was doing when it died.
+            job["stderr"] = _fail_note(e, job["last_lines"])
             print(f"  ⚠ run {session_id[:8]} failed: {type(e).__name__}: {e}")
+            for line in list(job["last_lines"])[-5:]:
+                print(f"    | {line}")
             traceback.print_exc()
             if proc:
                 procctl.kill(proc)

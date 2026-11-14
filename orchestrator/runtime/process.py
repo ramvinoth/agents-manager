@@ -42,7 +42,11 @@ def iter_stdout_until(proc, idle_timeout, paused=None, poll=30):
     question, plan or permission hook is holding the CLI until the owner
     answers. While paused the window does not run, and it re-arms in full once
     the answer lands. Those hooks bound their own wait (QUESTION_TIMEOUT,
-    PERM_TIMEOUT), so a pause cannot park the turn forever."""
+    PERM_TIMEOUT), so a pause cannot park the turn forever.
+
+    Callers keep a short ring of the last lines (runners/claude.py does) so a
+    killed turn's failure note can say what it was doing: a run has no
+    per-run log, and its transcript is trimmed on the next resume."""
     q = queue.Queue()
 
     def _pump():
