@@ -12,7 +12,7 @@ import {
   kindLabel, senderColor, senderLabel, SNOOZE_OPTIONS,
   conversationPreview, conversationBadge, groupConversations, inboxScopeFilter, inboxStateBadge,
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
-  confirmSent, pendingMessage, withPending,
+  confirmSent, pendingMessage, withPending, resolveParent, quotePreview,
 } from "../lib/inbox"
 import { fmtWaiting, queueFrom } from "../lib/decisions"
 import { fmtClock, fmtDate } from "../lib/thread"
@@ -78,6 +78,9 @@ export default function InboxScreen({ navigation, session, title, host, path, is
   const [composeOpen, setComposeOpen] = useState(false)
   const [snoozeFor, setSnoozeFor] = useState<number | null>(null)
   const [draft, setDraft] = useState("")
+  const [replyingTo, setReplyingTo] = useState<InboxMessage | null>(null)
+  const [flashId, setFlashId] = useState<number | null>(null)
+  const listRef = useRef<FlatList<ThreadItem>>(null)
   // The visible decision queue (the board band's source) — what "Decide"
   // opens the cockpit over. A failed read degrades to "fall back to the chat".
   const [queue, setQueue] = useState<OpenDecision[]>([])
@@ -190,6 +193,15 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     }
   }, [session, title, labels, isTab, unread, t.accent, openChat])
 
+  const timeline = useMemo(() => threadTimeline(messages, (ts) => fmtDate(iso(ts))).reverse(), [messages])
+  const jumpTo = useCallback((id: number) => {
+    const index = timeline.findIndex((x) => x.type !== "day" && x.m.id === id)
+    if (index < 0) return
+    listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true })
+    setFlashId(id)
+    setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 1200)
+  }, [timeline])
+
   // Optimistic: the box clears and the bubble shows the moment you tap send
   // (a messenger never makes you watch your words sit in the field); a failed
   // send takes the bubble back and returns the words to the box.
@@ -197,19 +209,21 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     const body = draft.trim()
     if (!body || !session) return
     const lastTheirs = [...messages].filter((m) => m.sender_type !== "user").sort((a, b) => b.created_at - a.created_at)[0]
-    const pending = pendingMessage(session, body, lastTheirs?.id ?? 0)
+    const parentId = replyingTo?.id ?? lastTheirs?.id
+    const pending = pendingMessage(session, body, parentId ?? 0)
     setDraft("")
+    setReplyingTo(null)
     setActionError("")
     setMessages((all) => [...all, pending])
     try {
-      const row = await api.inboxSend({ to: `session:${session}`, body, in_reply_to: lastTheirs?.id })
+      const row = await api.inboxSend({ to: `session:${session}`, body, in_reply_to: parentId })
       setMessages((all) => confirmSent(all, pending.id, row))
     } catch (e) {
       setMessages((all) => all.filter((m) => m.id !== pending.id))
       setDraft((d) => (d ? `${body}\n${d}` : body))
       setActionError(`Not sent: ${userError(e, "your message", "send")}`)
     }
-  }, [draft, session, messages])
+  }, [draft, session, messages, replyingTo])
 
   const snooze = async (hours: number) => {
     if (snoozeFor == null) return
@@ -243,9 +257,11 @@ export default function InboxScreen({ navigation, session, title, host, path, is
     >
       {errorBar}
       <FlatList<ThreadItem>
+        ref={listRef}
+        onScrollToIndexFailed={() => {}}
         testID="inbox-thread"
         inverted
-        data={threadTimeline(messages, (ts) => fmtDate(iso(ts))).reverse()}
+        data={timeline}
         keyExtractor={(x) => x.key}
         contentContainerStyle={styles.threadContent}
         ListEmptyComponent={
@@ -260,12 +276,17 @@ export default function InboxScreen({ navigation, session, title, host, path, is
           const m = item.m
           const decision = m.kind !== "message"
           const badge = decision ? inboxStateBadge(m) : null
+          const parent = resolveParent(messages, m)
           return (
-            <View
+            <TouchableOpacity
               testID={`inbox-msg-${m.id}`}
+              activeOpacity={1}
+              delayLongPress={350}
+              onLongPress={() => setReplyingTo(m)}
               style={[item.mine ? styles.bubbleUser : styles.bubbleAssistant,
                 !item.first ? { marginTop: 4 } : null,
-                decision && m.open ? styles.ibOpenDecision : null]}
+                decision && m.open ? styles.ibOpenDecision : null,
+                flashId === m.id ? styles.ibFlash : null]}
             >
               {!item.mine && item.first ? (
                 <Text style={[styles.ibKind, { color: senderColor(m, t.scheme) }]} numberOfLines={1}>{senderLabel(m, labels)}</Text>
@@ -274,6 +295,24 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                 <Text style={[styles.ibKind, { color: m.open ? t.accent : t.textMuted }]}>
                   {kindLabel(m.kind).toUpperCase()}{badge ? ` · ${badge}` : ""}
                 </Text>
+              ) : null}
+              {m.in_reply_to ? (
+                parent ? (
+                  <TouchableOpacity
+                    testID={`inbox-quote-${m.id}`}
+                    onPress={() => jumpTo(parent.id)}
+                    style={[styles.ibQuote, { borderLeftColor: senderColor(parent, t.scheme) }]}
+                  >
+                    <Text style={[styles.ibKind, { color: senderColor(parent, t.scheme), marginBottom: 2 }]} numberOfLines={1}>
+                      {parent.sender_type === "user" ? "You" : senderLabel(parent, labels)}
+                    </Text>
+                    <Text style={styles.ibQuoteText} numberOfLines={2}>{quotePreview(parent)}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.ibQuote, { borderLeftColor: t.textMuted }]}>
+                    <Text style={styles.ibQuoteText}>Original message unavailable</Text>
+                  </View>
+                )
               ) : null}
               <Text style={styles.bubbleText} selectable><CardMentions text={m.body} /></Text>
               {decision && m.open ? (
@@ -301,11 +340,24 @@ export default function InboxScreen({ navigation, session, title, host, path, is
                 </View>
               ) : null}
               <Text style={styles.msgTime}>{m.pending ? "Sending…" : fmtClock(iso(m.created_at))}</Text>
-            </View>
+            </TouchableOpacity>
           )
         }}
       />
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+        {replyingTo ? (
+          <View style={[styles.ibQuote, styles.ibReplyChip, { borderLeftColor: senderColor(replyingTo, t.scheme) }]} testID="inbox-reply-chip">
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.ibKind, { color: senderColor(replyingTo, t.scheme), marginBottom: 2 }]} numberOfLines={1}>
+                Replying to {replyingTo.sender_type === "user" ? "yourself" : senderLabel(replyingTo, labels)}
+              </Text>
+              <Text style={styles.ibQuoteText} numberOfLines={1}>{quotePreview(replyingTo)}</Text>
+            </View>
+            <TouchableOpacity testID="inbox-reply-cancel" accessibilityLabel="Cancel reply" onPress={() => setReplyingTo(null)} hitSlop={10}>
+              <Icon name="close" size={18} color={t.textMuted} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
         <View style={styles.composerBar}>
           <TextInput
             testID="inbox-composer"

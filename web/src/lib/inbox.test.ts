@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, searchInbox, type InboxMessage } from "./inbox.ts"
+import { resolveParent, quotePreview, INBOX_FILTERS, INBOX_KIND_LABEL, inboxStateBadge, messagePreview, messageTitle, orderInbox, replyTo, searchInbox, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -50,6 +50,16 @@ eq("peer row — reply to the recipient's mailbox", replyTo(M({ id: 3, session_i
 eq("no session party — nothing to reply to", replyTo(M({ id: 4, session_id: "", sender_type: "user", recipient_type: "user" })), null)
 
 // scope validation: unscoped is legitimate (the tab); malformed is refused
+
+// reply binding: the quoted parent
+{
+  const p = M({ id: 1, body: "Ship it?\nmore detail" })
+  const r = M({ id: 2, in_reply_to: 1 })
+  eq("parent found", resolveParent([p, r], r)?.id, 1)
+  eq("not a reply", resolveParent([p, r], p), null)
+  eq("parent not loaded", resolveParent([r], r), null)
+  eq("quote is the first line", quotePreview(p), "Ship it?")
+}
 
 console.log(`\ninbox: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

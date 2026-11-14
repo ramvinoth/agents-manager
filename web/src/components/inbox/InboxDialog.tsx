@@ -12,7 +12,7 @@ import { api } from "@/lib/api"
 import { fmtAgo, projectName } from "@/lib/format"
 import {
   INBOX_FILTERS, INBOX_KIND_LABEL, inboxStateBadge, messagePreview, messageTitle,
-  orderInbox, replyTo, rowActor, searchInbox, SNOOZE_OPTIONS, type InboxMessage,
+  orderInbox, quotePreview, replyTo, resolveParent, rowActor, searchInbox, SNOOZE_OPTIONS, type InboxMessage,
 } from "@/lib/inbox"
 import { useStore } from "@/store"
 import type { OpenDecision, OrgProject } from "@/lib/types"
@@ -310,6 +310,9 @@ export function InboxDialog({
                   key={open.id}
                   msg={open}
                   label={labels[open.sender_id] || ""}
+                  parent={resolveParent(messages, open)}
+                  parentLabel={labels[resolveParent(messages, open)?.sender_id ?? ""] || ""}
+                  onJump={setOpenId}
                   onDecide={() => decide(open)}
                   onRead={() => markRead(open)}
                   onSnooze={(h) => snooze(open, h)}
@@ -344,10 +347,13 @@ export function InboxDialog({
  *  an open decision opens the cockpit (the deciding surface) and can be snoozed;
  *  messages can be replied to, in place. */
 function RowDetail({
-  msg, label, onDecide, onRead, onSnooze, canReply,
+  msg, label, parent, parentLabel, onJump, onDecide, onRead, onSnooze, canReply,
 }: {
   msg: InboxMessage
   label: string
+  parent: InboxMessage | null
+  parentLabel: string
+  onJump: (id: number) => void
   onDecide: () => void
   onRead: () => void
   onSnooze: (hours: number) => void
@@ -385,6 +391,22 @@ function RowDetail({
         <span className="text-xs text-muted-foreground">{fmtAgo(msg.created_at)}</span>
         <span className="ml-auto text-xs text-muted-foreground">{isDecision ? (msg.open ? "decision still open" : "decision resolved") : `status: ${effLabel}`}</span>
       </div>
+
+      {msg.in_reply_to ? (
+        parent ? (
+          <button
+            type="button"
+            onClick={() => onJump(parent.id)}
+            className="flex flex-col items-start gap-0.5 rounded-md border-l-4 border-primary bg-muted/50 px-3 py-2 text-left hover:bg-muted"
+            aria-label="Go to the message this replies to"
+          >
+            <span className="text-xs font-medium text-primary">{rowActor(parent, parentLabel ? { [parent.sender_id]: parentLabel } : {})}</span>
+            <span className="line-clamp-2 text-xs text-muted-foreground">{quotePreview(parent)}</span>
+          </button>
+        ) : (
+          <div className="rounded-md border-l-4 border-border bg-muted/30 px-3 py-2 text-xs italic text-muted-foreground">Original message unavailable</div>
+        )
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border p-3">
         <div className="text-sm leading-relaxed"><Markdown text={msg.body} /></div>

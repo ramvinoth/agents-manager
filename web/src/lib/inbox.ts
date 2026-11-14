@@ -72,6 +72,18 @@ export function rowActor(m: InboxMessage, labels: Record<string, string> = {}): 
   return "You"
 }
 
+/** The message a reply answers, or null when it is not in the loaded set
+ *  (older than the page, or deleted). 0 / missing in_reply_to means "not a reply". */
+export function resolveParent(messages: InboxMessage[], m: InboxMessage): InboxMessage | null {
+  if (!m.in_reply_to) return null
+  return messages.find((x) => x.id === m.in_reply_to) || null
+}
+
+/** The quoted snippet shown above a reply: the parent's first line, clipped. */
+export function quotePreview(parent: InboxMessage, max = 120): string {
+  return messageTitle(parent, max)
+}
+
 /** Case-insensitive search over title + body (the same contract as notes). */
 export function searchInbox(messages: InboxMessage[], q: string): InboxMessage[] {
   const needle = q.trim().toLowerCase()

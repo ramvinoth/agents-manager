@@ -1,4 +1,4 @@
-import { INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, conversationBadge, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderColor, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
+import { resolveParent, quotePreview, INBOX_FILTERS, INBOX_KIND_LABEL, conversationPreview, conversationBadge, kindLabel, groupConversations, inboxScopeFilter, inboxStateBadge, messageTitle, searchConversations, searchInbox, senderColor, senderLabel, threadTimeline, waitsOnOwner, pendingMessage, withPending, confirmSent, type InboxMessage } from "./inbox.ts"
 
 let pass = 0, fail = 0
 function eq(label: string, got: unknown, want: unknown) {
@@ -95,6 +95,16 @@ eq("blank search keeps all", searchConversations(convs, rows, " ").length, 3)
 // thread timeline: oldest first, day separators on change, mine = owner wrote it
 const tl = threadTimeline(rows.slice(0, 2).concat(M({ id: 9, session_id: "a", sender_type: "session", created_at: 100 })), (ts) => (ts < 50 ? "D1" : "D2"))
 eq("timeline shape", tl.map((x) => (x.type === "day" ? x.label : `${x.m.id}${x.mine ? "R" : "L"}`)), ["D1", "1L", "2R", "D2", "9L"])
+
+// reply binding: the quoted parent
+{
+  const p = M({ id: 1, body: "Ship it?\nmore detail" })
+  const r = M({ id: 2, in_reply_to: 1 })
+  eq("parent found", resolveParent([p, r], r)?.id, 1)
+  eq("not a reply", resolveParent([p, r], p), null)
+  eq("parent not loaded", resolveParent([r], r), null)
+  eq("quote is the first line", quotePreview(p), "Ship it?")
+}
 
 console.log(`\ninbox: ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)
