@@ -15,7 +15,7 @@ import pytest
 
 from orchestrator import calllive, speakrailcall
 from orchestrator.speakrailcall import SrAsrState, BreezeTtsSocket, SpeakrailAsrSocket
-from orchestrator.speakrailcall import _SPEECH, _COMPLETE, _TRANS
+from orchestrator.speakrailcall import _SPEECH, _COMPLETE, _TRANS, dither_silence
 from orchestrator.calllive import pack
 from orchestrator.wsclient import OP_BINARY, OP_CLOSE, OP_TEXT
 from test_calllive import FakeFish, FakePhone, wait_for
@@ -69,6 +69,29 @@ def test_agent_voice_is_dropped_and_its_tail_filtered_by_time():
     s.on_words(words(("show", 600, 700), ("the", 700, 800), ("board", 800, 900)))
     assert s.on_frame(1280, _COMPLETE) == [
         {"type": "committed", "turn_index": 1, "text": "show the board", "user_turn": True}]
+
+
+def test_first_word_after_a_pause_survives_its_stale_position():
+    # Live repro: the adapter spread "Show me the" from the previous delta's end
+    # (2960) to now (23120), so "Show" sat at 9680, before the agent stopped, and
+    # the turn came out as "me the card".
+    s = SrAsrState()
+    s.set_agent_speaking(True)
+    s.set_agent_speaking(False)
+    assert s.on_frame(13040, _TRANS) == []              # leak window until 13340
+    assert s.on_frame(21840, _SPEECH) == [{"type": "user_turn_taken", "turn_index": 1}]
+    s.on_words(words(("Show", 2960, 9680), ("me", 9680, 16400), ("the", 16400, 23120)))
+    s.on_words(words(("card", 23120, 23840)))
+    assert s.on_frame(23840, _COMPLETE) == [
+        {"type": "committed", "turn_index": 1, "text": "Show me the card", "user_turn": True}]
+
+
+def test_the_clamp_never_pulls_the_agent_tail_into_the_turn():
+    s = SrAsrState()
+    s.set_agent_speaking(True)
+    s.set_agent_speaking(False)
+    assert s.on_frame(10000, _TRANS) == []              # leak window until 10300
+    assert s.on_words(words(("all", 2000, 6000), ("done", 6000, 10200))) == []
 
 
 def test_continuous_speech_after_agent_stop_latches():
@@ -222,6 +245,39 @@ def test_socket_translates_the_fish_dialect():
     assert s.state.agent is True
     s.send_bytes(pack({"type": "audio_done"}))
     assert "input_audio.end" in c.sent_text[0]
+
+
+def _samples(b):
+    return [int.from_bytes(b[i:i + 2], "little", signed=True) for i in range(0, len(b) - 1, 2)]
+
+
+def test_dither_turns_digital_silence_into_one_lsb_noise():
+    out = dither_silence(bytes(2560))                    # one 80 ms frame of pure zeros
+    vals = _samples(out)
+    assert len(out) == 2560 and set(vals) <= {-1, 1}
+    assert 1 in vals and -1 in vals                       # random, not a fixed DC offset
+
+
+def test_dither_leaves_speech_samples_alone():
+    speech = b"".join(v.to_bytes(2, "little", signed=True) for v in (1200, -300, 0, 7, 0, -32768))
+    vals = _samples(dither_silence(speech))
+    assert [vals[i] for i in (0, 1, 3, 5)] == [1200, -300, 7, -32768]
+    assert vals[2] in (-1, 1) and vals[4] in (-1, 1)
+
+
+def test_dither_keeps_frames_without_zero_samples_and_odd_tails():
+    frame = (1).to_bytes(2, "little") + (256).to_bytes(2, "little")   # bytes hold 00 pairs across samples
+    assert dither_silence(frame) == frame
+    assert dither_silence(b"") == b""
+    odd = bytes(5)                                        # a stray tail byte is passed through
+    out = dither_silence(odd)
+    assert len(out) == 5 and out[4] == 0 and set(_samples(out)) <= {-1, 1}
+
+
+def test_socket_never_sends_digital_silence_to_the_asr():
+    c = _mk_conn()
+    SpeakrailAsrSocket(c).send_bytes(pack({"type": "audio", "data": bytes(320)}))
+    assert set(_samples(c.sent_bytes[0])) <= {-1, 1}
 
 
 def test_recv_normalizes_and_queues_events_in_order():

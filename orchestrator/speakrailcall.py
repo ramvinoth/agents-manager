@@ -34,12 +34,19 @@ an ASR socket, an http(s):// URL a TTS socket.
 
 import json
 import queue
+import random
 import threading
 
 from orchestrator.calllive import OP_BINARY, OP_CLOSE, OP_TEXT, pack, unpack
 
 LEAK_MARGIN_MS = 300   # speaker ring-out + AEC tail after the agent stops
 LATCH_FRAMES = 5       # 5 x 80 ms of continuous speech settles the leak with no VAD boundary
+# The adapter does not know when a word was spoken: it spreads each delta's words
+# evenly from the previous delta's end to now. After a pause that puts the first
+# word back in the pause (even before the agent stopped), so the leak filter ate
+# it. A word really ends at most one 960 ms model chunk plus one held-back word
+# before the delta that carries it, so older positions are clamped to that.
+WORD_LAG_MS = 2 * 960
 
 _SPEECH = [0.95, 0.01, 0.02, 0.01, 0.01, 0.02, 0.02, 0.02]
 _COMPLETE = [0.01, 0.97, 0.01, 0.0, 0.01, 0.9, 0.9, 0.9]
@@ -139,8 +146,9 @@ class SrAsrState:
         with self.lock:
             if self.agent or not self.leak_settled:
                 return []                     # the model's tail of the agent's voice
-            keep = [w["text"] for w in (words or [])
-                    if isinstance(w, dict) and w.get("text") and w.get("end", 0) >= self.leak_until_ms]
+            words = [w for w in (words or []) if isinstance(w, dict) and w.get("text")]
+            floor = max((w.get("end", 0) for w in words), default=0) - WORD_LAG_MS
+            keep = [w["text"] for w in words if max(w.get("end", 0), floor) >= self.leak_until_ms]
             if not keep:
                 return []                     # an all-tail event never opens a turn
             acts = []
@@ -168,6 +176,30 @@ class SrAsrState:
         return acts
 
 
+_DITHER = (b"\x01\x00", b"\xff\xff")   # +1 / -1 as little-endian int16
+
+
+def dither_silence(pcm):
+    """Replace every exact-zero PCM16 sample with a random +-1 LSB.
+
+    LFM3's live ASR goes deaf after a stretch of pure digital silence (the
+    log-mel of zero power is far outside its training data) and hears nothing
+    again until its 24 s context reset; any noise at all keeps it listening.
+    The phone's echo canceller hands us exact zeros whenever it suppresses the
+    speaker or the room is quiet, which clipped the first and last words of
+    the next utterance. One LSB is -90 dBFS: inaudible, far under the
+    adapter's VAD floor, and real speech samples are left untouched.
+    """
+    if b"\x00\x00" not in pcm:
+        return pcm
+    out = bytearray(pcm)
+    pick = random.getrandbits
+    for i in range(0, len(out) - 1, 2):
+        if not out[i] and not out[i + 1]:
+            out[i:i + 2] = _DITHER[pick(1)]
+    return bytes(out)
+
+
 class SpeakrailAsrSocket:
     """A Fish-protocol ASR socket over the LFM3 adapter's websocket.
 
@@ -191,7 +223,7 @@ class SpeakrailAsrSocket:
         ev = unpack(b)
         t = ev.get("type")
         if t == "audio":
-            self.conn.send_bytes(ev.get("data") or b"")
+            self.conn.send_bytes(dither_silence(ev.get("data") or b""))
         elif t == "agent_speaking":
             self.state.set_agent_speaking(bool(ev.get("speaking")))
         elif t == "audio_done":
