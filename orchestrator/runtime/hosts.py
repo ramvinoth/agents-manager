@@ -24,7 +24,7 @@ from orchestrator.runtime.plugins import (
     plugin_description,
     plugin_mcp_servers,
 )
-from orchestrator.runtime.summaries import StatCache, _session_project, extract_cwd, remote_session_summary
+from orchestrator.runtime.summaries import StatCache, _session_project, project_name, extract_cwd, remote_session_summary
 from orchestrator.runtime.titles import _newer
 from orchestrator.sessions import compute_session_summary
 
@@ -298,6 +298,7 @@ class LocalHost(Host):
             project = _session_project(jsonl_file)
             sessions.append({"id": session_id, "path": str(jsonl_file.relative_to(CLAUDE_DIR.parent)),
                              "title": title or session_id[:8], "project": project,
+                             "project_name": project_name(project),
                              "size": stat.st_size, "modified": stat.st_mtime,
                              # When the last message was written. The
                              # file's mtime also moves when Claude appends

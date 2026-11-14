@@ -12,7 +12,7 @@ export function orderChats(chats: Session[]): Session[] {
   return [...chats].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || activity(b) - activity(a))
 }
 
-export type ChatRow = { kind: "chat"; s: Session } | { kind: "header"; project: string; count: number }
+export type ChatRow = { kind: "chat"; s: Session } | { kind: "header"; project: string; cwd: string; count: number }
 
 /** The list's rows. Flat, or grouped by project: a header per project (the one
  *  with the newest message first, "No project" last-named bucket by activity),
@@ -21,12 +21,12 @@ export function chatRows(chats: Session[], grouped: boolean, collapsed: Readonly
   if (!grouped) return chats.map((s) => ({ kind: "chat", s }))
   const groups = new Map<string, Session[]>()
   for (const s of chats) {
-    const key = s.project || NO_PROJECT
+    const key = sessionProject(s)
     ;(groups.get(key) || groups.set(key, []).get(key)!).push(s)
   }
   const out: ChatRow[] = []
   for (const [project, list] of groups) {
-    out.push({ kind: "header", project, count: list.length })
+    out.push({ kind: "header", project, cwd: list.find((s) => s.project)?.project ?? "", count: list.length })
     if (!collapsed.has(project)) for (const s of list) out.push({ kind: "chat", s })
   }
   return out
@@ -37,10 +37,16 @@ export const NO_PROJECT = "No project"
 /** The Chats search box's filter: one at a time, like a chat app's filter menu. */
 export type ChatFilter = { kind: "unread" } | { kind: "starred" } | null
 
-/** A project's display name: the last folder of its path. */
+/** A path's last folder: the name for a server that predates `project_name`. */
 export function projectName(p: string): string {
   const parts = p.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : p
+}
+
+/** The project a chat is listed under: the server's resolved name (git repo,
+ *  else folder), never the absolute path. Chats with no folder share one bucket. */
+export function sessionProject(s: Session): string {
+  return s.project_name || (s.project ? projectName(s.project) : NO_PROJECT)
 }
 
 export function filterLabel(f: ChatFilter): string {
@@ -55,7 +61,7 @@ export function visibleChats(chats: Session[], opts: { archived: boolean; query:
   const f = opts.filter
   return orderChats(chats.filter((s) =>
     !!s.archived === opts.archived &&
-    (!q || (s.title || s.id).toLowerCase().includes(q) || (s.project || "").toLowerCase().includes(q)) &&
+    (!q || (s.title || s.id).toLowerCase().includes(q) || sessionProject(s).toLowerCase().includes(q)) &&
     (!f || (f.kind === "unread" ? !!s.unread : !!s.favorite))))
 }
 

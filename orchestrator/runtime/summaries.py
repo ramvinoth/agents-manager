@@ -1,6 +1,9 @@
 """Session summaries and the cwd/project a session belongs to."""
 import json
+import re
+import subprocess
 import threading
+from functools import lru_cache
 from pathlib import Path
 
 from orchestrator.remote import SSH, remote_full_path, remote_run_python
@@ -24,6 +27,35 @@ def _session_project(jsonl_file):
     if pdir.startswith(_HOME_ENC + "-"):
         pdir = "~/" + pdir[len(_HOME_ENC) + 1:]
     return pdir.replace("--", "/").replace("-", "/")
+
+
+_REMOTE_REPO = re.compile(r"[/:]([^/:]+?)(?:\.git)?/?$")
+
+
+@lru_cache(maxsize=512)
+def project_name(cwd):
+    """What a project is called in lists: its git repo name (from the origin
+    remote, any https/ssh form), else the repo folder, else the folder itself.
+    Sub-folders of one repo share a name, so they group together. Never raises:
+    a missing folder or a slow git just falls back to the folder name."""
+    path = Path(cwd).expanduser()
+    if path == Path.home():
+        return "Home"
+    base = path.name or str(cwd)
+    if not path.is_dir():
+        return base
+    try:
+        top = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=3)
+        if top.returncode != 0:
+            return base
+        root = top.stdout.strip()
+        url = subprocess.run(["git", "-C", root, "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=3)
+        m = _REMOTE_REPO.search(url.stdout.strip()) if url.returncode == 0 else None
+        return m.group(1) if m else (Path(root).name or base)
+    except (OSError, subprocess.SubprocessError):
+        return base
 
 
 def extract_cwd(session_file):

@@ -337,6 +337,8 @@ export type Session = {
   title?: string
   path: string
   project?: string
+  /** What the project is called: its git repo name, else its folder. */
+  project_name?: string
   modified?: number
   /** When the last visible message was written (epoch s). The file's mtime
    *  (`modified`) also moves when Claude Code appends bookkeeping on resume or

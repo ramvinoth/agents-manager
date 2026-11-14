@@ -13,7 +13,7 @@ import ChatActions from "../components/ChatActions"
 import Avatar from "../components/Avatar"
 import { createHarman, HARMAN_TITLE } from "../lib/harman"
 import type { StartingChat } from "../lib/session"
-import { activity, chatRows, isGrouped, NO_PROJECT, defaultFilter, filterLabel, projectName, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
+import { activity, chatRows, isGrouped, defaultFilter, filterLabel, toStored, visibleChats, type ChatFilter } from "../lib/chatList"
 import { showActions } from "../lib/actionSheet"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
@@ -463,7 +463,7 @@ export default function ChatsScreen({ navigation }: Props) {
           renderItem={({ item: row }) => {
             if (row.kind === "header") {
               const open = !collapsed.has(row.project)
-              const named = row.project !== NO_PROJECT
+              const named = !!row.cwd
               return (
                 <View style={styles.projectHeader}>
                   <TouchableOpacity
@@ -478,15 +478,15 @@ export default function ChatsScreen({ navigation }: Props) {
                     }
                   >
                     <Icon name={open ? "chevronDown" : "chevronRight"} size={16} color={t.textMuted} />
-                    <Text style={styles.projectHeaderText} numberOfLines={1}>{named ? projectName(row.project) : row.project}</Text>
+                    <Text style={styles.projectHeaderText} numberOfLines={2}>{row.project}</Text>
                     <Text style={styles.projectHeaderCount}>{row.count}</Text>
                   </TouchableOpacity>
                   {named && (
                     <TouchableOpacity
                       testID={`project-new-chat-${row.project}`}
-                      accessibilityLabel={`New chat in ${projectName(row.project)}`}
+                      accessibilityLabel={`New chat in ${row.project}`}
                       hitSlop={10}
-                      onPress={() => navigation.navigate("NewChat", { cwd: row.project })}
+                      onPress={() => navigation.navigate("NewChat", { cwd: row.cwd })}
                     >
                       <Icon name="add" size={18} color={t.accent} />
                     </TouchableOpacity>
