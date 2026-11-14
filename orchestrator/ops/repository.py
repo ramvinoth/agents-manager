@@ -119,6 +119,40 @@ def ui_events_purge(max_age_days):
         return cur.rowcount
 
 
+# Call evidence (orchestrator.callrecord) -------------------------------------------
+
+def call_events_insert(call_id, events):
+    """Flush one call's buffered timeline (orchestrator.callrecord): one batched
+    statement, returns the rows written. Each row carries abs_ts (epoch, retention)
+    and ts (call-relative), aligned to the caller_bytes / reply_bytes offsets so a
+    reader can check whether the caller's first words were captured before the
+    engine answered."""
+    if not events:
+        return 0
+    rows = [(e.get("abs_ts", 0), e.get("ts", 0), call_id, e.get("kind", ""),
+             e.get("sub", ""), e.get("turn", -1), e.get("text", ""),
+             e.get("caller_bytes", 0), e.get("reply_bytes", 0), e.get("detail", ""))
+            for e in events]
+    with postgres.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO call_events (abs_ts, ts, call_id, kind, sub, turn, text, "
+            "caller_bytes, reply_bytes, detail) VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", rows)
+    return len(rows)
+
+
+def call_events_purge(max_age_days):
+    """Drop call timelines older than the retention window. Returns the removed
+    call ids (the scheduler deletes their raw audio too, though that sweep runs
+    independently so the disk stays bounded even if this fails)."""
+    if not max_age_days or max_age_days <= 0:
+        return []
+    with postgres.cursor() as cur:
+        cur.execute("DELETE FROM call_events WHERE abs_ts < %s RETURNING call_id",
+                    (postgres.now() - float(max_age_days) * 86400,))
+        return [r[0] for r in cur.fetchall()]
+
+
 # Restart requests (orchestrator.maintenance) ---------------------------------------
 
 def restart_request_add(requested_by, session_id, commit_sha, reason):

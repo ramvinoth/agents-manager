@@ -794,6 +794,28 @@ Full design: docs_read ORCHESTRATOR_MCP.md$n$))
               detail   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS ui_events_ts ON ui_events (ts);
+            -- Live-call evidence: one call's timeline (orchestrator.callrecord).
+            -- The raw audio lives on disk (CALL_RECORDINGS_DIR); these rows are what
+            -- it means — the heard/said/spoken events, each aligned to the bytes of
+            -- caller input and reply voice present when it fired, so a reader can
+            -- prove whether the caller's first words were actually captured. ts is
+            -- call-relative (with the byte offsets); abs_ts is epoch (retention).
+            -- Bounded by call_recordings_days.
+            CREATE TABLE IF NOT EXISTS call_events (
+              id           BIGSERIAL PRIMARY KEY,
+              abs_ts       DOUBLE PRECISION NOT NULL,
+              ts           DOUBLE PRECISION NOT NULL,
+              call_id      TEXT NOT NULL,
+              kind         TEXT NOT NULL,
+              sub          TEXT NOT NULL DEFAULT '',
+              turn         INTEGER NOT NULL DEFAULT -1,
+              text         TEXT NOT NULL DEFAULT '',
+              caller_bytes BIGINT NOT NULL DEFAULT 0,
+              reply_bytes  BIGINT NOT NULL DEFAULT 0,
+              detail       TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS call_events_call ON call_events (call_id, ts);
+            CREATE INDEX IF NOT EXISTS call_events_abs ON call_events (abs_ts);
             -- Intake channels: inbound doors from the outside world onto ONE board.
             -- Anything that can POST (a website form, a CI job, a monitoring alert,
             -- the owner's own in-app feedback) lands as a card on `project_id`,

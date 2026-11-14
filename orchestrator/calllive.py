@@ -204,9 +204,10 @@ class Voice:
     utterance finishing can never declare the voice over while another is speaking.
     """
 
-    def __init__(self, dial, tell, send_audio, asr_send, speakable, voice_id):
+    def __init__(self, dial, tell, send_audio, asr_send, speakable, voice_id, rec=None):
         self.dial, self.tell, self.send_audio = dial, tell, send_audio
         self.asr_send, self.speakable, self.voice_id = asr_send, speakable, voice_id
+        self.rec = rec                   # CallRecorder: captures the reply's voice + events
         self.lock = threading.Lock()     # guards everything below
         self.order = threading.Lock()    # one utterance streams at a time
         self.epoch = 0                   # bumped by every barge
@@ -278,6 +279,8 @@ class Voice:
             tts = self.dial()
         except Exception as e:
             print(f"[calllive] tts dial failed: {e}", flush=True)
+            if self.rec:
+                self.rec.event("error", sub="tts_dial", text=str(e))
             self.tell("error", message=dial_error(e, "The voice service is unreachable."))
             return
         with self.lock:
@@ -306,6 +309,8 @@ class Voice:
                         first = time.monotonic() - t0
                     chunks += 1
                     nbytes += len(ev["audio"])
+                    if self.rec:
+                        self.rec.reply(ev["audio"])
                     self.send_audio(ev["audio"])
                 elif ev.get("event") == "finish":
                     why = ev.get("reason") or "stop"
@@ -321,6 +326,9 @@ class Voice:
                 gen = self.awaiting = self.seq
         tts.close()
         print(f"[calllive] tts {why}: {chunks} chunks {nbytes} B first={first if first is None else round(first, 2)}s barged={barged}", flush=True)
+        if self.rec:
+            self.rec.event("tts", sub=why, text=text, chunks=chunks, bytes=nbytes,
+                           first_s=None if first is None else round(first, 3), barged=barged)
         if not barged:
             self.tell("audio_end", gen=gen)  # the phone answers "played" once its buffer drains
 
@@ -334,7 +342,7 @@ class Bridge:
     `brain(text, history, tool_runner)` returns call_turn's dict."""
 
     def __init__(self, phone, dial, brain, key, asr_url, tts_url, tts_model, voice_id="",
-                 history=None, speakable=lambda s: s):
+                 history=None, speakable=lambda s: s, rec=None):
         self.phone, self.dial, self.brain = phone, dial, brain
         self.key, self.asr_url, self.tts_url = key, asr_url, tts_url
         self.tts_model, self.voice_id, self.speakable = tts_model, voice_id, speakable
@@ -345,10 +353,11 @@ class Bridge:
         self.asr = None
         self.t0 = time.monotonic()
         self.done = threading.Event()
+        self.rec = rec                   # CallRecorder: the evidence behind this call
         self.voice = Voice(
             dial=lambda: dial(tts_url, {"Authorization": "Bearer " + key, "model": tts_model}),
             tell=self.tell, send_audio=phone.send_bytes, asr_send=self._asr_send,
-            speakable=speakable, voice_id=voice_id)
+            speakable=speakable, voice_id=voice_id, rec=rec)
 
     # -- helpers
     def tell(self, kind, **kw):
@@ -378,11 +387,16 @@ class Bridge:
                 threading.Thread(target=self._think, args=a[1:], daemon=True).start()
             elif a[0] == "heard":
                 self.tell("heard", text=a[1])
+                if self.rec:
+                    self.rec.event("heard", turn=self.turns.current, text=a[1])
             elif a[0] == "speak":
                 args = (a[2], self.voice.current_epoch())
                 threading.Thread(target=self._speak, args=args, daemon=True).start()
             elif a[0] == "interrupt":
-                if self.voice.barge():
+                barged = self.voice.barge()
+                if self.rec:
+                    self.rec.event("barge", sub="cut" if barged else "idle")
+                if barged:
                     self.tell("barge")
             # "cancel": the stale answer is dropped by TurnTaker; nothing to close
 
@@ -413,6 +427,8 @@ class Bridge:
             return self.act(acts)
         except Exception as e:
             print(f"[calllive] brain failed: {e}", flush=True)
+            if self.rec:
+                self.rec.event("error", sub="brain", text=str(e))
             out = {"reply": BRAIN_FAILED, "history": history}
         with self.lock:
             acts = self.turns.brain_done(turn, text, out["reply"])
@@ -422,6 +438,8 @@ class Bridge:
 
     def _speak(self, reply, epoch):
         self.tell("reply", text=reply)
+        if self.rec:
+            self.rec.event("reply", text=reply)
         self.voice.say(reply, epoch)
 
     # -- loops
@@ -458,6 +476,8 @@ class Bridge:
             ev = unpack(payload)
             if ev.get("type") == "error":
                 print(f"[calllive] asr error: {ev.get('message')}", flush=True)
+                if self.rec:
+                    self.rec.event("error", sub="asr", text=ev.get("message") or "")
                 if not ev.get("recoverable"):
                     self.tell("error", message="The listening service failed.")
                     self.done.set()
@@ -467,18 +487,28 @@ class Bridge:
                 # Per-turn timing: the gaps between these lines show where a slow reply is lost.
                 print(f"[calllive] asr {ev.get('type')} turn={ev.get('turn_index')} "
                       f"reason={ev.get('reason')} t={time.monotonic() - self.t0:.2f}s", flush=True)
+                if self.rec:
+                    self.rec.event("asr", sub=ev.get("type"), turn=ev.get("turn_index", -1),
+                                   text=clean_text(ev.get("text")))
             with self.lock:
                 acts = self.turns.on_asr(ev)
             self.act(acts)
 
     def run(self):
+        reason = "closed"
         try:
             self.open_asr()
         except Exception as e:
             print(f"[calllive] asr dial failed: {e}", flush=True)
+            if self.rec:
+                self.rec.event("error", sub="asr_dial", text=str(e))
             self.tell("error", message=dial_error(e, "The listening service is unreachable."))
+            if self.rec:
+                self.rec.close("asr_dial")
             return
         self.tell("ready", sample_rate=VOICE_RATE)
+        if self.rec:
+            self.rec.event("start")
         reader = threading.Thread(target=self.asr_loop, daemon=True)
         reader.start()
         try:
@@ -487,6 +517,8 @@ class Bridge:
                 if op == OP_CLOSE:
                     break
                 if op == OP_BINARY and payload:
+                    if self.rec:
+                        self.rec.caller(payload)
                     self.asr.send_bytes(pack({"type": "audio", "data": payload}))
                 elif op == OP_TEXT:
                     msg = json.loads(payload.decode("utf-8", "replace") or "{}")
@@ -504,22 +536,28 @@ class Bridge:
                         print(f"[calllive] phone t={time.monotonic() - self.t0:.1f}s "
                               f"{json.dumps({k: v for k, v in msg.items() if k != 'type'})[:200]}", flush=True)
                     elif kind == "stop":
+                        reason = "stop"
                         break
                     elif kind == "ping":
                         self.tell("pong")
         except Exception:
-            pass
+            reason = "error"
         finally:
             self.done.set()
             self.voice.barge()
             self._asr_send({"type": "audio_done"})
             if self.asr is not None:
                 self.asr.close()
+            if self.rec:
+                self.rec.close(reason)
 
 
-def run_bridge(phone, sid, principal, history, settings, dial=None, brain=None, speakable=None):
+def run_bridge(phone, sid, principal, history, settings, dial=None, brain=None,
+               speakable=None, rec=None):
     """Serve one phone call. `settings` = {key, asr_url, tts_url, tts_model, voice_id,
-    provider} — provider "speakrail" (the default is Fish's wire dialect)."""
+    provider} — provider "speakrail" (the default is Fish's wire dialect). `rec` is the
+    CallRecorder for the call; when None one is created here — the recorded evidence
+    behind the engine: the caller's voice, the reply's voice, and the event timeline."""
     if brain is None:
         from orchestrator import callbrain
         def brain(text, hist, runner):
@@ -530,5 +568,8 @@ def run_bridge(phone, sid, principal, history, settings, dial=None, brain=None, 
         from orchestrator import speakrailcall
         dial = speakrailcall.dial if settings.get("provider") == "speakrail" \
             else (lambda url, headers: wsclient.dial(url, headers=headers))
+    if rec is None:
+        from orchestrator import callrecord
+        rec = callrecord.CallRecorder(callrecord.safe_call_id(sid))
     Bridge(phone, dial, brain, settings["key"], settings["asr_url"], settings["tts_url"],
-           settings["tts_model"], settings.get("voice_id", ""), history, speakable).run()
+           settings["tts_model"], settings.get("voice_id", ""), history, speakable, rec).run()

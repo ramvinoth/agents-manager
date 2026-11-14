@@ -193,6 +193,9 @@ def _scheduler_pass(launch, now):
             rc = db.retention_config()
             db.job_runs_purge(rc["job_runs_days"], rc["job_runs_per_loop"])
             db.ui_events_purge(rc["ui_events_days"])
+            db.call_events_purge(rc["call_recordings_days"])
+            from orchestrator import callrecord
+            callrecord.purge_files(rc["call_recordings_days"])
             db.canvas_tombstones_gc(CANVAS_TOMBSTONE_TTL)
         except Exception:
             pass

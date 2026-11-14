@@ -148,6 +148,8 @@ from orchestrator.messaging.repository import (  # noqa: F401
 from orchestrator.ops.repository import (  # noqa: F401
     audit_append,
     audit_list,
+    call_events_insert,
+    call_events_purge,
     restart_request_add,
     restart_requests_by_status,
     restart_requests_set_status,

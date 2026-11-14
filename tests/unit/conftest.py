@@ -16,6 +16,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from orchestrator import config
 from orchestrator.shared import postgres
 
 
@@ -24,3 +25,12 @@ def no_database_or_network(monkeypatch):
     monkeypatch.setattr(postgres, "_get_pool", Mock(side_effect=AssertionError("Live DB forbidden in unit tests")))
     monkeypatch.setattr(urllib.request.OpenerDirector, "open",
                         Mock(side_effect=AssertionError("Network forbidden in unit tests")))
+
+
+@pytest.fixture(autouse=True)
+def hermetic_call_recordings(tmp_path, monkeypatch):
+    """Every run_bridge call auto-creates a CallRecorder; point its output at a
+    throwaway dir so tests never touch the owner's real recordings (the 0700
+    directory holding the owner's own voice). Tests that exercise the recorder
+    itself re-point it again."""
+    monkeypatch.setattr(config, "CALL_RECORDINGS_DIR", tmp_path / "call-recordings")

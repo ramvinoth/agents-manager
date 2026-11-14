@@ -25,7 +25,8 @@ def setting_set(key, value):
 # Retention policy. Reads from settings so a SaaS-admin portal can tune the caps
 # per plan/license without a deploy; falls back to the seeded defaults when the
 # row is missing or a value is malformed (never returns junk the purge can't use).
-_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500, "ui_events_days": 180}
+_RETENTION_DEFAULTS = {"job_runs_days": 90, "job_runs_per_loop": 500,
+                       "ui_events_days": 180, "call_recordings_days": 14}
 
 
 def retention_config():

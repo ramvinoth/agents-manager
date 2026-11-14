@@ -62,6 +62,10 @@ PUBLIC_URL = os.environ.get("HARMAN_PUBLIC_URL", "").strip().rstrip("/")
 DEFAULT_RELAY_URL = "wss://relay.suhai.ai"
 RELAY_ENV = os.environ.get("HARMAN_RELAY_URL", "").strip().rstrip("/")
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
+# Raw call audio (orchestrator.callrecord): the owner's voice, kept private (0700)
+# and bounded by retention. Two files per call — the caller's 16 kHz input and the
+# reply's 24 kHz voice — aligned to the call_events timeline by byte offset.
+CALL_RECORDINGS_DIR = Path.home() / ".harman" / "call-recordings"
 
 
 def transcript_path(session_id):
