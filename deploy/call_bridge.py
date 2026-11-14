@@ -14,6 +14,10 @@ port on the LAN (HARMAN_CALL_BRIDGE_PORT, default 18191) and fronts them:
                           PCM streamed back; if the caller disconnects mid-stream
                           the upstream request is dropped, which makes Breeze
                           abort generation — that is the barge-in
+  POST /v1/chat/completions
+                          the call brain: forwarded to Speakrail's Gemma vLLM
+                          (HARMAN_CALL_BRAIN_URL), so a viewer off the box's tailnet
+                          can still think
   GET  /health            {"ok", "asr", "tts"} — both engines reachable
 
 Everything is gated on `Authorization: Bearer <HARMAN_CALL_TOKEN>`; the bridge
@@ -49,6 +53,8 @@ TOKEN = os.environ.get("HARMAN_CALL_TOKEN", "")
 PORT = int(os.environ.get("HARMAN_CALL_BRIDGE_PORT", "18191"))
 ASR_URL = os.environ.get("HARMAN_CALL_ASR_URL", "ws://127.0.0.1:8191/v1/transcribe")
 TTS_URL = os.environ.get("HARMAN_CALL_TTS_URL", "http://127.0.0.1:7860/v1/audio/speech")
+BRAIN_URL = os.environ.get("HARMAN_CALL_BRAIN_URL",
+                           "http://127.0.0.1:8000/v1/chat/completions")
 VOICE = os.environ.get(
     "HARMAN_CALL_VOICE",
     os.path.expanduser("~/.speakrail/app/src/speakrail/harness/voices/female_a.wav"))
@@ -99,6 +105,27 @@ async def health(req):
             pass
     out["ok"] = out["asr"] and out["tts"]
     return web.json_response(out)
+
+
+async def brain(req):
+    """The call brain: an OpenAI chat-completions request, forwarded to Speakrail's
+    Gemma vLLM. The viewer's callbrain posts here, so the brain is reachable from a
+    Mac that is not on the box's tailnet. Non-streaming, status and body verbatim."""
+    try:
+        body = await req.json()
+    except ValueError:
+        return web.json_response({"error": "invalid json"}, status=400)
+    # Speakrail's vLLM runs without a tool-call parser and rejects `tools` with a 400,
+    # so the call brain answers conversationally here; board tools are not available.
+    body.pop("tools", None)
+    body.pop("tool_choice", None)
+    async with ClientSession(timeout=ClientTimeout(sock_connect=5, total=60)) as session:
+        try:
+            r = await session.post(BRAIN_URL, json=body)
+            return web.Response(status=r.status, body=await r.read(),
+                                content_type="application/json")
+        except (ClientConnectionError, asyncio.TimeoutError):
+            return web.json_response({"error": "brain unreachable"}, status=502)
 
 
 async def relay_asr(req):
@@ -230,7 +257,9 @@ def main():
     app.router.add_get("/health", health)
     app.router.add_get("/v1/transcribe", relay_asr)
     app.router.add_post("/v1/audio/speech", tts)
-    print(f"call bridge on 0.0.0.0:{PORT} (asr={ASR_URL} tts={TTS_URL})", flush=True)
+    app.router.add_post("/v1/chat/completions", brain)
+    print(f"call bridge on 0.0.0.0:{PORT} (asr={ASR_URL} tts={TTS_URL} brain={BRAIN_URL})",
+          flush=True)
     web.run_app(app, host="0.0.0.0", port=PORT)
     return 0
 
