@@ -486,7 +486,12 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
             messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
                              "content": tool_runner(name, args, ctx)})
     else:
-        reply = reply or "I lost the thread there; could you say that again?"
+        reply = reply or LOST
+    if not reply:
+        # An empty answer would reach the phone as a silent turn. After a tool ran,
+        # its output is already written to be spoken; otherwise ask again.
+        spoken = next((m["content"] for m in reversed(messages) if m.get("role") == "tool"), "")
+        reply = (spoken or LOST)[:ANSWER_CHARS].strip()
     messages.append({"role": "assistant", "content": reply})
     return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
 

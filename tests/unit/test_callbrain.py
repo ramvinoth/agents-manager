@@ -205,6 +205,20 @@ class TestCallTurn:
         assert len(out["tools"]) == callbrain.MAX_TOOL_ROUNDS + 1
         assert "say that again" in out["reply"]
 
+    def test_empty_reply_after_a_tool_speaks_the_tool_output(self, monkeypatch):
+        self._script(monkeypatch, [
+            {"content": None, "tool_calls": [_tool_call("card_detail", {"card_id": 470})]},
+            {"content": ""},
+        ])
+        out = callbrain.call_turn("s", PRINCIPAL, "latest comment on 470?", [], preset=self.preset,
+                                  tool_runner=lambda *a: "Card 470. Latest comment: ship it.", snapshot_text="snap")
+        assert out["reply"] == "Card 470. Latest comment: ship it."
+
+    def test_empty_reply_without_a_tool_asks_again(self, monkeypatch):
+        self._script(monkeypatch, [{"content": "  "}])
+        out = callbrain.call_turn("s", PRINCIPAL, "hello", [], preset=self.preset, snapshot_text="snap")
+        assert out["reply"] == callbrain.LOST
+
 
 def test_trim_history_cuts_on_a_user_turn():
     msgs = []
