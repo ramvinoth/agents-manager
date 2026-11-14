@@ -7,7 +7,8 @@ real call brain (callbrain.call_turn) against the corpus's fixed snapshot, with
 tools stubbed so nothing touches the board. Harman says the holding line
 (calllive.ack_line) on each turn that runs a tool, as the live bridge does.
 Prints callnatural.call_score per run and the mean. It needs the configured
-brain to be reachable; it writes nothing.
+brain to be reachable; a turn the brain fails is scored as the apology the
+live bridge speaks (calllive.BRAIN_FAILED) and counted. It writes nothing.
 """
 import argparse
 import json
@@ -27,16 +28,19 @@ STUB = {"delegate": "Created card 512.", "comment": "Comment posted.", "decide":
 
 
 def one_call():
-    history, replies, acks = [], [], []
+    history, replies, acks, failed = [], [], [], 0
     for line in CORPUS["utterances"]:
-        out = callbrain.call_turn("eval", PRINCIPAL, line, history,
-                                  tool_runner=lambda name, args, ctx: STUB.get(name, "ok"),
-                                  snapshot_text=CORPUS["snapshot"])
+        try:
+            out = callbrain.call_turn("eval", PRINCIPAL, line, history,
+                                      tool_runner=lambda name, args, ctx: STUB.get(name, "ok"),
+                                      snapshot_text=CORPUS["snapshot"])
+        except Exception:
+            out, failed = {"reply": calllive.BRAIN_FAILED, "history": history, "tools": []}, failed + 1
         history = out["history"]
         if out["tools"]:
             acks.append(calllive.ack_line(len(acks)))
         replies.append(out["reply"])
-    return replies, acks
+    return replies, acks, failed
 
 
 def main():
@@ -46,8 +50,8 @@ def main():
     a = ap.parse_args()
     scores = []
     for i in range(a.runs):
-        replies, acks = one_call()
-        s = callnatural.call_score(replies, acks)
+        replies, acks, failed = one_call()
+        s = {**callnatural.call_score(replies, acks), "failed": failed}
         scores.append(s["score"])
         if a.json:
             print(json.dumps({"run": i, **s, "replies": replies, "acks": acks}))

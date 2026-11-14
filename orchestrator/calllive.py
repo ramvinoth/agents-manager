@@ -47,6 +47,7 @@ READ_TIMEOUT = 10           # ASR read tick; an idle tick sends keepalive (Fish 
 ASR_RECONNECT = 1012        # Fish "service restart": dial again
 # Holding lines while a tool runs, said in turn so a call never repeats the
 # same one back to back (the same words every time sounds like a recording).
+BRAIN_FAILED = "Sorry, I could not think that through. Say it again?"
 ACK_LINES = ("One sec, checking.", "Let me look.", "Hang on.", "Okay, looking now.")
 
 
@@ -412,7 +413,7 @@ class Bridge:
             return self.act(acts)
         except Exception as e:
             print(f"[calllive] brain failed: {e}", flush=True)
-            out = {"reply": "Sorry, I could not think that through. Say it again?", "history": history}
+            out = {"reply": BRAIN_FAILED, "history": history}
         with self.lock:
             acts = self.turns.brain_done(turn, text, out["reply"])
             if acts:
