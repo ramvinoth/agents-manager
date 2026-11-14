@@ -54,7 +54,7 @@ from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY
 from orchestrator.customrun import chat_completion_message
 
 SETTING_KEY = "call_brain"        # {"provider": <preset id>}
-BRAIN_TIMEOUT = 25                # seconds per model call; a call cannot wait longer
+BRAIN_TIMEOUT = 12                # seconds per model call; dead air on a live call is worse than a short apology
 MAX_TOOL_ROUNDS = 3
 HISTORY_LIMIT = 24                # prior call messages replayed to the brain
 ANSWER_CHARS = 700                # how much of a finished answer is read aloud
