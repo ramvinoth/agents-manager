@@ -110,16 +110,12 @@ async def health(req):
 
 async def brain(req):
     """The call brain: an OpenAI chat-completions request, forwarded to Speakrail's
-    Gemma vLLM. The viewer's callbrain posts here, so the brain is reachable from a
+    Gemma vLLM (started with a tool-call parser, so `tools` pass through). The viewer's callbrain posts here, so the brain is reachable from a
     Mac that is not on the box's tailnet. Non-streaming, status and body verbatim."""
     try:
         body = await req.json()
     except ValueError:
         return web.json_response({"error": "invalid json"}, status=400)
-    # Speakrail's vLLM runs without a tool-call parser and rejects `tools` with a 400,
-    # so the call brain answers conversationally here; board tools are not available.
-    body.pop("tools", None)
-    body.pop("tool_choice", None)
     async with ClientSession(timeout=ClientTimeout(sock_connect=5, total=60)) as session:
         try:
             r = await session.post(BRAIN_URL, json=body)
