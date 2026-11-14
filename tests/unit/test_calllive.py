@@ -367,3 +367,9 @@ def test_barge_drops_utterances_queued_for_the_old_epoch():
     v.say("late answer", old)             # the brain finished after the user spoke
     assert len(ttses) == 1
     assert v.barge() is False             # nothing left to stop
+
+
+def test_ack_lines_rotate_and_never_repeat_back_to_back():
+    lines = [calllive.ack_line(n) for n in range(2 * len(calllive.ACK_LINES))]
+    assert set(lines) == set(calllive.ACK_LINES) and len(calllive.ACK_LINES) > 1
+    assert all(a != b for a, b in zip(lines, lines[1:]))

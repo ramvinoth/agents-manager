@@ -45,7 +45,15 @@ PHONE_RATE = 16000          # what the phone sends
 VOICE_RATE = 24000          # what TTS sends back
 READ_TIMEOUT = 10           # ASR read tick; an idle tick sends keepalive (Fish closes at 30 s idle)
 ASR_RECONNECT = 1012        # Fish "service restart": dial again
-ACK_LINE = "One sec, checking."
+# Holding lines while a tool runs, said in turn so a call never repeats the
+# same one back to back (the same words every time sounds like a recording).
+ACK_LINES = ("One sec, checking.", "Let me look.", "Hang on.", "Okay, looking now.")
+
+
+def ack_line(n):
+    """The holding line for the call's `n`th tool turn (0-based)."""
+    return ACK_LINES[n % len(ACK_LINES)]
+
 READ_ONLY_TOOLS = frozenset({"board_status", "card_detail"})
 
 
@@ -331,7 +339,8 @@ class Bridge:
         self.tts_model, self.voice_id, self.speakable = tts_model, voice_id, speakable
         self.history = list(history or [])
         self.turns = TurnTaker()
-        self.lock = threading.Lock()     # guards turns and history
+        self.lock = threading.Lock()     # guards turns, history and acks
+        self.acks = 0                    # holding lines said so far this call
         self.asr = None
         self.t0 = time.monotonic()
         self.done = threading.Event()
@@ -378,9 +387,10 @@ class Bridge:
 
     def _ack(self, turn, epoch):
         with self.lock:
-            live = self.turns.current == turn
-        if live:
-            self.voice.say(ACK_LINE, epoch, only_if_idle=True)
+            if self.turns.current != turn:
+                return
+            line, self.acks = ack_line(self.acks), self.acks + 1
+        self.voice.say(line, epoch, only_if_idle=True)
 
     def _think(self, turn, text, eager):
         acked = []
