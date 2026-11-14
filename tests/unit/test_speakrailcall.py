@@ -113,6 +113,15 @@ def test_silence_only_utterance_commits_nothing():
     assert s.on_frame(720, _SPEECH) == [{"type": "user_turn_taken", "turn_index": 2}]
 
 
+def test_finish_commits_speech_still_open_when_the_session_ends():
+    s = SrAsrState()
+    s.on_frame(0, _SPEECH)
+    s.on_words(words(("goodbye", 100, 400)))            # no VAD complete ever arrives
+    assert s.finish() == [
+        {"type": "committed", "turn_index": 1, "text": "goodbye", "user_turn": True}]
+    assert s.finish() == []                             # nothing left to commit twice
+
+
 def test_agent_turn_in_flight_kills_the_open_utterance():
     s = SrAsrState()
     assert s.on_frame(0, _SPEECH) == [{"type": "user_turn_taken", "turn_index": 1}]

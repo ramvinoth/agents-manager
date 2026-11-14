@@ -40,7 +40,7 @@ from aiohttp import (
     ClientConnectionError,
     ClientSession,
     ClientTimeout,
-    MultipartWriter,
+    FormData,
     WSMsgType,
     web,
 )
@@ -103,8 +103,8 @@ async def health(req):
 
 async def relay_asr(req):
     """Client websocket <-> ASR adapter websocket, frames verbatim."""
-    client = await web.WebSocketResponse()
-    if not await client.can_prepare(req):
+    client = web.WebSocketResponse()     # 3.14: a plain object; only prepare() awaits
+    if not client.can_prepare(req):
         return web.Response(status=426)
     await client.prepare(req)
     session = await _session()
@@ -122,6 +122,10 @@ async def relay_asr(req):
                 await up.send_bytes(msg.data)
             elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED):
                 break
+        # the caller hung up: close the upstream so the adapter's own loop ends
+        # instead of streaming into the void
+        if not up.closed:
+            await up.close()
 
     async def u2c():
         async for msg in up:
@@ -131,6 +135,10 @@ async def relay_asr(req):
                 await client.send_bytes(msg.data)
             elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED):
                 break
+        # the adapter ended the session: closing the client here is what unblocks
+        # c2u (gather cannot finish until both loops exit)
+        if not client.closed:
+            await client.close()
 
     try:
         await asyncio.gather(c2u(), u2c())
@@ -146,17 +154,26 @@ async def relay_asr(req):
 
 
 def _breeze_body(text):
-    data = MultipartWriter("form-data")
-    data.append_form_field("text", text)
+    """The harness's Breeze request (harness/tts.py) as a multipart form:
+    fields text/ref_text/seed/cfg_scale plus the reference wav as `ref_audio`
+    (Breeze caches its codes by content hash). FormData is the right tool —
+    aiohttp's MultipartWriter has no form-field helpers and a hand-rolled
+    content-disposition here invites boundary bugs."""
+    form = FormData()
+    form.add_field("text", text)
     try:
         with open(REF_TEXT, encoding="utf-8") as f:
-            data.append_form_field("ref_text", f.read().strip())
+            form.add_field("ref_text", f.read().strip())
     except OSError:
         pass
-    data.append_form_field("seed", str(SEED))
-    data.append_form_field("cfg_scale", str(CFG_SCALE))
-    data.append_form_file("ref_audio", VOICE, content_type="audio/wav")
-    return data
+    form.add_field("seed", str(SEED))
+    form.add_field("cfg_scale", str(CFG_SCALE))
+    # bytes, not a file object: FormData serializes at request time, after any
+    # `with` block has closed its file
+    with open(VOICE, "rb") as f:
+        form.add_field("ref_audio", f.read(),
+                       filename="ref.wav", content_type="audio/wav")
+    return form
 
 
 async def tts(req):
@@ -166,36 +183,37 @@ async def tts(req):
         return web.json_response({"error": "empty text"}, status=400)
     session = await _session()
     resp = None
-    for _ in range(75):       # 409 = a request we just killed is still releasing (~20-50 ms)
-        try:
-            resp = await session.post(TTS_URL, data=_breeze_body(text))
-        except ClientConnectionError:
-            return web.json_response({"error": "tts unreachable"}, status=502)
-        if resp.status != 409:
-            break
-        await resp.release()
-        await asyncio.sleep(0.02)
-    if resp is None or resp.status != 200:
-        detail = (await resp.text()).strip()[:200] if resp is not None else ""
-        if resp is not None:
-            resp.close()
-        return web.json_response({"error": f"tts {resp.status if resp else '?'}: {detail}"},
-                                 status=502)
-    out = web.Response(status=200, body=None, chunked=True)
-    out.content_type = resp.headers.get("Content-Type", "audio/pcm")
-    await out.prepare(req)
+    out = None
     try:
+        for _ in range(75):     # 409 = a request we just killed is still releasing (~20-50 ms)
+            try:
+                resp = await session.post(TTS_URL, data=_breeze_body(text))
+            except ClientConnectionError:
+                return web.json_response({"error": "tts unreachable"}, status=502)
+            if resp.status != 409:
+                break
+            await resp.release()
+            await asyncio.sleep(0.02)
+        if resp is None or resp.status != 200:
+            detail = (await resp.text()).strip()[:200] if resp is not None else ""
+            status = resp.status if resp is not None else "?"
+            if resp is not None:
+                resp.close()
+                resp = None
+            return web.json_response({"error": f"tts {status}: {detail}"}, status=502)
+        out = web.StreamResponse(status=200)   # 3.14 dropped Response(chunked=)
+        out.content_type = resp.headers.get("Content-Type", "audio/pcm")
+        await out.prepare(req)
         async for chunk in resp.content.iter_any():
             if chunk:
                 await out.write(chunk)
         await out.write_eof()
-    except Exception:
-        # Barge-in: the caller hung up mid-speech; dropping the upstream makes
-        # Breeze abort the generation (it watches its client's socket).
-        resp.close()
-        raise
     finally:
-        resp.close()
+        # Also the barge-in path: when the caller hangs up mid-speech the write
+        # raises, and closing the upstream makes Breeze abort the generation
+        # (it watches its client's socket).
+        if resp is not None:
+            resp.close()
         await session.close()
     return out
 

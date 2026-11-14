@@ -149,6 +149,14 @@ class SrAsrState:
             self.buf.extend(keep)
             return acts
 
+    def finish(self):
+        """The adapter session ended: commit whatever is in flight. A VAD
+        "complete" frame is what normally closes a turn, but the session can
+        end mid-utterance (input_audio.end right after continuous speech) —
+        without this the caller's last words would never reach the brain."""
+        with self.lock:
+            return self._finish_locked()
+
     def _finish_locked(self):
         acts = []
         if self.utter is not None:
@@ -213,6 +221,8 @@ class SpeakrailAsrSocket:
                        else []):
                 self.events.put(ev)
             if m.get("type") == "session.ended":
+                for ev in self.state.finish():
+                    self.events.put(ev)
                 self.done = True
 
     def close(self):
@@ -260,7 +270,10 @@ class BreezeTtsSocket:
         req = urllib.request.Request(
             self.url, data=body, method="POST",
             headers={"Authorization": "Bearer " + self.token,
-                     "Content-Type": "application/json"})
+                     "Content-Type": "application/json",
+                     # urllib's default UA (Python-urllib/x) is a Cloudflare WAF
+                     # 1010 on the tunnel edge; a plain custom UA passes.
+                     "User-Agent": "HarmanCall/1.0"})
         resp = None
         for _ in range(75):        # 409 = a request we just killed is still releasing (~20-50 ms)
             try:
