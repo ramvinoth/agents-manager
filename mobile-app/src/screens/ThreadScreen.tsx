@@ -51,6 +51,7 @@ import { showActions } from "../lib/actionSheet"
 import { speak, stopSpeaking } from "../lib/voice"
 import { splitThinking } from "../lib/thinking"
 import { serialize, startLiveRefresh, THREAD_FALLBACK_MS } from "../lib/liveEvents"
+import { PIN_THRESHOLD, shouldPinToNewest } from "../lib/threadScroll"
 import { liveEvents } from "../api/events"
 
 type Props = NativeStackScreenProps<RootStackParamList, "Thread">
@@ -207,9 +208,15 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // --- Autoscroll model: an INVERTED list --------------------------------------
   // Newest-first with `inverted`: item 0 sits at the bottom and new items prepend
   // at offset 0, so "stay on the latest" is the list's resting state and reading
-  // history is never yanked back — nothing scrolls imperatively (the WhatsApp /
-  // iMessage approach). The only scroll command is jump-to-latest;
-  // `distanceFromBottom` (0 = pinned to newest) just drives that button.
+  // history is never yanked back (the WhatsApp / iMessage approach).
+  // `distanceFromBottom` (0 = pinned to newest) drives two scroll commands, both
+  // keyed on the same threshold (PIN_THRESHOLD): the jump-to-latest button shows
+  // when it is passed, and a data change re-pins to the newest exactly while it
+  // is not (the pin effect below). The re-pin is what keeps an opened chat on its
+  // newest message — the first open paints the saved copy, then swaps in the
+  // live tail, and that swap alone would keep the saved newest row in view.
+  // A reader who has scrolled up (button visible) is never pulled back: their
+  // position is held by the inverted list's own anchor, and the button is theirs.
   const distanceFromBottom = useRef(0)
 
   useFocusEffect(
@@ -643,17 +650,40 @@ export default function ThreadScreen({ route, navigation }: Props) {
 
   // Deep-link jump: when arriving from the profile's pinned list (route.jumpTo),
   // scroll to that message once the transcript has loaded. The ref guards against
-  // re-jumping on every data change (e.g. a new message streaming in).
+  // re-jumping on every data change (e.g. a new message streaming in);
+  // `deepLinkPending` marks the 300ms in which the jump is scheduled but not yet
+  // fired, so the re-pin below never clobbers it.
   const jumpedTo = useRef<string | undefined>(undefined)
+  const deepLinkPending = useRef(false)
   useEffect(() => {
     const target = route.params.jumpTo
     if (!target || jumpedTo.current === target || !listData.length) return
     const idx = listData.findIndex((it) => it.id !== WORKING.id && itemUuid(it as ThreadItem) === target)
     if (idx >= 0) {
       jumpedTo.current = target
-      setTimeout(() => listRef.current?.scrollToIndex({ index: idx, viewPosition: 0.3, animated: true }), 300)
+      deepLinkPending.current = true
+      setTimeout(() => {
+        deepLinkPending.current = false
+        listRef.current?.scrollToIndex({ index: idx, viewPosition: 0.3, animated: true })
+      }, 300)
     }
   }, [route.params.jumpTo, listData])
+
+  // Re-pin to the newest after a data change, but only while the reader is still
+  // at the bottom — the same threshold as the jump button, so the list follows
+  // exactly while that button is hidden. The 300ms deferral lets the new rows
+  // lay out first (the deep-link jump uses the same one). A reader who has
+  // scrolled up is never touched: their position is held by the list's own
+  // anchor and the jump button is their way back.
+  useEffect(() => {
+    if (!listData.length || deepLinkPending.current) return
+    if (!shouldPinToNewest(distanceFromBottom.current)) return
+    const t = setTimeout(
+      () => listRef.current?.scrollToOffset({ offset: 0, animated: false }),
+      300
+    )
+    return () => clearTimeout(t)
+  }, [listData])
 
   function doFork() {
     const uuid = msgAction?.uuid
@@ -893,13 +923,13 @@ export default function ThreadScreen({ route, navigation }: Props) {
         // Keep the visible rows anchored when older messages prepend above, so the
         // viewport doesn't jump on a page-in.
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-        // onScroll is display-only: in the inverted list, contentOffset.y is the
-        // distance from the bottom (0 = pinned to newest). It drives just the
-        // jump-to-latest button and the day-pill flash — never the scroll itself.
+        // In the inverted list, contentOffset.y is the distance from the bottom
+        // (0 = pinned to newest). It drives the jump-to-latest button, the
+        // re-pin decision, and the day-pill flash — never the scroll itself.
         onScroll={(e) => {
           const y = e.nativeEvent.contentOffset.y
           distanceFromBottom.current = y
-          setShowJump(y > 240)
+          setShowJump(y > PIN_THRESHOLD)
           revealDate()
         }}
         scrollEventThrottle={16}

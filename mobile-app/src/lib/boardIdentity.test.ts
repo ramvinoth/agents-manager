@@ -121,7 +121,7 @@ function screen(initial: Route) {
   // its src/-relative id so the hooks split out of the screen run as real code
   // through the same stubs.
   const stubs = new Map(Object.entries(modules).map(([k, v]) => [k.startsWith(".") ? posix.normalize(posix.join("screens", k)) : k, v]))
-  const real = new Set(["lib/useThreadTranscript", "lib/useBoardSwipe", "components/ComposerSuggestions"])
+  const real = new Set(["lib/useThreadTranscript", "lib/useBoardSwipe", "components/ComposerSuggestions", "lib/threadScroll"])
   const src = resolve(dirname(process.argv[1]), "..")
   const loaded = new Map<string, any>()
   const load = (id: string, file: string) => {
