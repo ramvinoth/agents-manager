@@ -39,7 +39,7 @@ from urllib.parse import urlparse, urlunparse
 
 from orchestrator import project_plugins
 from orchestrator.config import CLAUDE_DIR, PORT, session_plugin_dirs, transcript_path
-from orchestrator.runtime.backends import Backend, sandbox_sync
+from orchestrator.runtime.backends import Backend, box_store, sandbox_store, sandbox_sync
 from orchestrator.runtime.backends.sandbox_drivers import LABEL, DockerDriver, open_driver
 from orchestrator.runtime.run_config import perm_mcp_servers
 
@@ -53,7 +53,8 @@ ENV_PREFIXES = ("VIEWER_", "ANTHROPIC_", "CLAUDE_CODE_")
 ENV_NAMES = ("MCP_TIMEOUT", "HARMAN_SESSION_LABEL")
 ORCH = Path(__file__).resolve().parents[2]      # orchestrator/
 DIAGNOSTICS_ROOT = CLAUDE_DIR / ".viewer-diagnostics"
-SHIPPED = (ORCH / "permission_mcp.py", ORCH / "viewer_mcp.py", Path(sandbox_sync.__file__))
+SHIPPED = (ORCH / "permission_mcp.py", ORCH / "viewer_mcp.py", Path(sandbox_sync.__file__),
+           Path(box_store.__file__))
 # The claude this backend started, by an argv no other process in the box has.
 CLAUDE_MATCH = "-p --input-format stream-json"
 
@@ -127,6 +128,10 @@ class _Box:
                     tar.addfile(info, io.BytesIO(data))
         self.put_stream(dest, write)
 
+    def put_opt(self, files):
+        """{name: bytes} into the box's own folder (what Harman ships to it)."""
+        self.put_files(OPT, files)
+
     def put_tree(self, src, dest):
         """A folder's contents into dest, following symlinks (skills and
         plugins are often linked in from elsewhere)."""
@@ -171,20 +176,17 @@ class _Box:
         finally:
             pipe.close()
 
+    def store(self, verb, part):
+        """Run box_store in the box: it pulls or pushes one folder itself."""
+        return self.driver.run(self.name, [BOX_PY, f"{OPT}/box_store.py", verb, part["volume"], part["box"]],
+                               user="node", check=False, timeout=1800)
+
     def sync_folder(self, key):
-        """Three way sync of one copied folder (the workspace or the memory)."""
+        """Bring one copied folder (the workspace or the memory) home, the
+        way the store it was planned with keeps it."""
         part = self.plan[key]
-        if part is None:
-            return
-        local, box, base = part["local"], part["box"], part["base"]
-        writes, deletes, conflicts = sandbox_sync.plan_sync(
-            base, sandbox_sync.current_manifest(local, base), self.manifest(box, base))
-        os.makedirs(local, exist_ok=True)
-        self.fetch(box, writes, local)
-        sandbox_sync.delete_files(local, deletes)
-        for path in conflicts:
-            print(f"  ⚠ sandbox {self.name}: {key} {path} changed here and in the box, kept this machine's copy",
-                  flush=True)
+        if part is not None:
+            sandbox_store.of(part).home(self, key, part)
 
     def bring_home(self):
         """Transcript, sidecar, folder, memory. Each step on its own: one
@@ -322,8 +324,9 @@ class SandboxProc:
 class SandboxBackend(Backend):
     name = "sandbox"
 
-    def __init__(self, driver=None):
+    def __init__(self, driver=None, store=None):
         self.driver = driver         # opened at spawn from the sandbox_provider setting
+        self.store = store           # where the folders live, from the sandbox_storage setting
         self.box = None
         self.run_settings = {}
         self.plugins = []            # local plugin folders, staged as OPT/plugins/<i>
@@ -401,9 +404,8 @@ class SandboxBackend(Backend):
         live = transcript_path(session_id)
         local_dir = live.parent if live else CLAUDE_DIR / slug(cwd)
         box_dir = f"{HOME}/.claude/projects/{slug(cwd)}"
-        paths = sandbox_sync.list_files(cwd)
+        store = self.store
         memory = local_dir / "memory"
-        mem_paths = sandbox_sync.list_files(str(memory)) if memory.is_dir() else []
         diagnostics = None
         if self.diagnostics:
             diagnostics = {"local": self.diagnostics["local_dir"], "box": f"{OPT}/diagnostics"}
@@ -411,10 +413,8 @@ class SandboxBackend(Backend):
             "session": session_id,
             "transcript": {"local": str(live or local_dir / f"{session_id}.jsonl"),
                            "box": f"{box_dir}/{session_id}.jsonl"},
-            "workspace": {"local": cwd, "box": cwd, "paths": paths,
-                          "base": sandbox_sync.manifest(cwd, paths)},
-            "memory": {"local": str(memory), "box": f"{box_dir}/memory", "paths": mem_paths,
-                       "base": sandbox_sync.manifest(str(memory), mem_paths)},
+            "workspace": store.plan(cwd, cwd, "ws", cwd, self.driver.route),
+            "memory": store.plan(str(memory), f"{box_dir}/memory", "mem", cwd, self.driver.route),
             "diagnostics": diagnostics,
         }
 
@@ -437,10 +437,11 @@ class SandboxBackend(Backend):
 
         mcp = {"mcpServers": perm_mcp_servers(BOX_PY, OPT)}
         files = {p.name: p.read_bytes() for p in SHIPPED}
+        files.update(sandbox_store.of(ws).credentials(ws))
         files.update({"settings.json": json.dumps(settings).encode(),
                       "mcp.json": json.dumps(mcp).encode(),
                       "plan.json": json.dumps(plan).encode()})
-        box.put_files(OPT, files)
+        box.put_opt(files)
         for src, dest in zip(self.plugins, plugin_dests):
             box.put_tree(str(src), dest)
 
@@ -457,12 +458,13 @@ class SandboxBackend(Backend):
         if sidecar.is_dir():
             box.mkdirs(f"{box_dir}/{sidecar.name}")
             box.put_tree(str(sidecar), f"{box_dir}/{sidecar.name}")
-        box.put_paths(mem["box"], mem["local"], mem["paths"])
-        box.put_paths(ws["box"], ws["local"], ws["paths"])
+        sandbox_store.of(mem).stage(box, mem)
+        sandbox_store.of(ws).stage(box, ws)
 
     def spawn(self, cmd, cwd, env, session_id, forward=()):
         cwd = os.path.expanduser(cwd or "~")
         self.driver = self.driver or open_driver()
+        self.store = self.store or sandbox_store.current()
         sweep_orphans(self.driver)
         plan = self._plan(session_id, cwd)
         # Every address is routed before the box starts: a driver that tunnels

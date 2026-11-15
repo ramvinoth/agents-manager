@@ -12,6 +12,9 @@
       "images": { "base": { "dockerfile": "../Dockerfile" } }
     }
   ],
+  "r2_buckets": [
+    { "binding": "STORE", "bucket_name": "harman-store" }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "BOX", "class_name": "HarmanBox" },

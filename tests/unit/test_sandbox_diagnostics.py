@@ -4,7 +4,7 @@ import stat
 from pathlib import Path
 from unittest.mock import Mock
 
-from orchestrator.runtime.backends import sandbox
+from orchestrator.runtime.backends import sandbox, sandbox_store
 from orchestrator.runtime.backends.sandbox import SandboxBackend, _Box
 from orchestrator.runtime.backends.sandbox_drivers import CloudflareDriver, DockerDriver
 
@@ -35,7 +35,7 @@ def test_diagnostic_plan_is_separate_from_workspace(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox, "DIAGNOSTICS_ROOT", tmp_path / "diagnostics")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    backend = SandboxBackend(DockerDriver())
+    backend = SandboxBackend(DockerDriver(), sandbox_store.STORES["viewer"])
     paths = backend.diagnostic_paths("session-id", "opaque-run-id")
 
     plan = backend._plan("session-id", str(workspace))

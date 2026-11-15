@@ -2,13 +2,16 @@
  * Harman sandbox on Cloudflare Containers: one throwaway box per run.
  *
  * The viewer's CloudflareDriver (orchestrator/runtime/backends/sandbox_drivers.py)
- * drives it through box_client.mjs. Every route needs the shared secret.
+ * drives it through box_client.mjs. Every route needs the shared secret, save
+ * the store, which also takes a capability.
  *
  *   POST /box/:name/start     start the box {labels}
  *   WS   /box/:name/exec      run one command, stdio piped over the socket
  *   WS   /box/:name/reach     the tunnel the box uses to call the viewer back
  *   POST /box/:name/destroy   stop the box
  *   GET  /boxes?labels=<json> names of live boxes carrying those labels
+ *   *    /store/...            the folder store (src/store.ts); also opens to
+ *                             a per folder capability, not only the secret
  *
  * Exec socket. Client sends a JSON spec {argv, user, cwd, env} first, then
  * stdin as binary frames and {"eof":true}. The box sends binary frames whose
@@ -26,11 +29,13 @@
  * away sends {id, cancel}.
  */
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { handleStore } from "./store";
 
 export interface Env {
   BOX: DurableObjectNamespace<HarmanBox>;
   REGISTRY: DurableObjectNamespace<Registry>;
   BOX_SECRET: string;
+  STORE: R2Bucket;
 }
 
 const NAME_RE = /^[A-Za-z0-9_.-]{1,63}$/;
@@ -57,8 +62,11 @@ function fail(status: number, error: string): Response {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
-    if (!authorized(req, env)) return fail(401, "unauthorized");
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const owner = authorized(req, env);
+    const stored = await handleStore(req, env, ctx, owner);
+    if (stored) return stored;
+    if (!owner) return fail(401, "unauthorized");
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/boxes") {
       const labels = JSON.parse(url.searchParams.get("labels") || "{}");
