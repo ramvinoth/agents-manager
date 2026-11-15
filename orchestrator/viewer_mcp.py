@@ -132,6 +132,9 @@ _TOOLS = {
     "loop_delete":   ("POST", "/api/org/loops/delete"),
     "loop_control_set": ("POST", "/api/org/loop-control"),
     "intake_create": ("POST", "/api/org/intake"),
+    "intake_update": ("POST", "/api/org/intake/update"),
+    "intake_rotate": ("POST", "/api/org/intake/rotate"),
+    "intake_delete": ("POST", "/api/org/intake/delete"),
     "restart_request": ("POST", "/api/org/maintenance/request"),
 }
 
@@ -260,6 +263,22 @@ _TOOL_LIST = [
          "project_id": {"type": "integer"},
          "for_session": {"type": "string", "description": "Session to wake for each new card; omit to push the owner instead."},
          "app_feedback": {"type": "boolean"}}}},
+    {"name": "intake_update",
+     "description": "Rename an intake channel, rebind the session it wakes (for_session, empty to push the owner instead), or set app_feedback. The token does not change.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string", "description": "Channel id from intake_list."},
+         "name": {"type": "string"},
+         "for_session": {"type": "string"},
+         "app_feedback": {"type": "boolean"}}}},
+    {"name": "intake_rotate",
+     "description": "Replace a channel's token; the old one stops working at once. Red: queues for the owner's approval (pass `reason`). The new token is shown to the owner under Integrations, Intake channels, never returned to an agent.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id", "reason"], "properties": {
+         "reason": _REASON_ARG,
+         "id": {"type": "string", "description": "Channel id from intake_list."}}}},
+    {"name": "intake_delete",
+     "description": "Close an intake channel for good: its URL stops accepting posts. Needs Workspace level.",
+     "inputSchema": {"type": "object", "additionalProperties": True, "required": ["id"], "properties": {
+         "id": {"type": "string", "description": "Channel id from intake_list."}}}},
     {"name": "restart_request",
      "description": "Ask for a Harman server restart so your server-code change goes live. Never restart the server yourself: every restart cuts off every running agent turn. Requests queue for the hourly maintenance window (:50 local time): it waits for running turns to finish (up to 10 min), preflights the code on a spare port, restarts ONCE for all queued requests and writes one audit entry. You are woken afterwards with the result (live, or why it was not applied). Commit your change first.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["reason"], "properties": {
