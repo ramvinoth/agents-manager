@@ -38,6 +38,7 @@ import queue
 import random
 import re
 import threading
+import time
 
 from orchestrator.calllive import OP_BINARY, OP_CLOSE, OP_TEXT, pack, unpack
 
@@ -50,6 +51,7 @@ LATCH_FRAMES = 5       # 5 x 80 ms of continuous speech settles the leak with no
 STOP_WORDS = frozenset("okay ok stop pause wait hold on please hang a second minute sorry enough shut up".split())
 STOP_TRIGGERS = frozenset("stop pause wait hold enough".split())
 STOP_MAX_WORDS = 4
+REPLY_WAIT_S = 30.0   # how long after a committed turn a spoken stop still cancels the pending reply
 # The adapter does not know when a word was spoken: it spreads each delta's words
 # evenly from the previous delta's end to now. After a pause that puts the first
 # word back in the pause (even before the agent stopped), so the leak filter ate
@@ -104,11 +106,13 @@ class SrAsrState:
         self.utter = None           # turn index of the open utterance
         self.buf = []               # that utterance's transcript words
         self.stopped = False        # a spoken stop already cut this agent utterance
+        self.reply_due = 0.0        # monotonic deadline: a committed turn is awaiting its spoken reply
 
     def set_agent_speaking(self, speaking):
         with self.lock:
             if speaking == self.agent:
                 return
+            self.reply_due = 0.0    # the reply arrived (or the agent finished): nothing is waiting
             if speaking:
                 self.agent = True
                 self.stopped = False
@@ -157,6 +161,11 @@ class SrAsrState:
         with self.lock:
             if self.agent:
                 return self._stop_command(words)
+            if self._reply_pending():
+                said = [{"text": t} for t in self.buf] + [w for w in (words or []) if isinstance(w, dict)]
+                acts = self._stop_command(said)
+                if acts:
+                    return acts           # the reply was queued or thinking: cancel it
             if not self.leak_settled:
                 return []                     # the model's tail of the agent's voice
             words = [w for w in (words or []) if isinstance(w, dict) and w.get("text")]
@@ -170,6 +179,9 @@ class SrAsrState:
             self.buf.extend(keep)
             return acts
 
+    def _reply_pending(self):
+        return time.monotonic() < self.reply_due
+
     def _stop_command(self, words):
         """While the agent speaks: a spoken "stop"/"pause" barges in. Emits a bare
         user_turn_taken (calllive cuts the voice) and never a committed turn, so the
@@ -181,6 +193,7 @@ class SrAsrState:
                 or not any(t in STOP_TRIGGERS for t in toks)):
             return []
         self.stopped = True
+        self.reply_due = 0.0
         acts = self._open()
         self.utter = None             # the command is not a turn: nothing to commit
         return acts
@@ -201,6 +214,8 @@ class SrAsrState:
             self.buf = []
             if text:
                 acts.append({"type": "committed", "turn_index": turn, "text": text, "user_turn": True})
+                self.stopped = False
+                self.reply_due = time.monotonic() + REPLY_WAIT_S
         return acts
 
 

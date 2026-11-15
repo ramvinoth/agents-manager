@@ -475,6 +475,23 @@ def test_spoken_stop_while_agent_speaks_barges_once_and_commits_nothing():
     assert s.finish() == []                      # the command is never a turn
 
 
+def test_spoken_stop_while_reply_is_thinking_cancels_it():
+    s = SrAsrState()
+    s.utter, s.buf = 1, ["tell", "me", "a", "story"]
+    assert [a["type"] for a in s.finish()] == ["committed"]   # reply now due, agent not speaking yet
+    s.utter, s.buf = None, []
+    acts = s.on_words(_w("Okay,", "stop."))
+    assert [a["type"] for a in acts] == ["user_turn_taken"]   # calllive drops the stale reply
+    assert s.finish() == []                                   # and the stop is never answered
+    assert s.on_words(_w("hello", "there")) != [] or s.buf    # normal speech still works after
+
+
+def test_stop_word_with_nothing_pending_is_a_normal_turn():
+    s = SrAsrState()
+    assert [a["type"] for a in s.on_words(_w("stop"))] == ["user_turn_taken"]
+    assert s.buf == ["stop"] and s.utter is not None
+
+
 def test_agent_speech_and_long_sentences_never_barge():
     s = SrAsrState()
     s.set_agent_speaking(True)
