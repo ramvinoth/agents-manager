@@ -1,5 +1,7 @@
 """The scheduler thread must outlive a failed pass (2026-11-04: a Postgres
 restart made one pass raise, the thread died, and no loop fired for a day)."""
+import time
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -26,8 +28,12 @@ def test_a_raising_pass_does_not_end_the_scheduler():
         if isinstance(nxt, BaseException):
             raise nxt
 
+    # Swap the scheduler module's own `time` name, not time.sleep itself: the
+    # latter is process-global, so any other thread that sleeps mid-test would
+    # consume a scripted sleep and end the loop one pass early.
+    fake_time = SimpleNamespace(sleep=fake_sleep, time=time.time)
     with mock.patch.object(scheduler, "_scheduler_pass", flaky_pass), \
-            mock.patch.object(scheduler.time, "sleep", fake_sleep):
+            mock.patch.object(scheduler, "time", fake_time):
         with pytest.raises(_Stop):
             scheduler.loop_scheduler(lambda *a: True)
     assert len(passes) == 2  # the pass after the failure still ran
