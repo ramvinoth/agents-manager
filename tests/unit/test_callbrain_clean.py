@@ -20,3 +20,7 @@ def test_printed_tool_call_is_removed():
 def test_garbled_printed_call_is_dropped():
     assert clean_reply("{ } tell tell") == ""
     assert clean_reply("Card [4] is in review now, nothing else waiting") != ""
+
+
+def test_stripped_call_leaves_no_leading_punctuation():
+    assert clean_reply('delegate(title="x"). I added that note.') == "I added that note."

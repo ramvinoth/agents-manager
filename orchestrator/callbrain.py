@@ -78,7 +78,7 @@ def clean_reply(text):
     nothing but a repeated word (the brain degenerating) comes back empty so the caller
     falls back instead of speaking gibberish."""
     text = _PRINTED_CALL.sub(" ", _SPECIAL_TOKEN.sub(" ", text or ""))
-    text = " ".join(text.split())
+    text = " ".join(text.split()).lstrip(".,;:!?-) ")  # a stripped call leaves stray marks in front
     words = text.lower().split()
     if re.search(r"[{}\[\]|]", text) and len(re.findall(r"[a-z]{2,}", text.lower())) < 3:
         return ""  # a garbled printed call such as "{ } tell tell", never speech
