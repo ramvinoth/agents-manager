@@ -277,6 +277,9 @@ export interface SessionMeta {
   permission_mode?: string
   level?: string
   effective_level?: string
+  /** Where its turns run: the stored choice ("" = server default) and what applies. */
+  runtime?: string
+  effective_runtime?: string
 }
 
 /**

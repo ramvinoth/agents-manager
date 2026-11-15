@@ -2,16 +2,21 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
+import { RUNTIME_OPTIONS, isRuntime, runtimeSaved, runtimeSummary, type Runtime } from "@/lib/runtime"
 import { HARMAN_LEVELS, LEVEL_NAME, POLICIES, isHarmanLevel, trustOutcome, type HarmanLevel, type PermissionPolicy } from "@/lib/trust"
 
-/** A chat's Trust: its saved Claude Code permission policy and its Harman
- *  level. The web twin of the mobile Trust card (SessionProfileScreen) — same
- *  endpoints, same plain level names. */
+/** A chat's Trust: its saved Claude Code permission policy, its Harman level and
+ *  where its turns run. The web twin of the mobile Trust and Runs on cards
+ *  (SessionProfileScreen): same endpoints, same plain names. */
 export function TrustDialog({ path, open, onOpenChange }: { path: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+  // A chat on another host always runs on that host (mobile shows Runs on for local only too).
+  const localHost = api.host === "local"
   const [target, setTarget] = useState("")
   const [mode, setMode] = useState("")
   const [level, setLevel] = useState<HarmanLevel | "">("")
   const [effective, setEffective] = useState<HarmanLevel | "">("")
+  const [runtime, setRuntime] = useState<Runtime | "">("")
+  const [effectiveRuntime, setEffectiveRuntime] = useState<Runtime | "">("")
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [reload, setReload] = useState(0)
@@ -29,6 +34,8 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
       setMode(d.permission_mode)
       setLevel(isHarmanLevel(d.level) ? d.level : "")
       setEffective(isHarmanLevel(d.effective_level) ? d.effective_level : "")
+      setRuntime(isRuntime(d.runtime) ? d.runtime : "")
+      setEffectiveRuntime(isRuntime(d.effective_runtime) ? d.effective_runtime : "")
     }).catch(() => { if (live) setNote("Could not load this chat's Trust. Close and try again.") })
       .finally(() => { if (live) setBusy(false) })
     return () => { live = false }
@@ -42,6 +49,20 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
       if (out.applied) setReload((n) => n + 1)
     } catch {
       setNote("Could not save. Please retry.")
+    } finally {
+      setBusy(false)
+    }
+  }
+  // Runs on: a session-meta field, not a Trust write (no approval queue), so
+  // the save must echo the stored value before the dialog reloads.
+  const pickRuntime = async (v: Runtime | "") => {
+    setBusy(true); setNote("")
+    try {
+      const reply = await (await api.sessionMetaSave({ session: path, runtime: v })).json()
+      if (!runtimeSaved(reply, v)) throw new Error("unconfirmed")
+      setReload((n) => n + 1)
+    } catch {
+      setNote("Could not save where this chat runs. Please retry.")
     } finally {
       setBusy(false)
     }
@@ -75,6 +96,14 @@ export function TrustDialog({ path, open, onOpenChange }: { path: string; open: 
               level, (v) => write(() => api.sessionLevelSet(target, v), "level", v), "Board authority")}
             {effective ? <p className="text-muted-foreground">Acting at {LEVEL_NAME[effective]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</p> : null}
           </section>
+          {localHost ? (
+            <section className="space-y-1.5">
+              <h3 className="text-xs font-semibold tracking-wide text-muted-foreground">RUNS ON · WHERE ITS TURNS RUN</h3>
+              <p className="text-muted-foreground">Server runs turns on this computer with its files. Cloud sandbox runs each turn in a throwaway box that sees only this chat's folder.</p>
+              {pick(RUNTIME_OPTIONS, runtime, pickRuntime, "Runs on")}
+              {effectiveRuntime ? <p className="text-muted-foreground">Running on {runtimeSummary(runtime, effectiveRuntime)}. Applies from the next turn.</p> : null}
+            </section>
+          ) : null}
           {busy ? <p className="text-muted-foreground">{target ? "Saving…" : "Loading…"}</p> : null}
           {note ? <p role="alert" className="text-destructive">{note}</p> : null}
         </div>
