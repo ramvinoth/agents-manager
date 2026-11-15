@@ -51,6 +51,19 @@ def _fail_note(err, last_lines, tail=5, cap=4000):
     return note[-cap:]
 
 
+def _diagnostic_event(path, event, **fields):
+    """Append a bounded, payload-free timing event to a private run artifact."""
+    if not path:
+        return
+    record = {"event": event, "monotonic": time.monotonic(), "wall": time.time(), **fields}
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            os.chmod(path, 0o600)
+            f.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except OSError:
+        pass
+
+
 def start_claude_run(session_id, session_args, message, mode, cwd, model="", host="local", provider_env=None, effort="", on_done=None):
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
@@ -93,8 +106,19 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     meta = db.session_meta_get(session_id) or {}
     backend = backend_for(host, meta)  # where it runs; builds nothing yet
     job["runtime"] = backend.name
+    diagnostic = None
+    if meta.get("sandboxDiagnostics") and backend.name == "sandbox":
+        # Diagnostic sessions are throwaway and deliberately record every managed
+        # retry/resume as a separate private evidence bundle. The caller cannot
+        # select its files, arguments, or environment.
+        diagnostic = backend.diagnostic_paths(session_id, secrets.token_hex(12))
+        job["diagnostic"] = diagnostic
     cmd = [backend.binary(), "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
+    if diagnostic:
+        cmd += ["--debug-file", diagnostic["debug_file"]]
+        _diagnostic_event(diagnostic["runner_file"], "command_built", run_id=diagnostic["run_id"],
+                          runtime=backend.name)
     if mode in ("bypass", "bypassPermissions"):
         cmd.append("--dangerously-skip-permissions")
     elif mode in ("acceptEdits", "plan"):
@@ -260,8 +284,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             if provider_env:
                 env.update({str(k): str(v) for k, v in provider_env.items()})
                 forward += [str(k) for k in provider_env]
+            _diagnostic_event((diagnostic or {}).get("runner_file", ""), "spawn_begin")
             backend.prepare()
             proc = backend.spawn(cmd, cwd, env, session_id, forward=forward)
+            _diagnostic_event((diagnostic or {}).get("runner_file", ""), "spawn_ready")
             with CHAT_LOCK:
                 job["proc"] = proc
                 job["stdin_open"] = True
@@ -276,8 +302,13 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                                  provider_env.get("ANTHROPIC_MODEL", ""),
                                  provider_env.get("ANTHROPIC_API_KEY", "")), daemon=True).start()
 
+            first_stream = True
+            first_result = True
             for line in iter_stdout_until(proc, CHAT_IDLE_TIMEOUT,
                                           paused=lambda: bool(job.get("pending_approvals"))):
+                if first_stream:
+                    _diagnostic_event((diagnostic or {}).get("runner_file", ""), "first_stream_event")
+                    first_stream = False
                 # Kept for the failure note (last 8, bounded): what a killed
                 # run was doing, when its own record is already gone.
                 job["last_lines"].append(line[:300].rstrip("\n"))
@@ -300,6 +331,9 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                     job["model_wait"].update(ev, time.time())
                 if ev.get("type") != "result":
                     continue
+                if first_result:
+                    _diagnostic_event((diagnostic or {}).get("runner_file", ""), "first_result_event")
+                    first_result = False
                 job["turns"] += 1
                 job["turn_open"] = False
                 # Capture the final assistant text so the push notification can
@@ -318,6 +352,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                         pass
             proc.wait(timeout=60)
             job["returncode"] = proc.returncode
+            _diagnostic_event((diagnostic or {}).get("runner_file", ""), "process_exit",
+                              returncode=proc.returncode)
         except Exception as e:
             job["returncode"] = -1
             # The job is reaped after CHAT_JOB_TTL; without this line the cause
@@ -334,8 +370,11 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # Must never raise: the running/queue cleanup below has to run so the
             # session doesn't stay wedged as "busy" after the process exits.
             try:
+                _diagnostic_event((diagnostic or {}).get("runner_file", ""), "backend_finish_begin")
                 backend.finish(session_id)
+                _diagnostic_event((diagnostic or {}).get("runner_file", ""), "backend_finish_end")
             except Exception as e:
+                _diagnostic_event((diagnostic or {}).get("runner_file", ""), "backend_finish_error")
                 print(f"  ⚠ run {session_id[:8]} backend finish failed: {type(e).__name__}: {e}", flush=True)
             try:
                 if stderr_buf and stderr_buf[0]:

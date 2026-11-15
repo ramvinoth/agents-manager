@@ -44,6 +44,10 @@ class Backend:
         """A line for the system prompt about where the run is, or ''."""
         return ""
 
+    def diagnostic_paths(self, session_id, run_id):
+        """Private server-owned diagnostic paths, or None when unsupported."""
+        return None
+
     def prepare(self):
         """Anything that must be running before claude boots."""
 

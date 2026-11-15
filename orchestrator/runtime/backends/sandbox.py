@@ -52,6 +52,7 @@ BOX_PY = "python3"
 ENV_PREFIXES = ("VIEWER_", "ANTHROPIC_", "CLAUDE_CODE_")
 ENV_NAMES = ("MCP_TIMEOUT", "HARMAN_SESSION_LABEL")
 ORCH = Path(__file__).resolve().parents[2]      # orchestrator/
+DIAGNOSTICS_ROOT = CLAUDE_DIR / ".viewer-diagnostics"
 SHIPPED = (ORCH / "permission_mcp.py", ORCH / "viewer_mcp.py", Path(sandbox_sync.__file__))
 # The claude this backend started, by an argv no other process in the box has.
 CLAUDE_MATCH = "-p --input-format stream-json"
@@ -191,6 +192,7 @@ class _Box:
         t = self.plan["transcript"]
         steps = (("transcript", lambda: self._transcript_home(t)),
                  ("sidecar", lambda: self._sidecar_home(t)),
+                 ("diagnostics", self._diagnostics_home),
                  ("folder", lambda: self.sync_folder("workspace")),
                  ("memory", lambda: self.sync_folder("memory")))
         for what, step in steps:
@@ -221,6 +223,30 @@ class _Box:
         finally:
             p.stdout.close()
             p.wait(timeout=300)
+
+    def _diagnostics_home(self):
+        part = self.plan.get("diagnostics")
+        if not part:
+            return
+        if self.driver.run(self.name, ["test", "-d", part["box"]], check=False).returncode != 0:
+            return
+        os.makedirs(part["local"], mode=0o700, exist_ok=True)
+        os.chmod(part["local"], 0o700)
+        p = self.driver.popen(self.name, ["tar", "-C", part["box"], "-cf", "-", "."],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            sandbox_sync.extract_tar(p.stdout, part["local"])
+        finally:
+            p.stdout.close()
+            p.wait(timeout=300)
+        # Claude owns the in-box debug file and therefore its creation mode.
+        # After fetch, every private evidence artifact is locked down locally.
+        for root, dirs, files in os.walk(part["local"]):
+            os.chmod(root, 0o700)
+            for name in dirs:
+                os.chmod(os.path.join(root, name), 0o700)
+            for name in files:
+                os.chmod(os.path.join(root, name), 0o600)
 
     def remove(self):
         try:
@@ -302,6 +328,7 @@ class SandboxBackend(Backend):
         self.run_settings = {}
         self.plugins = []            # local plugin folders, staged as OPT/plugins/<i>
         self._tail = None
+        self.diagnostics = None
 
     def binary(self):
         return "claude"
@@ -327,6 +354,25 @@ class SandboxBackend(Backend):
                 "The browser and this machine's own MCP servers are not here, and rebuilt folders "
                 "such as node_modules were not copied, so reinstall what you need. "
                 "Your changes to the folder sync back when the turn ends.")
+
+    def diagnostic_paths(self, session_id, run_id):
+        """Allocate private, non-workspace artifacts for an opted-in run only."""
+        local_dir = DIAGNOSTICS_ROOT / session_id / run_id
+        local_dir.mkdir(parents=True, mode=0o700, exist_ok=False)
+        os.chmod(local_dir, 0o700)
+        self.diagnostics = {
+            "run_id": run_id,
+            "local_dir": str(local_dir),
+            "debug_file": f"{OPT}/diagnostics/claude.debug.log",
+            "runner_file": str(local_dir / "runner.jsonl"),
+            "transport_file": str(local_dir / "box-client.jsonl"),
+        }
+        # Pre-create viewer-owned files with a mode that does not depend on the
+        # process umask of either Python or Node.
+        for path in (self.diagnostics["runner_file"], self.diagnostics["transport_file"]):
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+        return dict(self.diagnostics)
 
     # -- spawn -------------------------------------------------------------
     def _box_env(self, env, forward):
@@ -358,6 +404,9 @@ class SandboxBackend(Backend):
         paths = sandbox_sync.list_files(cwd)
         memory = local_dir / "memory"
         mem_paths = sandbox_sync.list_files(str(memory)) if memory.is_dir() else []
+        diagnostics = None
+        if self.diagnostics:
+            diagnostics = {"local": self.diagnostics["local_dir"], "box": f"{OPT}/diagnostics"}
         return {
             "session": session_id,
             "transcript": {"local": str(live or local_dir / f"{session_id}.jsonl"),
@@ -366,6 +415,7 @@ class SandboxBackend(Backend):
                           "base": sandbox_sync.manifest(cwd, paths)},
             "memory": {"local": str(memory), "box": f"{box_dir}/memory", "paths": mem_paths,
                        "base": sandbox_sync.manifest(str(memory), mem_paths)},
+            "diagnostics": diagnostics,
         }
 
     def _box_settings(self):
@@ -379,7 +429,11 @@ class SandboxBackend(Backend):
         t, ws, mem = plan["transcript"], plan["workspace"], plan["memory"]
         box_dir = os.path.dirname(t["box"])
         plugin_dests = [f"{OPT}/plugins/{i}" for i in range(len(self.plugins))]
-        box.mkdirs(ws["box"], OPT, box_dir, mem["box"], f"{HOME}/.claude/skills", *plugin_dests)
+        diagnostics = plan.get("diagnostics")
+        dirs = [ws["box"], OPT, box_dir, mem["box"], f"{HOME}/.claude/skills", *plugin_dests]
+        if diagnostics:
+            dirs.append(diagnostics["box"])
+        box.mkdirs(*dirs)
 
         mcp = {"mcpServers": perm_mcp_servers(BOX_PY, OPT)}
         files = {p.name: p.read_bytes() for p in SHIPPED}
@@ -427,8 +481,17 @@ class SandboxBackend(Backend):
         self._stage(self.box, plan, settings)
         self._tail = _TranscriptTail(self.box, plan["transcript"])
         self._tail.start()
-        popen = self.driver.popen(name, cmd, user="node", workdir=cwd, env=box_env, text=True,
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Only the Claude exec client is observed. Staging, transcript tailing,
+        # sync-back, and teardown also use exec clients but are not part of the
+        # tool-output transport we are diagnosing.
+        if self.diagnostics and hasattr(self.driver, "diagnostic_event_path"):
+            self.driver.diagnostic_event_path = self.diagnostics["transport_file"]
+        try:
+            popen = self.driver.popen(name, cmd, user="node", workdir=cwd, env=box_env, text=True,
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        finally:
+            if hasattr(self.driver, "diagnostic_event_path"):
+                self.driver.diagnostic_event_path = ""
         return SandboxProc(self.box, popen)
 
     def finish(self, session_id):

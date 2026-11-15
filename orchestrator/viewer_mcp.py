@@ -507,6 +507,7 @@ _TOOL_LIST = [
          "goal": {"type": "string", "description": "Standing goal shown on the session and kept across runs."},
          "systemPrompt": {"type": "string"},
          "runtime": {"type": "string", "enum": ["local", "sandbox"], "description": "Where its turns run: this computer, or a throwaway cloud sandbox that sees only its own folder. Omit for the server's default."},
+         "sandboxDiagnostics": {"type": "boolean", "description": "Server-owned Cloudflare sandbox diagnostics for this new throwaway session. Captures private Claude and transport timing artifacts; valid only with runtime=sandbox."},
          "template": {"type": "integer", "description": "Agent template id (GET /api/agent-templates) the worker starts from: it brings that agent's plugins, skills and MCP. Pass its system prompt and goal too."},
          "mode": {"type": "string", "enum": ["default", "acceptEdits", "plan"]},
          "reason": _REASON_ARG}}},

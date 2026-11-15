@@ -199,6 +199,8 @@ class SessionsMixin:
                 self.send_json({"error": f"runtime must be one of {', '.join(RUNTIMES)}"}, status=400)
                 return
             fields["runtime"] = runtime
+        # sandboxDiagnostics is intentionally creation-only. A later metadata
+        # write cannot turn an ordinary reusable session into a diagnostic run.
         # provider / convMode / effort / model are NOT accepted here: the AI
         # selection is a revisioned, validated document owned by orchestrator/ai.py
         # and written only through /api/session/ai (routes/providers.py).
@@ -218,7 +220,8 @@ class SessionsMixin:
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
                         "pinned": meta.get("pinned", []),
-                        "runtime": meta.get("runtime", "")})
+                        "runtime": meta.get("runtime", ""),
+                        "sandboxDiagnostics": bool(meta.get("sandboxDiagnostics", False))})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -831,6 +834,14 @@ def start_new_session(body):
         if runtime not in RUNTIMES or host != "local":
             return {"error": f"runtime must be one of {', '.join(RUNTIMES)} on this computer"}, 400
         meta["runtime"] = runtime
+    # Diagnostic collection is server-owned and only valid for a fresh local
+    # sandbox session. It has no caller-supplied path, arguments, or env.
+    if "sandboxDiagnostics" in body and not isinstance(body["sandboxDiagnostics"], bool):
+        return {"error": "sandboxDiagnostics must be a boolean"}, 400
+    if body.get("sandboxDiagnostics"):
+        if runtime != "sandbox" or host != "local":
+            return {"error": "sandbox diagnostics require a local sandbox session"}, 400
+        meta["sandboxDiagnostics"] = True
     if title:
         # The fallback name until the transcript carries its own custom-title
         # (a remote run gets no --name, and the client's rename can fail).

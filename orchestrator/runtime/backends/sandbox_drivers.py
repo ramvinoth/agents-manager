@@ -174,6 +174,10 @@ class CloudflareDriver:
         env = {"PATH": os.path.dirname(self.node) + ":/usr/bin:/bin",
                "HARMAN_BOX_URL": self.url, "HARMAN_BOX_SECRET": self.secret,
                "HARMAN_BOX_SPEC": json.dumps(spec or {})}
+        # A server-owned sandbox diagnostic may observe this local transport
+        # process. It never travels in the box command spec or reaches Worker.
+        if mode == "exec" and getattr(self, "diagnostic_event_path", ""):
+            env["HARMAN_BOX_DIAGNOSTICS"] = self.diagnostic_event_path
         return subprocess.Popen([self.node, str(self.CLIENT), mode, name], env=env, **kw)
 
     def _call(self, mode, name, spec=None, input=None, timeout=120, check=True):

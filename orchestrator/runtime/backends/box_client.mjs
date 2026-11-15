@@ -15,6 +15,8 @@
 //
 // The wire format is described at the top of sandbox/cloudflare/src/index.ts.
 
+import { appendFileSync, chmodSync } from "node:fs";
+
 const [major] = process.versions.node.split(".").map(Number);
 if (major < 22) {
   process.stderr.write(`box_client needs Node 22 or newer, this is ${process.version}\n`);
@@ -27,6 +29,23 @@ const secret = process.env.HARMAN_BOX_SECRET || "";
 const spec = JSON.parse(process.env.HARMAN_BOX_SPEC || "{}");
 const auth = { Authorization: `Bearer ${secret}` };
 const DROP = new Set(["host", "content-length", "connection", "transfer-encoding", "content-encoding", "keep-alive"]);
+const diagnostics = process.env.HARMAN_BOX_DIAGNOSTICS || "";
+
+// Diagnostics are opt-in and viewer-owned. They intentionally record only
+// event names, timing, stream channel and byte counts: never command specs,
+// payloads, headers, error text, or environment values.
+function event(type, fields = {}) {
+  if (!diagnostics) return;
+  try {
+    appendFileSync(diagnostics, JSON.stringify({
+      event: type,
+      monotonic_ns: process.hrtime.bigint().toString(),
+      wall_ms: Date.now(),
+      ...fields,
+    }) + "\n", { mode: 0o600 });
+    chmodSync(diagnostics, 0o600);
+  } catch (_) {}
+}
 
 function die(msg, code = 1) {
   process.stderr.write(`${msg}\n`);
@@ -56,7 +75,9 @@ function exec() {
   const ws = socket(`/box/${name}/exec`);
   let written = 0;
   let out = Promise.resolve();
+  event("exec_connecting");
   ws.addEventListener("open", () => {
+    event("exec_open");
     ws.send(JSON.stringify(spec));
     process.stdin.on("data", (d) => ws.send(d));
     process.stdin.on("end", () => ws.send(JSON.stringify({ eof: true })));
@@ -65,20 +86,35 @@ function exec() {
   ws.addEventListener("message", (ev) => {
     if (typeof ev.data === "string") {
       const msg = JSON.parse(ev.data);
-      if (msg.exit !== undefined) out.then(() => process.exit(msg.exit));
-      else if (msg.error) out.then(() => die(msg.error, 125));
+      if (msg.exit !== undefined) {
+        event("exec_exit", { code: msg.exit });
+        out.then(() => process.exit(msg.exit));
+      } else if (msg.error) {
+        event("exec_error");
+        out.then(() => die(msg.error, 125));
+      }
       return;
     }
     const buf = Buffer.from(ev.data);
-    const target = buf[0] === 2 ? process.stderr : process.stdout;
+    const channel = buf[0] === 2 ? "stderr" : "stdout";
+    const bytes = buf.length - 1;
+    const target = channel === "stderr" ? process.stderr : process.stdout;
+    event("frame_received", { channel, bytes });
     out = out.then(async () => {
       await write(target, buf.subarray(1));
-      written += buf.length - 1;
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ ack: written }));
+      event("stream_written", { channel, bytes });
+      written += bytes;
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ ack: written }));
+        event("ack_sent", { written });
+      }
     });
   });
-  ws.addEventListener("close", (ev) => out.then(() => die(`box connection closed (${ev.code} ${ev.reason})`, 125)));
-  ws.addEventListener("error", () => die("box connection failed", 125));
+  ws.addEventListener("close", (ev) => {
+    event("exec_close", { code: ev.code });
+    out.then(() => die(`box connection closed (${ev.code} ${ev.reason})`, 125));
+  });
+  ws.addEventListener("error", () => { event("exec_socket_error"); die("box connection failed", 125); });
   // Killed by the backend: closing the socket kills the process in the box.
   for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { ws.close(1000, sig); process.exit(143); });
 }
