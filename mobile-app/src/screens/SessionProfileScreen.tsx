@@ -16,7 +16,7 @@ import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, typ
 import { HARMAN_LEVELS, LEVEL_NAME, isHarmanLevel } from "../lib/harmanLevel"
 import { RUNTIME_OPTIONS, isRuntime, runtimeSummary, type Runtime } from "../lib/runtime"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
-import { AVATARS, avatarGlyph } from "../lib/avatars"
+import { AVATARS } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
 import { compactNumber, durationBetween, shortModel, topTools } from "../lib/stats"
 import { groupThread, itemPreview, itemUuid, parseTranscript, type ThreadItem } from "../lib/thread"
@@ -49,6 +49,7 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const seed = sessionId || path || "session"
 
   const [avatar, setAvatar] = useState("")
+  const [pickingAvatar, setPickingAvatar] = useState(false)
   const [title, setTitle] = useState(route.params.label || "")
   const [systemPrompt, setSystemPrompt] = useState("")
   const [goal, setGoal] = useState("")
@@ -448,7 +449,9 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
     >
       {/* Identity: big avatar + editable name. */}
       <View style={styles.spHeader}>
-        <Avatar avatar={avatar} seed={seed} size={92} />
+        <TouchableOpacity testID="sp-avatar" accessibilityLabel="Change avatar" onPress={() => setPickingAvatar((v) => !v)}>
+          <Avatar avatar={avatar} seed={seed} size={92} />
+        </TouchableOpacity>
         <TextInput
           testID="sp-title"
           style={styles.spTitleInput}
@@ -462,6 +465,23 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         />
         {saved === "title" ? <Text style={styles.ssSaved}>Saved</Text> : null}
       </View>
+      {pickingAvatar ? (
+        <View style={styles.spAvatarGrid}>
+          {AVATARS.map((a) => {
+            const on = avatar === a
+            return (
+              <TouchableOpacity
+                key={a}
+                testID={`sp-avatar-${a}`}
+                onPress={() => pickAvatar(a)}
+                style={[styles.spAvatarCell, on ? styles.spAvatarCellOn : null]}
+              >
+                <Text style={styles.spAvatarGlyph}>{a}</Text>
+              </TouchableOpacity>
+            )
+          })}
+        </View>
+      ) : null}
 
       <TouchableOpacity testID="sp-ai-row" style={styles.spCard} onPress={() => setProviderPickerOpen(true)} disabled={!aiConfig?.capabilities.editable}>
         <View style={styles.spAiBody}>
@@ -704,25 +724,6 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
           ))}
         </>)
       ) : null}
-
-      {/* ── APPEARANCE: avatar picker (collapsed — cosmetic). ── */}
-      {renderCard("appearance", "star", "Appearance", avatar ? "Custom avatar" : "Auto avatar", <>
-        <View style={styles.spAvatarGrid}>
-          {AVATARS.map((a) => {
-            const on = (avatar || avatarGlyph(avatar, seed)) === a && !!avatar
-            return (
-              <TouchableOpacity
-                key={a}
-                testID={`sp-avatar-${a}`}
-                onPress={() => pickAvatar(a)}
-                style={[styles.spAvatarCell, on ? styles.spAvatarCellOn : null]}
-              >
-                <Text style={styles.spAvatarGlyph}>{a}</Text>
-              </TouchableOpacity>
-            )
-          })}
-        </View>
-      </>)}
 
       {/* ── STATS: read-only (collapsed). ── */}
       {summary ? (

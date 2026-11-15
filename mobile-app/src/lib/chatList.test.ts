@@ -66,10 +66,10 @@ test("chatRows groups by project in first-seen order, honours collapse, flat whe
   assert.equal(isGrouped(false), false)
 })
 
-test("projects group by the server's repo name; same-named folders of one repo merge, cwd kept for New chat", () => {
+test("projects group by the server's repo name; same-named folders of one repo merge", () => {
   const mk = (id: string, project: string, project_name?: string) => ({ id, path: id, project, project_name } as never)
   const rows = chatRows([mk("a", "/w/widget/api", "widget-factory"), mk("b", "/w/widget", "widget-factory"), mk("c", "/o/old", undefined)], true, new Set())
-  const heads = rows.filter((r) => r.kind === "header") as { project: string; cwd: string; count: number }[]
-  assert.deepEqual(heads.map((h) => [h.project, h.cwd, h.count]), [["widget-factory", "/w/widget/api", 2], ["old", "/o/old", 1]])
+  const heads = rows.filter((r) => r.kind === "header") as { project: string; count: number }[]
+  assert.deepEqual(heads.map((h) => [h.project, h.count]), [["widget-factory", 2], ["old", 1]])
   assert.deepEqual(ids(visibleChats([mk("a", "/w/x", "widget-factory")] as never, { archived: false, query: "widget", filter: null }) as never), ["a"])
 })

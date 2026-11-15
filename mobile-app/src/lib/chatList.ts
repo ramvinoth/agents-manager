@@ -12,7 +12,7 @@ export function orderChats(chats: Session[]): Session[] {
   return [...chats].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || activity(b) - activity(a))
 }
 
-export type ChatRow = { kind: "chat"; s: Session } | { kind: "header"; project: string; cwd: string; count: number }
+export type ChatRow = { kind: "chat"; s: Session } | { kind: "header"; project: string; count: number }
 
 /** The list's rows. Flat, or grouped by project: a header per project (the one
  *  with the newest message first, "No project" last-named bucket by activity),
@@ -26,7 +26,7 @@ export function chatRows(chats: Session[], grouped: boolean, collapsed: Readonly
   }
   const out: ChatRow[] = []
   for (const [project, list] of groups) {
-    out.push({ kind: "header", project, cwd: list.find((s) => s.project)?.project ?? "", count: list.length })
+    out.push({ kind: "header", project, count: list.length })
     if (!collapsed.has(project)) for (const s of list) out.push({ kind: "chat", s })
   }
   return out

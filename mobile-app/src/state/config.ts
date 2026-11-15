@@ -38,6 +38,7 @@ const THEME_KEY = "themePref"
 const NOTIFY_KEY = "notifyEveryReply"
 const DRAFTS_KEY = "composerDrafts"
 const PROFILE_CARDS_KEY = "profileOpenCards"
+const PROFILE_CARDS_V2_KEY = "profileOpenCardsV2"
 const CHAT_FILTERS_KEY = "chatFilters"
 
 export type ThemePref = "system" | "light" | "dark"
@@ -55,7 +56,7 @@ let _theme: ThemePref = "system"
 let _notify = true
 // Which Session Profile cards are expanded. Global (not per session): the card
 // you reach for is a habit of the reader, not a property of one chat.
-let _profileCards: Record<string, boolean> = { behaviour: true, model: true }
+let _profileCards: Record<string, boolean> = {}
 let _chatFilters: Record<string, unknown> = {}
 
 // Tiny pub-sub so a theme change repaints the whole tree without prop-drilling.
@@ -122,6 +123,14 @@ export async function loadConfig(): Promise<void> {
     try {
       const pc = JSON.parse((await SecureStore.getItemAsync(PROFILE_CARDS_KEY)) || "null")
       if (pc && typeof pc === "object" && !Array.isArray(pc)) _profileCards = pc
+      // Trust started open and nobody used it: close it once on phones that saved
+      // the old default, keeping every other card the reader chose to open.
+      if ((await SecureStore.getItemAsync(PROFILE_CARDS_V2_KEY)) !== "1") {
+        const { behaviour: _b, model: _m, ...kept } = _profileCards
+        _profileCards = kept
+        await SecureStore.setItemAsync(PROFILE_CARDS_KEY, JSON.stringify(kept))
+        await SecureStore.setItemAsync(PROFILE_CARDS_V2_KEY, "1")
+      }
     } catch {
       /* defaults stand */
     }
