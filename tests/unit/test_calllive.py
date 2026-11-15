@@ -188,8 +188,8 @@ def make_bridge(brain, tts_frames=None):
 
 def test_bridge_full_turn_streams_voice_and_commits_history():
     def brain(text, history, runner):
-        return {"reply": "hello " + text, "history": history + [{"role": "user", "content": text},
-                                                                 {"role": "assistant", "content": "hello " + text}]}
+        return {"reply": "hello " + text, "served_by": "Qwen", "history": history + [
+            {"role": "user", "content": text}, {"role": "assistant", "content": "hello " + text}]}
     phone, asr, ttses, th = make_bridge(brain)
     assert asr.sent[0]["type"] == "config"
     phone.inbox.put((OP_BINARY, b"\x01\x02"))
@@ -201,7 +201,7 @@ def test_bridge_full_turn_streams_voice_and_commits_history():
     time.sleep(0.2)
     assert phone.kinds().count("audio_end") == 1  # a second one made the phone end playback early
     assert {"type": "heard", "text": "ram"} in phone.out
-    assert {"type": "reply", "text": "hello ram"} in phone.out
+    assert {"type": "reply", "text": "hello ram", "served_by": "Qwen"} in phone.out
     assert [m for m in ttses[0].sent if m["event"] == "text"][0]["text"] == "hello ram"
     assert {"type": "agent_speaking", "speaking": True} in asr.sent
     gen = [m for m in phone.out if m["type"] == "audio_end"][0]["gen"]
@@ -211,6 +211,21 @@ def test_bridge_full_turn_streams_voice_and_commits_history():
     th.join(2)
     assert not th.is_alive()
     assert asr.closed and {"type": "audio_done"} in asr.sent
+
+
+def test_bridge_failed_brain_tells_the_phone_it_fell_back():
+    def brain(text, history, runner):
+        raise RuntimeError("down")
+    phone, asr, ttses, th = make_bridge(brain)
+    phone.inbox.put((OP_BINARY, b"\x01\x02"))
+    assert wait_for(lambda: any(m["type"] == "audio" for m in asr.sent))
+    asr.push({"type": "eager_end_of_turn", "turn_index": 0, "text": "ram"})
+    asr.push({"type": "committed", "turn_index": 0, "text": "ram"})
+    assert wait_for(lambda: "audio_end" in phone.kinds())
+    reply = [m for m in phone.out if m["type"] == "reply"][0]
+    assert reply["fallback"] == "the call brain failed" and "served_by" not in reply
+    phone.inbox.put((OP_TEXT, b'{"type":"stop"}'))
+    th.join(2)
 
 
 def test_bridge_eager_write_tool_waits_for_commit():

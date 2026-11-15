@@ -161,6 +161,16 @@ class TestCallTurn:
         with pytest.raises(RuntimeError):
             callbrain.call_turn("s", PRINCIPAL, "hi", [])
 
+    def test_reply_names_who_served_it(self, monkeypatch):
+        self._script(monkeypatch, [{"content": "Hi."}])
+        out = callbrain.call_turn("s", PRINCIPAL, "hi", [], preset=self.preset, snapshot_text="x")
+        assert out["served_by"] == callbrain.served_by(self.preset) and "fallback" not in out
+
+    def test_lost_reply_is_flagged_as_a_fallback(self, monkeypatch):
+        self._script(monkeypatch, [{"content": "  "}])
+        out = callbrain.call_turn("s", PRINCIPAL, "hi", [], preset=self.preset, snapshot_text="x")
+        assert out["fallback"]
+
     def test_stall_without_tool_is_nudged_once_and_kept_out_of_history(self, monkeypatch):
         call = {"tool_calls": [{"id": "1", "function": {"name": "board_status", "arguments": "{}"}}]}
         seen = self._script(monkeypatch, [{"content": "One moment, let me check."}, call,
@@ -181,7 +191,7 @@ class TestCallTurn:
         seen = self._script(monkeypatch, [{"content": "It is Saturday the 26th."}])
         out = callbrain.call_turn("s", PRINCIPAL, "what is the date", [], preset=self.preset,
                                   snapshot_text="Now: Saturday, September 26, 2026.")
-        assert out == {"reply": "It is Saturday the 26th.", "tools": [],
+        assert out == {"reply": "It is Saturday the 26th.", "tools": [], "served_by": "qwen",
                        "history": [{"role": "user", "content": "what is the date"},
                                    {"role": "assistant", "content": "It is Saturday the 26th."}]}
         payload = seen[0]
@@ -402,7 +412,7 @@ class TestDescribeEngine:
         monkeypatch.setattr(callbrain, "SPEAKRAIL_ASR_URL", "ws://box:18191/v1/transcribe")
         monkeypatch.setattr(callbrain, "brain_preset", lambda: self.preset)
         out = callbrain.engine()
-        assert out == {"engine": "speakrail", "model": "Breeze + Qwen 3.8-27B",
+        assert out == {"engine": "speakrail", "model": "Speakrail voice + Qwen 3.8-27B",
                        "live": "/api/call/live"}
 
     def test_speakrail_stays_off_without_a_token(self, monkeypatch):
@@ -540,3 +550,9 @@ def test_lfm3_falls_back_to_brain_only_before_any_tool(pending, monkeypatch):
                     OSError("down")])
     with pytest.raises(OSError):   # a tool already ran: re-running the turn on Qwen would repeat it
         callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], tool_runner=_runner([]), snapshot_text="", http=mid)
+
+
+def test_lfm3_reply_says_lfm3_served_it(pending):
+    fake = FakeLFM3([{"text": "Hi there.", "tool_calls": [], "audio": False}])
+    r = callbrain.lfm3_turn("s1", PRINCIPAL, "hi", [], snapshot_text="", http=fake)
+    assert r["served_by"] == callbrain.LFM3_NAME and "fallback" not in r

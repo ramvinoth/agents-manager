@@ -13,7 +13,7 @@ import { stopSpeaking } from "./voice"
 
 type Turn = ReturnType<typeof useAssistantTurn>
 
-interface CallApi extends Pick<Turn, "phase" | "model" | "heard" | "reply" | "error"> {
+interface CallApi extends Pick<Turn, "phase" | "model" | "lines" | "error"> {
   active: boolean
   label: string
   muted: boolean
@@ -92,9 +92,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const join = useCallback((label: string, path: string | undefined) => { callSession.start(label, path) }, [])
 
   const value = useMemo<CallApi>(() => ({
-    phase: turn.phase, model: turn.model, heard: turn.heard, reply: turn.reply, error: turn.error,
+    phase: turn.phase, model: turn.model, lines: turn.lines, error: turn.error,
     active: session.active, label: session.label, muted, elapsed, join, hangUp, toggleMute,
-  }), [turn.phase, turn.model, turn.heard, turn.reply, turn.error, session.active, session.label, muted, elapsed, join, hangUp, toggleMute])
+  }), [turn.phase, turn.model, turn.lines, turn.error, session.active, session.label, muted, elapsed, join, hangUp, toggleMute])
 
   return <CallContext.Provider value={value}>{children}</CallContext.Provider>
 }

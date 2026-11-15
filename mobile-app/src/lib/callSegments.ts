@@ -15,6 +15,9 @@ export type CallAnswer = {
   next?: string
   /** /api/call/next only: the words the segment that just ended actually said. */
   said?: string
+  /** Who answered, and why a stand-in did (absent from an older server). */
+  served_by?: string
+  fallback?: string
   history: CallHistory
   tools: string[]
 }
@@ -28,11 +31,4 @@ export function callStep(res: CallAnswer): CallStep {
   if (res.audio && res.next) return { kind: "play", audio: res.audio, next: res.next }
   const text = (res.reply || "").trim()
   return text ? { kind: "speak", text } : { kind: "done" }
-}
-
-/** The caption under the call: the words spoken so far this turn. */
-export function joinSaid(shown: string, said: string | undefined): string {
-  const s = (said || "").trim()
-  if (!s) return shown
-  return shown ? `${shown} ${s}` : s
 }

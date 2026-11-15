@@ -41,6 +41,20 @@ test("parse", () => {
   assert.strictEqual(parseFishEvent("nope"), null)
   assert.strictEqual(parseFishEvent(new ArrayBuffer(2)), null)
 })
+test("a reply carries who served it and why a stand-in did", async () => {
+  assert.deepStrictEqual(
+    parseFishEvent('{"type":"reply","text":"hi","served_by":"LFM3-Audio","fallback":"LFM3 timed out"}'),
+    { type: "reply", text: "hi", servedBy: "LFM3-Audio", fallback: "LFM3 timed out" }
+  )
+  // An older server sends neither field.
+  assert.deepStrictEqual(parseFishEvent('{"type":"reply","text":"hi"}'), { type: "reply", text: "hi" })
+  const r = rig()
+  const got: unknown[] = []
+  r.h.onReply = ((t: string, m: unknown) => got.push([t, m])) as any
+  await startFishCall(r.sock, r.audio, [], r.h, r.timers)
+  r.msg('{"type":"reply","text":"yo","served_by":"Qwen"}')
+  assert.deepStrictEqual(got, [["yo", { servedBy: "Qwen", fallback: undefined }]])
+})
 test("start sends history, mic goes up binary", async () => {
   const r = rig()
   await startFishCall(r.sock, r.audio, [1], r.h, r.timers)

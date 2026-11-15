@@ -7,13 +7,14 @@
  * of the app stays usable; End hangs up and the screen closes itself.
  */
 import React, { useEffect, useRef } from "react"
-import { Text, View } from "react-native"
+import { ScrollView, Text, View } from "react-native"
 import { Pressable } from "../components/Tracked"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { useCall } from "../lib/CallProvider"
 import { fmtElapsed } from "../lib/callSession"
+import { brainLabel, latestFallback } from "../lib/callTranscript"
 import { useTheme } from "../lib/useTheme"
 import Icon from "../components/Icon"
 import { useStyles } from "../lib/styles"
@@ -25,8 +26,9 @@ export default function CallScreen({ route, navigation }: Props) {
   const styles = useStyles()
   const t = useTheme()
   const insets = useSafeAreaInsets()
-  const { active, label: liveLabel, phase, model, heard, reply, error, muted, elapsed, join, hangUp, toggleMute } = useCall()
+  const { active, label: liveLabel, phase, model, lines, error, muted, elapsed, join, hangUp, toggleMute } = useCall()
   const wasActive = useRef(false)
+  const scroller = useRef<ScrollView>(null)
 
   // Opening the screen joins the live call, or starts one if none is running.
   useEffect(() => { join(requested, path) }, [join, requested, path])
@@ -72,28 +74,36 @@ export default function CallScreen({ route, navigation }: Props) {
         <Text style={styles.callLabel} numberOfLines={1}>{label}</Text>
         {/* The server's own name for the model answering, once it has told us. */}
         {model !== null ? (
-          <Text style={styles.callCaption} numberOfLines={1}>{`Brain: ${model || "call brain"}`}</Text>
+          <Text style={styles.callCaption} numberOfLines={1}>{`Brain: ${brainLabel(model, lines)}`}</Text>
         ) : null}
         <Text style={styles.callElapsed}>{fmtElapsed(elapsed)}</Text>
         <View style={styles.callStatus}>
           <View style={[styles.callDot, { backgroundColor: dotColor }]} />
           <Text style={styles.callStatusText}>{statusLine}</Text>
         </View>
-        {/* The exchange in text, so a glance confirms what was heard and said. */}
-        {heard ? (
-          <Text style={styles.callHeard} numberOfLines={2}>
-            You: {heard}
-          </Text>
-        ) : null}
-        {reply ? (
-          <Text style={styles.callReply} numberOfLines={4}>
-            {reply}
-          </Text>
+        {latestFallback(lines) ? (
+          <Text style={styles.callError}>{latestFallback(lines)}</Text>
         ) : null}
         {error ? (
           <Text style={styles.callError}>{error}</Text>
         ) : null}
       </View>
+
+      {/* The whole exchange, oldest first, never truncated; follows the latest line. */}
+      <ScrollView
+        ref={scroller}
+        testID="call-transcript"
+        style={styles.callTranscript}
+        contentContainerStyle={styles.callTranscriptContent}
+        onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
+      >
+        {lines.map((l) => (
+          <View key={l.id} style={[styles.callBubble, l.who === "you" ? styles.callBubbleYou : styles.callBubbleHarman]}>
+            <Text style={styles.callBubbleWho}>{l.who === "you" ? "You" : "Harman"}</Text>
+            <Text style={[styles.callBubbleText, l.who === "you" ? styles.callBubbleTextYou : null]} selectable>{l.text}</Text>
+          </View>
+        ))}
+      </ScrollView>
 
       {/* Call controls: Mute + big red End (mirror the CallKit / lock-screen UI). */}
       <View style={styles.callControls}>

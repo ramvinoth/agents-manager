@@ -3,7 +3,7 @@
  *     node --experimental-strip-types src/lib/callSegments.test.ts
  */
 import assert from "node:assert"
-import { callStep, joinSaid } from "./callSegments.ts"
+import { callStep } from "./callSegments.ts"
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -31,11 +31,4 @@ test("blank reply or nothing ends the turn", () => {
   assert.deepStrictEqual(callStep({ ...base, reply: "   " }), { kind: "done" })
   assert.deepStrictEqual(callStep({ ...base, said: "ok" }), { kind: "done" })
 })
-test("joinSaid appends segments, ignores blanks", () => {
-  assert.strictEqual(joinSaid("", "Checking."), "Checking.")
-  assert.strictEqual(joinSaid("Checking.", " Three cards. "), "Checking. Three cards.")
-  assert.strictEqual(joinSaid("Checking.", ""), "Checking.")
-  assert.strictEqual(joinSaid("x", undefined), "x")
-})
-
 console.log(`${passed} passed`)

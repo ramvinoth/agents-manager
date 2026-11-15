@@ -24,7 +24,8 @@ import {
 } from "./voice"
 import { startWakeguard, duplexAvailable, type DuplexMic } from "./duplexMic"
 import { parseBargeTail } from "./bargeCommand"
-import { callStep, joinSaid } from "./callSegments"
+import { callStep, type CallAnswer } from "./callSegments"
+import { addLine, type ReplyMeta, type TranscriptLine } from "./callTranscript"
 import { audioSession } from "./audioSessionNative"
 import { startFishCall, type FishCall } from "./fishCall"
 import { fishAudioAvailable, nativeFishAudio } from "./fishNative"
@@ -44,10 +45,8 @@ export interface UseAssistantTurn {
   /** The server's name for the call brain's model; null until the first start
    *  has asked. */
   model: string | null
-  /** What the caller last said (transcribed). */
-  heard: string
-  /** What Harman last said back. */
-  reply: string
+  /** The whole call so far, oldest first: what the caller said and what Harman said back. */
+  lines: TranscriptLine[]
   error: string
   /** Run one brain turn from already-transcribed text: ask the call brain, speak its reply. */
   runTurn: (text: string) => Promise<void>
@@ -63,8 +62,8 @@ export function useAssistantTurn(
 ): UseAssistantTurn {
   const [phase, setPhase] = useState<Phase>("idle")
   const [model, setModel] = useState<string | null>(null)
-  const [heard, setHeard] = useState("")
-  const [reply, setReply] = useState("")
+  const [lines, setLines] = useState<TranscriptLine[]>([])
+  const say = useCallback((who: TranscriptLine["who"], text: string, meta: ReplyMeta = {}) => setLines((l) => addLine(l, who, text, meta)), [])
   const [error, setError] = useState("")
 
   // The call brain's memory for this call: spoken turns plus the tool calls it
@@ -161,22 +160,20 @@ export function useAssistantTurn(
   const runTurn = useCallback(
     async (text: string): Promise<void> => {
       if (!text.trim() || !path) return
-      setHeard(text)
+      say("you", text)
       setError("")
       setPhase("thinking")
       try {
         let res = await api.callTurn({ path, text, history: historyRef.current })
-        let shown = ""
-        setReply("")
+        const meta = (r: CallAnswer): ReplyMeta => ({ servedBy: r.served_by, fallback: r.fallback })
         for (;;) {
           historyRef.current = res.history
-          shown = joinSaid(shown, res.said)
-          setReply(shown)
+          say("harman", res.said || "", meta(res))
           const step = callStep(res)
           if (step.kind === "done") break
           setPhase("speaking")
           if (step.kind === "speak") {
-            setReply(joinSaid(shown, step.text))
+            if (step.text !== res.said) say("harman", step.text, meta(res))
             await playWithBargeIn(() => speak(step.text))
             break
           }
@@ -187,7 +184,7 @@ export function useAssistantTurn(
           res = await api.callNext({ path, next: step.next, stop: cut })
           if (cut) {
             historyRef.current = res.history
-            setReply(joinSaid(shown, res.said))
+            say("harman", res.said || "", meta(res))
             break
           }
         }
@@ -200,7 +197,7 @@ export function useAssistantTurn(
         setError((e as Error).message)
       }
     },
-    [path, playWithBargeIn]
+    [path, playWithBargeIn, say]
   )
 
   /** Each window's verdict from the server: fire a turn on an utterance with
@@ -254,8 +251,8 @@ export function useAssistantTurn(
       try {
         const call = await startFishCall(api.callLive(path), nativeFishAudio, historyRef.current, {
           onPhase: setPhase,
-          onHeard: setHeard,
-          onReply: setReply,
+          onHeard: (t) => say("you", t),
+          onReply: (t, meta) => say("harman", t, meta),
           onFailed: (m) => {
             fishRef.current = null
             handsFreeRef.current = false
@@ -273,7 +270,7 @@ export function useAssistantTurn(
       return
     }
     listenStopRef.current = await startListening(onListenEvent)
-  }, [path, model, onListenEvent])
+  }, [path, model, onListenEvent, say])
 
   /** Pause listening and settle back to idle. */
   const stopHandsFree = useCallback(async () => {
@@ -286,5 +283,5 @@ export function useAssistantTurn(
     if (!busyRef.current) setPhase("idle")
   }, [])
 
-  return { phase, model, heard, reply, error, runTurn, startHandsFree, stopHandsFree }
+  return { phase, model, lines, error, runTurn, startHandsFree, stopHandsFree }
 }

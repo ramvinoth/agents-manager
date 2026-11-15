@@ -368,6 +368,7 @@ class Bridge:
         self.turns = TurnTaker()
         self.lock = threading.Lock()     # guards turns, history and acks
         self.acks = 0                    # holding lines said so far this call
+        self.served = {}                 # turn -> who really answered (served_by, fallback)
         self.asr = None
         self.t0 = time.monotonic()
         self.done = threading.Event()
@@ -408,7 +409,9 @@ class Bridge:
                 if self.rec:
                     self.rec.event("heard", turn=self.turns.current, text=a[1])
             elif a[0] == "speak":
-                args = (a[2], self.voice.current_epoch())
+                with self.lock:
+                    meta = self.served.pop(a[1], {})
+                args = (a[2], self.voice.current_epoch(), meta)
                 threading.Thread(target=self._speak, args=args, daemon=True).start()
             elif a[0] == "interrupt":
                 barged = self.voice.barge()
@@ -447,17 +450,18 @@ class Bridge:
             print(f"[calllive] brain failed: {e}", flush=True)
             if self.rec:
                 self.rec.event("error", sub="brain", text=str(e))
-            out = {"reply": BRAIN_FAILED, "history": history}
+            out = {"reply": BRAIN_FAILED, "history": history, "fallback": "the call brain failed"}
         with self.lock:
+            self.served[turn] = {k: out[k] for k in ("served_by", "fallback") if out.get(k)}
             acts = self.turns.brain_done(turn, text, out["reply"])
             if acts:
                 self.history = out.get("history") or history
         self.act(acts)
 
-    def _speak(self, reply, epoch):
-        self.tell("reply", text=reply)
+    def _speak(self, reply, epoch, meta):
+        self.tell("reply", text=reply, **meta)
         if self.rec:
-            self.rec.event("reply", text=reply)
+            self.rec.event("reply", text=reply, **meta)
         self.voice.say(reply, epoch)
 
     # -- loops

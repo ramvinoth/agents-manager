@@ -315,6 +315,14 @@ def describe_engine(preset):
     return {"engine": "brain", "model": preset.get("name") or preset.get("model") or ""}
 
 
+LFM3_NAME = "LFM3-Audio"
+
+
+def served_by(preset):
+    """The model that actually answers, as the phone labels it."""
+    return (preset.get("name") or preset.get("model") or "call brain") if preset else "call brain"
+
+
 def engine():
     if CALL_ENGINE == "fish" and FISH_API_KEY:
         # Fish listens and speaks over /api/call/live; the call brain still thinks.
@@ -325,13 +333,13 @@ def engine():
     if CALL_ENGINE == "speakrail" and SPEAKRAIL_TOKEN and SPEAKRAIL_ASR_URL:
         # The box's Speakrail engines speak the call (speakrailcall); the brain still thinks.
         d = describe_engine(brain_preset())
-        out = {"engine": "speakrail", "model": f"Breeze + {d.get('model', '')}".rstrip(" +"),
+        out = {"engine": "speakrail", "model": f"Speakrail voice + {d.get('model', '')}".rstrip(" +"),
                "live": "/api/call/live"}
         return {**out, "error": d["error"]} if "error" in d else out
     if LFM3_SERVICE_URL:
         try:
             if _lfm3_http("GET", "/health", timeout=2).get("ok"):
-                return {"engine": "brain", "model": "LFM3-Audio"}
+                return {"engine": "brain", "model": LFM3_NAME}
         except Exception:
             pass
     return describe_engine(brain_preset())
@@ -525,7 +533,9 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
     if nudged is not None:
         del messages[nudged:nudged + 2]
     messages.append({"role": "assistant", "content": reply})
-    return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
+    out = {"reply": reply, "history": trim_history(messages[1:]), "tools": used,
+           "served_by": served_by(preset)}
+    return dict(out, fallback="the model gave no answer") if reply == LOST else out
 
 
 # ------------------------------------------------------- LFM3-Audio engine
@@ -582,14 +592,16 @@ def _lfm3_rounds(messages, used, ctx, rounds, tool_runner, http):
                 _PENDING[r["id"]] = {"messages": messages, "used": used, "ctx": ctx,
                                      "rounds": rounds, "ts": now}
             return {"audio": r["id"], "next": r["id"], "history": trim_history(messages[1:]),
-                    "tools": used}
+                    "tools": used, "served_by": LFM3_NAME}
         if r.get("error"):
             raise RuntimeError(f"LFM3: {r['error']}")
         said, calls = (r.get("text") or "").strip(), r.get("tool_calls") or []
         if not calls or rounds <= 0:
             reply = said or LOST
             messages.append({"role": "assistant", "content": reply})
-            return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
+            out = {"reply": reply, "history": trim_history(messages[1:]), "tools": used,
+                   "served_by": LFM3_NAME}
+            return dict(out, fallback="the model gave no answer") if reply == LOST else out
         _run_calls(messages, said, calls, used, ctx, tool_runner)
         rounds -= 1
 
@@ -607,10 +619,11 @@ def lfm3_turn(sid, principal, text, history, tool_runner=run_tool, snapshot_text
     used = []
     try:
         return _lfm3_rounds(messages, used, ctx, MAX_TOOL_ROUNDS, tool_runner, http)
-    except Exception:
+    except Exception as e:
         if used or not brain_preset():
             raise
-        return call_turn(sid, principal, text, history, tool_runner=tool_runner, snapshot_text=snap)
+        out = call_turn(sid, principal, text, history, tool_runner=tool_runner, snapshot_text=snap)
+        return dict(out, fallback=f"{LFM3_NAME} failed ({type(e).__name__})")
 
 
 def owns_segment(sid, segment):
@@ -636,7 +649,8 @@ def lfm3_next(sid, segment, stop=False, tool_runner=run_tool, http=_lfm3_http):
             http("POST", f"/cancel/{segment}")
         r = http("GET", f"/result/{segment}")
     except Exception:
-        return {"said": "", "reply": LOST, "history": trim_history(messages[1:]), "tools": used}
+        return {"said": "", "reply": LOST, "history": trim_history(messages[1:]), "tools": used,
+                "served_by": LFM3_NAME, "fallback": f"{LFM3_NAME} did not return its answer"}
     said = (r.get("text") or "").strip()
     calls = [] if stop else (r.get("tool_calls") or [])
     if not calls or st["rounds"] <= 0:
@@ -647,7 +661,8 @@ def lfm3_next(sid, segment, stop=False, tool_runner=run_tool, http=_lfm3_http):
     try:
         out = _lfm3_rounds(messages, used, st["ctx"], st["rounds"] - 1, tool_runner, http)
     except Exception:
-        out = {"reply": LOST, "history": trim_history(messages[1:]), "tools": used}
+        out = {"reply": LOST, "history": trim_history(messages[1:]), "tools": used,
+               "served_by": LFM3_NAME, "fallback": f"{LFM3_NAME} failed after a tool ran"}
     return dict(out, said=said)
 
 

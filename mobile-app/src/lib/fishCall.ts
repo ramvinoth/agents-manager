@@ -13,6 +13,7 @@
  * protocol is unit-tested without a simulator.
  */
 import { fromBase64, toBase64 } from "./bytes.ts"
+import type { ReplyMeta } from "./callTranscript.ts"
 
 export type FishPhase = "waiting" | "thinking" | "speaking"
 
@@ -39,7 +40,7 @@ export interface FishAudio {
 export interface FishHandlers {
   onPhase(phase: FishPhase): void
   onHeard(text: string): void
-  onReply(text: string): void
+  onReply(text: string, meta?: ReplyMeta): void
   /** The call ended on its own (server error or socket drop), not via stop(). */
   onFailed(message: string): void
 }
@@ -51,7 +52,8 @@ const OPEN = 1
 /** A parsed server event, or null for anything we do not understand. */
 export type FishEvent =
   | { type: "ready"; sampleRate: number }
-  | { type: "heard" | "reply"; text: string }
+  | { type: "heard"; text: string }
+  | ({ type: "reply"; text: string } & ReplyMeta)
   | { type: "audio_end"; gen: number | null }
   | { type: "barge" | "pong" }
   | { type: "error"; message: string }
@@ -68,8 +70,14 @@ export function parseFishEvent(raw: unknown): FishEvent | null {
     case "ready":
       return { type: "ready", sampleRate: Number(m.sample_rate) || 24000 }
     case "heard":
+      return { type: "heard", text: String(m.text ?? "") }
     case "reply":
-      return { type: m.type, text: String(m.text ?? "") }
+      return {
+        type: "reply",
+        text: String(m.text ?? ""),
+        ...(typeof m.served_by === "string" && m.served_by ? { servedBy: m.served_by } : {}),
+        ...(typeof m.fallback === "string" && m.fallback ? { fallback: m.fallback } : {}),
+      }
     case "audio_end":
       return { type: "audio_end", gen: typeof m.gen === "number" ? m.gen : null }
     case "barge":
@@ -185,7 +193,7 @@ export async function startFishCall(
         h.onPhase("thinking")
         break
       case "reply":
-        h.onReply(e.text)
+        h.onReply(e.text, { servedBy: e.servedBy, fallback: e.fallback })
         break
       case "audio_end":
         endPending = true
