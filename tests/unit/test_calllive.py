@@ -403,18 +403,12 @@ def test_announce_with_no_live_call_returns_zero():
     assert calllive.announce("hi") == 0
 
 
-def test_announce_speaks_full_text_to_live_call():
-    said = []
-
-    class V:
-        def current_epoch(self):
-            return 7
-
-        def say(self, text, epoch, only_if_idle=False):
-            said.append((text, epoch, only_if_idle))
+def test_announce_queues_full_text_for_live_call():
+    got = []
 
     class B:
-        voice = V()
+        def enqueue(self, text):
+            got.append(text)
 
     b = B()
     with calllive._LIVE_LOCK:
@@ -424,5 +418,4 @@ def test_announce_speaks_full_text_to_live_call():
     finally:
         with calllive._LIVE_LOCK:
             calllive._LIVE.discard(b)
-    time.sleep(0.2)
-    assert said == [("x" * 500, 7, True)]
+    assert got == ["x" * 500]

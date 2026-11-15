@@ -20,6 +20,7 @@ owner already use — never a private side channel:
   decide         The owner's judgement: move a card to Approved or Declined.
   board_status   Every open card by column, when the snapshot's top few are
                  not enough.
+  call_log       What was said on past calls on a given day (call_events).
 
 Every write goes through actions.execute under the CALLER's principal — the
 human on the phone — so authority, audit and wakes are the ones the board
@@ -46,7 +47,7 @@ import re
 import threading
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from orchestrator import actions, db, orglogic, providers
 from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY, FISH_TTS_MODEL, LFM3_SERVICE_URL,
@@ -98,7 +99,7 @@ PERSONA = (
     "MUST become a card: call delegate with a clear title and the request in the "
     "owner's words; only after the tool returns may you say it is delegated. Saying "
     "it is started without calling the tool is lying. To check on a card, call "
-    "card_detail. When the owner approves or declines a card, call decide. When they "
+    "card_detail. When the owner asks what you talked about on an earlier call, call call_log. When the owner approves or declines a card, call decide. When they "
     "want a note left on a card, call comment. For the full list of open cards, call "
     "board_status, then speak it like a manager on the phone: the count per column, "
     "the cards waiting on the owner by number and title, and an offer to go through "
@@ -139,6 +140,12 @@ TOOLS = [
         "name": "board_status",
         "description": "Every open card on the board, grouped by column.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "call_log",
+        "description": "What was said on past calls on one day, both sides, oldest first. Use when the owner asks what we talked about before.",
+        "parameters": {"type": "object", "properties": {
+            "day": {"type": "string",
+                    "description": "today, yesterday, or a date as YYYY-MM-DD. Default today."}}}}},
 ]
 
 
@@ -455,6 +462,48 @@ def _board_status(ctx):
     return render_board(db.board_columns_list(project), db.card_list(project_id=project), time.time())
 
 
+CALL_LOG_LINES = 40
+RECENT_CALL_WINDOW_S = 6 * 3600
+RECENT_CALL_TURNS = 8
+
+
+def _day_bounds(day, now=None):
+    """(start, end) epoch of a local calendar day: 'today', 'yesterday' or YYYY-MM-DD; None if unreadable."""
+    now = datetime.fromtimestamp(now if now is not None else time.time())
+    word = (day or "today").strip().lower() or "today"
+    if word in ("today", "yesterday"):
+        d = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if word == "yesterday":
+            d = d - timedelta(days=1)
+    else:
+        try:
+            d = datetime.strptime(word, "%Y-%m-%d")
+        except ValueError:
+            return None
+    return d.timestamp(), (d + timedelta(days=1)).timestamp()
+
+
+def _call_log(day):
+    bounds = _day_bounds(day)
+    if bounds is None:
+        return "Say today, yesterday, or a date like 2026-11-14."
+    lines = db.call_turns_between(*bounds, limit=CALL_LOG_LINES)
+    if not lines:
+        return "No call lines on that day."
+    return "\n".join(f"{datetime.fromtimestamp(m['at']):%H:%M} {m['who']}: {m['text']}" for m in lines)
+
+
+def recent_call_history(now=None):
+    """The tail of the last few hours of calls as plain chat turns, so a new call knows
+    what the last one was about. Empty when there was none."""
+    now = now if now is not None else time.time()
+    lines = db.call_turns_between(now - RECENT_CALL_WINDOW_S, now, limit=RECENT_CALL_TURNS)
+    turns = [{"role": "user" if m["who"] == "caller" else "assistant", "content": m["text"]} for m in lines]
+    while turns and turns[0]["role"] != "user":
+        turns.pop(0)
+    return turns
+
+
 def _int(v):
     try:
         return int(v)
@@ -468,6 +517,8 @@ def run_tool(name, args, ctx):
         return _delegate(ctx, str(args.get("title", "")), str(args.get("detail", "")))
     if name == "board_status":
         return _board_status(ctx)
+    if name == "call_log":
+        return _call_log(str(args.get("day", "")))
     card_id = _int(args.get("card_id"))
     if name in ("card_detail", "comment", "decide") and card_id is None:
         return "Which card number?"

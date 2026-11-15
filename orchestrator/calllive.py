@@ -342,15 +342,20 @@ _LIVE_LOCK = threading.Lock()
 
 
 def announce(text):
-    """Speak `text` into every live call, unless that call is already talking (the
-    update is dropped rather than cutting in on the owner). Returns how many calls
-    were live, so the caller can fall back to a push when it is 0."""
+    """Queue `text` for every live call. The caller always has priority: an update
+    waits until nobody is talking or thinking, then is spoken in order, never cutting
+    in and never dropped. Returns how many calls were live, so the caller can fall
+    back to a push when it is 0."""
     with _LIVE_LOCK:
         bridges = list(_LIVE)
     for b in bridges:
-        threading.Thread(target=b.voice.say, args=(text, b.voice.current_epoch(), True),
-                         daemon=True).start()
+        b.enqueue(text)
     return len(bridges)
+
+
+QUIET_S = 1.5            # silence after the last ASR event before an update may speak
+UPDATE_POLL_S = 0.5
+UPDATE_LIMIT = 8         # queued updates per call; the oldest is dropped beyond this
 
 
 class Bridge:
@@ -368,6 +373,9 @@ class Bridge:
         self.turns = TurnTaker()
         self.lock = threading.Lock()     # guards turns, history and acks
         self.acks = 0                    # holding lines said so far this call
+        self.updates = []                # board updates waiting for a quiet moment
+        self.thinking = 0                # brain turns in flight
+        self.last_asr = 0.0              # monotonic time of the newest ASR event
         self.served = {}                 # turn -> who really answered (served_by, fallback)
         self.asr = None
         self.t0 = time.monotonic()
@@ -398,6 +406,29 @@ class Bridge:
         asr.sock.settimeout(READ_TIMEOUT)
         asr.send_bytes(pack(asr_config(self.history)))
         self.asr = asr
+
+    # -- queued board updates
+    def enqueue(self, text):
+        with self.lock:
+            self.updates.append(text)
+            del self.updates[:-UPDATE_LIMIT]
+
+    def _quiet(self):
+        with self.lock:
+            idle = self.thinking == 0 and time.monotonic() - self.last_asr >= QUIET_S
+        return idle and not self.voice._busy()
+
+    def update_loop(self):
+        """Speak queued updates one at a time, only while the caller and the agent are both quiet."""
+        while not self.done.wait(UPDATE_POLL_S):
+            with self.lock:
+                text = self.updates[0] if self.updates else None
+            if text is None or not self._quiet():
+                continue
+            with self.lock:
+                if self.updates and self.updates[0] == text:
+                    self.updates.pop(0)
+            self.voice.say(text, self.voice.current_epoch(), only_if_idle=True)
 
     # -- actions
     def act(self, actions):
@@ -440,10 +471,12 @@ class Bridge:
             return run_tool(name, args, ctx)
         with self.lock:
             history = list(self.history)
+            self.thinking += 1
         try:
             out = self.brain(text, history, runner)
         except NeedsCommit:
             with self.lock:
+                self.thinking -= 1
                 acts = self.turns.brain_deferred(turn, text)
             return self.act(acts)
         except Exception as e:
@@ -452,6 +485,7 @@ class Bridge:
                 self.rec.event("error", sub="brain", text=str(e))
             out = {"reply": BRAIN_FAILED, "history": history, "fallback": "the call brain failed"}
         with self.lock:
+            self.thinking -= 1
             self.served[turn] = {k: out[k] for k in ("served_by", "fallback") if out.get(k)}
             acts = self.turns.brain_done(turn, text, out["reply"])
             if acts:
@@ -513,6 +547,7 @@ class Bridge:
                     self.rec.event("asr", sub=ev.get("type"), turn=ev.get("turn_index", -1),
                                    text=clean_text(ev.get("text")))
             with self.lock:
+                self.last_asr = time.monotonic()
                 acts = self.turns.on_asr(ev)
             self.act(acts)
 
@@ -535,6 +570,7 @@ class Bridge:
             self.rec.event("start")
         reader = threading.Thread(target=self.asr_loop, daemon=True)
         reader.start()
+        threading.Thread(target=self.update_loop, daemon=True).start()
         try:
             while not self.done.is_set():
                 op, payload = self.phone.recv()
@@ -551,7 +587,7 @@ class Bridge:
                         # The phone's call history so far; it feeds the brain's turns
                         # (the ASR context was already sent when the socket opened).
                         hist = msg.get("history")
-                        if isinstance(hist, list):
+                        if isinstance(hist, list) and hist:
                             with self.lock:
                                 self.history = [m for m in hist if isinstance(m, dict)]
                     elif kind == "played":
