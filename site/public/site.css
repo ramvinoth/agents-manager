@@ -19,3 +19,11 @@ h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height:1.12; letter-spacing:-.03e
 .uses, .how { padding:2.5rem 0; border-top:1px solid var(--line); }
 li { margin:.5rem 0; }
 footer { padding:2rem 1.25rem 3rem; color:var(--mute); font-size:.9rem; border-top:1px solid var(--line); margin-top:2rem; }
+.waitlist { display:grid; gap:.4rem; max-width:26rem; margin-top:1.25rem; }
+.waitlist label { font-size:.9rem; color:var(--mute); }
+.waitlist input { font:inherit; padding:.65rem .8rem; border-radius:.6rem; border:1px solid var(--line); background:transparent; color:var(--fg); }
+.waitlist .opt { opacity:.7; }
+.waitlist .hp { position:absolute; left:-9999px; }
+.waitlist button { border:0; cursor:pointer; font:inherit; font-weight:600; justify-self:start; }
+.waitlist button:disabled { opacity:.5; }
+.status { min-height:1.5rem; margin:.25rem 0 0; color:var(--mute); font-size:.95rem; }

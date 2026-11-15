@@ -1,7 +1,8 @@
 {
-  // Public site (suhai.ai): static assets only, no Worker code.
+  // Public site (suhai.ai): static assets plus one Worker route, /api/waitlist (secrets INTAKE_URL, INTAKE_TOKEN).
   "name": "harman-site",
+  "main": "./worker.js",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./dist", "not_found_handling": "404-page", "html_handling": "drop-trailing-slash" },
+  "assets": { "binding": "ASSETS", "run_worker_first": ["/api/*"], "directory": "./dist", "not_found_handling": "404-page", "html_handling": "drop-trailing-slash" },
   "routes": [{ "pattern": "suhai.ai", "custom_domain": true }]
 }
