@@ -42,7 +42,7 @@ export function AuthGate() {
           <h1 className="text-base font-semibold">{signupOpen ? "Create your account" : "Sign in"}</h1>
           <p className="mt-1 text-xs text-muted-foreground">
             {signupOpen
-              ? "First run — this account owns the instance. Enter the setup code shown when Harman was installed."
+              ? "This account will own the instance. Enter the setup code from install. If it scrolled away, run harman setup-code on the computer."
               : "This viewer is private to your account."}
           </p>
         </div>

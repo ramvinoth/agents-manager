@@ -65,6 +65,18 @@ export async function ensurePermission(): Promise<boolean> {
   }
 }
 
+/** Where the OS permission stands, without ever prompting. */
+export async function pushPermission(): Promise<"granted" | "undetermined" | "denied" | "unavailable"> {
+  const N = await load()
+  if (!N) return "unavailable"
+  try {
+    const p = await N.getPermissionsAsync()
+    return p.granted ? "granted" : p.canAskAgain === false ? "denied" : "undetermined"
+  } catch {
+    return "unavailable"
+  }
+}
+
 // The APNs device token registered with the server this session, so logout can
 // unregister exactly what was registered.
 let _pushToken: string | null = null
@@ -78,16 +90,20 @@ let _pushToken: string | null = null
  * Uses getDevicePushTokenAsync (raw APNs token) — the server contacts Apple
  * directly, so no Expo push token / EAS projectId is needed.
  *
+ * Never prompts unless `ask` is true: the OS dialog belongs behind a screen
+ * that says why (components/PushPromptCard), not at sign-in.
+ *
  * Best-effort throughout: a device without push (simulator, Expo Go, denied
  * permission) simply gets no background notifications rather than an error.
  */
 export async function registerForPush(
-  send: (token: string) => Promise<unknown>
+  send: (token: string) => Promise<unknown>,
+  ask = false,
 ): Promise<string | null> {
   const N = await load()
   if (!N) return null
   try {
-    if (!(await ensurePermission())) return null
+    if (ask ? !(await ensurePermission()) : (await pushPermission()) !== "granted") return null
     const res = await N.getDevicePushTokenAsync()
     const token = res?.data
     if (!token || typeof token !== "string") return null

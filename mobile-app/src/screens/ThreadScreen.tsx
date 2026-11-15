@@ -22,7 +22,6 @@ import { api, type PendingPlan, type PendingQuestion, type PermApproval, type Re
 import { useThreadTranscript } from "../lib/useThreadTranscript"
 import { fmtDate, itemPreview, itemUuid, type ThreadItem } from "../lib/thread"
 import ComposerSuggestions, { useComposerCompletion } from "../components/ComposerSuggestions"
-import { ensurePermission } from "../lib/notify"
 import { composerPrefs, draftFor, setDraft } from "../state/config"
 import OfflineBanner from "../components/OfflineBanner"
 import { useReachability } from "../lib/useReachability"
@@ -313,11 +312,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
     }, 400)
     return () => clearTimeout(h)
   }, [input, path, sessionId])
-
-  // Ask for notification permission once; declined is fine, we just stay quiet.
-  useEffect(() => {
-    ensurePermission().catch(() => {})
-  }, [])
 
   // WhatsApp-style header: the session name (tap it to open the session's
   // profile/settings page) with a live "typing…" subtitle while the agent

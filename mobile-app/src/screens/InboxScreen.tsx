@@ -14,6 +14,9 @@ import {
   searchConversations, threadTimeline, waitsOnOwner, type Conversation, type ThreadItem,
   confirmSent, pendingMessage, withPending, resolveParent, quotePreview,
 } from "../lib/inbox"
+import FirstGoalCard from "../components/FirstGoalCard"
+import PushPromptCard from "../components/PushPromptCard"
+import type { FirstGoalStart } from "../lib/firstGoal"
 import { fmtWaiting, queueFrom } from "../lib/decisions"
 import { fmtClock, fmtDate } from "../lib/thread"
 import { userError } from "../lib/errors"
@@ -412,6 +415,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
       composeOpen={composeOpen}
       setComposeOpen={setComposeOpen}
       sessions={sessions}
+      onStartFirst={(first) => navigation.push("NewChat", { first })}
     />
     {cockpit.element}
     </>
@@ -421,7 +425,7 @@ export default function InboxScreen({ navigation, session, title, host, path, is
 /** The Inbox tab body: search, an "All / Needs you" switch, the conversation
  *  rows, and the "New message" chat picker. */
 function ConversationList({
-  queueCount, heldCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, onRefresh, composeOpen, setComposeOpen, sessions,
+  queueCount, heldCount, onDecideAll, messages, labels, byId, query, setQuery, needsOnly, setNeedsOnly, errorBar, onOpen, onRefresh, composeOpen, setComposeOpen, sessions, onStartFirst,
 }: {
   queueCount: number
   heldCount: number
@@ -439,6 +443,7 @@ function ConversationList({
   composeOpen: boolean
   setComposeOpen: (v: boolean) => void
   sessions: Session[]
+  onStartFirst: (first: FirstGoalStart) => void
 }) {
   const t = useTheme()
   const styles = useStyles()
@@ -452,6 +457,7 @@ function ConversationList({
   return (
     <View style={styles.page}>
       {errorBar}
+      <PushPromptCard />
       <View style={styles.ibHead}>
         <View style={styles.ibSearch}>
           <Icon name="search" size={16} color={t.textMuted} />
@@ -510,6 +516,9 @@ function ConversationList({
               <Text style={styles.ibEmptyBody}>
                 When an agent asks you something or writes to you, the conversation shows up here. Tap + to message a chat.
               </Text>
+            ) : null}
+            {!query && !needsOnly && pickable.length === 0 ? (
+              <FirstGoalCard onStart={onStartFirst} />
             ) : null}
           </View>
         }

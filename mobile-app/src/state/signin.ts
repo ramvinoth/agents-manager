@@ -11,16 +11,26 @@ import { registerForPush } from "../lib/notify"
 import { parsePairLink } from "../lib/pairLink"
 import { activeServerId, addServer, setToken, switchServer } from "./config"
 
+/**
+ * Register this device for background push, declaring which build it runs
+ * (version + native build number from the embedded Info.plist) so the server
+ * can see what is on the device. `ask` shows the OS permission dialog; without
+ * it only an already-granted device registers.
+ */
+export function registerDevice(ask = false): Promise<string | null> {
+  return registerForPush(
+    (tok) => api.pushRegister(tok, "ios", { version: Constants.expoConfig?.version ?? null, build: Constants.ios?.buildNumber ?? null }),
+    ask,
+  )
+}
+
 export async function completeSignIn(token: string, username?: string): Promise<void> {
   // Record the username with the token so actor labels ("you") render
   // client-side on cards and threads without a round trip.
   await setToken(token, username)
-  // Register this device for background push now that we're authenticated,
-  // declaring which build it runs (version + native build number from the
-  // embedded Info.plist) so the server can see what is on the device.
-  registerForPush((tok) =>
-    api.pushRegister(tok, "ios", { version: Constants.expoConfig?.version ?? null, build: Constants.ios?.buildNumber ?? null }),
-  ).catch(() => {})
+  // Authenticated now: register if push is already allowed. The permission
+  // prompt itself waits for the Inbox card that explains it.
+  registerDevice().catch(() => {})
 }
 
 function confirm(title: string, message: string, ok: string): Promise<boolean> {

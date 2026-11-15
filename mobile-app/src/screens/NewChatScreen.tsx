@@ -48,6 +48,8 @@ export default function NewChatScreen({ navigation, route }: Props) {
   const t = useTheme()
   const headerHeight = useHeaderHeight()
   const template = route.params?.template
+  // From the first-run goal card: the CEO chat, filled in so Start is one tap.
+  const first = route.params?.first
   const host = currentHost()
   const local = host === "local"
 
@@ -67,11 +69,11 @@ export default function NewChatScreen({ navigation, route }: Props) {
   // Shown once the server says this host has no GitHub token.
   const [needToken, setNeedToken] = useState(false)
   const [token, setToken] = useState("")
-  const [message, setMessage] = useState("")
+  const [message, setMessage] = useState(first?.message ?? "")
   const messageRef = useRef<TextInput>(null)
-  const [title, setTitle] = useState(template?.name ?? "")
-  const [systemPrompt, setSystemPrompt] = useState(template?.system_prompt ?? "")
-  const [goal, setGoal] = useState(template?.goal ?? "")
+  const [title, setTitle] = useState(first?.title ?? template?.name ?? "")
+  const [systemPrompt, setSystemPrompt] = useState(first?.systemPrompt ?? template?.system_prompt ?? "")
+  const [goal, setGoal] = useState(first?.goal ?? template?.goal ?? "")
   const [mode, setModeState] = useState(composerPrefs().mode)
   const setMode = (v: string) => {
     setModeState(v)

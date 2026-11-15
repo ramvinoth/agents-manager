@@ -97,7 +97,7 @@ export default function LoginScreen({ navigation }: Props) {
             onChangeText={setSetupCode}
           />
           <Text style={styles.hint}>
-            First run on this instance — this creates the owner account. The setup code is shown when Harman is installed.
+            Set up the owner account on your computer first, then pair this phone. If you are here to create it, the setup code is shown at install; run harman setup-code on the computer if it scrolled away.
           </Text>
         </>
       ) : null}

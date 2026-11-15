@@ -56,7 +56,7 @@ export type RootStackParamList = {
   Login: undefined
   // A decision push opens the deck on that item (HomeTabs consumes and clears these).
   Home: { decision?: string; ref?: string; session?: string } | undefined
-  NewChat: { template?: import("./src/api/client").AgentTemplate; cwd?: string } | undefined
+  NewChat: { template?: import("./src/api/client").AgentTemplate; cwd?: string; first?: import("./src/lib/firstGoal").FirstGoalStart } | undefined
   // `starting`: a chat that was just started and whose transcript isn't written
   // yet — the thread opens at once and resolves it (see ThreadScreen).
   Thread: { host: string; label: string; path?: string; session?: string; jumpTo?: string; agent?: string; starting?: StartingChat }

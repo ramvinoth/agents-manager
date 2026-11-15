@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { HarmanDialog } from "@/components/HarmanDialog"
+import { FirstGoalCard } from "@/components/FirstGoalCard"
 import { SessionActions } from "@/components/SessionActions"
 import { cn } from "@/lib/utils"
 import { fmtAgo, projectName } from "@/lib/format"
@@ -254,6 +255,7 @@ export function SessionList() {
           {tree.length === 0 && q.trim() && !showHarman && (
             <div className="px-2 py-6 text-center text-xs text-muted-foreground">No project or chat matches “{q.trim()}”.</div>
           )}
+          {sessions.length === 0 && !q.trim() && <FirstGoalCard />}
         </div>
       </div>
       {tasksFor && (

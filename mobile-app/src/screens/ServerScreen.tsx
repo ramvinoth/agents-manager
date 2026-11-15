@@ -30,6 +30,7 @@ export default function ServerScreen({ navigation }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [scanning, setScanning] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
 
   async function paired(link: string) {
     setScanning(false)
@@ -72,6 +73,12 @@ export default function ServerScreen({ navigation }: Props) {
         <Text style={styles.buttonText}>Scan pairing QR</Text>
       </TouchableOpacity>
       <Text style={styles.hint}>On your computer open Harman → Profile → Pair a phone. Signs you in, no password.</Text>
+      {!advanced ? (
+        <TouchableOpacity testID="server-advanced" accessibilityLabel="Advanced" style={{ marginTop: 20 }} onPress={() => setAdvanced(true)}>
+          <Text style={styles.hint}>Advanced: enter a server address</Text>
+        </TouchableOpacity>
+      ) : (
+      <>
       <Text style={[styles.hint, { marginTop: 20 }]}>Or enter the server address:</Text>
       <Text style={styles.label}>Name (optional)</Text>
       <TextInput
@@ -97,13 +104,15 @@ export default function ServerScreen({ navigation }: Props) {
         onChangeText={setUrl}
       />
       <Text style={styles.hint}>
-        Reach your self-hosted server over Tailscale — its tailnet IP or MagicDNS name, port 8091. A pasted
+        Reach your self-hosted server over Tailscale: its tailnet IP or MagicDNS name, port 8091. A pasted
         pairing link works here too.
       </Text>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
       <TouchableOpacity testID="server-connect" accessibilityLabel="server-connect" style={styles.button} onPress={connect} disabled={busy || !url}>
         {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>Connect</Text>}
       </TouchableOpacity>
+      </>
+      )}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
       <PairScanner visible={scanning} onClose={() => setScanning(false)} onScan={paired} />
     </ScrollView>
   )
