@@ -308,7 +308,7 @@ def test_routes_are_registered_and_not_public():
                     "/api/integrations/client/delete": "_p_integrations_client_delete",
                     "/api/gmail/draft": "_p_gmail_draft"}.items():
         assert H.POST_ROUTES[path] == m and path not in H.PUBLIC_API
-    # Client setup moved here from the drive routes — one home, no twin.
+    # Client setup has one home (integrations); the drive routes carry no twin.
     assert not any(p.startswith("/api/drive/clients") for p in list(H.GET_ROUTES) + list(H.POST_ROUTES))
 
 

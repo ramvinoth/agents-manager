@@ -11,7 +11,7 @@ export const fishAudioAvailable = (): boolean => AgentsAudio.isAvailable()
 
 export const nativeFishAudio: FishAudio = {
   start: async (rate) => {
-    // Native capture/engine failures used to vanish; surface them in the device log.
+    // Surface native capture/engine failures in the device log; nothing else reports them.
     errorSub?.remove()
     errorSub = AgentsAudio.addErrorListener((e) => console.warn("[agents-audio]", e.message ?? "unknown error"))
     await AgentsAudio.start(rate)

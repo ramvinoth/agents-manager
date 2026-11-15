@@ -6,7 +6,7 @@ function eq(label: string, got: unknown, want: unknown) {
   else { fail++; console.log(`FAIL ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`) }
 }
 
-// A 9 KB markdown file used to read "0.0 MB".
+// A 9 KB markdown file must not read "0.0 MB".
 eq("zero", fmtBytes(0), "0 B")
 eq("bytes", fmtBytes(512), "512 B")
 eq("small KB", fmtBytes(9067), "8.9 KB")

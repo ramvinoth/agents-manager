@@ -34,8 +34,7 @@ from orchestrator.sessions import compute_session_summary
 # One interface over "where the session files and shell live." Every filesystem
 # / session / config query goes through it, so a feature can't silently target
 # the LOCAL box when a remote host is selected — the recurring bug class this
-# project kept hitting. LocalHost holds the logic that used to be inline in the
-# route handlers; RemoteHost delegates to the proven remote_* helpers over SSH.
+# project kept hitting. LocalHost runs everything on this machine; RemoteHost delegates to the proven remote_* helpers over SSH.
 # Handlers do `host = get_host(hid); host.<method>()` — no `if hid == "local"`.
 _TCC_GUARDED = ("Desktop", "Documents", "Downloads")
 

@@ -98,8 +98,8 @@ def _run_migrations(prev):
                         "WHERE recipient_type = 'session' AND status = 'sent' "
                         "AND created_at < %s", (postgres.now(), postgres.now() - 86400))
     if prev < 6:
-        # One row per skill name. Re-promoting a skill used to INSERT a new row
-        # each time (8 rows for one skill). Collapse duplicates onto the FIRST
+        # One row per skill name. Databases from before v6 can hold several rows
+        # for one skill (one per re-promotion). Collapse duplicates onto the FIRST
         # row (it holds the original provenance), keeping 'active' if any
         # duplicate was active, then let the unique index enforce it —
         # ops.repository.skill_learned_record upserts ON CONFLICT (name).
