@@ -20,7 +20,8 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type PendingPlan, type PendingQuestion, type PermApproval, type RedAsk } from "../api/client"
 import { useThreadTranscript } from "../lib/useThreadTranscript"
-import { fmtDate, itemPreview, itemUuid, type ThreadItem } from "../lib/thread"
+import { useScrollDatePill } from "../lib/useScrollDatePill"
+import { itemPreview, itemUuid, type ThreadItem } from "../lib/thread"
 import ComposerSuggestions, { useComposerCompletion } from "../components/ComposerSuggestions"
 import { composerPrefs, draftFor, setDraft } from "../state/config"
 import OfflineBanner from "../components/OfflineBanner"
@@ -58,6 +59,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Thread">
 // Sentinel appended to the list while a run is in flight (see WorkingBubble).
 const WORKING = { kind: "working" as const, id: "__working__" }
 type ListItem = ThreadItem | typeof WORKING
+const isMessageRow = (item: unknown): item is ThreadItem => (item as ListItem).id !== WORKING.id
 
 // A WhatsApp-style thread for one agent session. Each agent exchange shows its
 // final response with the tool-call "steps" collapsed underneath (tap to expand,
@@ -155,11 +157,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   useSeen("swipe-board", undefined, true)
   // Shows a "jump to latest" button when the user has scrolled up from the bottom.
   const [showJump, setShowJump] = useState(false)
-  // WhatsApp-style floating day header: the date of the topmost visible message,
-  // shown only while scrolling and auto-hidden ~1s after scrolling stops.
-  const [scrollDate, setScrollDate] = useState("")
-  const dateOpacity = useRef(new Animated.Value(0)).current
-  const dateHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { scrollDate, dateOpacity, revealDate, onViewableItemsChanged, viewabilityConfig } =
+    useScrollDatePill(isMessageRow)
   const completion = useComposerCompletion({ input, setInput, host, cwd })
   // Id of the most recent agent exchange — its steps default to expanded so the
   // current turn is visible without a tap; older exchanges stay collapsed. Keyed
@@ -369,49 +368,6 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // Reveal the floating day pill, then schedule it to fade out ~1s after the
   // last scroll event — the WhatsApp behaviour of showing the date only while
   // the finger is moving. Cleared on unmount.
-  // Called on every scroll frame: start the fade-in once, then only push the
-  // hide timer back, so a scroll doesn't restart an animation 60 times a second.
-  const dateShown = useRef(false)
-  const revealDate = useCallback(() => {
-    if (!dateShown.current) {
-      dateShown.current = true
-      dateOpacity.stopAnimation()
-      Animated.timing(dateOpacity, { toValue: 1, duration: 120, useNativeDriver: true }).start()
-    }
-    if (dateHideTimer.current) clearTimeout(dateHideTimer.current)
-    dateHideTimer.current = setTimeout(() => {
-      dateShown.current = false
-      Animated.timing(dateOpacity, { toValue: 0, duration: 350, useNativeDriver: true }).start()
-    }, 1000)
-  }, [dateOpacity])
-
-  useEffect(() => {
-    return () => {
-      if (dateHideTimer.current) clearTimeout(dateHideTimer.current)
-    }
-  }, [])
-
-  // Track the topmost visible message so the floating pill shows ITS day. The
-  // list is inverted, so the row at the TOP of the screen is the one with the
-  // highest data index (index 0 sits at the bottom). Kept in a stable ref
-  // because FlatList forbids changing these props at runtime.
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: Array<{ item: ListItem; index: number | null }> }) => {
-      let top: ThreadItem | undefined
-      let topIndex = -1
-      for (const v of viewableItems) {
-        if ((v.item as ThreadItem).id === WORKING.id) continue
-        if ((v.index ?? -1) > topIndex) {
-          topIndex = v.index ?? -1
-          top = v.item as ThreadItem
-        }
-      }
-      const d = top ? fmtDate(top.ts) : ""
-      if (d) setScrollDate(d)
-    }
-  ).current
-
   function jumpTo(dir: 1 | -1) {
     const next = stepMatch(searchMatches, searchAt, dir)
     if (next === -1) return

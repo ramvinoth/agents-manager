@@ -58,6 +58,7 @@ def iter_stdout_until(proc, idle_timeout, paused=None, poll=30):
 
     threading.Thread(target=_pump, daemon=True).start()
     last = time.monotonic()
+    was_paused = False
     while True:
         try:
             item = q.get(timeout=min(poll, idle_timeout))
@@ -65,6 +66,12 @@ def iter_stdout_until(proc, idle_timeout, paused=None, poll=30):
             now = time.monotonic()
             if paused and paused():
                 last = now
+                was_paused = True
+            elif was_paused:
+                # The answer landed since the last poll: re-arm the full window
+                # from here, not from the last paused poll (up to `poll` ago).
+                last = now
+                was_paused = False
             elif now - last >= idle_timeout:
                 raise TimeoutError(f"No output for {idle_timeout}s (idle timeout)")
             continue

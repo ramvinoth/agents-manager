@@ -108,6 +108,7 @@ function screen(initial: Route) {
     "../lib/errors": errors, "../lib/redApproval": redApproval, "../lib/transcriptWindow": transcriptWindow,
     "../lib/useTheme": { useTheme: () => ({}) }, "../lib/styles": { useStyles: () => ({}) },
     "../lib/gestures": boardSwipe,
+    "../lib/useScrollDatePill": { useScrollDatePill: () => ({ scrollDate: "", dateOpacity: 0, revealDate: () => {}, onViewableItemsChanged: () => {}, viewabilityConfig: {} }) },
     "../lib/usageReporter": { recordSwipe: () => {} },
     "../lib/liveEvents": { serialize, THREAD_FALLBACK_MS: [1500],
       startLiveRefresh: (o: { refresh: Function }) => { const id = ++timerId; polls.set(id, o.refresh); return () => polls.delete(id) } },
