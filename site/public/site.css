@@ -31,5 +31,5 @@ footer { padding:2rem 1.25rem 3rem; color:var(--mute); font-size:.9rem; border-t
 .shots h2 { font-size:1.5rem; margin:0 0 .25rem; }
 .shots .cap { color:var(--mute); margin:0 0 1.5rem; }
 .shots figure { margin:0 0 1.75rem; }
-.shots img { width:100%; height:auto; border:1px solid var(--line); border-radius:10px; }
+.shots img, .shots video { width:100%; height:auto; border:1px solid var(--line); border-radius:10px; }
 .shots figcaption { color:var(--mute); font-size:.9rem; margin-top:.5rem; }
