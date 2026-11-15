@@ -1,0 +1,14 @@
+{
+  "name": "harman-sandbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261004.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.147.0"
+  }
+}

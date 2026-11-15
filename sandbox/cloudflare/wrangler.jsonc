@@ -1,0 +1,25 @@
+{
+  // Harman's throwaway run boxes. Deploy steps are in README.md.
+  "name": "harman-sandbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "name": "harman-sandbox",
+      "class_name": "HarmanBox",
+      "scheduling_policy": "durable_object",
+      "images": { "base": { "dockerfile": "../Dockerfile" } }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "BOX", "class_name": "HarmanBox" },
+      { "name": "REGISTRY", "class_name": "Registry" }
+    ]
+  },
+  "exports": {
+    "HarmanBox": { "type": "durable-object", "storage": "sqlite" },
+    "Registry": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

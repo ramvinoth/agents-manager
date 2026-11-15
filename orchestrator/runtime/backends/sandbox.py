@@ -1,8 +1,10 @@
 """A run in a throwaway container: the same claude, none of this machine's reach.
 
 Each run leases one fresh box from the sandbox image (sandbox/Dockerfile), copies
-in what the CLI needs to behave as it would here, drives `claude -p` inside it
-through `docker exec`, and at the end brings the box's work home and removes it.
+in what the CLI needs to behave as it would here, drives `claude -p` inside it,
+and at the end brings the box's work home and removes it. Where the box runs
+(this machine's docker, or a Cloudflare Container) is the driver's business
+(backends.sandbox_drivers); this module only says what goes in and out.
 
 What goes in, at the paths the CLI expects:
   - the folder, at the same absolute path, so the transcript's project slug and
@@ -12,8 +14,9 @@ What goes in, at the paths the CLI expects:
     plugins and each project plugin's box build (Sift), the owner's skills and
     CLAUDE.md;
   - the run's --settings and --mcp-config.
-The box reaches this machine's viewer, Sift and any loopback endpoint through
-host.docker.internal; nothing else of this machine is mounted.
+The box reaches this machine's viewer, Sift, and any endpoint only this machine
+can reach (its loopback, its private network), at the address its driver
+gives; nothing else of this machine is mounted.
 
 What comes back: the transcript (streamed live while the run goes, replaced
 whole at the end), the sidecar folder, and a three way sync of the folder and
@@ -26,7 +29,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import signal
 import subprocess
 import tarfile
@@ -35,18 +37,15 @@ import threading
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-from orchestrator import db, project_plugins
+from orchestrator import project_plugins
 from orchestrator.config import CLAUDE_DIR, PORT, session_plugin_dirs, transcript_path
 from orchestrator.runtime.backends import Backend, sandbox_sync
+from orchestrator.runtime.backends.sandbox_drivers import LABEL, DockerDriver, open_driver
 from orchestrator.runtime.run_config import perm_mcp_servers
 
-IMAGE = "harman-sandbox:dev"
 HOME = "/home/node"
 OPT = "/opt/harman"
 BOX_PY = "python3"
-REACH_HOST = "host.docker.internal"
-LIMITS = ["--cpus", "2", "--memory", "4g", "--pids-limit", "512"]
-LABEL = "harman.run"
 # Env the box gets: the run's own viewer and plugin wiring, the model provider
 # and credentials, the keys the runner forwards on purpose. Never PATH, never
 # the rest of this server's environment.
@@ -67,46 +66,17 @@ def slug(path):
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
-def reach(value):
-    """A loopback URL rewritten to the host the box reaches this machine on."""
+def reach(value, route=DockerDriver().route):
+    """A URL rewritten to the address the box reaches it on, when the driver
+    says the box cannot reach it as written; anything else as it was."""
     if not isinstance(value, str) or not value.startswith(("http://", "https://")):
         return value
     u = urlparse(value)
-    if (u.hostname or "") not in project_plugins.LOOPBACK:
+    routed = route(u.scheme, u.hostname or "", u.port)
+    if not routed:
         return value
-    netloc = REACH_HOST + (f":{u.port}" if u.port else "")
-    return urlunparse(u._replace(netloc=netloc))
-
-
-def _docker_bin():
-    return shutil.which("docker") or "/usr/local/bin/docker"
-
-
-class _Docker:
-    """The docker CLI with a config of its own: the owner's may name a
-    credential helper that hangs a headless call."""
-
-    def __init__(self):
-        self.config = tempfile.mkdtemp(prefix="harman-docker-")
-        with open(os.path.join(self.config, "config.json"), "w") as f:
-            f.write("{}")
-        self.bin = _docker_bin()
-
-    def env(self, extra=None):
-        env = {"DOCKER_CONFIG": self.config, "HOME": os.path.expanduser("~"),
-               "PATH": os.path.dirname(self.bin) + ":/usr/bin:/bin"}
-        env.update(extra or {})
-        return env
-
-    def run(self, *args, input=None, timeout=120, check=True):
-        return subprocess.run([self.bin, *args], input=input, capture_output=True,
-                              env=self.env(), timeout=timeout, check=check)
-
-    def popen(self, args, env=None, **kw):
-        return subprocess.Popen([self.bin, *args], env=self.env(env), **kw)
-
-    def close(self):
-        shutil.rmtree(self.config, ignore_errors=True)
+    scheme, netloc = routed
+    return urlunparse(u._replace(scheme=scheme, netloc=netloc))
 
 
 # For each path: find the highest folder that does not exist yet, make the
@@ -126,17 +96,17 @@ class _Box:
     is also written into the box, so a box this server lost track of (a
     restart mid run) can still be synced by the next one."""
 
-    def __init__(self, docker, name, plan):
-        self.docker, self.name, self.plan = docker, name, plan
+    def __init__(self, driver, name, plan):
+        self.driver, self.name, self.plan = driver, name, plan
 
     # -- putting files in --------------------------------------------------
     def mkdirs(self, *paths):
         """Make each path, and every parent it needs, owned by the box user."""
-        self.docker.run("exec", "-u", "root", self.name, "sh", "-c", MKDIRS_SH, "sh", *paths)
+        self.driver.run(self.name, ["sh", "-c", MKDIRS_SH, "sh", *paths], user="root")
 
     def put_stream(self, dest, write):
         """Unpack into dest, as the box user, the tar that `write(pipe)` streams."""
-        p = self.docker.popen(["exec", "-i", "-u", "node", self.name, "tar", "-xf", "-", "-C", dest],
+        p = self.driver.popen(self.name, ["tar", "-xf", "-", "-C", dest], user="node",
                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             write(p.stdin)
@@ -171,11 +141,11 @@ class _Box:
 
     # -- bringing work home ------------------------------------------------
     def read(self, path):
-        r = self.docker.run("exec", self.name, "cat", path, check=False, timeout=300)
+        r = self.driver.run(self.name, ["cat", path], check=False, timeout=300)
         return r.stdout if r.returncode == 0 else None
 
     def manifest(self, root, base_paths):
-        r = self.docker.run("exec", "-i", self.name, BOX_PY, f"{OPT}/sandbox_sync.py", "manifest", root,
+        r = self.driver.run(self.name, [BOX_PY, f"{OPT}/sandbox_sync.py", "manifest", root],
                             input=json.dumps(sorted(base_paths)).encode(), timeout=600)
         return json.loads(r.stdout)
 
@@ -183,7 +153,7 @@ class _Box:
         """Copy `paths` (relative to root in the box) under local_root."""
         if not paths:
             return []
-        p = self.docker.popen(["exec", "-i", self.name, "tar", "-C", root, "-cf", "-", "--null", "-T", "-"],
+        p = self.driver.popen(self.name, ["tar", "-C", root, "-cf", "-", "--null", "-T", "-"],
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         feeder = threading.Thread(target=self._feed, args=(p.stdin, paths), daemon=True)
         feeder.start()
@@ -242,9 +212,9 @@ class _Box:
 
     def _sidecar_home(self, t):
         box_dir = t["box"][:-len(".jsonl")]
-        if self.docker.run("exec", self.name, "test", "-d", box_dir, check=False).returncode != 0:
+        if self.driver.run(self.name, ["test", "-d", box_dir], check=False).returncode != 0:
             return
-        p = self.docker.popen(["exec", self.name, "tar", "-C", box_dir, "-cf", "-", "."],
+        p = self.driver.popen(self.name, ["tar", "-C", box_dir, "-cf", "-", "."],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             sandbox_sync.extract_tar(p.stdout, t["local"][:-len(".jsonl")])
@@ -254,26 +224,24 @@ class _Box:
 
     def remove(self):
         try:
-            self.docker.run("rm", "-f", self.name, check=False, timeout=60)
+            self.driver.remove(self.name)
         except Exception as e:
             print(f"  ⚠ sandbox {self.name}: remove failed: {e}", flush=True)
         with _LIVE_LOCK:
             _LIVE.discard(self.name)
 
 
-def sweep_orphans(docker):
+def sweep_orphans(driver):
     """Boxes this server's port started that no live run owns (a restart cut
     their run off): bring their work home, then remove them. A preflight
     server on another port never touches this one's boxes."""
     with _SWEEP_LOCK:
-        r = docker.run("ps", "-a", "--filter", f"label={LABEL}", "--filter", f"label=harman.port={PORT}",
-                       "--format", "{{.Names}}", check=False)
-        for name in r.stdout.decode().split():
+        for name in driver.names({LABEL: "1", "harman.port": str(PORT)}):
             with _LIVE_LOCK:
                 if name in _LIVE:
                     continue
                 _LIVE.add(name)
-            box = _Box(docker, name, None)
+            box = _Box(driver, name, None)
             try:
                 raw = box.read(f"{OPT}/plan.json")
                 box.plan = json.loads(raw) if raw else None
@@ -286,8 +254,8 @@ def sweep_orphans(docker):
 
 
 class SandboxProc:
-    """Popen-like handle on the `docker exec` that runs claude in the box.
-    Signals to the docker client never reach the box, so they are sent inside."""
+    """Popen-like handle on the driver's process that runs claude in the box.
+    Signals to that local client never reach the box, so they are sent inside."""
 
     def __init__(self, box, popen):
         self.box, self.popen = box, popen
@@ -310,7 +278,7 @@ class SandboxProc:
     def send_signal(self, sig):
         name = signal.Signals(sig).name.removeprefix("SIG")
         try:
-            self.box.docker.run("exec", self.box.name, "pkill", f"-{name}", "-f", CLAUDE_MATCH,
+            self.box.driver.run(self.box.name, ["pkill", f"-{name}", "-f", CLAUDE_MATCH],
                                 check=False, timeout=30)
         except Exception as e:
             raise OSError(f"signal into the sandbox failed: {e}") from e
@@ -328,8 +296,8 @@ class SandboxProc:
 class SandboxBackend(Backend):
     name = "sandbox"
 
-    def __init__(self):
-        self.docker = None
+    def __init__(self, driver=None):
+        self.driver = driver         # opened at spawn from the sandbox_provider setting
         self.box = None
         self.run_settings = {}
         self.plugins = []            # local plugin folders, staged as OPT/plugins/<i>
@@ -366,9 +334,9 @@ class SandboxBackend(Backend):
                 if k.startswith(ENV_PREFIXES) or k in ENV_NAMES or k in forward}
         for plugin in project_plugins.available():
             keep.update({k: env[k] for k in plugin.mcp_env if env.get(k)})
-        keep = {k: reach(str(v)) for k, v in keep.items()}
+        keep = {k: reach(str(v), self.driver.route) for k, v in keep.items()}
         keep["HOME"] = HOME
-        base = f"http://{REACH_HOST}:{PORT}"
+        base = reach(f"http://127.0.0.1:{PORT}", self.driver.route)
         if keep.get("VIEWER_PERM_TOKEN"):
             keep["VIEWER_PERM_BASE"] = base
         if keep.get("VIEWER_KANBAN_TOKEN"):
@@ -400,15 +368,19 @@ class SandboxBackend(Backend):
                        "base": sandbox_sync.manifest(str(memory), mem_paths)},
         }
 
-    def _stage(self, box, plan):
+    def _box_settings(self):
+        """The run's --settings as the box sees them: its env's URLs routed."""
+        settings = dict(self.run_settings)
+        if settings.get("env"):
+            settings["env"] = {k: reach(v, self.driver.route) for k, v in settings["env"].items()}
+        return settings
+
+    def _stage(self, box, plan, settings):
         t, ws, mem = plan["transcript"], plan["workspace"], plan["memory"]
         box_dir = os.path.dirname(t["box"])
         plugin_dests = [f"{OPT}/plugins/{i}" for i in range(len(self.plugins))]
         box.mkdirs(ws["box"], OPT, box_dir, mem["box"], f"{HOME}/.claude/skills", *plugin_dests)
 
-        settings = dict(self.run_settings)
-        if settings.get("env"):
-            settings["env"] = {k: reach(v) for k, v in settings["env"].items()}
         mcp = {"mcpServers": perm_mcp_servers(BOX_PY, OPT)}
         files = {p.name: p.read_bytes() for p in SHIPPED}
         files.update({"settings.json": json.dumps(settings).encode(),
@@ -436,32 +408,26 @@ class SandboxBackend(Backend):
 
     def spawn(self, cmd, cwd, env, session_id, forward=()):
         cwd = os.path.expanduser(cwd or "~")
-        self.docker = _Docker()
-        sweep_orphans(self.docker)
+        self.driver = self.driver or open_driver()
+        sweep_orphans(self.driver)
         plan = self._plan(session_id, cwd)
+        # Every address is routed before the box starts: a driver that tunnels
+        # them back here (cloudflare) fixes its list of targets at start.
         box_env = self._box_env(env, set(forward))
+        settings = self._box_settings()
         name = f"harman-run-{session_id[:8]}-{secrets.token_hex(3)}"
         with _LIVE_LOCK:
             _LIVE.add(name)
-        self.box = _Box(self.docker, name, plan)
-        image = db.setting_get("sandbox_image", IMAGE) or IMAGE
+        self.box = _Box(self.driver, name, plan)
         try:
-            self.docker.run("run", "-d", "--name", name, *LIMITS,
-                            "--add-host", f"{REACH_HOST}:host-gateway",
-                            "--label", f"{LABEL}=1", "--label", f"harman.port={PORT}",
-                            "--label", f"harman.session={session_id}",
-                            image, timeout=180)
-        except subprocess.CalledProcessError as e:
+            self.driver.start(name, {LABEL: "1", "harman.port": str(PORT), "harman.session": session_id})
+        except Exception:
             self.box.remove()
-            raise RuntimeError(f"Could not start a sandbox from {image}: "
-                               f"{e.stderr.decode(errors='replace').strip()[:300]}") from e
-        self._stage(self.box, plan)
+            raise
+        self._stage(self.box, plan, settings)
         self._tail = _TranscriptTail(self.box, plan["transcript"])
         self._tail.start()
-        args = ["exec", "-i", "-u", "node", "-w", cwd]
-        for k in box_env:
-            args += ["-e", k]
-        popen = self.docker.popen(args + [name] + cmd, env=box_env, text=True,
+        popen = self.driver.popen(name, cmd, user="node", workdir=cwd, env=box_env, text=True,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return SandboxProc(self.box, popen)
 
@@ -475,8 +441,8 @@ class SandboxBackend(Backend):
         except Exception as e:
             print(f"  ⚠ sandbox finish {session_id[:8]} failed: {type(e).__name__}: {e}", flush=True)
         finally:
-            if self.docker:
-                self.docker.close()
+            if self.driver:
+                self.driver.close()
 
 
 def _git_config(key):
@@ -496,7 +462,7 @@ class _TranscriptTail:
         self.box, self.local = box, t["local"]
         os.makedirs(os.path.dirname(self.local), exist_ok=True)
         start = os.path.getsize(self.local) + 1 if os.path.exists(self.local) else 1
-        self.proc = box.docker.popen(["exec", box.name, "tail", "-c", f"+{start}", "-F", t["box"]],
+        self.proc = box.driver.popen(box.name, ["tail", "-c", f"+{start}", "-F", t["box"]],
                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.thread = threading.Thread(target=self._copy, daemon=True, name="sandbox-tail")
 
