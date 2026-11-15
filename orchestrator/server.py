@@ -422,6 +422,8 @@ class SessionViewerHandler(
         "/api/canvas/agent/read": "_g_canvas_agent_read",
         "/api/canvas/agent/snapshot": "_g_canvas_agent_snapshot",
         "/api/call/engine": "_g_call_engine",
+        "/api/call/log": "_g_call_log",
+        "/api/call/log/audio": "_g_call_log_audio",
         "/api/call/audio": "_g_call_audio",
         "/api/browser/status": "_g_browser_status",
         "/api/browser/tabs": "_g_browser_tabs",

@@ -26,6 +26,7 @@ All are normal /api routes, so the standard session gate authenticates them.
 """
 import json
 import urllib.request
+from pathlib import Path
 
 from orchestrator import voice
 from orchestrator.config import LFM3_SERVICE_URL, SPEECH_SERVICE_URL, SPEECH_TIMEOUT, TTS_STREAM_URL
@@ -36,6 +37,66 @@ class VoiceMixin:
     def _g_call_engine(self, req):
         from orchestrator import callbrain
         self.send_json(callbrain.engine())
+
+    def _g_call_log(self, req):
+        """Past calls with transcripts, newest first. ?before=<started>&limit=N
+        pages backwards; `next` is the cursor for the following page (null at the end)."""
+        from orchestrator import db
+        try:
+            before = float((req.query.get("before") or [""])[0]) if (req.query.get("before") or [""])[0] else None
+            limit = int((req.query.get("limit") or ["20"])[0])
+        except ValueError:
+            self.send_json({"error": "before and limit must be numbers"}, status=400)
+            return
+        calls = db.call_log_list(before, limit)
+        full = len(calls) == max(1, min(limit, 50))
+        self.send_json({"calls": calls, "next": calls[-1]["started"] if full else None})
+
+    def _g_call_log_audio(self, req):
+        """One call's recorded audio as WAV (?id=<call>&stream=caller|reply), ranged so
+        the phone fetches nothing until play and can seek. Private: the recordings are
+        the owner's own voice, so this rides the normal session gate."""
+        from orchestrator import callrecord, config
+        from orchestrator.routes.fs import _parse_range, _STREAM_CHUNK
+        call_id = callrecord.safe_call_id((req.query.get("id") or [""])[0])
+        reply = (req.query.get("stream") or ["caller"])[0] == "reply"
+        target = Path(config.CALL_RECORDINGS_DIR) / f"{call_id}.{'reply' if reply else 'caller'}.pcm"
+        if not target.is_file():
+            self.send_json({"error": "No recording for that call"}, status=404)
+            return
+        pcm = target.stat().st_size - target.stat().st_size % 2
+        header = callrecord.wav_header(pcm, 24000 if reply else 16000)
+        size = len(header) + pcm
+        rng = _parse_range(self.headers.get("Range"), size)
+        if rng is False:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = rng or (0, size - 1)
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Accept-Ranges", "bytes")
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        try:
+            if start < len(header):
+                self.wfile.write(header[start:end + 1])
+            left = end + 1 - max(start, len(header))
+            if left > 0:
+                with open(target, "rb") as f:
+                    f.seek(max(start, len(header)) - len(header))
+                    while left > 0:
+                        chunk = f.read(min(_STREAM_CHUNK, left))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _p_call_turn(self, req):
         """One spoken exchange with the call brain (orchestrator.callbrain). Body:
@@ -160,7 +221,7 @@ class VoiceMixin:
         if not ws:
             return
         try:
-            calllive.run_bridge(ws, full.stem, req.principal, [], settings)
+            calllive.run_bridge(ws, full.stem, req.principal, callbrain.recent_call_history(), settings)
         finally:
             try:
                 ws.close()

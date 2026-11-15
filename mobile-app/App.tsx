@@ -43,6 +43,7 @@ import InboxScreen from "./src/screens/InboxScreen"
 import NoteEditorScreen from "./src/screens/NoteEditorScreen"
 import OrgScreen from "./src/screens/OrgScreen"
 import AuditScreen from "./src/screens/AuditScreen"
+import CallLogScreen from "./src/screens/CallLogScreen"
 import CanvasScreen from "./src/screens/CanvasScreen"
 import AuditEntryScreen from "./src/screens/AuditEntryScreen"
 import type { AuditEntry } from "./src/lib/audit"
@@ -78,6 +79,7 @@ export type RootStackParamList = {
   Inbox: { session?: string; host?: string; path?: string; title?: string } | undefined
   Org: undefined
   Audit: undefined
+  CallLog: undefined
   AuditEntry: { entry: AuditEntry }
   HostEdit: { host?: HostConfig } | undefined
   Terminal: undefined
@@ -293,6 +295,7 @@ export default function App() {
             <Stack.Screen name="NoteEditor" component={NoteEditorScreen} options={{ title: "Note" }} />
             <Stack.Screen name="Org" component={OrgScreen} options={{ title: "Company" }} />
             <Stack.Screen name="Audit" component={AuditScreen} options={{ title: "Activity" }} />
+            <Stack.Screen name="CallLog" component={CallLogScreen} options={{ title: "Call log" }} />
             <Stack.Screen name="AuditEntry" component={AuditEntryScreen} options={{ title: "Recorded action" }} />
             <Stack.Screen name="HostEdit" component={HostEditScreen} options={{ title: "SSH host" }} />
             <Stack.Screen

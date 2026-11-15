@@ -149,6 +149,8 @@ from orchestrator.ops.repository import (  # noqa: F401
     audit_append,
     audit_list,
     call_events_insert,
+    call_log_list,
+    call_turns_between,
     call_events_purge,
     restart_request_add,
     restart_requests_by_status,

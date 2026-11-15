@@ -399,6 +399,13 @@ export default function ProfileScreen({ navigation }: Props) {
           </View>
           <Icon name="chevronRight" size={18} color={t.textMuted} />
         </TouchableOpacity>
+        <TouchableOpacity testID="open-call-log" style={styles.profileInfoRow} onPressIn={rowTap.onPressIn} onPress={rowTap.tap(() => navigation.navigate("CallLog"))}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.ssRowLabel}>Call log</Text>
+            <Text style={[styles.ssRowHint, { maxWidth: undefined }]}>Read past calls with the live agent and replay the voice.</Text>
+          </View>
+          <Icon name="chevronRight" size={18} color={t.textMuted} />
+        </TouchableOpacity>
       </Card>
       {aiOpen && aiConfig ? <ProviderPicker config={aiConfig} scope={{host}} providers={providers} title="AI for new chats" onSave={setAIConfig} onClose={() => setAIOpen(false)}/> : null}
 

@@ -150,7 +150,48 @@ def call_events_purge(max_age_days):
     with postgres.cursor() as cur:
         cur.execute("DELETE FROM call_events WHERE abs_ts < %s RETURNING call_id",
                     (postgres.now() - float(max_age_days) * 86400,))
-        return [r[0] for r in cur.fetchall()]
+        return [r["call_id"] for r in cur.fetchall()]
+
+
+def call_log_list(before=None, limit=20):
+    """Past calls, newest first, each with its transcript (heard + reply lines).
+    `before` is the previous page's last start time (keyset paging, so a new call
+    arriving mid-scroll never shifts a page)."""
+    limit = max(1, min(int(limit), 50))
+    with postgres.cursor() as cur:
+        cur.execute(
+            "SELECT call_id, MIN(abs_ts) AS started, MAX(ts) AS duration, "
+            "COUNT(*) FILTER (WHERE kind = 'heard') AS turns FROM call_events "
+            "GROUP BY call_id HAVING (%s::float8 IS NULL OR MIN(abs_ts) < %s::float8) "
+            "ORDER BY started DESC LIMIT %s", (before, before, limit))
+        calls = [dict(r) for r in cur.fetchall()]
+        for c in calls:
+            c["transcript"] = []
+        if calls:
+            by_id = {c["call_id"]: c for c in calls}
+            cur.execute(
+                "SELECT call_id, kind, text, ts FROM call_events "
+                "WHERE call_id = ANY(%s) AND kind IN ('heard', 'reply') AND text <> '' "
+                "ORDER BY call_id, ts, id", (list(by_id),))
+            for r in cur.fetchall():
+                by_id[r["call_id"]]["transcript"].append(
+                    {"who": "caller" if r["kind"] == "heard" else "agent",
+                     "text": r["text"], "ts": r["ts"]})
+    return calls
+
+
+def call_turns_between(start, end, limit=60):
+    """Spoken lines (caller + agent) with abs_ts in [start, end), oldest first, as
+    {who, text, at}. Backs the brain's call_log tool and the cross-call memory."""
+    limit = max(1, min(int(limit), 200))
+    with postgres.cursor() as cur:
+        cur.execute(
+            "SELECT kind, text, abs_ts FROM (SELECT kind, text, abs_ts, id FROM call_events "
+            "WHERE kind IN ('heard', 'reply') AND text <> '' AND abs_ts >= %s AND abs_ts < %s "
+            "ORDER BY abs_ts DESC, id DESC LIMIT %s) t ORDER BY abs_ts, id",
+            (float(start), float(end), limit))
+        return [{"who": "caller" if r["kind"] == "heard" else "agent",
+                 "text": r["text"], "at": r["abs_ts"]} for r in cur.fetchall()]
 
 
 # Restart requests (orchestrator.maintenance) ---------------------------------------

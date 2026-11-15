@@ -511,6 +511,7 @@ async function startFixture({ jobs = false, ai = false, audit = false, integrati
     if (market && url.pathname === "/api/market/skills") return send({ items: [{ id: "pdf", title: "pdf", description: "PDF work", license: "Proprietary", files: 3, repo: "https://github.com/anthropics/skills/tree/main/skills/pdf" }] })
     if (url.pathname === "/api/projects" && ai) return send([{ name: "Fixture project", cwd: "/fixture" }])
     if (["/api/hosts", "/api/commands", "/api/projects", "/api/loops"].includes(url.pathname)) return send([])
+    if (url.pathname === "/api/call/log") return send({ calls: [], next: null })
     if (route === "GET /api/inbox") {
       const sid = url.searchParams.get("session")
       const rows = inboxRows.filter(r => !sid || r.session_id === sid).sort((a, b) => b.created_at - a.created_at)

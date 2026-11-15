@@ -14,6 +14,7 @@ import type { CloneStatus, NewChatJob } from "../lib/newChat"
 import type { ModelRow } from "../lib/providerModels"
 import { auditPath, parseAuditPage, type AuditFilter } from "../lib/audit"
 import type { NoteGraph } from "../lib/noteLinks"
+import type { CallLogPage } from "../lib/callLog"
 import type { UsageEvent } from "../lib/usage"
 
 export type User = { id: number; username: string; role?: string }
@@ -547,6 +548,9 @@ export const api = {
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
   // The brain answers with {reply} (text, for TTS) or, on LFM3-Audio, {audio, next}:
+  // Past calls, newest first, with transcripts. `before` is the previous page's `next`.
+  callLog: (before?: number, limit = 20) =>
+    req<CallLogPage>("GET", `/api/call/log?limit=${limit}${before != null ? `&before=${before}` : ""}`),
   // stream callAudio(audio), then post callNext(next) — stop:true on a barge-in.
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
     req<CallAnswer>("POST", "/api/call/turn", body),
@@ -854,6 +858,9 @@ export const api = {
   callAudio: (path: string, id: string, dest: string) =>
     serverMedia(`/api/call/audio?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, dest),
   // Call listening socket. The app streams endpointed utterances (binary
+  // One recorded side of a past call (caller or reply), fetched only when played.
+  callLogAudio: (id: string, stream: "caller" | "reply", dest: string) =>
+    serverMedia(`/api/call/log/audio?id=${encodeURIComponent(id)}&stream=${stream}`, dest),
   // frames); the server transcribes each on the GPU box and pushes back
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
   // signal, so there is no per-turn wake word.

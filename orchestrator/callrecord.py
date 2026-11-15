@@ -19,6 +19,7 @@ purged by the scheduler, whose file sweep runs independently of the row purge).
 """
 import json
 import re
+import struct
 import time
 import threading
 
@@ -29,6 +30,14 @@ def safe_call_id(raw):
     column. Blank input still yields a usable, unique-per-call id."""
     s = re.sub(r"[^0-9A-Za-z._-]", "_", str(raw or ""))[:64]
     return s or "call"
+
+
+def wav_header(data_bytes, rate):
+    """44-byte RIFF header for raw 16-bit mono PCM, so a recording plays in any
+    audio element without a conversion pass."""
+    return (b"RIFF" + struct.pack("<I", 36 + data_bytes) + b"WAVEfmt "
+            + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+            + b"data" + struct.pack("<I", data_bytes))
 
 
 class CallRecorder:

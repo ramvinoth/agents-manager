@@ -772,6 +772,13 @@ export function buildScreenStyles(t: Theme) {
     audChip: { alignSelf: "flex-start", marginTop: 3, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
     audChipText: { fontSize: 12, fontWeight: "600" },
 
+    // CallLogScreen (clog) — transcript lines and the replay controls; list chrome reuses aud*.
+    clogLine: { flexDirection: "row", gap: 8, paddingVertical: 3 },
+    clogWho: { width: 48, color: t.textMuted, fontSize: 12, fontWeight: "600" },
+    clogText: { flex: 1, color: t.text, fontSize: 14, lineHeight: 19 },
+    clogPlayRow: { flexDirection: "row", gap: 16, marginTop: 8 },
+    clogPlayError: { color: t.danger, fontSize: 12, marginTop: 4 },
+
     // OrgScreen (org) — onboarding steps, projects, activity link, learned skills.
     orgContent: { padding: 16 },
     orgSection: { marginBottom: 18 },
