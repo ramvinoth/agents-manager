@@ -337,6 +337,22 @@ class Voice:
 
 # ------------------------------------------------------------ the bridge
 
+_LIVE = set()
+_LIVE_LOCK = threading.Lock()
+
+
+def announce(text):
+    """Speak `text` into every live call, unless that call is already talking (the
+    update is dropped rather than cutting in on the owner). Returns how many calls
+    were live, so the caller can fall back to a push when it is 0."""
+    with _LIVE_LOCK:
+        bridges = list(_LIVE)
+    for b in bridges:
+        threading.Thread(target=b.voice.say, args=(text, b.voice.current_epoch(), True),
+                         daemon=True).start()
+    return len(bridges)
+
+
 class Bridge:
     """One live call. `phone` is a server-side socket (recv/send_bytes/
     send_text/close); `dial(url, headers)` opens the provider's ASR/TTS socket
@@ -498,6 +514,8 @@ class Bridge:
 
     def run(self):
         reason = "closed"
+        with _LIVE_LOCK:
+            _LIVE.add(self)
         try:
             self.open_asr()
         except Exception as e:
@@ -545,6 +563,8 @@ class Bridge:
         except Exception:
             reason = "error"
         finally:
+            with _LIVE_LOCK:
+                _LIVE.discard(self)
             self.done.set()
             self.voice.barge()
             self._asr_send({"type": "audio_done"})

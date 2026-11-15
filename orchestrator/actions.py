@@ -969,15 +969,21 @@ def _board_followup(action, args, actor, session_level, acting_session, payload=
         # inbox delivery above pushes it (or holds it behind a full queue),
         # so a second push here would double it.
         if agent and action == "card_comment" and not _decision_column(card):
-            from orchestrator import push
+            from orchestrator import calllive, push
+            # On a live call the update is spoken in full, so the owner never has
+            # to ask for status. The push stays as the fallback when no call is up.
+            spoken = f"Card {card['id']}, {card.get('title', '')}. {body}"
+            if calllive.announce(spoken):
+                excerpt = ""
             # The owner reads this cold, possibly hours later: the title must
             # identify the card by number AND name, and the payload must carry
             # the card id so a tap opens that card (App.tsx openFromNotification),
             # not just the app. A bare "Board · <title>" push left the owner
             # asking "which card is that?" (card 53, 2026-09-26).
-            push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
-                            f"{actor}: {excerpt}"[:300],
-                            data={"card": card["id"]})
+            if excerpt:
+                push.notify_all(f"Card {card['id']} · {card.get('title', '')}"[:120],
+                                f"{actor}: {excerpt}"[:300],
+                                data={"card": card["id"]})
         if not card.get("session_id") and action == "card_comment":
             # A reply on a card that came through a door bound since (the
             # owner answering an old feedback note): the door's session owns

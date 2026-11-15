@@ -1,6 +1,8 @@
 """Live call engine (Fish provider): the turn-taking state machine and a fake-Fish bridge."""
 
 import json
+
+import pytest
 import queue
 import threading
 import time
@@ -373,3 +375,39 @@ def test_ack_lines_rotate_and_never_repeat_back_to_back():
     lines = [calllive.ack_line(n) for n in range(2 * len(calllive.ACK_LINES))]
     assert set(lines) == set(calllive.ACK_LINES) and len(calllive.ACK_LINES) > 1
     assert all(a != b for a, b in zip(lines, lines[1:]))
+
+
+@pytest.fixture(autouse=True)
+def _no_other_bridges():
+    # Bridges that earlier tests left running must not count as live calls.
+    with calllive._LIVE_LOCK:
+        calllive._LIVE.clear()
+
+
+def test_announce_with_no_live_call_returns_zero():
+    assert calllive.announce("hi") == 0
+
+
+def test_announce_speaks_full_text_to_live_call():
+    said = []
+
+    class V:
+        def current_epoch(self):
+            return 7
+
+        def say(self, text, epoch, only_if_idle=False):
+            said.append((text, epoch, only_if_idle))
+
+    class B:
+        voice = V()
+
+    b = B()
+    with calllive._LIVE_LOCK:
+        calllive._LIVE.add(b)
+    try:
+        assert calllive.announce("x" * 500) == 1
+    finally:
+        with calllive._LIVE_LOCK:
+            calllive._LIVE.discard(b)
+    time.sleep(0.2)
+    assert said == [("x" * 500, 7, True)]
