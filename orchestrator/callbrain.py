@@ -42,6 +42,7 @@ with Pocket TTS. Pure helpers
 they are unit-tested without a model or a database.
 """
 import json
+import re
 import threading
 import time
 import urllib.request
@@ -63,6 +64,25 @@ LFM3_TIMEOUT = 130                # the service holds /generate and /result up t
 PENDING_TTL = 300                 # an unclaimed spoken segment is forgotten after this
 LOST = "I lost the thread there; could you say that again?"
 
+_SPECIAL_TOKEN = re.compile(r"<[a-z_|]{2,20}>")
+_PRINTED_CALL = re.compile(r"\b(?:talk_with_harman|delegate|comment|decide|board_status|card_detail)\s*\([^)]*\)?")
+_STALL = re.compile(r"\b(one (moment|second)|let me (check|pull|take a look|look)|i.ll (check|pull|take a look)|"
+                    r"checking (that|now)|pulling (that|it) up)\b", re.I)
+STALL_NUDGE = ("You said you would check but called no tool. Call the right tool now, "
+               "then answer with its result in one or two short sentences.")
+
+
+def clean_reply(text):
+    """Strip model control tokens (e.g. <listen>) from a spoken reply. A reply that is
+    nothing but a repeated word (the brain degenerating) comes back empty so the caller
+    falls back instead of speaking gibberish."""
+    text = _PRINTED_CALL.sub(" ", _SPECIAL_TOKEN.sub(" ", text or ""))
+    text = " ".join(text.split())
+    words = text.lower().split()
+    if len(words) >= 6 and len(set(words)) <= max(2, len(words) // 6):
+        return ""
+    return text
+
 PERSONA = (
     "You are Harman, on a phone call with the owner of this system. Talk like a "
     "person on the phone: short natural sentences, no markdown, no lists, card "
@@ -81,7 +101,10 @@ PERSONA = (
     "board_status, then speak it like a manager on the phone: the count per column, "
     "the cards waiting on the owner by number and title, and an offer to go through "
     "the rest; never read out more than three cards in one reply. Never invent card "
-    "numbers or work that is not in the snapshot or a tool result."
+    "numbers or work that is not in the snapshot or a tool result. Never say you are "
+    "checking, looking, pulling something up or will be right back unless you call the "
+    "tool in that same turn: call it first, then speak the result. If you do not know "
+    "something, say so plainly instead of guessing. Never write a tool name or call out loud."
 )
 
 TOOLS = [
@@ -469,6 +492,7 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
     messages.append({"role": "user", "content": text})
     used = []
     reply = ""
+    nudged = None   # index of the stall nudge pair, so it never reaches the replayed history
     for _ in range(MAX_TOOL_ROUNDS + 1):
         message = chat_completion_message(
             preset["baseUrl"], preset.get("apiKey", ""),
@@ -476,7 +500,13 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
              "max_tokens": 200, "chat_template_kwargs": {"enable_thinking": False}},
             timeout=BRAIN_TIMEOUT)
         calls = parse_tool_calls(message)
-        reply = (message.get("content") or "").strip()
+        reply = clean_reply(message.get("content"))
+        if not calls and not used and nudged is None and _STALL.search(reply):
+            # A promise to check with no tool behind it is dead air on the phone: ask once more.
+            nudged = len(messages)
+            messages.append({"role": "assistant", "content": reply})
+            messages.append({"role": "user", "content": STALL_NUDGE})
+            continue
         if not calls:
             break
         messages.append({"role": "assistant", "content": message.get("content") or None,
@@ -492,6 +522,8 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
         # its output is already written to be spoken; otherwise ask again.
         spoken = next((m["content"] for m in reversed(messages) if m.get("role") == "tool"), "")
         reply = (spoken or LOST)[:ANSWER_CHARS].strip()
+    if nudged is not None:
+        del messages[nudged:nudged + 2]
     messages.append({"role": "assistant", "content": reply})
     return {"reply": reply, "history": trim_history(messages[1:]), "tools": used}
 

@@ -161,6 +161,22 @@ class TestCallTurn:
         with pytest.raises(RuntimeError):
             callbrain.call_turn("s", PRINCIPAL, "hi", [])
 
+    def test_stall_without_tool_is_nudged_once_and_kept_out_of_history(self, monkeypatch):
+        call = {"tool_calls": [{"id": "1", "function": {"name": "board_status", "arguments": "{}"}}]}
+        seen = self._script(monkeypatch, [{"content": "One moment, let me check."}, call,
+                                          {"content": "Two cards wait on you."}])
+        out = callbrain.call_turn("s", PRINCIPAL, "what is pending", [], preset=self.preset,
+                                  snapshot_text="x", tool_runner=lambda n, a, c: "2 waiting")
+        assert out["reply"] == "Two cards wait on you." and out["tools"] == ["board_status"]
+        assert callbrain.STALL_NUDGE in json.dumps(seen[1]["messages"])
+        assert callbrain.STALL_NUDGE not in json.dumps(out["history"])
+        assert "One moment" not in json.dumps(out["history"])
+
+    def test_stall_is_nudged_only_once(self, monkeypatch):
+        self._script(monkeypatch, [{"content": "One moment."}, {"content": "Let me check that."}])
+        out = callbrain.call_turn("s", PRINCIPAL, "hi", [], preset=self.preset, snapshot_text="x")
+        assert out["reply"] == "Let me check that." and out["tools"] == []
+
     def test_snapshot_is_the_system_prompt(self, monkeypatch):
         seen = self._script(monkeypatch, [{"content": "It is Saturday the 26th."}])
         out = callbrain.call_turn("s", PRINCIPAL, "what is the date", [], preset=self.preset,
