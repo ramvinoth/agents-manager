@@ -110,6 +110,7 @@ _ACTIONS = {
     "automation_pause": ("Pause automation", None),
     "automation_resume": ("Resume automation", None),
     "approval_resolve": ("Resolve approval", ("Approval", "id", "id")),
+    "approval_supersede": ("Close replaced approval", ("Approval", "id", "id")),
     "session_create": ("Start a new session", None),
     "loop_create": ("Create scheduled work", None),
     "loop_wake_self": ("Set own wake", None),

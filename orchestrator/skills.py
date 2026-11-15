@@ -62,6 +62,29 @@ def write_bundle(name, files, scope="user", cwd=None, base=None):
     return d / "SKILL.md"
 
 
+def current_text(name, scope="user", cwd=None):
+    """The skill's SKILL.md as it is now, or None when there is none."""
+    if not valid_name(name):
+        return None
+    p = skills_base(scope, cwd) / name / "SKILL.md"
+    try:
+        return p.read_text()
+    except OSError:
+        return None
+
+
+def replace_summary(current, proposed):
+    """One line on what overwriting `current` with `proposed` does, so an
+    approver sees a whole-file replace that drops content. Pure."""
+    if current is None:
+        return "new file"
+    import difflib
+    old, new = current.splitlines(), (proposed or "").splitlines()
+    dropped = sum(1 for d in difflib.ndiff(old, new) if d.startswith("- "))
+    s = f"replaces the whole file: {len(old)} lines now, {len(new)} proposed"
+    return s + (f", drops {dropped} current lines" if dropped else "")
+
+
 def list_skill_names(scope="user", cwd=None):
     """Names of skills present under the scope (dirs containing a SKILL.md)."""
     base = skills_base(scope, cwd)

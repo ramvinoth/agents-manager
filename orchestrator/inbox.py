@@ -277,7 +277,15 @@ def red_subject(intent):
             when = args.get("cron") or args.get("interval") or (f"once at {args['at']}" if args.get("at") else "")
             return f"\"{(args.get('prompt') or '')[:80]}\" {when} in {_label(str(args.get('session') or ''))}".strip()
         if action == "skill_promote":
-            return str(args.get("name") or "")
+            from orchestrator import skills
+            name = str(args.get("name") or "")
+            current = skills.current_text(name)
+            parts = [name, skills.replace_summary(current, str(args.get("content") or ""))]
+            ids = intent.get("supersedes") or []
+            if ids:
+                parts.append("replaces open approval " + ", ".join(str(i) for i in ids)
+                             + ", now closed")
+            return "; ".join(p for p in parts if p)
         if action == "system_preamble_set":
             return f"\"{str(args.get('preamble') or '')[:120]}\""
     except Exception:
@@ -359,6 +367,25 @@ def tell_requester(approval, resolution, result=None):
             text = (f"The owner denied \"{what}\" (approval {approval['id']}). It was not done — "
                     "do not retry it; pick another way or ask on your card.")
         deliver_message("user", "", "session", sid, text)
+    except Exception:
+        pass
+
+
+def tell_superseded(approval, by_id):
+    """Tell the session that queued an ask that a newer ask for the same
+    target replaced it, so it does not wait on a decision that will never
+    come. Never raises."""
+    try:
+        sid = str((approval.get("detail") or {}).get("session") or "")
+        if not sid:
+            return
+        from orchestrator import audit
+        action = (approval.get("detail") or {}).get("action") or ""
+        what = audit.action_label(action) if action else (approval.get("summary") or "your request")
+        deliver_message("user", "", "session", sid,
+                        f"Your \"{what}\" ask (approval {approval['id']}) was closed: a newer ask for "
+                        f"the same target, approval {by_id}, replaced it. If yours held content the "
+                        "newer one lacks, merge it into a fresh ask.")
     except Exception:
         pass
 

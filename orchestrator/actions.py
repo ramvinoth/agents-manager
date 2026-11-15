@@ -1072,14 +1072,42 @@ def _queue_for_owner(it, acting_session, outcome, need_reason=True):
     # `queued` tells the decision card WHY it is asking: "red" (the action is
     # risky for anyone) or "scope" (fine in itself, but above the asking
     # session's level) — the two need different "if you approve" lines.
+    older = _open_asks_for_same_target(it)
+    detail = dict(it, session=acting_session or "", queued=outcome.split(":", 1)[-1])
+    if older:
+        detail["supersedes"] = [o["id"] for o in older]
     ap = db.approval_open(kind="infra", summary=f"{actor}: {action}",
-                          detail=dict(it, session=acting_session or "",
-                                      queued=outcome.split(":", 1)[-1]),
-                          created_by=actor)
+                          detail=detail, created_by=actor)
     db.audit_append(actor, action, it, outcome)
+    _supersede(older, ap)
     from orchestrator import inbox
     inbox.deliver_red(ap)
     return {"queued": True, "approval": ap["id"]}, 200
+
+
+def _open_asks_for_same_target(it):
+    """Open approvals this new ask replaces (orglogic.supersede_key): same
+    action on the same target. [] for actions that never supersede, without
+    touching the db."""
+    key = orglogic.supersede_key(it)
+    if key is None:
+        return []
+    return [o for o in db.approval_list_open()
+            if orglogic.supersede_key(o.get("detail")) == key]
+
+
+def _supersede(older, new_ap):
+    """Close each older open ask as replaced by new_ap and tell its asker.
+    approval_resolve only closes a row that is still open, so an older ask the
+    owner approved a moment ago is left as decided, never closed twice."""
+    from orchestrator import inbox
+    for old in older:
+        row = db.approval_resolve(old["id"], f"superseded by approval {new_ap['id']}")
+        if row is None:
+            continue
+        db.audit_append(new_ap.get("created_by") or "", "approval_supersede",
+                        {"id": old["id"], "by": new_ap["id"]}, "done")
+        inbox.tell_superseded(row, new_ap["id"])
 
 
 def execute(it, human_role, session_level, acting_session=""):

@@ -120,6 +120,26 @@ _RED_ACTIONS = {
     "reboot_host", "stop_shared_service", "prod_down", "touch_foreign_host",
 }
 
+# Asks that replace one named thing: a newer queued ask for the same thing
+# closes the older open one instead of waiting beside it. Two open
+# skill_promote asks for one skill each carry a WHOLE file, so approving both
+# lets whichever is approved last silently undo the other (Nov 14: approval 40
+# wiped the merged body approved as 41). action -> the arg naming the target.
+SUPERSEDED_BY_TARGET = {"skill_promote": "name"}
+
+
+def supersede_key(intent):
+    """(action, target) when a newer ask for the same target replaces this
+    one, else None. Pure."""
+    intent = intent or {}
+    action = intent.get("action") or ""
+    field = SUPERSEDED_BY_TARGET.get(action)
+    if not field:
+        return None
+    target = str((intent.get("args") or {}).get(field) or "").strip()
+    return (action, target) if target else None
+
+
 # What the owner risks by approving, in one plain line — shown with the approval
 # in the decision queue so a cold reader can judge it without knowing the policy
 # above. Only actions an agent can actually queue need an entry; anything else
