@@ -232,6 +232,23 @@ def test_trim_history_cuts_on_a_user_turn():
     assert callbrain.trim_history(msgs[:3], limit=6) == msgs[:3]
 
 
+def test_trim_history_keeps_the_turn_when_its_tool_chain_overruns_the_window():
+    msgs = [{"role": "user", "content": "q"}]
+    for _ in range(5):
+        msgs += [{"role": "assistant", "content": None, "tool_calls": [_tool_call("board_status", {})]},
+                 {"role": "tool", "tool_call_id": "c1", "content": "r"}]
+    out = callbrain.trim_history(msgs, limit=6)
+    assert out[0] == {"role": "user", "content": "q"} and len(out) == len(msgs)
+
+
+def test_trim_history_stays_bounded_over_a_very_long_call():
+    msgs = []
+    for i in range(5000):
+        msgs += [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}]
+        msgs = callbrain.trim_history(msgs)
+    assert len(msgs) <= callbrain.HISTORY_LIMIT and msgs[0]["role"] == "user"
+
+
 class FakeDb:
     def __init__(self):
         self.cards = {53: {"id": 53, "title": "Call mode", "project_id": 15, "column_id": 3,

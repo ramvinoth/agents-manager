@@ -634,4 +634,9 @@ def trim_history(messages, limit=HISTORY_LIMIT):
     for i, m in enumerate(tail):
         if m.get("role") == "user":
             return list(tail[i:])
+    # No user turn inside the window (one turn's tool chain overran it): keep
+    # that whole turn rather than lose every bit of context.
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            return list(messages[i:])
     return []
