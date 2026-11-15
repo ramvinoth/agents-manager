@@ -79,6 +79,8 @@ def clean_reply(text):
     text = _PRINTED_CALL.sub(" ", _SPECIAL_TOKEN.sub(" ", text or ""))
     text = " ".join(text.split())
     words = text.lower().split()
+    if re.search(r"[{}\[\]|]", text) and len(re.findall(r"[a-z]{2,}", text.lower())) < 3:
+        return ""  # a garbled printed call such as "{ } tell tell", never speech
     if len(words) >= 6 and len(set(words)) <= max(2, len(words) // 6):
         return ""
     return text

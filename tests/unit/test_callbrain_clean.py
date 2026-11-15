@@ -15,3 +15,8 @@ def test_normal_reply_untouched():
 
 def test_printed_tool_call_is_removed():
     assert "talk_with_harman" not in clean_reply('Sure. talk_with_harman(request="check cards") Done.')
+
+
+def test_garbled_printed_call_is_dropped():
+    assert clean_reply("{ } tell tell") == ""
+    assert clean_reply("Card [4] is in review now, nothing else waiting") != ""
