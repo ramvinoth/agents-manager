@@ -27,3 +27,9 @@ footer { padding:2rem 1.25rem 3rem; color:var(--mute); font-size:.9rem; border-t
 .waitlist button { border:0; cursor:pointer; font:inherit; font-weight:600; justify-self:start; }
 .waitlist button:disabled { opacity:.5; }
 .status { min-height:1.5rem; margin:.25rem 0 0; color:var(--mute); font-size:.95rem; }
+.shots { padding:2.5rem 0; border-top:1px solid var(--line); }
+.shots h2 { font-size:1.5rem; margin:0 0 .25rem; }
+.shots .cap { color:var(--mute); margin:0 0 1.5rem; }
+.shots figure { margin:0 0 1.75rem; }
+.shots img { width:100%; height:auto; border:1px solid var(--line); border-radius:10px; }
+.shots figcaption { color:var(--mute); font-size:.9rem; margin-top:.5rem; }
