@@ -26,6 +26,9 @@ CANVAS_TOMBSTONE_TTL = 7 * 86400  # a deleted canvas element is kept a week so a
 
 
 _last_purge = 0.0
+_last_stuck_check = 0.0
+_STUCK_INTERVAL = 300
+_stuck_alerted = set()  # incident keys already pushed, so one stuck loop alerts once
 
 
 def fire_due_loops(launch, now):
@@ -164,9 +167,32 @@ def loop_scheduler(launch):
             traceback.print_exc()
 
 
+def check_stuck_loops(now):
+    """Scheduler self-check: push the owner once per incident for an enabled loop
+    that is overdue or whose last run failed. Uses the same origin gating as
+    fire_due_loops so a loop paused by the mode or master switch is not flagged."""
+    from orchestrator import inbox
+    from orchestrator.loops import AGENT_ORIGIN, allowed_origins, stuck_loops
+    from orchestrator.orchestrator import automation_enabled, loop_mode
+    origins = allowed_origins(loop_mode())
+    if not automation_enabled():
+        origins = origins - {AGENT_ORIGIN}
+    loops = db.loop_list(None)
+    found = stuck_loops(loops, now, origins)
+    _stuck_alerted.intersection_update({k for _, _, k in found})
+    for lid, reason, key in found:
+        if key in _stuck_alerted:
+            continue
+        _stuck_alerted.add(key)
+        what = "is overdue and has not fired" if reason == "overdue" else "failed its last run"
+        inbox._push_owner("A scheduled loop looks stuck",
+                          f"Loop {lid} {what}: {(loops[lid].get('prompt') or '')[:80]}",
+                          {"loop": lid})
+
+
 def _scheduler_pass(launch, now):
     """One 5s tick of loop_scheduler (see its docstring)."""
-    global _last_purge
+    global _last_purge, _last_stuck_check
     with CHAT_LOCK:
         # Reap from when the run FINISHED, not when it started — a long run
         # otherwise loses its final status seconds after completing.
@@ -209,6 +235,12 @@ def _scheduler_pass(launch, now):
         except Exception:
             pass
     fire_due_loops(launch, now)
+    if now - _last_stuck_check >= _STUCK_INTERVAL:
+        _last_stuck_check = now
+        try:
+            check_stuck_loops(now)
+        except Exception:
+            traceback.print_exc()
     # The hourly maintenance window (orchestrator.maintenance): applies queued
     # restart requests at :50. Not gated by the master switch — agents only
     # QUEUE restarts; applying them is the owner's standing policy (Card 133).

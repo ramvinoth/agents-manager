@@ -2,7 +2,7 @@
 import time
 import uuid as uuid_mod
 from orchestrator import db
-from orchestrator.loops import USER_ORIGIN, build_schedule
+from orchestrator.loops import USER_ORIGIN, audit_toggle, build_schedule
 
 
 class LoopsMixin:
@@ -88,6 +88,9 @@ class LoopsMixin:
             # missed while off.
             fields["enabled"] = bool(body["enabled"])
         updated = db.loop_update(lid, fields)
+        if "enabled" in fields:
+            audit_toggle((self.current_user() or {}).get("username", ""), lid,
+                         loop.get("enabled"), fields["enabled"])
         self.send_json({"updated": lid, "kind": updated.get("kind", "recurring"),
                         "interval": updated.get("interval"), "cron": updated.get("cron"),
                         "nextRun": updated.get("nextRun"), "enabled": updated.get("enabled")})

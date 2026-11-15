@@ -275,24 +275,39 @@ def test_session_message_push_opens_its_mailbox(monkeypatch):
 # ── _wake_session: a live run gets the message mid-turn, not at turn end ──
 
 def test_wake_steers_into_a_running_turn(monkeypatch):
-    from orchestrator import config, engine
+    from orchestrator import config, engine, turn
     monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     steered, started = [], []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: steered.append(t) or "steered")
-    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    monkeypatch.setattr(turn, "start_turn", lambda *a, **k: started.append(a))
     inbox._wake_session("s1", "[inbox] wait")
     assert steered == ["[inbox] wait"] and not started
 
 
 def test_wake_resumes_when_the_run_ended_before_the_steer(monkeypatch):
-    from orchestrator import config, engine
+    from orchestrator import config, engine, turn
     monkeypatch.setitem(config.CHAT_JOBS, "s1", {"running": True, "host": "local"})
     started = []
     monkeypatch.setattr(engine, "steer_chat", lambda sid, t: None)   # run just finished
-    monkeypatch.setattr(engine, "start_claude_run", lambda *a, **k: started.append(a) or True)
+    monkeypatch.setattr(turn, "start_turn", lambda *a, **k: started.append(a))
     monkeypatch.setattr("orchestrator.config.transcript_path", lambda sid: None)
     inbox._wake_session("s1", "[inbox] wait")
     assert len(started) == 1        # never dropped: a fresh resumed turn carries it
+
+
+def test_wake_goes_through_start_turn_so_a_custom_provider_session_keeps_its_provider(monkeypatch):
+    """Qwen sessions must wake on their own provider: start_turn re-resolves the
+    session's AI selection, a bare start_claude_run would use Anthropic OAuth."""
+    from orchestrator import config, db, providers, turn
+    monkeypatch.setattr(db, "session_meta_get", lambda sid: {"provider": "qwen", "convMode": "agent"})
+    monkeypatch.setattr(providers, "get_preset", lambda pid: {"baseUrl": "http://x", "model": "qwen"})
+    monkeypatch.setattr(providers, "anthropic_env", lambda *a, **k: {"ANTHROPIC_BASE_URL": "http://x"})
+    seen = []
+    monkeypatch.setattr(turn, "start_claude_run", lambda *a, **k: seen.append(k) or True)
+    monkeypatch.setattr("orchestrator.config.transcript_path", lambda sid: None)
+    config.CHAT_JOBS.pop("s9", None)
+    inbox._wake_session("s9", "[inbox] hi")
+    assert seen and seen[0]["provider_env"] == {"ANTHROPIC_BASE_URL": "http://x"}
 
 
 # ---- org Red approvals -------------------------------------------------------

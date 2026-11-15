@@ -240,3 +240,37 @@ def cron_next_run(expr: str, after: Optional[float] = None) -> Optional[float]:
             return dt.timestamp()
         dt += timedelta(minutes=1)
     return None
+
+
+def audit_toggle(actor, lid, was_enabled, now_enabled):
+    """Audit row for a loop switched on or off, written only when the state really
+    changed. Every path that flips `enabled` (web route, MCP/action dispatch)
+    calls this one helper so the trail is identical whoever did it."""
+    if bool(was_enabled) == bool(now_enabled):
+        return
+    from orchestrator import db
+    db.audit_append(actor or "", "loop_enable" if now_enabled else "loop_disable",
+                    {"id": lid}, "done")
+
+
+# A busy-deferred loop is pushed 30s at a time and a paused-then-resumed loop
+# fires within one 5s tick, so a nextRun older than this is stuck, not slow.
+STUCK_GRACE = 300
+
+
+def stuck_loops(loops, now, origins, grace=STUCK_GRACE):
+    """Enabled loops the scheduler should have fired but has not, or whose last
+    run failed with nothing since. `loops` is {id: row}; `origins` is the set the
+    scheduler may fire right now (a paused origin is paused, not stuck).
+    Returns [(id, reason, key)]; `key` changes when the situation does, so
+    callers can alert once per incident."""
+    out = []
+    for lid, lp in loops.items():
+        if not lp.get("enabled") or (lp.get("origin") or USER_ORIGIN) not in origins:
+            continue
+        nxt = lp.get("nextRun")
+        if nxt and nxt < now - grace:
+            out.append((lid, "overdue", f"{lid}:overdue:{int(nxt)}"))
+        elif lp.get("lastRc") not in (None, 0):
+            out.append((lid, "failed", f"{lid}:failed:{int(lp.get('lastRun') or 0)}"))
+    return out

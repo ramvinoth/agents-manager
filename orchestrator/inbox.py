@@ -569,7 +569,7 @@ def _wake_session(session_id, prompt):
     t0 = time.time()
     how = "failed"
     try:
-        from orchestrator import engine
+        from orchestrator import engine, turn
         from orchestrator.config import CHAT_JOBS, CHAT_LOCK
         with CHAT_LOCK:
             job = CHAT_JOBS.get(session_id)
@@ -595,13 +595,17 @@ def _wake_session(session_id, prompt):
             full = transcript_path(session_id)
             if full:
                 cwd = sessions_mod.extract_cwd(full) or cwd
-        if engine.start_claude_run(session_id, ["--resume", session_id],
-                                   prompt, "acceptEdits", cwd, "", host):
+        # start_turn re-resolves the session's AI selection, so a Qwen/custom
+        # session wakes on its own provider instead of the default Anthropic one.
+        err = turn.start_turn(session_id, prompt, "acceptEdits", cwd, "", host)
+        if err is None:
             how = "resumed"
-        elif engine.enqueue_chat(session_id, prompt):
+        elif err[0] == 409 and engine.enqueue_chat(session_id, prompt):
             # Another wake started a run between our check and our start:
             # ride its queue instead of leaving this message unannounced.
             how = "queued"
+        else:
+            print(f"[inbox] wake {session_id[:8]} refused: {err[1]}", flush=True)
     except Exception as e:
         print(f"[inbox] wake {session_id[:8]} error: {e}", flush=True)
     finally:

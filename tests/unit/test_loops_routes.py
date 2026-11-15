@@ -22,6 +22,9 @@ class _Handler(LoopsMixin):
     def read_body(self):
         return self._body
 
+    def current_user(self):
+        return {"username": "ram"}
+
     def send_json(self, data, status=200):
         self.sent = (data, status)
 
@@ -145,7 +148,9 @@ def test_edit_interval_on_cron_loop_keeps_cron_unless_cleared(store):
     assert store[lid]["nextRun"] == NOW + 300
 
 
-def test_edit_non_schedule_fields_leave_schedule_alone(store):
+def test_edit_non_schedule_fields_leave_schedule_alone(store, monkeypatch):
+    audits = []
+    monkeypatch.setattr(db, "audit_append", lambda *a, **k: audits.append(a))
     row, data = _create(store, {"session": "s", "prompt": "p", "at": "1h"})
     lid = data["created"]
     before = dict(store[lid])
@@ -154,6 +159,7 @@ def test_edit_non_schedule_fields_leave_schedule_alone(store):
     assert store[lid]["prompt"] == "new" and store[lid]["enabled"] is False
     for k in ("kind", "cron", "interval", "nextRun"):
         assert store[lid][k] == before[k]
+    assert [(a[0], a[1]) for a in audits] == [("ram", "loop_disable")]
 
 
 def test_edit_rejects_bad_schedule_and_missing_loop(store):

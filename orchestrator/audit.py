@@ -116,6 +116,8 @@ _ACTIONS = {
     "loop_wake_self": ("Set own wake", None),
     "loop_pause_self": ("Pause own scheduled work", None),
     "loop_update": ("Update scheduled work", None),
+    "loop_enable": ("Turn scheduled work on", None),
+    "loop_disable": ("Turn scheduled work off", None),
     "loop_delete": ("Delete scheduled work", None),
     "loop_mode_set": ("Change loop firing mode", None),
     "session_mode_set": ("Change session permission mode", None),

@@ -563,7 +563,7 @@ def _loop_update(a):
     a user-origin loop: the two paths own disjoint sets, so an agent can never edit
     a schedule a human authored (and vice-versa the human route ignores origin
     because a person may edit anything they can see)."""
-    from orchestrator.loops import build_schedule
+    from orchestrator.loops import audit_toggle, build_schedule
     lid = a.get("id", "")
     loop = db.loop_get(lid)
     if not loop:
@@ -572,6 +572,7 @@ def _loop_update(a):
         # The route granted a session pausing its OWN loop (any origin — pausing
         # only narrows what runs). Nothing but `enabled` changes on this path.
         updated = db.loop_update(lid, {"enabled": False})
+        audit_toggle(a.get("_actor"), lid, loop.get("enabled"), False)
         return {"updated": lid, "enabled": False} if updated else {"error": "not found"}
     if (loop.get("origin") or "user") != "harman":
         return {"error": "not an agent loop"}
@@ -604,6 +605,8 @@ def _loop_update(a):
             return {"error": err}
         fields.update(sched)
     updated = db.loop_update(lid, fields)
+    if "enabled" in fields:
+        audit_toggle(a.get("_actor"), lid, loop.get("enabled"), fields["enabled"])
     return {"updated": lid, "kind": updated.get("kind", "recurring"),
             "interval": updated.get("interval"), "cron": updated.get("cron")} \
         if updated else {"error": "not found"}
@@ -1158,6 +1161,9 @@ def execute(it, human_role, session_level, acting_session=""):
         # intended.) card_create needs it for the same ask/judgement rules as
         # card_move: a card born in Review is an agent's ask.
         payload = handler(args, by_agent=bool(session_level))
+    elif action in ("loop_update", "loop_pause_self"):
+        # The handler audits enable/disable itself and needs the actor for it.
+        payload = handler(dict(args, _actor=actor))
     else:
         payload = handler(args)
     db.audit_append(actor, action, it, "done")
