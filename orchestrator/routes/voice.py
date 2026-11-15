@@ -48,7 +48,11 @@ class VoiceMixin:
         except ValueError:
             self.send_json({"error": "before and limit must be numbers"}, status=400)
             return
+        from orchestrator.runtime import titles
         calls = db.call_log_list(before, limit)
+        for c in calls:
+            # A call's id is the session id it ran in, so that session's name is the agent.
+            c["agent"] = titles.push_label(c["call_id"])
         full = len(calls) == max(1, min(limit, 50))
         self.send_json({"calls": calls, "next": calls[-1]["started"] if full else None})
 

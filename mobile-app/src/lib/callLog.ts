@@ -4,7 +4,7 @@
  */
 
 export type CallLine = { who: "caller" | "agent"; text: string; ts: number }
-export type CallEntry = { call_id: string; started: number; duration: number; turns: number; transcript: CallLine[] }
+export type CallEntry = { call_id: string; agent: string; started: number; duration: number; turns: number; transcript: CallLine[] }
 export type CallLogPage = { calls: CallEntry[]; next: number | null }
 
 /** Append an older page to what is loaded. A call already shown is kept once (a refresh can overlap). */

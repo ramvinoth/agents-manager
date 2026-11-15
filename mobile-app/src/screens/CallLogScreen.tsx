@@ -106,7 +106,7 @@ export default function CallLogScreen({ navigation }: Props) {
           style={({ pressed }) => [styles.audRow, pressed ? styles.audRowPressed : null]}
         >
           <View style={styles.audRowBody}>
-            <Text style={styles.audTime}>{callWhen(item.started)} · {callLength(item.duration)} · {item.turns} {item.turns === 1 ? "turn" : "turns"}</Text>
+            <Text style={styles.audTime}>{item.agent} · {callWhen(item.started)} · {callLength(item.duration)} · {item.turns} {item.turns === 1 ? "turn" : "turns"}</Text>
             <Text style={styles.audSubject} numberOfLines={expanded ? undefined : 2}>{callPreview(item)}</Text>
             {expanded ? (
               <View>

@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { mergeCalls, callLength, callPreview, speakerLabel, type CallEntry } from "./callLog.ts"
 
-const call = (id: string, lines: CallEntry["transcript"] = []): CallEntry => ({ call_id: id, started: 1, duration: 5, turns: 1, transcript: lines })
+const call = (id: string, lines: CallEntry["transcript"] = []): CallEntry => ({ call_id: id, agent: "Harman", started: 1, duration: 5, turns: 1, transcript: lines })
 
 test("mergeCalls keeps order and drops duplicates", () => {
   const out = mergeCalls([call("a"), call("b")], [call("b"), call("c")])
