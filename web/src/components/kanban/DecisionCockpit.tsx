@@ -269,7 +269,7 @@ export function DecisionCockpit({
           onOpenSession={d?.session && onOpenSession ? () => { if (onOpenSession(d)) setCard(null) } : undefined}
           onChange={(u) => { setCard((c) => c && { ...c, card: u }); onCardChange?.(u) }}
           onClose={() => {
-            // Moved out of the column it was parked in = decided; otherwise it stays open here.
+            // A card that left the column it was parked in is decided; otherwise it stays open here.
             const moved = card.card.column_id !== card.from
             setCard(null)
             if (moved) resolvedHere()

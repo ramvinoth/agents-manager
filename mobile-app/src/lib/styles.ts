@@ -529,8 +529,8 @@ function buildCoreStyles(t: Theme) {
     capModalBtn: { fontSize: 16 },
     sheetPills: { paddingHorizontal: 18, paddingVertical: 10, gap: 8 },
     // Bordered + bg one step darker than the sheet so each pill reads as a
-    // distinct, tappable element (previously chipBg on surface was near-invisible
-    // in dark mode).
+    // distinct, tappable element (chipBg on surface is near-invisible in dark
+    // mode).
     sheetPill: {
       flexDirection: "row",
       alignItems: "center",

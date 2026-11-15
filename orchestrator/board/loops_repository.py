@@ -4,10 +4,9 @@ from orchestrator.shared import postgres
 
 
 # Loops (recurring prompts) ---------------------------------------------------
-# Moved out of ~/.claude/.viewer-loops.json into Postgres. Per-row CRUD: each
-# scheduler edit touches ONE loop, so nothing rewrites the whole set. Rows come
-# back in the historical JSON shape (camelCase keys like nextRun) so the routes
-# and clients are unchanged.
+# Per-row CRUD: each scheduler edit touches ONE loop, so nothing rewrites the
+# whole set. Rows come back with the camelCase keys (nextRun, ...) the routes and
+# clients read.
 
 # JSON key -> SQL column -> default. Explicit (not **row) so a stray client key
 # can't inject a column and the name mapping lives in exactly one place.

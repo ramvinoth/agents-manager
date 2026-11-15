@@ -10,7 +10,7 @@ import type { AppSocket } from "./deferredSocket"
  * close on unmount and the server would kill the PTY — losing your shell and
  * scrollback. So the socket lives here instead, in a module singleton: it stays
  * open across navigation, keeps the PTY alive, and buffers all server output so a
- * freshly-remounted xterm can replay the scrollback and reattach seamlessly.
+ * freshly-remounted xterm can replay the scrollback and reattach without a gap.
  *
  * (This survives NAVIGATION, not full app close — when the app is killed the OS
  * drops the socket and the server reaps the PTY. Persisting across app close would

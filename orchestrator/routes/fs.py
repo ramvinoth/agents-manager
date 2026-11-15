@@ -262,8 +262,8 @@ class FsMixin:
             self.send_json({"error": str(e)}, status=500)
 
     def _p_fs_mkdir(self, req):
-        # One handler for both hosts. (Previously two separate /api/fs/mkdir
-        # blocks: the local one re-read the already-consumed body and hung.)
+        # One handler for both hosts; the body is read exactly once (a second
+        # read of a consumed body blocks forever).
         body = self.read_body()
         if body is None:
             self.send_json({"error": "Invalid JSON body"}, status=400)
