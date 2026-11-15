@@ -459,3 +459,25 @@ def test_bridge_speakrail_full_turn():
     assert any("input_audio.end" in t for t in adapter.sent_text)   # audio_done translated at close
     assert adapter.closed
     assert ttses[0].closed                                # the barge at end of call
+
+
+def _w(*t):
+    return [{"text": x, "start": 0, "end": 100} for x in t]
+
+
+def test_spoken_stop_while_agent_speaks_barges_once_and_commits_nothing():
+    s = SrAsrState()
+    s.set_agent_speaking(True)
+    acts = s.on_words(_w("Okay,", "stop."))
+    assert [a["type"] for a in acts] == ["user_turn_taken"]
+    assert s.on_words(_w("stop")) == []          # once per agent utterance
+    s.set_agent_speaking(False)
+    assert s.finish() == []                      # the command is never a turn
+
+
+def test_agent_speech_and_long_sentences_never_barge():
+    s = SrAsrState()
+    s.set_agent_speaking(True)
+    assert s.on_words(_w("okay")) == []                          # no trigger word
+    assert s.on_words(_w("please", "do", "not", "stop")) == []   # not all stop words
+    assert s.on_words(_w("okay", "please", "wait", "a", "second")) == []  # too long

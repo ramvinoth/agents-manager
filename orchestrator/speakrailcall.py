@@ -16,9 +16,10 @@ engines on one LAN port:
        still hold the agent's tail; words are filtered by their own timestamps),
        and emits user_turn_taken / committed — never the eager/speculative
        events Fish has, so calllive's bookkeeping runs in half-duplex: the
-       caller waits for the agent to finish, then talks. A mid-speech barge-in
-       is a v2 item (it needs echo-cancelling on the ASR side, which this
-       VAD does not have).
+       caller waits for the agent to finish, then talks. The one exception is a
+       spoken stop command ("okay stop", "pause"): see _stop_command. Free
+       barge-in by voice energy needs echo-cancelling on the ASR side, which this
+       VAD does not have.
   TTS  POST <box>/v1/audio/speech — Breeze: the Mac sends the text as JSON and
        the bridge turns it into Breeze's streaming multipart request (adding the
        reference voice, which lives on the box) and streams raw 24 kHz int16 PCM
@@ -35,12 +36,20 @@ an ASR socket, an http(s):// URL a TTS socket.
 import json
 import queue
 import random
+import re
 import threading
 
 from orchestrator.calllive import OP_BINARY, OP_CLOSE, OP_TEXT, pack, unpack
 
 LEAK_MARGIN_MS = 300   # speaker ring-out + AEC tail after the agent stops
 LATCH_FRAMES = 5       # 5 x 80 ms of continuous speech settles the leak with no VAD boundary
+# Spoken stop commands that cut the agent off mid-speech. The ASR keeps hearing the
+# caller while the agent talks, but the VAD cannot tell voices apart, so only a
+# transcript event made ENTIRELY of these words counts: short, whole-utterance, and
+# not something a sentence of the agent's own would produce.
+STOP_WORDS = frozenset("okay ok stop pause wait hold on please hang a second minute sorry enough shut up".split())
+STOP_TRIGGERS = frozenset("stop pause wait hold enough".split())
+STOP_MAX_WORDS = 4
 # The adapter does not know when a word was spoken: it spreads each delta's words
 # evenly from the previous delta's end to now. After a pause that puts the first
 # word back in the pause (even before the agent stopped), so the leak filter ate
@@ -94,6 +103,7 @@ class SrAsrState:
         self.turn = 0               # last turn index opened
         self.utter = None           # turn index of the open utterance
         self.buf = []               # that utterance's transcript words
+        self.stopped = False        # a spoken stop already cut this agent utterance
 
     def set_agent_speaking(self, speaking):
         with self.lock:
@@ -101,6 +111,7 @@ class SrAsrState:
                 return
             if speaking:
                 self.agent = True
+                self.stopped = False
                 self.speech_run = 0
                 self.utter = None   # an in-flight user utterance is now the agent's echo: dead
                 self.buf = []
@@ -144,7 +155,9 @@ class SrAsrState:
     def on_words(self, words):
         """One transcript event's words, each {text, start, end} in the audio clock."""
         with self.lock:
-            if self.agent or not self.leak_settled:
+            if self.agent:
+                return self._stop_command(words)
+            if not self.leak_settled:
                 return []                     # the model's tail of the agent's voice
             words = [w for w in (words or []) if isinstance(w, dict) and w.get("text")]
             floor = max((w.get("end", 0) for w in words), default=0) - WORD_LAG_MS
@@ -156,6 +169,21 @@ class SrAsrState:
                 acts = self._open()           # a quiet onset under the VAD floor: open late
             self.buf.extend(keep)
             return acts
+
+    def _stop_command(self, words):
+        """While the agent speaks: a spoken "stop"/"pause" barges in. Emits a bare
+        user_turn_taken (calllive cuts the voice) and never a committed turn, so the
+        command itself gets no reply. Once per agent utterance."""
+        toks = [t for t in (re.sub(r"[^a-z]", "", str(w.get("text", "")).lower())
+                            for w in (words or []) if isinstance(w, dict)) if t]
+        if (not toks or len(toks) > STOP_MAX_WORDS or self.stopped
+                or not all(t in STOP_WORDS for t in toks)
+                or not any(t in STOP_TRIGGERS for t in toks)):
+            return []
+        self.stopped = True
+        acts = self._open()
+        self.utter = None             # the command is not a turn: nothing to commit
+        return acts
 
     def finish(self):
         """The adapter session ended: commit whatever is in flight. A VAD
