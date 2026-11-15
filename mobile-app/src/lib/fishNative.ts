@@ -11,7 +11,7 @@ export const fishAudioAvailable = (): boolean => HarmanAudio.isAvailable()
 
 export const nativeFishAudio: FishAudio = {
   start: async (rate) => {
-    // Native capture/engine failures used to vanish; surface them in the device log.
+    // Surface native capture/engine failures in the device log; nothing else reports them.
     errorSub?.remove()
     errorSub = HarmanAudio.addErrorListener((e) => console.warn("[harman-audio]", e.message ?? "unknown error"))
     await HarmanAudio.start(rate)

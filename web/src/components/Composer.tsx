@@ -225,7 +225,7 @@ export function Composer() {
   const agentLabel = useAgentLabel()
 
   // Claude has full driving (steer/queue). Pi and Codex are driven one-shot
-  // (send + stop, no steer/queue). Other agents stay view-only for now.
+  // (send + stop, no steer/queue). Other agents are view-only.
   const canSteer = currentAgent === "claude"
   const viewOnly = !["claude", "pi", "codex", "copilot"].includes(currentAgent)
   const disabled = !currentSessionPath || viewOnly

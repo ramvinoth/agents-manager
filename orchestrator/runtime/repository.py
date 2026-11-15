@@ -282,10 +282,9 @@ def agent_template_delete(template_id):
 
 # Session meta ----------------------------------------------------------------
 # Per-session extras (title/goal/systemPrompt/provider/convMode/effort/favorite/
-# pinned/avatar/archived). Moved out of ~/.claude/.viewer-meta.json. The payload
-# is JSONB so keys the app adds later survive without a schema change. Per-row
-# CRUD with a JSONB merge for patches, so two concurrent field edits on the same
-# session don't clobber each other.
+# pinned/avatar/archived). The payload is JSONB so keys the app adds later
+# survive without a schema change. Per-row CRUD with a JSONB merge for patches,
+# so two concurrent field edits on the same session don't clobber each other.
 
 def session_meta_get(sid):
     """One session's meta dict (empty dict if none)."""

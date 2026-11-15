@@ -558,8 +558,8 @@ export default function ThreadScreen({ route, navigation }: Props) {
   async function stop() {
     if (!sessionId) return
     // Snapshot the queue before interrupting: the server drops it on interrupt
-    // ("stop what's planned"), but the user asked for Stop to end only the
-    // CURRENT turn and still run what they lined up. We re-send them below.
+    // ("stop what's planned"), but Stop ends only the CURRENT turn and still
+    // runs what the owner lined up. We re-send them below.
     const carry = [...queueList]
     try {
       await api.chatInterrupt(path || sessionId)

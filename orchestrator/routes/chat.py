@@ -72,7 +72,7 @@ class ChatMixin:
             return
 
         # Non-Claude agents drive through their own launcher. Pi is one-shot
-        # (`pi -p --session`), local-only for now; other agents are view-only.
+        # (`pi -p --session`), local-only; other agents are view-only.
         if agent != "claude":
             if agent == "pi" and host == "local":
                 full_path = resolve_agent_session("pi", rel_path)
