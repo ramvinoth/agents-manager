@@ -26,6 +26,7 @@ export default function LoginScreen({ navigation }: Props) {
   // so a login page for an unreachable server is never a dead end (you can
   // switch to a working server, add a new one, or remove this one).
   const [serverOpen, setServerOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   // Whether the server responded to the initial reachability probe. When it's
   // down we show a clear "can't reach server" note pointing at Change server,
   // rather than a blank form that looks like a password problem.
@@ -102,7 +103,7 @@ export default function LoginScreen({ navigation }: Props) {
       ) : null}
       {!reachable ? (
         <Text testID="login-unreachable" style={[styles.error]}>
-          Can't reach this server. It may be down — use “Change server” below to switch or edit it.
+          Can't reach this server. It may be down. Use Change server below to switch or edit it.
         </Text>
       ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -116,20 +117,32 @@ export default function LoginScreen({ navigation }: Props) {
         {busy ? <ActivityIndicator color={t.onAccent} /> : <Text style={styles.buttonText}>{signupOpen ? "Create account" : "Sign in"}</Text>}
       </TouchableOpacity>
 
-      {/* Always-available escape hatch: change/switch server. Critical when the
-          selected server is DOWN — otherwise Login is a dead end you can't leave,
-          even across app restarts (the active server persists). */}
-      <TouchableOpacity
-        testID="login-change-server"
-        accessibilityLabel="Change server"
-        style={{ marginTop: 22, alignItems: "center" }}
-        onPress={() => setServerOpen(true)}
-      >
-        <Text style={{ color: t.accent, fontWeight: "600" }}>Change server</Text>
-        <Text style={[styles.hint, { textAlign: "center", marginTop: 2 }]} numberOfLines={1}>
-          {(() => { const s = activeServer(); return s ? displayAddress(s) : "—" })()}
-        </Text>
-      </TouchableOpacity>
+      {/* The server address is an advanced setting: most people sign in to the
+          server they were given. It opens by itself when the server is DOWN, so
+          Login is never a dead end you can't leave (the active server persists). */}
+      {advancedOpen || !reachable ? (
+        <TouchableOpacity
+          testID="login-change-server"
+          accessibilityLabel="Change server"
+          style={{ marginTop: 22, alignItems: "center" }}
+          onPress={() => setServerOpen(true)}
+        >
+          <Text style={{ color: t.accent, fontWeight: "600" }}>Change server</Text>
+          <Text style={[styles.hint, { textAlign: "center", marginTop: 2 }]} numberOfLines={1}>
+            {(() => { const s = activeServer(); return s ? displayAddress(s) : "—" })()}
+          </Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          testID="login-advanced"
+          accessibilityLabel="Advanced"
+          accessibilityRole="button"
+          style={{ marginTop: 22, alignItems: "center" }}
+          onPress={() => setAdvancedOpen(true)}
+        >
+          <Text style={styles.hint}>Advanced</Text>
+        </TouchableOpacity>
+      )}
       <ServerPicker visible={serverOpen} onClose={() => setServerOpen(false)} navigation={navigation} />
     </ScrollView>
   )

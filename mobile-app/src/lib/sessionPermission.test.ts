@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { test } from "node:test"
 import ts from "typescript"
+import * as runtimeLib from "./runtime.ts"
 
 const settle = () => new Promise<void>(r => setImmediate(r))
 function deferred() { let resolve!: (v: any) => void, reject!: (e: unknown) => void; const promise = new Promise<any>((r,j) => { resolve=r; reject=j }); return {promise, resolve, reject} }
 function harness() {
   const slots: any[] = [], cleanups: any[] = [], pending: Function[] = []
   let cursor = 0
-  const reads: any[] = [], writes: any[] = [], deviceWrites: any[] = []
+  const reads: any[] = [], writes: any[] = [], deviceWrites: any[] = [], metaSaves: any[] = []
   let params = {host:"local",path:"project/session-1.jsonl",sessionId:"session-1",agent:"claude"}
   const react = {
     createElement:(type:any,props:any,...children:any[])=>({type,props:props||{},children}),
@@ -23,10 +24,10 @@ function harness() {
     "../components/Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "./Tracked": { Pressable: "Pressable", TouchableOpacity: "TouchableOpacity" },
     "react-native":Object.fromEntries(["ActivityIndicator","ScrollView","Switch","Text","TextInput","TouchableOpacity","View"].map(x=>[x,x])),
-    "../api/client":{api:{sessionMeta:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
+    "../api/client":{api:{sessionMeta:(...args:any[])=>{const d=deferred();reads.push({args,...d});return d.promise},sessionModeSet:(...args:any[])=>{const d=deferred();writes.push({args,...d});return d.promise},sessionMetaSave:(...args:any[])=>{const d=deferred();metaSaves.push({args,...d});return d.promise},sessionSummary:async()=>null,capabilities:async()=>({skills:[],mcp:[]}),loops:async()=>[],providers:async()=>({providers:[]}),aiConfig:async()=>({capabilities:{},selection:{}})}},
     "../state/config":{composerPrefs:()=>({mode:"bypassPermissions"}),setComposerPrefs:(v:any)=>deviceWrites.push(v),notifyEveryReply:()=>false,setNotifyEveryReply:()=>{},profileOpenCards:()=>({behaviour:true}),setProfileOpenCards:async()=>{}},
     "../lib/aiSelection":{aiSummary:()=>"AI",aiError:(e:any)=>e.message},
-    "../lib/avatars":{AVATARS:[]},"../lib/harmanLevel":{HARMAN_LEVELS:["ic","lead","manager"],LEVEL_NAME:{ic:"Own work",lead:"Workspace",manager:"Organization"},isHarmanLevel:(v:unknown)=>v==="ic"||v==="lead"||v==="manager"},"../lib/interval":{},"../lib/undo":{offerUndo:()=>{}},"../lib/stats":{},"../lib/thread":{},
+    "../lib/avatars":{AVATARS:[]},"../lib/harmanLevel":{HARMAN_LEVELS:["ic","lead","manager"],LEVEL_NAME:{ic:"Own work",lead:"Workspace",manager:"Organization"},isHarmanLevel:(v:unknown)=>v==="ic"||v==="lead"||v==="manager"},"../lib/runtime":runtimeLib,"../lib/interval":{},"../lib/undo":{offerUndo:()=>{}},"../lib/stats":{},"../lib/thread":{},
     "../lib/useTheme":{useTheme:()=>({})},"../lib/styles":{useStyles:()=>({})},
     ...Object.fromEntries(["Avatar","Icon","JobScheduler","ProviderPicker"].map(x=>[`../components/${x}`,{default:x}])),
   }
@@ -36,7 +37,7 @@ function harness() {
   function find(tree:any,id:string):any {if(!tree||typeof tree!=="object")return;if(Array.isArray(tree))return tree.map(x=>find(x,id)).find(Boolean);return tree.props?.testID===id?tree:find(tree.children,id)}
   const node=(id:string)=>{const n=find(render(),id);assert.ok(n,id);return n}
   async function effects(){render();while(pending.length)pending.shift()!();await settle()}
-  return {node,render,effects,reads,writes,deviceWrites,change:(p:Partial<typeof params>)=>{params={...params,...p}},unmount:()=>cleanups.forEach(fn=>fn?.())}
+  return {node,render,effects,reads,writes,deviceWrites,metaSaves,change:(p:Partial<typeof params>)=>{params={...params,...p}},unmount:()=>cleanups.forEach(fn=>fn?.())}
 }
 
 test("permission client uses existing authority endpoints and canonical target",async()=>{
@@ -122,4 +123,22 @@ test("scope changes ignore old reads and writes; other harnesses have no control
   h.change({agent:"codex"});await h.effects()
   assert.doesNotMatch(JSON.stringify(h.render()),/sp-mode-bypass/)
   h.unmount()
+})
+
+test("runs-on choice saves to session meta and shows only what the server confirmed",async()=>{
+  const h=harness();await h.effects()
+  h.reads[0].resolve({session:"session-1",permission_mode:"default",runtime:"",effective_runtime:"local"});await settle()
+  assert.match(JSON.stringify(h.render()),/Server \(server default\)/)
+  h.node("sp-card-runtime").props.onPress()
+  const failed=h.node("sp-runtime-sandbox").props.onPress()
+  assert.deepEqual(h.metaSaves[0].args,[{session:"project/session-1.jsonl",runtime:"sandbox"}])
+  h.metaSaves[0].resolve({error:"unknown runtime"});await failed
+  assert.equal(h.node("sp-runtime-default").props.accessibilityState.selected,true)
+  assert.ok(h.node("sp-runtime-note").children.join(""))
+  const saving=h.node("sp-runtime-sandbox").props.onPress()
+  h.metaSaves[1].resolve({saved:true,runtime:"sandbox"});await saving;await h.effects()
+  assert.equal(h.reads.length,2,"a confirmed save re-reads the server's view")
+  h.reads[1].resolve({session:"session-1",permission_mode:"default",runtime:"sandbox",effective_runtime:"sandbox"});await settle()
+  assert.equal(h.node("sp-runtime-sandbox").props.accessibilityState.selected,true)
+  assert.match(JSON.stringify(h.render()),/Cloud sandbox/)
 })

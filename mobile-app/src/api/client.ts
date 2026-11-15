@@ -118,9 +118,10 @@ export type SessionSummary = {
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypass"
 export type PermApproval = { id: string; tool_name: string; input: unknown }
 /** GET /api/session-meta: stored per-chat settings plus Trust (saved permission
- *  policy, level override "" = none, and the level that applies). Cheap — no transcript read. */
+ *  policy, level override "" = none, and the level that applies) and where turns
+ *  run (runtime "" = server default, effective_runtime = what applies). Cheap — no transcript read. */
 export type SessionMeta = { session?: string; goal?: string; systemPrompt?: string; avatar?: string; pinned?: string[]; cwd?: string
-  permission_mode?: string; level?: string; effective_level?: string }
+  permission_mode?: string; level?: string; effective_level?: string; runtime?: string; effective_runtime?: string }
 export type GitStatus = { repo: boolean; branch?: string; name?: string; remote?: string; root?: string; dirty?: number; ahead?: number | null; behind?: number | null }
 // A saved custom LLM provider (OpenAI-compatible endpoint). apiKey is NEVER
 // returned by the server — it stays on the box and is revealed only to the runner.
@@ -547,10 +548,10 @@ export const api = {
   // brain's ask_harman/check_harman/board_status tools). `history` is opaque —
   // echo the returned one back on the next turn; the server keeps no call state.
   callEngine: () => req<CallEngine>("GET", "/api/call/engine"),
-  // The brain answers with {reply} (text, for TTS) or, on LFM3-Audio, {audio, next}:
   // Past calls, newest first, with transcripts. `before` is the previous page's `next`.
   callLog: (before?: number, limit = 20) =>
     req<CallLogPage>("GET", `/api/call/log?limit=${limit}${before != null ? `&before=${before}` : ""}`),
+  // The brain answers with {reply} (text, for TTS) or, on LFM3-Audio, {audio, next}:
   // stream callAudio(audio), then post callNext(next) — stop:true on a barge-in.
   callTurn: (body: { path: string; text: string; history: CallHistory }) =>
     req<CallAnswer>("POST", "/api/call/turn", body),
@@ -631,8 +632,8 @@ export const api = {
       `/api/session-meta?session=${encodeURIComponent(session)}` +
         (host && host !== "local" ? `&host=${encodeURIComponent(host)}` : "")
     ),
-  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; host?: string }) =>
-    req<{ ok?: boolean }>("POST", "/api/session-meta", body),
+  sessionMetaSave: (body: { session: string; goal?: string; systemPrompt?: string; avatar?: string; archived?: boolean; favorite?: boolean; pinned?: string[]; host?: string; runtime?: string }) =>
+    req<{ saved?: boolean; runtime?: string }>("POST", "/api/session-meta", body),
 
   // ---- custom LLM providers (OpenAI-compatible endpoints). The apiKey is sent
   //      on save but never returned; /models is fetched server-side so the key
@@ -857,10 +858,10 @@ export const api = {
   // One segment the call brain is speaking (LFM3-Audio), same delivery as voiceTts.
   callAudio: (path: string, id: string, dest: string) =>
     serverMedia(`/api/call/audio?path=${encodeURIComponent(path)}&id=${encodeURIComponent(id)}`, dest),
-  // Call listening socket. The app streams endpointed utterances (binary
   // One recorded side of a past call (caller or reply), fetched only when played.
   callLogAudio: (id: string, stream: "caller" | "reply", dest: string) =>
     serverMedia(`/api/call/log/audio?id=${encodeURIComponent(id)}&stream=${stream}`, dest),
+  // Call listening socket. The app streams endpointed utterances (binary
   // frames); the server transcribes each on the GPU box and pushes back
   // {type:"utterance",text}. mode=call: the call itself is the "talking to you"
   // signal, so there is no per-turn wake word.

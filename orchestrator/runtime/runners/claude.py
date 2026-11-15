@@ -4,36 +4,28 @@ import json
 import os
 import re
 import secrets
-import subprocess
-import tempfile
 import threading
 import time
 import traceback
 
-from orchestrator import db, history, inference_health, procctl, project_plugins, resume
+from orchestrator import db, history, inference_health, procctl, resume
 from orchestrator.agents import agent_env
-from orchestrator.browser import ensure_mcp_browser
 from orchestrator.config import (
     CHAT_IDLE_TIMEOUT,
     CHAT_JOBS,
     CHAT_LOCK,
     PORT,
     VIEWER_TOKEN_FILE,
-    claude_bin,
     claude_version_gate,
     invalidate_claude_bin_cache,
-    session_plugin_dirs,
-    transcript_path,
 )
 from orchestrator.login import auth_status
-from orchestrator.remote import remote_claude_bin
+from orchestrator.runtime.backends import backend_for
 from orchestrator.runtime.chat import _resume_cut_turn, _watch_endpoint, feed_next_queued, record_inflight
 from orchestrator.runtime.permissions import effective_permission_mode
-from orchestrator.runtime.process import RemoteProc, iter_stdout_until, stream_user_message
+from orchestrator.runtime.process import iter_stdout_until, stream_user_message
 from orchestrator.runtime.run_config import (
-    RUN_SETTINGS_PREFIX,
     _integrations_summary,
-    _perm_mcp_config_path,
     _run_settings,
     owner_time_line,
     resolve_level,
@@ -44,23 +36,6 @@ from orchestrator.runtime.titles import push_label
 # short when --resume first parses a multi-GB transcript; our own stdio servers
 # answer in well under a second, so this only ever waits on a blocked loader.
 MCP_CONNECT_TIMEOUT_MS = "120000"
-
-
-def _finish_history(session_id):
-    """Fold what this run's trims dropped into the chat's history archive, in a
-    thread (a chat's first fold copies its whole old transcript: seconds). Only
-    snapshots from before now are settled, so the next run's are left alone."""
-    live = transcript_path(session_id)
-    if not live:
-        return
-    cutoff = time.time_ns()
-
-    def fold():
-        try:
-            history.finish_run(live, before_ns=cutoff)
-        except Exception as e:
-            print(f"  ⚠ history fold {session_id[:8]} failed: {type(e).__name__}: {e}", flush=True)
-    threading.Thread(target=fold, daemon=True, name="history-fold").start()
 
 
 def _fail_note(err, last_lines, tail=5, cap=4000):
@@ -80,7 +55,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     """Spawn a headless claude run (stream-json, stdin kept open) and track it
     in CHAT_JOBS. While it runs, messages can be QUEUED (delivered as the next
     turn on the same process) or STEERED (injected mid-turn, like the TUI).
-    host != 'local' runs claude on that SSH host instead.
+    Where it runs is the backend's call (orchestrator.runtime.backends): this
+    machine, an SSH host (host != 'local'), or an ephemeral sandbox.
 
     provider_env (Agent mode): an optional {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
     ANTHROPIC_MODEL} dict that points the harness at a custom Anthropic-compatible
@@ -93,7 +69,6 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     sees the False return and records that itself.
     Returns False if the session already has a running job."""
     mode = effective_permission_mode(session_id, mode)
-    remote = bool(host) and host != "local"
     with CHAT_LOCK:
         job = CHAT_JOBS.get(session_id)
         if job and job["running"]:
@@ -115,8 +90,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         CHAT_JOBS[session_id] = job
     record_inflight(session_id, job)
 
-    binary = "claude" if remote else claude_bin()
-    cmd = [binary, "-p", "--input-format", "stream-json",
+    meta = db.session_meta_get(session_id) or {}
+    backend = backend_for(host, meta)  # where it runs; builds nothing yet
+    job["runtime"] = backend.name
+    cmd = [backend.binary(), "-p", "--input-format", "stream-json",
            "--output-format", "stream-json", "--verbose"] + session_args
     if mode in ("bypass", "bypassPermissions"):
         cmd.append("--dangerously-skip-permissions")
@@ -129,8 +106,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # Always attach the viewer permission tool. In "default" mode it gates each
     # tool call (Allow/Deny); in every mode it is ALSO how AskUserQuestion reaches
     # the user (the CLI routes AUQ's checkPermissions "ask" to this tool, even under
-    # --dangerously-skip-permissions — verified). Remote hosts reach the viewer via
-    # an SSH reverse tunnel set up below; the MCP config + helper run on the host.
+    # --dangerously-skip-permissions — verified). The backend says where its
+    # config lives and how the run reaches back to the viewer.
     perm_token = secrets.token_hex(16)
     job["perm_token"] = perm_token
     # Kanban (org board) tool token: the agent session can create/move cards from
@@ -157,7 +134,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                              job["level"], cwd, host)
     except Exception:
         pass
-    cmd += ["--mcp-config", _perm_mcp_config_path(host),
+    cmd += ["--mcp-config", backend.mcp_config(),
             "--permission-prompt-tool", "mcp__viewerperm__approve"]
     # "default" is the composer's sentinel for "no --model" (the CLI picks). Some
     # clients persist it as a literal, which would run `claude --model default`
@@ -170,37 +147,22 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
     # the subprocess environment — so injecting ANTHROPIC_* into env alone is
     # silently overridden by any base URL pinned in settings.json (e.g. a LiteLLM
     # proxy). A `--settings` env block DOES take precedence (verified: it forces
-    # /v1/messages to the given base URL). Locally the JSON goes through a 0600
-    # temp file so provider secrets stay out of argv. A remote run gets the JSON
-    # inline (the CLI accepts a path or a JSON string): a local temp path means
-    # nothing on the other host, and its shell command already carries the
-    # per-run tokens as exports, so argv adds no new exposure there.
-    # A custom endpoint driven from this machine gets a liveness Watch (below),
-    # so the CLI's own blind ceilings are lifted and the Watch decides when the
-    # endpoint has actually failed. Remote runs keep the CLI defaults: a probe
-    # from here says nothing about that host's route to the endpoint.
-    watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if not remote else ""
+    # /v1/messages to the given base URL). How the JSON reaches the CLI (a 0600
+    # file, inline, staged in a box) is the backend's call.
+    # A custom endpoint driven through this machine's network gets a liveness
+    # Watch (below), so the CLI's own blind ceilings are lifted and the Watch
+    # decides when the endpoint has actually failed. An SSH host keeps the CLI
+    # defaults: a probe from here says nothing about that host's route.
+    watch_url = (provider_env or {}).get("ANTHROPIC_BASE_URL", "") if backend.watches_endpoint else ""
     if watch_url:
         provider_env = {**provider_env, **inference_health.WATCHED_ENV}
-    run_settings = _run_settings(provider_env, history_hook=not remote)
-    settings_path = None
-    if remote:
-        cmd += ["--settings", json.dumps(run_settings)]
-    else:
-        try:
-            fd, settings_path = tempfile.mkstemp(prefix=RUN_SETTINGS_PREFIX, suffix=".json")
-            with os.fdopen(fd, "w") as f:
-                json.dump(run_settings, f)
-            os.chmod(settings_path, 0o600)
-            cmd += ["--settings", settings_path]
-        except Exception as e:
-            print(f"[engine] run settings write failed: {e}", flush=True)
+    run_settings = _run_settings(provider_env, history_hook=backend.keeps_history)
+    cmd += backend.settings_arg(run_settings)
 
     # System prompt = a global Harman system-awareness preamble (so every session
     # knows it is a node in the orchestration system and how its mcp__viewer__*
     # power is gated), then the per-session prompt and goal from the viewer's panel.
     # The preamble lives in settings (db, runtime-editable) — empty string disables it.
-    meta = db.session_meta_get(session_id) or {}
     extra = []
     preamble = db.setting_get("system_preamble", "") or ""
     if preamble.strip():
@@ -213,15 +175,14 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         extra.append(meta["systemPrompt"])
     if meta.get("goal"):
         extra.append("Active goal (keep working toward this; check it before stopping): " + meta["goal"])
+    if backend.system_note():
+        extra.append(backend.system_note())
     if extra:
         cmd += ["--append-system-prompt", "\n\n".join(extra)]
     # The chat's plugins (its agent's, any the owner added), its own extras
     # folder, and every project plugin this machine has on (an app sharing the
-    # project's folder, e.g. Sift) — skills, MCP, hooks. Local runs only: the
-    # folders live here.
-    if not remote:
-        for plugin_dir in session_plugin_dirs(session_id, meta) + project_plugins.plugin_dirs():
-            cmd += ["--plugin-dir", str(plugin_dir)]
+    # project's folder, e.g. Sift) — skills, MCP, hooks.
+    cmd += backend.plugin_args(session_id, meta)
 
     def run():
         proc = None
@@ -250,12 +211,12 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # viewerperm "failed" and every tool call died with "approve not found".
             # An owner-set MCP_TIMEOUT still wins.
             env.setdefault("MCP_TIMEOUT", MCP_CONNECT_TIMEOUT_MS)
-            if not remote:
+            if backend.keeps_history:
                 # After each compaction the CLI rewrites the transcript down to
                 # what a resume needs, so a long chat resumes in a second instead
                 # of re-parsing gigabytes; orchestrator.history keeps the rows it
                 # drops for the app (the PreCompact hook in run_settings + the
-                # snapshot below). Remote hosts have no archive, so no trim.
+                # backend's snapshot). Elsewhere there is no archive, so no trim.
                 env.setdefault(history.GC_ENV, "1")
             if perm_token:  # let permission_mcp.py reach the viewer + this session
                 env["VIEWER_PERM_SESSION"] = session_id
@@ -286,51 +247,21 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                         env["CLAUDE_CODE_OAUTH_TOKEN"] = VIEWER_TOKEN_FILE.read_text().strip()
                     except Exception:
                         pass
+            forward = []  # env set on purpose for this run, which a filtering backend keeps
             try:  # per-host env vars (e.g. GH_TOKEN) so git push / gh authenticate
                 from orchestrator.hostenv import host_env
-                env.update(host_env(host))
+                henv = host_env(host)
+                env.update(henv)
+                forward += list(henv)
             except Exception:
                 pass
             # Agent mode: point the harness at a custom Anthropic-compatible endpoint
             # (our llama-server). Applied LAST so it wins over any inherited creds.
             if provider_env:
                 env.update({str(k): str(v) for k, v in provider_env.items()})
-            # If Playwright MCP on this host attaches to our CDP browser, it
-            # must be running before claude boots (no-op / ~50ms otherwise).
-            ensure_mcp_browser(host if remote else "local")
-            if remote:
-                # nvm/npm installs aren't on the non-interactive login PATH;
-                # resolve the actual binary location on the host first.
-                try:
-                    cmd[0] = remote_claude_bin(host)
-                except Exception:
-                    pass
-                # Ship the perm-tool env into the remote shell so its permission_mcp
-                # can reach the viewer directly at its tailnet address.
-                rperm_env = {"MCP_TIMEOUT": env["MCP_TIMEOUT"]}
-                if perm_token:
-                    from orchestrator.remote import viewer_tailnet_base
-                    base = viewer_tailnet_base(PORT)
-                    rperm_env.update({"VIEWER_PERM_SESSION": session_id,
-                                      "VIEWER_PERM_TOKEN": perm_token})
-                    if base:
-                        rperm_env["VIEWER_PERM_BASE"] = base
-                    # Same reach-back for the kanban tool on the remote host.
-                    if kanban_token:
-                        rperm_env["VIEWER_KANBAN_SESSION"] = session_id
-                        rperm_env["VIEWER_KANBAN_TOKEN"] = kanban_token
-                        if kanban_project:
-                            rperm_env["VIEWER_KANBAN_PROJECT"] = kanban_project
-                        if base:
-                            rperm_env["VIEWER_KANBAN_BASE"] = base
-                proc = RemoteProc(host, cmd, cwd, env=rperm_env)
-            else:
-                live = transcript_path(session_id)
-                if live:  # belt to the PreCompact hook's braces
-                    history.snapshot(live)
-                proc = subprocess.Popen(cmd, cwd=procctl.local_cwd(cwd), env=env, text=True,
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, **procctl.interruptible_kwargs())
+                forward += [str(k) for k in provider_env]
+            backend.prepare()
+            proc = backend.spawn(cmd, cwd, env, session_id, forward=forward)
             with CHAT_LOCK:
                 job["proc"] = proc
                 job["stdin_open"] = True
@@ -402,13 +333,10 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
         finally:
             # Must never raise: the running/queue cleanup below has to run so the
             # session doesn't stay wedged as "busy" after the process exits.
-            if settings_path:
-                try:
-                    os.unlink(settings_path)
-                except OSError:
-                    pass
-            if not remote:
-                _finish_history(session_id)
+            try:
+                backend.finish(session_id)
+            except Exception as e:
+                print(f"  ⚠ run {session_id[:8]} backend finish failed: {type(e).__name__}: {e}", flush=True)
             try:
                 if stderr_buf and stderr_buf[0]:
                     tail = stderr_buf[0]
@@ -453,9 +381,8 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
             # rejected this run for a too-old CLI, so force the next run to
             # re-resolve the binary from disk — if the user has since run
             # `claude update`, the retry picks it up immediately (no restart,
-            # no hour-long cache wait). Skipped for remote runs, which spawn a
-            # bare `claude` on the host and never consult this cache.
-            if version_gate and job.get("host", "local") == "local":
+            # no hour-long cache wait). Only a local run consults this cache.
+            if version_gate and backend.name == "local":
                 invalidate_claude_bin_cache()
             # Messages queued in the closing race get a fresh resumed run.
             if leftovers and job["returncode"] == 0:

@@ -21,6 +21,7 @@ from orchestrator.engine import (
     start_copilot_new,
 )
 from orchestrator.loops import USER_ORIGIN, build_schedule
+from orchestrator.runtime.backends import RUNTIMES, effective_runtime
 from orchestrator.remote import (
     remote_extract_cwd, remote_list_sessions_agent, remote_read_agent_session, remote_read_session, remote_session_edit,
 )
@@ -190,6 +191,14 @@ class SessionsMixin:
             # A list of pinned message uuids. Cap count + id length so a stray
             # payload can't bloat the persisted meta.
             fields["pinned"] = [str(x)[:80] for x in (body["pinned"] or [])][:50]
+        if "runtime" in body:
+            # Where this chat's turns run: this computer or a cloud sandbox.
+            # Empty clears the choice back to the server's default_runtime.
+            runtime = str(body["runtime"] or "")
+            if runtime and runtime not in RUNTIMES:
+                self.send_json({"error": f"runtime must be one of {', '.join(RUNTIMES)}"}, status=400)
+                return
+            fields["runtime"] = runtime
         # provider / convMode / effort / model are NOT accepted here: the AI
         # selection is a revisioned, validated document owned by orchestrator/ai.py
         # and written only through /api/session/ai (routes/providers.py).
@@ -208,7 +217,8 @@ class SessionsMixin:
                         "avatar": meta.get("avatar", ""),
                         "archived": bool(meta.get("archived", False)),
                         "favorite": bool(meta.get("favorite", False)),
-                        "pinned": meta.get("pinned", [])})
+                        "pinned": meta.get("pinned", []),
+                        "runtime": meta.get("runtime", "")})
 
     # ----- Route tables (path -> handler). One place to see every endpoint. -----
     def _g_session_meta(self, req):
@@ -242,7 +252,9 @@ class SessionsMixin:
                 "avatar": meta.get("avatar", ""), "pinned": meta.get("pinned", []),
                 "permission_mode": meta.get("permission_mode", ""),
                 "level": meta.get("level", ""),
-                "effective_level": resolve_level(sid)}
+                "effective_level": resolve_level(sid),
+                "runtime": meta.get("runtime", ""),
+                "effective_runtime": effective_runtime(meta)}
 
     def serve_remote_session_file(self, host, rel_path, q):
         if not any(k in q for k in ("tail", "before", "from")):
@@ -404,6 +416,7 @@ class SessionsMixin:
                      "convMode": meta.get("convMode", "chat"), "effort": meta.get("effort", ""),
                      "permission_mode": meta.get("permission_mode", ""),
                      "level": meta.get("level", ""),
+                     "runtime": meta.get("runtime", ""),
                      "archived": bool(meta.get("archived", False)),
                      "favorite": bool(meta.get("favorite", False))},
             # The Harman level this session acts at right now (override → its
@@ -813,6 +826,11 @@ def start_new_session(body):
             "convMode": conv_mode, "effort": effort, "aiHost": host, "aiAgent": "claude"}
     if body.get("createdBySession"):
         meta["createdBySession"] = str(body["createdBySession"])
+    runtime = str(body.get("runtime") or "")
+    if runtime:
+        if runtime not in RUNTIMES or host != "local":
+            return {"error": f"runtime must be one of {', '.join(RUNTIMES)} on this computer"}, 400
+        meta["runtime"] = runtime
     if title:
         # The fallback name until the transcript carries its own custom-title
         # (a remote run gets no --name, and the client's rename can fail).

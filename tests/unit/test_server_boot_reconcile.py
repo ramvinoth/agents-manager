@@ -11,7 +11,6 @@ import time
 
 
 from orchestrator.runtime import run_config
-from orchestrator.runtime.runners import claude as claude_runner
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -100,7 +99,9 @@ def test_paths_in_use_are_read_from_live_argv(monkeypatch):
 
 def test_writer_and_sweeper_share_one_prefix():
     # The sweep only knows a file is ours by its prefix; the writer must use the same constant.
+    # Only the local backend writes run settings to a file here (sandbox: in the box, ssh: inline).
     import inspect
-    src = inspect.getsource(claude_runner.start_claude_run)
+    from orchestrator.runtime.backends import local
+    src = inspect.getsource(local)
     assert "prefix=RUN_SETTINGS_PREFIX" in src
     assert '"viewer-run-"' not in src

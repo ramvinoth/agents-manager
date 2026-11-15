@@ -14,6 +14,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../../App"
 import { api, type Capabilities, type GitStatus, type HarmanLevel, type Job, type PermissionMode, type Provider, type SessionSummary } from "../api/client"
 import { HARMAN_LEVELS, LEVEL_NAME, isHarmanLevel } from "../lib/harmanLevel"
+import { RUNTIME_OPTIONS, isRuntime, runtimeSummary, type Runtime } from "../lib/runtime"
 import { aiError, aiSummary, type AIConfig } from "../lib/aiSelection"
 import { AVATARS, avatarGlyph } from "../lib/avatars"
 import { describeSchedule, fmtNextRun } from "../lib/interval"
@@ -64,12 +65,18 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
   const [effectiveLevel, setEffectiveLevel] = useState<HarmanLevel | "">("")
   const [levelSaving, setLevelSaving] = useState(false)
   const [levelNote, setLevelNote] = useState("")
+  // Where turns run: the stored choice ("" = server default) and what applies.
+  const [runtime, setRuntime] = useState<Runtime | "">("")
+  const [effectiveRuntime, setEffectiveRuntime] = useState<Runtime | "">("")
+  const [runtimeSaving, setRuntimeSaving] = useState(false)
+  const [runtimeNote, setRuntimeNote] = useState("")
   const modeRequest = useRef({ active: false, saving: false })
   useEffect(() => {
     const request = { active: true, saving: false }
     modeRequest.current = request
     setModeState(""); setModeTarget(""); setModeError(""); setModeSaving(false)
     setLevel(""); setEffectiveLevel(""); setLevelNote("")
+    setRuntime(""); setEffectiveRuntime(""); setRuntimeNote("")
     const claude = agent === "claude"
     setModeLoading(claude && !!path)
     if (path) {
@@ -97,6 +104,8 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         setModeState(stored)
         setLevel(isHarmanLevel(meta.level) ? meta.level : "")
         setEffectiveLevel(isHarmanLevel(meta.effective_level) ? meta.effective_level : "")
+        setRuntime(isRuntime(meta.runtime) ? meta.runtime : "")
+        setEffectiveRuntime(isRuntime(meta.effective_runtime) ? meta.effective_runtime : "")
       }).catch(e => {
         if (request.active && claude) setModeError(e?.message || "Could not load permission policy. Please retry.")
       }).finally(() => { if (request.active) setModeLoading(false) })
@@ -249,6 +258,21 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
       if (request.active) setLevelNote(e instanceof Error ? e.message : "Could not save the level. Please retry.")
     } finally {
       if (request.active) setLevelSaving(false)
+    }
+  }
+  const pickRuntime = async (v: Runtime | "") => {
+    const request = modeRequest.current
+    if (!request.active || runtimeSaving || !modeTarget || !path || modeLoading || v === runtime) return
+    setRuntimeSaving(true); setRuntimeNote("")
+    try {
+      const result = await api.sessionMetaSave({ session: path, runtime: v })
+      if (!request.active) return
+      if (!result.saved || (result.runtime ?? "") !== v) throw new Error("Server did not confirm where this chat runs. Reload before retrying.")
+      setModeReload(n => n + 1) // re-read what now applies when the choice is the server default
+    } catch (e) {
+      if (request.active) setRuntimeNote(e instanceof Error ? e.message : "Could not save where this chat runs. Please retry.")
+    } finally {
+      if (request.active) setRuntimeSaving(false)
     }
   }
   function addJob(prompt: string, schedule: JobSchedule) {
@@ -468,6 +492,12 @@ export default function SessionProfileScreen({ route, navigation }: Props) {
         {effectiveLevel ? <Text testID="sp-level-effective" style={styles.sheetHint}>Acting at {LEVEL_NAME[effectiveLevel]}{level ? " (set for this chat)" : " (from the agent it was started from)"}. Applies from the next run.</Text> : null}
         {levelSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}
         {levelNote ? <Text testID="sp-level-note" accessibilityRole="alert" style={styles.sheetHint}>{levelNote}</Text> : null}
+      </>) : null}
+      {agent === "claude" && host === "local" ? renderCard("runtime", "cloud", "Runs on", runtimeSummary(runtime, effectiveRuntime), <>
+        <Text style={styles.sheetHint}>Server runs each turn on the machine Harman is installed on. Cloud sandbox runs each turn in a fresh throwaway box: the chat's folder is copied in, changes come back when the turn ends, and the box is deleted. Board, notes, Sift and every Harman tool work the same in both.</Text>
+        {renderPill(RUNTIME_OPTIONS, runtime, pickRuntime, "sp-runtime", "place to run", runtimeSaving)}
+        {runtimeSaving ? <Text style={styles.sheetHint}>Saving…</Text> : null}
+        {runtimeNote ? <Text testID="sp-runtime-note" accessibilityRole="alert" style={styles.sheetHint}>{runtimeNote}</Text> : null}
       </>) : null}
 
       {/* ── GIT: repo · branch · ahead/behind + Sync (only when cwd is a repo). ── */}

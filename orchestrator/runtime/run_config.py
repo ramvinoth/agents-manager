@@ -9,20 +9,21 @@ from datetime import datetime
 from pathlib import Path
 
 from orchestrator import db, orglogic
-from orchestrator.config import CHAT_JOBS, CHAT_LOCK, PORT
+from orchestrator.config import CHAT_JOBS, CHAT_LOCK
 
 
 # The tool each server must list, or every driven run breaks (maintenance preflight checks it).
 REQUIRED_MCP_TOOLS = {"viewerperm": "approve", "viewer": "card_list"}
 
 
-def perm_mcp_servers():
+def perm_mcp_servers(py=None, root=None):
     """The mcpServers entries every driven claude run loads. The scripts live in the
     package root (orchestrator/), not beside this module in orchestrator/runtime/ —
     resolving them from here once pointed every run at missing files, so every
-    permission prompt failed ("mcp__viewerperm__approve not found")."""
-    pkg = Path(__file__).resolve().parent.parent
-    py = sys.executable or "python3"
+    permission prompt failed ("mcp__viewerperm__approve not found"). A sandbox
+    passes its own interpreter and the folder it copied the scripts into."""
+    pkg = Path(root) if root else Path(__file__).resolve().parent.parent
+    py = py or sys.executable or "python3"
     return {"viewerperm": {"command": py, "args": [str(pkg / "permission_mcp.py")]},
             "viewer": {"command": py, "args": [str(pkg / "viewer_mcp.py")]}}
 
@@ -196,16 +197,6 @@ def validate_session_credential(session_id, token):
         return {"level": row.get("level") or "ic", "label": ""}
     except Exception:
         return None
-
-
-def _perm_mcp_config_path(host):
-    """--mcp-config path for the viewer permission tool: a local temp file for a
-    local run, or a remote path (config + helper shipped over SFTP) for a remote
-    host, whose permission_mcp reaches the viewer through an SSH reverse tunnel."""
-    if host and host != "local":
-        from orchestrator.remote import remote_setup_perm_mcp
-        return remote_setup_perm_mcp(host, PORT)
-    return _write_perm_mcp_config()
 
 
 def owner_time_line(now=None, localtime_path="/etc/localtime"):

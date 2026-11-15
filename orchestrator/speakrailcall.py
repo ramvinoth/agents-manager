@@ -336,7 +336,6 @@ class BreezeTtsSocket:
         self.done = False
 
     def _fire(self):
-        import time
         import urllib.error
         import urllib.request
         if not self.text.strip():

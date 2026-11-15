@@ -9,8 +9,10 @@ plugin folder is, and how to mint the URL the owner's browser opens. The app's
 behaviour stays in the app.
 
 A plugin is *available* when its env is set (orchestrator/.apns.env); unset, it does
-not exist here: no row, no tools. Everything is local-only, because the app's
-plugin folder and server live on this machine.
+not exist here: no row, no tools. The app's server lives on this machine. A run
+in a sandbox gets the app's box build instead of its local plugin (one that
+carries its own code rather than running from this machine's source) plus the
+env its MCP server reads, so agents there operate the same app.
 """
 import json
 import os
@@ -49,6 +51,7 @@ class ProjectPlugin:
     """The contract one app fills in. `icon` is a lucide name the web registry maps."""
     id = label = icon = description = ""
     required_env = ()   # every one set → available
+    mcp_env = ()        # what the app's MCP server reads, handed to a sandboxed run
 
     def available(self):
         return all(_env(k) for k in self.required_env) and self.plugin_dir() is not None
@@ -56,6 +59,12 @@ class ProjectPlugin:
     def plugin_dir(self):
         """The app's Claude Code plugin folder, when it ships one."""
         raise NotImplementedError
+
+    def box_plugin_dir(self):
+        """The plugin folder a sandboxed run gets: self contained, since the
+        box has none of this machine's files. None means sandboxed runs go
+        without the app."""
+        return None
 
     def open_url(self, cwd, origin):
         """The URL the owner's browser opens for this project folder; `origin`
@@ -76,10 +85,18 @@ class Sift(ProjectPlugin):
     id, label, icon = "sift", "Sift", "BookOpenText"
     description = "Read, mark and link this folder's documents on a workspace."
     required_env = ("SIFT_URL", "SIFT_SERVICE_TOKEN", "SIFT_EMAIL", "SIFT_ROOT")
+    mcp_env = ("SIFT_URL", "SIFT_SERVICE_TOKEN", "SIFT_EMAIL")
 
     def plugin_dir(self):
+        return self._built("plugin")
+
+    def box_plugin_dir(self):
+        # Sift's `npm run build:plugin-box` bundles the MCP server into one file.
+        return self._built("plugin-box")
+
+    def _built(self, folder):
         root = _env("SIFT_ROOT")
-        path = Path(root).expanduser() / "plugin" if root else None
+        path = Path(root).expanduser() / folder if root else None
         return path if path and (path / ".claude-plugin" / "plugin.json").is_file() else None
 
     def _call(self, path, body):
@@ -139,3 +156,8 @@ def plugin_dirs():
     run gets them all (engine, beside config.session_plugin_dirs), so agents
     can use the app."""
     return [p.plugin_dir() for p in available()]
+
+
+def box_plugin_dirs():
+    """The box builds of the available project plugins, for a sandboxed run."""
+    return [d for d in (p.box_plugin_dir() for p in available()) if d]
