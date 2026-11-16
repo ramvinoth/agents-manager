@@ -39,6 +39,39 @@ RECIPIENT_OWNER_PUSH = "owner_push"
 RECIPIENT_AGENT_WAKE = "agent_wake"
 RUNTIME_RECIPIENT_KINDS = frozenset({RECIPIENT_OWNER_PUSH, RECIPIENT_AGENT_WAKE})
 
+# Dispatch is advisory: delivery means APNs accepted an owner notification or the
+# durable one-shot wake was queued, never that a device received it or an agent
+# completed work.  Only transport/queue failures retry.  Policy suppressions are
+# final for the revision so restoring automation cannot replay a pause backlog.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_DELAYS_SECONDS = (15, 60)
+
+
+def retry_delay(attempts: Any) -> float | None:
+    """Return the bounded delay after a failed claimed attempt.
+
+    ``attempts`` is incremented while a row is claimed.  A first failed claim
+    therefore retries in 15 seconds, a second in 60, and the third is terminal.
+    Keeping this pure makes the database transaction and TLA model share one
+    deterministic contract.
+    """
+    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts <= 0:
+        return None
+    if attempts >= RETRY_MAX_ATTEMPTS:
+        return None
+    return float(RETRY_DELAYS_SECONDS[attempts - 1])
+
+
+def retry_eligible(reminder: Mapping[str, Any], *, now: float) -> bool:
+    """Whether a pending durable reminder is eligible for another claim."""
+    if reminder.get("status") != "pending":
+        return False
+    due = reminder.get("next_attempt_at")
+    if due is None:
+        due = reminder.get("due_at")
+    return (isinstance(due, (int, float)) and not isinstance(due, bool)
+            and math.isfinite(due) and due <= now)
+
 
 def is_terminal(status: str | None) -> bool:
     return status in TERMINAL_STATUSES

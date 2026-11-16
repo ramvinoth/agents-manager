@@ -91,6 +91,19 @@ def test_only_an_owner_can_create_an_owner_commitment():
     ) == "only an owner may create an owner commitment"
 
 
+def test_retry_policy_is_bounded_and_pending_rows_use_sql_coalesce_semantics():
+    assert policy.retry_delay(1) == 15.0
+    assert policy.retry_delay(2) == 60.0
+    assert policy.retry_delay(3) is None
+    assert policy.retry_delay(0) is None
+    assert policy.retry_delay(True) is None
+
+    legacy = {"status": "pending", "due_at": 200.0, "next_attempt_at": None}
+    assert policy.retry_eligible(legacy, now=200.0)
+    assert not policy.retry_eligible(dict(legacy, next_attempt_at=201.0), now=200.0)
+    assert not policy.retry_eligible(dict(legacy, status="claimed"), now=300.0)
+
+
 def test_priority_order_is_stable_and_unknown_values_sink():
     assert [policy.priority_rank(p) for p in ("critical", "high", "normal", "low")] == [0, 1, 2, 3]
     assert policy.priority_rank("unknown") > policy.priority_rank("low")

@@ -127,6 +127,57 @@ def build_payload(title, body, data=None, time_sensitive=False):
     return payload
 
 
+# A delivery reminder needs a durable outcome, unlike ordinary best-effort UI
+# notifications. These reasons are stable categories; neither APNs bodies nor
+# transport exceptions enter the delivery ledger.
+_PERMANENT_APNS_FAILURES = frozenset({
+    "BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered", "410",
+    "400", "403", "404", "405", "413",
+})
+
+
+def notify_delivery(title, body, data=None, time_sensitive=False):
+    """Synchronously submit one advisory delivery notification.
+
+    Returns ``(accepted, retryable, reason)``. ``accepted`` means at least one
+    APNs request returned 200, not that a device displayed it. A failure before
+    any accepted submission retries only when APNs/credential access may recover;
+    known dead or absent device/configuration states are final for this reminder
+    revision. This narrowly serves the durable delivery scheduler; normal app
+    pushes remain asynchronous in ``notify_all`` below.
+    """
+    if not _configured():
+        return False, False, "owner_push_unavailable"
+    try:
+        tokens = db.all_push_tokens()
+    except Exception:
+        return False, True, "owner_push_dispatch_failed"
+    if not tokens:
+        return False, False, "owner_push_unavailable"
+    try:
+        jwt_token = _auth_jwt()
+    except Exception:
+        return False, True, "owner_push_dispatch_failed"
+    payload = json.dumps(build_payload(title, body, data, time_sensitive))
+    transient_failure = False
+    for token in tokens:
+        ok, reason = _send_one(token, payload, jwt_token)
+        if ok:
+            # Do not retry after any accepted submission: retry would make an
+            # already-alerted device receive a duplicate reminder.
+            return True, False, "owner_attention"
+        if reason in ("BadDeviceToken", "Unregistered", "410"):
+            try:
+                db.remove_push_token(token)
+            except Exception:
+                pass
+        if reason not in _PERMANENT_APNS_FAILURES:
+            transient_failure = True
+    if transient_failure:
+        return False, True, "owner_push_dispatch_failed"
+    return False, False, "owner_push_unavailable"
+
+
 def notify_all(title, body, data=None, time_sensitive=False):
     """Push to every registered device (the base is single-owner). No-ops when
     unconfigured or no devices. Daemon thread so callers never block on the net."""

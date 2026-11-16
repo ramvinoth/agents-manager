@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any, Mapping
 
 from orchestrator import delivery_policy as policy
@@ -30,6 +31,15 @@ def _row(row):
 def _json(value: Any) -> str:
     """Use explicit JSON encoding, never interpolate planning data into SQL."""
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+_FAILURE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+
+
+def _failure_code(value: str) -> str:
+    """Keep durable delivery errors to stable, non-sensitive categories."""
+    code = str(value or "").strip()
+    return code if _FAILURE_CODE.fullmatch(code) else "dispatch_failed"
 
 
 def schedule_get(schedule_id: int):
@@ -398,10 +408,11 @@ def reminder_create(schedule_id: int, *, reminder_kind: str, recipient_kind: str
         cur.execute(
             "INSERT INTO delivery_reminder_deliveries("
             "schedule_id,schedule_revision,reminder_kind,recipient_kind,recipient_id,due_at,status,"
-            "idempotency_key,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s) "
+            "next_attempt_at,idempotency_key,created_at,updated_at) "
+            "VALUES(%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s) "
             "ON CONFLICT (idempotency_key) DO NOTHING RETURNING *",
             (schedule_id, revision, reminder_kind.strip(), recipient_kind.strip(), recipient_id or "", due_at,
-             key, now, now),
+             due_at, key, now, now),
         )
         created = _row(cur.fetchone())
         if created:
@@ -430,10 +441,15 @@ def reminders_claim_due(*, now: float | None = None, lease_seconds: int = 60, li
             "WITH due AS ("
             " SELECT r.id FROM delivery_reminder_deliveries r "
             " JOIN delivery_schedules s ON s.id = r.schedule_id "
-            " WHERE r.status = 'pending' AND r.due_at <= %s "
+            " WHERE r.status = 'pending' AND COALESCE(r.next_attempt_at, r.due_at) <= %s "
             "   AND r.schedule_revision = s.revision "
             "   AND s.status NOT IN ('completed','cancelled','archived') "
-            " ORDER BY r.due_at, r.id FOR UPDATE OF r SKIP LOCKED LIMIT %s"
+            # Priority keeps urgent work ahead, while eligible time and id make
+            # retry selection fair and deterministic across capped passes.
+            " ORDER BY COALESCE(r.next_attempt_at, r.due_at), "
+            "          CASE s.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
+            "                          WHEN 'normal' THEN 2 ELSE 3 END, r.due_at, r.id "
+            " LIMIT %s FOR UPDATE OF r SKIP LOCKED"
             ") UPDATE delivery_reminder_deliveries r SET status = 'claimed', lease_until = %s, "
             "attempts = attempts + 1, updated_at = %s FROM due WHERE r.id = due.id RETURNING r.*",
             (stamp, limit, stamp + lease_seconds, stamp),
@@ -448,12 +464,68 @@ def reminder_recover_expired_claims(*, now: float | None = None) -> int:
         cur.execute(
             "UPDATE delivery_reminder_deliveries r SET status = CASE "
             " WHEN s.status IN ('completed','cancelled','archived') OR r.schedule_revision <> s.revision "
-            " THEN 'cancelled' ELSE 'pending' END, lease_until = 0, updated_at = %s "
+            " THEN 'cancelled' ELSE 'pending' END, lease_until = 0, "
+            "next_attempt_at = CASE WHEN s.status IN ('completed','cancelled','archived') "
+            " OR r.schedule_revision <> s.revision THEN r.next_attempt_at ELSE %s END, updated_at = %s "
             "FROM delivery_schedules s WHERE r.schedule_id = s.id "
             "AND r.status = 'claimed' AND r.lease_until <= %s",
-            (stamp, stamp),
+            (stamp, stamp, stamp),
         )
         return cur.rowcount
+
+
+def reminder_retry_or_fail(reminder_id: int, *, error: str, now: float | None = None):
+    """Release a transient dispatch failure using the durable retry policy.
+
+    This is the only path that changes a claimed row back to pending.  It locks
+    the schedule with the reminder, so a reschedule or terminal transition wins
+    over a retry even if it races the failed transport attempt.
+    """
+    stamp = postgres.now() if now is None else now
+    failure = _failure_code(error)
+    with postgres.cursor() as cur:
+        cur.execute(
+            "SELECT r.*, s.id AS schedule_row_id, s.card_id AS schedule_card_id, "
+            "s.revision AS current_revision, s.status AS schedule_status "
+            "FROM delivery_reminder_deliveries r JOIN delivery_schedules s ON s.id = r.schedule_id "
+            "WHERE r.id = %s FOR UPDATE OF r, s",
+            (reminder_id,),
+        )
+        reminder = _row(cur.fetchone())
+        if not reminder:
+            return {"error": "reminder not found"}
+        if reminder["status"] != "claimed":
+            return {"error": "reminder is not claimed"}
+        valid = (reminder["schedule_revision"] == reminder["current_revision"]
+                 and not policy.is_terminal(reminder["schedule_status"]))
+        delay = policy.retry_delay(reminder.get("attempts")) if valid else None
+        if not valid:
+            status, next_attempt_at = "cancelled", None
+        elif delay is None:
+            status, next_attempt_at = "failed", None
+        else:
+            status, next_attempt_at = "pending", stamp + delay
+        cur.execute(
+            "UPDATE delivery_reminder_deliveries SET status = %s, lease_until = 0, "
+            "next_attempt_at = %s, last_error = %s, updated_at = %s "
+            "WHERE id = %s RETURNING *",
+            (status, next_attempt_at, failure, stamp, reminder_id),
+        )
+        updated = _row(cur.fetchone())
+        event_type = "reminder_retry_scheduled" if status == "pending" else "reminder_failed"
+        if status == "cancelled":
+            event_type = "reminder_cancelled"
+        _append_event(
+            cur,
+            {"id": reminder["schedule_row_id"], "card_id": reminder["schedule_card_id"],
+             "revision": reminder["current_revision"]},
+            event_type,
+            "scheduler",
+            metadata={"reminder_id": reminder_id, "outcome": status,
+                      "error": failure, "attempts": reminder.get("attempts", 0),
+                      "next_attempt_at": next_attempt_at},
+        )
+        return updated
 
 
 def reminder_finish(reminder_id: int, *, outcome: str, error: str = "", now: float | None = None):

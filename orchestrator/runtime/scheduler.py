@@ -217,25 +217,37 @@ def _dispatch_delivery_reminder(reminder, *, now, autonomous):
             from orchestrator import push
             # No card title/body: notification privacy is preserved; the deep link
             # resolves current schedule/card truth in the authenticated app.
-            push.notify_all(
+            accepted, retryable, reason = push.notify_delivery(
                 "Delivery reminder", "A planned delivery deadline needs attention.",
                 data={"delivery_schedule": int(schedule["id"]), "card": int(schedule["card_id"])},
                 time_sensitive=schedule.get("priority") == "critical",
             )
+            if not accepted:
+                if retryable:
+                    return delivery_repository.reminder_retry_or_fail(
+                        reminder["id"], error=reason, now=now)
+                return delivery_repository.reminder_finish(
+                    reminder["id"], outcome="suppressed", error=reason, now=now)
         elif recipient == delivery_policy.RECIPIENT_AGENT_WAKE:
             from orchestrator import delivery_wake
             queued, reason = delivery_wake.schedule_delivery_wake(schedule, reminder)
             if not queued:
-                return delivery_repository.reminder_finish(
-                    reminder["id"], outcome="suppressed", error=reason, now=now)
+                # The adapter's known outcomes are policy suppressions. Any
+                # unexpected false result is a queue failure and must follow
+                # the bounded transient retry path rather than disappearing.
+                if reason in {"stranded_missing_session", "agent_already_running"}:
+                    return delivery_repository.reminder_finish(
+                        reminder["id"], outcome="suppressed", error=reason, now=now)
+                return delivery_repository.reminder_retry_or_fail(
+                    reminder["id"], error="agent_wake_dispatch_failed", now=now)
         else:
             return delivery_repository.reminder_finish(
                 reminder["id"], outcome="suppressed", error="unknown_recipient", now=now)
     except Exception as exc:
         # Do not place exception text (which may contain infrastructure details)
         # into the durable ledger. The stable category is sufficient for retry/audit.
-        return delivery_repository.reminder_finish(
-            reminder["id"], outcome="failed", error=f"{recipient or 'unknown'}_dispatch_failed", now=now)
+        return delivery_repository.reminder_retry_or_fail(
+            reminder["id"], error=f"{recipient or 'unknown'}_dispatch_failed", now=now)
     return delivery_repository.reminder_finish(reminder["id"], outcome="delivered", error=reason, now=now)
 
 
@@ -268,8 +280,8 @@ def delivery_pass(now):
             # A bad row or transient downstream failure must not end the pass or
             # starve later claims. Try to make the failure terminal and auditable.
             try:
-                delivery_repository.reminder_finish(
-                    reminder["id"], outcome="failed", error="delivery_dispatch_failed", now=now)
+                delivery_repository.reminder_retry_or_fail(
+                    reminder["id"], error="delivery_dispatch_failed", now=now)
             except Exception:
                 pass
 

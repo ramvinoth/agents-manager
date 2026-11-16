@@ -7,6 +7,8 @@ busy-session deferral and job-run audit behavior.
 """
 from __future__ import annotations
 
+import hashlib
+
 from typing import Any, Mapping
 
 from orchestrator import boardwatch, loops
@@ -14,8 +16,20 @@ from orchestrator.config import CHAT_JOBS, CHAT_LOCK, transcript_path
 
 
 def wake_id(reminder: Mapping[str, Any]) -> str:
-    """One logical delivery wake per durable reminder row."""
-    return f"dw{int(reminder['id'])}"
+    """Return a bounded, collision-resistant logical wake identity.
+
+    ``loops.id`` is an unconstrained opaque key. Hashing the recipient/purpose
+    avoids leaking a session id into that shared scheduler table and makes a
+    maliciously long id unable to create oversized rows. The preimage remains
+    revision-bound schedule identity, so retries coalesce while a reschedule
+    receives a distinct wake.
+    """
+    schedule_id = int(reminder["schedule_id"])
+    revision = int(reminder["schedule_revision"])
+    purpose = str(reminder.get("reminder_kind") or "due")
+    recipient = str(reminder.get("recipient_id") or "-").strip() or "-"
+    identity = f"{schedule_id}\x1f{revision}\x1f{purpose}\x1f{recipient}".encode()
+    return f"dw:{schedule_id}:{revision}:{hashlib.sha256(identity).hexdigest()[:20]}"
 
 
 def _session_running(session_id: str) -> bool:

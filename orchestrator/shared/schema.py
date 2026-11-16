@@ -357,13 +357,23 @@ def init_db():
               idempotency_key TEXT NOT NULL UNIQUE,
               lease_until     DOUBLE PRECISION NOT NULL DEFAULT 0,
               attempts        INTEGER NOT NULL DEFAULT 0,
+              -- Pending rows are eligible at this timestamp. It is separate
+              -- from due_at so a transient dispatch failure can retry without
+              -- manufacturing another logical delivery row.
+              next_attempt_at DOUBLE PRECISION,
               last_error      TEXT NOT NULL DEFAULT '',
               created_at      DOUBLE PRECISION NOT NULL,
               updated_at      DOUBLE PRECISION NOT NULL,
               delivered_at    DOUBLE PRECISION
             );
+            -- Existing databases predate retry scheduling. Null means use the
+            -- original due boundary and keeps their already-pending rows ready.
+            ALTER TABLE delivery_reminder_deliveries
+              ADD COLUMN IF NOT EXISTS next_attempt_at DOUBLE PRECISION;
             CREATE INDEX IF NOT EXISTS delivery_reminder_due_idx
               ON delivery_reminder_deliveries(status, due_at, id);
+            CREATE INDEX IF NOT EXISTS delivery_reminder_eligible_idx
+              ON delivery_reminder_deliveries(status, next_attempt_at, due_at, id);
             CREATE INDEX IF NOT EXISTS delivery_reminder_schedule_idx
               ON delivery_reminder_deliveries(schedule_id, schedule_revision, status);
             -- Notes: the org's knowledge ledger, next to cards (its work ledger).

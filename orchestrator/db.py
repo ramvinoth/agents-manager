@@ -85,6 +85,7 @@ from orchestrator.delivery_repository import (  # noqa: F401
     reminder_create,
     reminders_claim_due,
     reminder_recover_expired_claims,
+    reminder_retry_or_fail,
     reminder_finish,
 )
 from orchestrator.canvas.repository import (  # noqa: F401

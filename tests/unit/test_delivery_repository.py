@@ -257,7 +257,113 @@ def test_reminder_recovery_rechecks_terminal_and_stale_schedule(monkeypatch):
     sql, params = cur.calls[0]
     assert "r.schedule_revision <> s.revision" in sql
     assert "'cancelled'" in sql
-    assert params == (250.0, 250.0)
+    assert "next_attempt_at" in sql
+    assert params == (250.0, 250.0, 250.0)
+
+
+def test_retry_failure_releases_current_claim_with_bounded_sanitized_metadata(monkeypatch):
+    claimed = {
+        "id": 71, "status": "claimed", "schedule_id": 8, "schedule_revision": 3,
+        "schedule_row_id": 8, "schedule_card_id": 42, "current_revision": 3,
+        "schedule_status": "planned", "attempts": 1,
+    }
+
+    class Cur:
+        def __init__(self):
+            self.calls = []
+            self._reply = None
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, params))
+            if sql.startswith("SELECT r.*, s.id AS schedule_row_id"):
+                self._reply = claimed
+            elif sql.startswith("UPDATE delivery_reminder_deliveries"):
+                self._reply = {"id": 71, "status": params[0], "next_attempt_at": params[1]}
+            else:
+                self._reply = None
+
+        def fetchone(self):
+            return self._reply
+
+    cur = Cur()
+    monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))
+    monkeypatch.setattr(postgres, "now", lambda: 250.0)
+
+    assert repository.reminder_retry_or_fail(71, error="owner_push_dispatch_failed", now=250.0) == {
+        "id": 71, "status": "pending", "next_attempt_at": 265.0,
+    }
+    update_sql, update_params = next((sql, params) for sql, params in cur.calls
+                                      if sql.startswith("UPDATE delivery_reminder_deliveries"))
+    assert update_params == ("pending", 265.0, "owner_push_dispatch_failed", 250.0, 71)
+    event_sql, event_params = next((sql, params) for sql, params in cur.calls
+                                    if sql.startswith("INSERT INTO delivery_schedule_events"))
+    assert event_params[0:3] == (8, 42, "reminder_retry_scheduled")
+    assert '"attempts":1' in event_params[-1]
+    assert '"next_attempt_at":265.0' in event_params[-1]
+
+
+def test_retry_failure_exhaustion_and_stale_schedule_are_terminal(monkeypatch):
+    def run(row):
+        class Cur:
+            def __init__(self):
+                self.calls = []
+                self._reply = None
+
+            def execute(self, sql, params=()):
+                self.calls.append((sql, params))
+                if sql.startswith("SELECT r.*, s.id AS schedule_row_id"):
+                    self._reply = row
+                elif sql.startswith("UPDATE delivery_reminder_deliveries"):
+                    self._reply = {"id": 71, "status": params[0]}
+                else:
+                    self._reply = None
+
+            def fetchone(self):
+                return self._reply
+
+        cur = Cur()
+        monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))
+        result = repository.reminder_retry_or_fail(71, error="unexpected detail\nsecret", now=250.0)
+        update = next(params for sql, params in cur.calls if sql.startswith("UPDATE delivery_reminder_deliveries"))
+        event = next(params for sql, params in cur.calls if sql.startswith("INSERT INTO delivery_schedule_events"))
+        return result, update, event
+
+    exhausted = {
+        "id": 71, "status": "claimed", "schedule_id": 8, "schedule_revision": 3,
+        "schedule_row_id": 8, "schedule_card_id": 42, "current_revision": 3,
+        "schedule_status": "planned", "attempts": 3,
+    }
+    result, update, event = run(exhausted)
+    assert result == {"id": 71, "status": "failed"}
+    assert update[0:3] == ("failed", None, "dispatch_failed")
+    assert event[2] == "reminder_failed"
+
+    stale = dict(exhausted, current_revision=4, attempts=1)
+    result, update, event = run(stale)
+    assert result == {"id": 71, "status": "cancelled"}
+    assert update[0] == "cancelled"
+    assert event[2] == "reminder_cancelled"
+
+
+def test_claim_query_uses_next_attempt_and_deterministic_priority_order(monkeypatch):
+    class Cur:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, params))
+
+        def fetchall(self):
+            return []
+
+    cur = Cur()
+    monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))
+    assert repository.reminders_claim_due(now=250.0, lease_seconds=60, limit=20) == []
+    sql, params = cur.calls[0]
+    assert "COALESCE(r.next_attempt_at, r.due_at) <= %s" in sql
+    assert "CASE s.priority" in sql
+    assert "LIMIT %s FOR UPDATE OF r SKIP LOCKED" in sql
+    assert params == (250.0, 20, 310.0, 250.0)
 
 
 def test_reminder_finish_cancels_claim_when_schedule_became_stale(monkeypatch):
