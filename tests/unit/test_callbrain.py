@@ -378,6 +378,13 @@ class TestRunTool:
 
 def test_snapshot_composes_live_data(board, monkeypatch):
     monkeypatch.setattr(callbrain, "_run_sentence", lambda sid: "The work session is idle.")
+    monkeypatch.setattr(callbrain.executive_briefing, "current", lambda **kwargs: {
+        "delivery": {"source": {"state": "available"}, "items": []},
+        "inbox": {"source": {"state": "available"}, "items": []},
+        "decisions": {"source": {"state": "available"}, "shown": 0, "held": 0},
+        "gmail": {"source": {"state": "available"}, "items": []},
+        "calendar": {"source": {"state": "available"}, "items": []},
+    })
     s = callbrain.snapshot("sess", PRINCIPAL, now=NOW)
     assert "Now: Saturday, September 26, 2026, 3:04 PM PDT." in s
     assert "Speaking with: user:ram." in s
@@ -385,6 +392,16 @@ def test_snapshot_composes_live_data(board, monkeypatch):
     assert "Counts by column — Review: 1 open." in s
     assert 'Review: 1 open — #53 "Call mode" (1 minute)' in s
     assert "approvals waiting on the owner in the app: 1." in s
+    assert "Delivery agenda: no active scheduled work." in s
+    assert "Gmail: 0 unread messages" in s
+
+
+def test_snapshot_keeps_board_when_briefing_composition_crashes(board, monkeypatch):
+    monkeypatch.setattr(callbrain, "_run_sentence", lambda sid: "The work session is idle.")
+    monkeypatch.setattr(callbrain.executive_briefing, "current", lambda **kwargs: (_ for _ in ()).throw(RuntimeError()))
+    s = callbrain.snapshot("sess", PRINCIPAL, now=NOW)
+    assert "Board 'Harman': 1 open card." in s
+    assert s.endswith("Executive briefing is unavailable.")
 
 
 class TestDescribeEngine:

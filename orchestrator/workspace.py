@@ -49,10 +49,11 @@ _HEADERS = ("From", "To", "Cc", "Subject", "Date")
 class _GoogleAPI(OAuthAccount):
     kind = "google"
 
-    def _json(self, method, url, body=None):
+    def _json(self, method, url, body=None, timeout=60):
         data = json.dumps(body).encode() if body is not None else None
         status, raw = self._req(method, url, data=data,
-                                headers={"Content-Type": "application/json"} if data else None)
+                                headers={"Content-Type": "application/json"} if data else None,
+                                timeout=timeout)
         if 200 <= status < 300:
             return json.loads(raw) if raw else {}
         try:
@@ -114,15 +115,15 @@ def build_raw(to, subject, body, cc="", in_reply_to="", references=""):
 
 
 class Gmail(_GoogleAPI):
-    def search(self, q="", limit=20):
+    def search(self, q="", limit=20, timeout=60):
         limit = max(1, min(int(limit or 20), 50))
         j = self._json("GET", _GMAIL + "/messages?" + urllib.parse.urlencode(
-            {"q": q or "in:inbox", "maxResults": limit}))
+            {"q": q or "in:inbox", "maxResults": limit}), timeout=timeout)
         out = []
         for m in j.get("messages") or []:
             meta = self._json("GET", _GMAIL + "/messages/%s?format=metadata&%s" % (
                 urllib.parse.quote(m["id"]),
-                "&".join("metadataHeaders=" + h for h in _HEADERS)))
+                "&".join("metadataHeaders=" + h for h in _HEADERS)), timeout=timeout)
             hs = (meta.get("payload") or {}).get("headers")
             out.append({"id": m["id"], "thread": m.get("threadId", ""),
                         "from": _header(hs, "From"), "subject": _header(hs, "Subject"),
@@ -251,7 +252,7 @@ class Calendar(_GoogleAPI):
         self._json("DELETE", self._url(calendar, event) + "?sendUpdates=none")
         return {"deleted": event}
 
-    def events(self, start="", end="", q="", calendar="primary", limit=50):
+    def events(self, start="", end="", q="", calendar="primary", limit=50, timeout=60):
         now = datetime.datetime.now(datetime.timezone.utc)
         t0 = _rfc3339(start, now)
         t1 = _rfc3339(end, now + datetime.timedelta(days=7))
@@ -259,7 +260,7 @@ class Calendar(_GoogleAPI):
                   "maxResults": max(1, min(int(limit or 50), 250))}
         if q:
             params["q"] = q
-        j = self._json("GET", self._url(calendar) + "?" + urllib.parse.urlencode(params))
+        j = self._json("GET", self._url(calendar) + "?" + urllib.parse.urlencode(params), timeout=timeout)
         out = [_event(e) for e in j.get("items") or []]
         return {"calendar": j.get("summary", calendar), "time_zone": j.get("timeZone", ""),
                 "from": t0, "to": t1, "events": out}

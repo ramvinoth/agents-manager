@@ -7,6 +7,7 @@ import pytest
 
 from orchestrator import cloudauth, db, drive_oauth, server
 from orchestrator.integrations import catalog as I
+from orchestrator.integrations import service_access
 from orchestrator.shared import settings as shared_settings
 from orchestrator.routes.integrations import IntegrationsMixin
 from orchestrator.routes.drives import DrivesMixin
@@ -94,6 +95,37 @@ def test_pick_connection():
     assert I.pick_connection([mail, two], "google.gmail", "c")["id"] == "c"
     off = dict(mail, config=I.with_service(mail["config"], "google.gmail", False))
     assert pytest.raises(I.IntegrationError, I.pick_connection, [off], "google.gmail", "a").value.status == 403
+
+
+def test_shared_agent_client_enforces_operation_and_never_falls_back(monkeypatch):
+    mail = _conn("a", refresh_token="R", scopes=[G + "gmail.readonly", G + "gmail.compose"])
+    second = _conn("b", refresh_token="R", scopes=[G + "gmail.readonly", G + "gmail.compose"])
+    created = []
+
+    class Client:
+        def __init__(self, connection):
+            created.append(connection["id"])
+
+    monkeypatch.setitem(service_access._CLIENTS, "google.gmail", Client)
+    client, selected = service_access.open_client("google.gmail", "read", connection_id="b",
+                                                   connections=[mail, second])
+    assert isinstance(client, Client) and selected["id"] == "b" and created == ["b"]
+
+    with pytest.raises(I.IntegrationError) as err:
+        service_access.open_client("google.gmail", "read", connections=[mail, second])
+    assert err.value.status == 400
+
+    blocked = dict(second, config=I.with_op(second["config"], "google.gmail", "read", False))
+    with pytest.raises(I.IntegrationError) as err:
+        service_access.open_client("google.gmail", "read", connection_id="b", connections=[mail, blocked])
+    assert err.value.status == 403
+    assert created == ["b"]
+
+
+def test_shared_agent_client_rejects_unknown_service_before_construction():
+    with pytest.raises(I.IntegrationError) as err:
+        service_access.open_client("google.keep", "read", connections=[])
+    assert err.value.status == 400
 
 
 def test_view_has_state_and_no_secrets():

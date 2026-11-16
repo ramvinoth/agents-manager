@@ -113,14 +113,15 @@ def session_red_items(session_id):
     return decisions.session_red(mine, session_id, time.time())
 
 
-def open_items():
-    """The cross-session decision queue — the SAME sources /api/decisions/open
-    reads (durable questions, durable plans, the live approval registry, cards
-    in Review/Needs-info, open org Red approvals), shaped by decisions.open_decisions and joined to
-    each item's inbox row (inbox_id, snoozed_until) so ONE snooze holds on
-    every surface. Returns EVERY open item, snoozed included: the inbox's
-    derived open-state needs the full set (a snoozed item is deferred, not
-    decided); a human-facing queue applies inbox.visible_queue last."""
+def open_items(*, materialize_missing_red=True):
+    """Read the cross-session decision queue from its durable sources.
+
+    ``materialize_missing_red`` preserves the historical Inbox-delivery behavior
+    for normal decision surfaces. Read-only compositions such as Call briefings
+    set it false: rendering an answer must not create an inbox row merely because
+    a Red approval has not been delivered yet. In both modes the returned
+    decisions still come from the same authoritative sources.
+    """
     qrows = questions.get_open_all()
     prows = questions.get_open_plan_all()
     arows = pending_approvals_all_public()
@@ -144,8 +145,9 @@ def open_items():
     # gives it a row, so it can be postponed like any other item.
     held = {f"{r['kind']}:{r['ref_id']}" for r in refs}
     missing = [r for r in rrows if f"red:{r['id']}" not in held]
-    for r in missing:
-        inbox.deliver_red(r)
-    if missing:
-        refs = db.inbox_decision_refs()
+    if materialize_missing_red:
+        for r in missing:
+            inbox.deliver_red(r)
+        if missing:
+            refs = db.inbox_decision_refs()
     return inbox.attach_snooze(items, refs, now)

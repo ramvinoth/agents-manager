@@ -49,7 +49,7 @@ import time
 import urllib.request
 from datetime import datetime, timedelta
 
-from orchestrator import actions, db, orglogic, providers
+from orchestrator import actions, db, executive_briefing, orglogic, providers
 from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY, FISH_TTS_MODEL, LFM3_SERVICE_URL,
                                  SPEAKRAIL_ASR_URL, SPEAKRAIL_TOKEN,
                                  read_back, split_lines, transcript_path)
@@ -388,8 +388,15 @@ def snapshot(sid, principal, now=None):
         columns = db.board_columns_list(project)
         cards = db.card_list(project_id=project)
         name = (db.project_get(project) or {}).get("name") or str(project)
-    return render_snapshot(now, principal.get("actor", "the owner"), name, columns, cards,
-                           len(db.approval_list_open()), _run_sentence(sid))
+    board_snapshot = render_snapshot(now, principal.get("actor", "the owner"), name, columns, cards,
+                                     len(db.approval_list_open()), _run_sentence(sid))
+    # The executive composition is independently failure-tolerant: a Google
+    # outage must not remove the authoritative board snapshot from the call.
+    try:
+        briefing = executive_briefing.current(project_id=project)
+        return board_snapshot + "\n" + executive_briefing.render_call_facts(briefing)
+    except Exception:
+        return board_snapshot + "\nExecutive briefing is unavailable."
 
 
 # ------------------------------------------------------------ tool executors

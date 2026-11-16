@@ -216,16 +216,16 @@ class OAuthAccount:
     def _client(self):
         return _vendor_client(self.kind, public=self._provider()["public"])
 
-    def _access_token(self):
+    def _access_token(self, timeout=60):
         cfg = self.config
         at, exp = cfg.get("access_token"), cfg.get("token_expiry") or 0
         if at and time.time() < exp - 60:
             return at
         if not cfg.get("refresh_token"):
             raise DriveError("Not authorized — connect this account in Integrations", 403)
-        return self._refresh()
+        return self._refresh(timeout=timeout)
 
-    def _refresh(self):
+    def _refresh(self, timeout=60):
         client = self._client()
         form = {
             "grant_type": "refresh_token",
@@ -236,7 +236,7 @@ class OAuthAccount:
             form["client_secret"] = client["client_secret"]
         status, _, body = _http("POST", self._provider()["token"],
                                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                                data=urllib.parse.urlencode(form).encode())
+                                data=urllib.parse.urlencode(form).encode(), timeout=timeout)
         if status != 200:
             # 400/401 is the vendor refusing the grant itself (invalid_grant:
             # revoked, password change, a Google app left in Testing) — only a
@@ -265,19 +265,22 @@ class OAuthAccount:
                         f"Agents can no longer use {who}. Open Integrations and tap Reconnect.",
                         data={"screen": "Integrations"})
 
-    def _req(self, method, url, data=None, headers=None):
+    def _req(self, method, url, data=None, headers=None, timeout=60):
         """An authenticated request. Adds the Bearer token; on a 401 (stale
-        token) it forces a refresh and retries exactly once."""
-        h = {"Authorization": "Bearer " + self._access_token()}
+        token) it forces a refresh and retries exactly once. ``timeout`` stays
+        opt-in so normal file and workspace routes retain their established
+        vendor budget while latency-sensitive read-only compositions can bound
+        a stale vendor independently."""
+        h = {"Authorization": "Bearer " + self._access_token(timeout=timeout)}
         if headers:
             h.update(headers)
-        status, _, body = _http(method, url, headers=h, data=data)
+        status, _, body = _http(method, url, headers=h, data=data, timeout=timeout)
         if status == 401:
             self.config["token_expiry"] = 0
-            h = {"Authorization": "Bearer " + self._access_token()}
+            h = {"Authorization": "Bearer " + self._access_token(timeout=timeout)}
             if headers:
                 h.update(headers)
-            status, _, body = _http(method, url, headers=h, data=data)
+            status, _, body = _http(method, url, headers=h, data=data, timeout=timeout)
         return status, body
 
 
