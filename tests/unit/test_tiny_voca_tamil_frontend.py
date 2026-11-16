@@ -23,8 +23,9 @@ def test_unsupported_or_nonlexical_input_is_rejected(text):
 
 
 def test_repeated_punctuation_collapses_and_no_duplicate_spaces():
-    result = phonemize("அம்மா!!  அப்பா")
+    result = phonemize('"அம்மா!!"  அப்பா')
     assert result.symbols.count("!") == 1
+    assert result.symbols.count('"') == 2
     assert not any(left == right == SP for left, right in zip(result.symbols, result.symbols[1:]))
 
 

@@ -13,10 +13,12 @@ import unicodedata
 from typing import Iterable
 
 
-FRONTEND_VERSION = 1
+FRONTEND_VERSION = 2
 PAD, BOS, EOS, SP, UNK = "<pad>", "<bos>", "<eos>", "<sp>", "<unk>"
 SPECIALS = (PAD, BOS, EOS, SP, UNK)
-PUNCTUATION = (",", ".", "?", "!", ";", ":", "…")
+# Structural punctuation retained from Tamil read-speech transcripts.  These are
+# non-acoustic boundaries, never fallback pronunciations for foreign text.
+PUNCTUATION = (",", ".", "?", "!", ";", ":", "…", '"')
 
 # Append-only. Reordering invalidates token IDs and all dependent annotations.
 CONSONANTS = (

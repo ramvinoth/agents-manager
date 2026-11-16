@@ -31,6 +31,7 @@ class PreparedRow:
     transcript: str
     normalized_transcript: str
     audio: str
+    source_audio_sha256: str
     audio_sha256: str
     duration_ms: int
     speaker_id: None = None
@@ -44,6 +45,7 @@ class PreparedRow:
             "transcript": self.transcript,
             "normalized_transcript": self.normalized_transcript,
             "audio": self.audio,
+            "source_audio_sha256": self.source_audio_sha256,
             "audio_sha256": self.audio_sha256,
             "duration_ms": self.duration_ms,
             "speaker_id": self.speaker_id,
@@ -97,6 +99,13 @@ def build_row(row: Mapping[str, Any], *, audio_root: Path) -> PreparedRow:
         raise PreparationError("FLEURS speaker identity is unavailable; labels must remain unknown")
     transcript = row.get("transcript")
     normalized = normalize_transcript(transcript)
+    source_audio_sha256 = row.get("source_audio_sha256")
+    if not isinstance(source_audio_sha256, str) or len(source_audio_sha256) != 64:
+        raise PreparationError("source_audio_sha256 must be a SHA-256 string")
+    try:
+        int(source_audio_sha256, 16)
+    except ValueError as error:
+        raise PreparationError("source_audio_sha256 must be a SHA-256 string") from error
     audio_path = audio_root / audio
     if not audio_path.is_file():
         raise PreparationError("normalized audio is missing")
@@ -108,6 +117,7 @@ def build_row(row: Mapping[str, Any], *, audio_root: Path) -> PreparedRow:
         transcript=transcript,
         normalized_transcript=normalized,
         audio=audio,
+        source_audio_sha256=source_audio_sha256,
         audio_sha256=sha256_file(audio_path),
         duration_ms=duration_ms,
     )

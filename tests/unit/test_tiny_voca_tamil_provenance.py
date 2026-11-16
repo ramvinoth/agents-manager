@@ -10,6 +10,7 @@ import pytest
 
 from experiments.tiny_voca_tamil import spec
 from experiments.tiny_voca_tamil.audio_convert import AudioConversionError, convert_to_contract
+from experiments.tiny_voca_tamil.fleurs_ingest import records_from_tsv
 from experiments.tiny_voca_tamil.prepare_fleurs import PreparationError, build_manifest, build_row, write_manifest
 from experiments.tiny_voca_tamil.provenance import ProvenanceError, canonical_json, provenance_fingerprint, source_identity
 import experiments.tiny_voca_tamil.alignment as alignment
@@ -34,6 +35,7 @@ def _row(**overrides):
         "audio": "train/27.wav",
         "speaker_id": None,
         "speaker_known": False,
+        "source_audio_sha256": "0" * 64,
     }
     row.update(overrides)
     return row
@@ -125,3 +127,28 @@ def test_conversion_failure_never_publishes_invalid_destination(tmp_path):
     with pytest.raises(AudioConversionError):
         convert_to_contract(tmp_path / "missing.wav", destination)
     assert not destination.exists()
+
+
+def test_fleurs_tsv_ingest_preserves_transcript_and_rejects_gender_as_identity(tmp_path):
+    source = tmp_path / "dev.tsv"
+    source.write_text(
+        "27\t27.wav\tதமிழ் சோதனை\tதமிழ் சோதனை\tத ம ி ழ ்\t1000\tMALE\n",
+        encoding="utf-8",
+    )
+    assert list(records_from_tsv(source, source_split="dev")) == [{
+        "source_row_id": "27", "source_sentence_id": "27", "split": "validation", "transcript": "தமிழ் சோதனை",
+        "normalized_transcript": "தமிழ் சோதனை", "source_audio": "dev/27.wav",
+        "speaker_id": None, "speaker_known": False,
+    }]
+
+
+@pytest.mark.parametrize("contents,split", [
+    ("27\tunsafe.wav\ttext\tnormalized\ttokens\t1000\n", "dev"),
+    ("27\t../unsafe.wav\ttext\tnormalized\ttokens\t1000\tMALE\n", "dev"),
+    ("", "unknown"),
+])
+def test_fleurs_tsv_ingest_rejects_invalid_source_rows(tmp_path, contents, split):
+    source = tmp_path / "input.tsv"
+    source.write_text(contents, encoding="utf-8")
+    with pytest.raises(PreparationError):
+        list(records_from_tsv(source, source_split=split))
