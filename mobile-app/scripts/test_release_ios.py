@@ -112,6 +112,21 @@ class ReleaseTests(unittest.TestCase):
             target = self.bin / name
             target.write_text(MOCK.replace('__PYTHON__', sys.executable)); target.chmod(0o755)
         self.calls = self.root / 'calls.jsonl'
+        # ship-native.sh invokes this host-level guard before and after the
+        # release. The fixture has no checkout at the wrapper's real repo path,
+        # so provide a tiny deterministic stand-in instead of accidentally
+        # running the host helper against the developer's repository.
+        guard = self.root / 'asc-tools/ship_head.py'
+        guard.parent.mkdir()
+        guard.write_text(
+            "import pathlib, sys\n"
+            "command, _repo, stamp = sys.argv[1:4]\n"
+            "if command == 'record':\n"
+            "    pathlib.Path(stamp).write_text('fixture-head\\n')\n"
+            "    print('HEAD stamped fixture')\n"
+            "else:\n"
+            "    print('HEAD current: build contains the latest commit')\n"
+        )
         self.key = self.root / 'fake.p8'; self.key.write_text('TEST ONLY')
         self.env = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}', HOME=str(self.root),
                         FIXTURE_APP=str(self.app), CALLS=str(self.calls), BUILD_NUMBER=BUILD,
