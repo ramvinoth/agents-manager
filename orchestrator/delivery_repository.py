@@ -68,11 +68,27 @@ def schedules_due_for_reminders(*, now: float, limit: int = 20):
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError("limit must be a positive integer")
     with postgres.cursor() as cur:
+        # Do not let the oldest already-materialized schedules monopolize this
+        # bounded scan forever.  A schedule is a candidate only while its current
+        # revision is missing one of the policy's due-boundary deliveries.  The
+        # two NOT EXISTS clauses deliberately preserve recovery from a crash
+        # between the owner and agent inserts: an existing owner row does not
+        # hide its still-missing agent wake.
         cur.execute(
-            "SELECT * FROM delivery_schedules "
-            "WHERE status NOT IN ('completed', 'cancelled', 'archived') "
-            "AND due_at IS NOT NULL AND due_at <= %s "
-            "ORDER BY due_at, id LIMIT %s",
+            "SELECT * FROM delivery_schedules s "
+            "WHERE s.status NOT IN ('completed', 'cancelled', 'archived') "
+            "AND s.due_at IS NOT NULL AND s.due_at <= %s "
+            "AND ("
+            " NOT EXISTS (SELECT 1 FROM delivery_reminder_deliveries r "
+            "             WHERE r.schedule_id = s.id AND r.schedule_revision = s.revision "
+            "             AND r.reminder_kind = 'due' AND r.recipient_kind = 'owner_push' "
+            "             AND r.recipient_id = '') "
+            " OR (COALESCE(BTRIM(s.owner_session_id), '') <> '' "
+            "     AND NOT EXISTS (SELECT 1 FROM delivery_reminder_deliveries r "
+            "                     WHERE r.schedule_id = s.id AND r.schedule_revision = s.revision "
+            "                     AND r.reminder_kind = 'due' AND r.recipient_kind = 'agent_wake' "
+            "                     AND r.recipient_id = BTRIM(s.owner_session_id)))"
+            ") ORDER BY s.due_at, s.id LIMIT %s",
             (now, limit),
         )
         return [dict(row) for row in cur.fetchall()]

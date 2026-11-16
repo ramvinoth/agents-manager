@@ -214,6 +214,29 @@ def test_card_completion_with_no_schedule_is_a_noop(monkeypatch):
     assert not any(sql.startswith("UPDATE delivery_schedules SET") for sql, _ in cur.calls)
 
 
+def test_due_scan_skips_fully_materialized_schedules_without_hiding_partial_work(monkeypatch):
+    class Cur:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, params))
+
+        def fetchall(self):
+            return [SCHEDULE]
+
+    cur = Cur()
+    monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))
+
+    assert repository.schedules_due_for_reminders(now=250.0, limit=7) == [SCHEDULE]
+    sql, params = cur.calls[0]
+    assert "NOT EXISTS" in sql
+    assert "recipient_kind = 'owner_push'" in sql
+    assert "recipient_kind = 'agent_wake'" in sql
+    assert "r.recipient_id = BTRIM(s.owner_session_id)" in sql
+    assert params == (250.0, 7)
+
+
 def test_reminder_key_is_stable_for_retries_and_distinct_by_revision():
     first = repository._reminder_key(8, 3, "due", "owner", "")
     assert first == repository._reminder_key(8, 3, "due", "owner", "")
