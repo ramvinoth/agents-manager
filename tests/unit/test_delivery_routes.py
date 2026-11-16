@@ -186,9 +186,10 @@ def test_delivery_schedule_lifecycle_routes_send_only_named_intents(db):
         assert route.intents == [(action, body)]
 
 
-def test_delivery_schedule_proposal_sends_no_revision_or_apply_action(db):
+def test_delivery_schedule_proposal_sends_revision_without_apply_action(db):
     body = {
         "schedule_id": 7,
+        "expected_revision": 3,
         "changes": {"due_at": 1_800_000_000.0},
         "reason": "Dependency will miss the owner commitment",
         "correlation_id": "risk-7",

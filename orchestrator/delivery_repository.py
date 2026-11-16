@@ -271,7 +271,7 @@ def schedule_complete_for_card(card_id: int, *, actor: str, reason: str = ""):
 
 
 def schedule_propose(schedule_id: int, changes: Mapping[str, Any], *, actor: str, reason: str,
-                     correlation_id: str = ""):
+                     correlation_id: str = "", expected_revision: int | None = None):
     """Append an agent proposal for an owner commitment without changing truth.
 
     A proposal is immutable discussion evidence, not an alternate mutable
@@ -288,6 +288,8 @@ def schedule_propose(schedule_id: int, changes: Mapping[str, Any], *, actor: str
         current = _row(cur.fetchone())
         if not current:
             return {"error": "schedule not found"}
+        if expected_revision is not None and current["revision"] != expected_revision:
+            return {"conflict": True, "schedule": current}
         err = policy.validate_proposal(current, fields, reason=reason)
         if err:
             return {"error": err}

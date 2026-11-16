@@ -205,6 +205,29 @@ def init_db():
               host        TEXT NOT NULL DEFAULT 'local',
               created_at  DOUBLE PRECISION NOT NULL
             );
+            -- Consequential Call-mode commands are a separate single-use authority.
+            -- A phone transcript alone is not proof of confirmation, and neither
+            -- pending_questions nor call_events has the caller/session binding,
+            -- expiry or atomic-consume semantics required here. Arguments and source
+            -- fingerprints deliberately carry opaque ids/revisions only, not vendor
+            -- bodies, credentials, or spoken free text.
+            CREATE TABLE IF NOT EXISTS call_pending_commands (
+              id              TEXT PRIMARY KEY,
+              caller          TEXT NOT NULL,
+              call_session_id TEXT NOT NULL,
+              operation       TEXT NOT NULL,
+              arguments       JSONB NOT NULL DEFAULT '{}'::jsonb,
+              source_state    JSONB NOT NULL DEFAULT '{}'::jsonb,
+              correlation_id  TEXT NOT NULL DEFAULT '',
+              status          TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','consumed','expired','superseded','stale')),
+              created_at      DOUBLE PRECISION NOT NULL,
+              expires_at      DOUBLE PRECISION NOT NULL,
+              resolved_at     DOUBLE PRECISION
+            );
+            CREATE INDEX IF NOT EXISTS call_pending_commands_pending_by_call
+              ON call_pending_commands(caller, call_session_id, expires_at)
+              WHERE status = 'pending';
             -- ── Orchestrator ("Harman") empire tables ─────────────────────────
             -- ONE canonical Kanban board: a single cards table; every per-session
             -- / project / CEO "board" is a filtered VIEW of it. See

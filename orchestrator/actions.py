@@ -245,10 +245,14 @@ def _delivery_schedule_propose(a, *, by_agent=False):
     changes = a.get("changes")
     if not isinstance(changes, dict):
         return {"error": "delivery changes must be an object"}
+    expected = a.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+        return {"error": "expected_revision must be a positive integer"}
     return db.schedule_propose(a.get("schedule_id"), changes,
                                actor=a.get("_actor") or "",
                                reason=a.get("reason") or "",
-                               correlation_id=a.get("correlation_id") or "")
+                               correlation_id=a.get("correlation_id") or "",
+                               expected_revision=expected)
 
 
 def _card_delete(a):

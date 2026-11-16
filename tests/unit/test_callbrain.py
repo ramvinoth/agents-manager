@@ -217,7 +217,7 @@ class TestCallTurn:
         out = callbrain.call_turn("s1", PRINCIPAL, "check my email", history,
                                   preset=self.preset, tool_runner=runner, snapshot_text="snap")
         assert ran == [("delegate", {"title": "Check email", "detail": "check my email"},
-                        {"sid": "s1", "principal": PRINCIPAL})]
+                        {"sid": "s1", "principal": PRINCIPAL, "turn_text": "check my email"})]
         assert out["reply"] == "Delegated as card 70." and out["tools"] == ["delegate"]
         roles = [m["role"] for m in seen[1]["messages"]]
         assert roles == ["system", "user", "assistant", "user", "assistant", "tool"]
@@ -239,6 +239,27 @@ class TestCallTurn:
         out = callbrain.call_turn("s", PRINCIPAL, "latest comment on 470?", [], preset=self.preset,
                                   tool_runner=lambda *a: "Card 470. Latest comment: ship it.", snapshot_text="snap")
         assert out["reply"] == "Card 470. Latest comment: ship it."
+
+    def test_delivery_preview_cannot_confirm_in_the_same_spoken_turn(self, monkeypatch):
+        seen = []
+        self._script(monkeypatch, [
+            {"content": None, "tool_calls": [
+                _tool_call("delivery_update", {"schedule_id": 8, "expected_revision": 3,
+                                                 "changes": {"priority": "high"}}),
+                _tool_call("confirm_delivery_update", {"confirmation_id": "opaque"}, "c2"),
+            ]},
+            {"content": "I will wait for your confirmation."},
+        ])
+
+        def runner(name, args, ctx):
+            seen.append(name)
+            return "Prepared confirmation opaque."
+
+        out = callbrain.call_turn("s", PRINCIPAL, "make it high priority", [], preset=self.preset,
+                                  tool_runner=runner, snapshot_text="snap")
+        assert seen == ["delivery_update"]
+        assert out["tools"] == ["delivery_update", "confirm_delivery_update"]
+        assert "wait" in out["reply"].lower()
 
     def test_empty_reply_without_a_tool_asks_again(self, monkeypatch):
         self._script(monkeypatch, [{"content": "  "}])
@@ -374,6 +395,117 @@ class TestRunTool:
 
     def test_unknown_tool(self, board):
         assert "Unknown tool" in callbrain.run_tool("nope", {}, CTX)
+
+
+class TestConfirmedDeliveryTool:
+    schedule = {"id": 8, "card_id": 53, "project_id": 15, "revision": 3,
+                "status": "planned", "owner_commitment": False}
+
+    def test_preview_stores_a_command_without_executing_a_write(self, board, monkeypatch):
+        _, executed = board
+        saved = {}
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(self.schedule))
+        monkeypatch.setattr(callbrain.call_commands, "prepare",
+                            lambda **kwargs: saved.update(kwargs) or {"id": "opaque-code"})
+
+        out = callbrain.run_tool("delivery_update", {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"priority": "high"},
+        }, CTX)
+
+        assert "opaque-code" in out
+        assert executed == []
+        assert saved["operation"] == "delivery_schedule_update"
+        assert saved["source_state"] == {"id": 8, "card_id": 53, "project_id": 15,
+                                          "revision": 3, "status": "planned", "owner_commitment": False}
+
+    def test_confirm_executes_once_through_agent_delivery_boundary(self, board, monkeypatch):
+        _, executed = board
+        command = {"operation": "delivery_schedule_update", "arguments": {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"priority": "high"}, "reason": ""}}
+        monkeypatch.setattr(callbrain.call_commands, "get_pending", lambda *a, **k: command)
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(self.schedule))
+        monkeypatch.setattr(callbrain.call_commands, "consume", lambda *a, **k: {"command": command})
+
+        confirm_ctx = dict(CTX, turn_text="confirm opaque")
+        assert callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "opaque"}, confirm_ctx) == \
+            "The delivery schedule was updated."
+        intent, role, level, _ = executed[0]
+        assert intent["action"] == "delivery_schedule_update"
+        assert intent["args"] == command["arguments"]
+        assert (role, level) == ("owner", "ic")
+
+    def test_stale_confirmation_never_reaches_actions(self, board, monkeypatch):
+        _, executed = board
+        command = {"operation": "delivery_schedule_update", "arguments": {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"priority": "high"}, "reason": ""}}
+        monkeypatch.setattr(callbrain.call_commands, "get_pending", lambda *a, **k: command)
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(self.schedule, revision=4))
+        monkeypatch.setattr(callbrain.call_commands, "consume",
+                            lambda *a, **k: {"error": "the item changed; please ask again"})
+
+        out = callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "opaque"},
+                                 dict(CTX, turn_text="confirm opaque"))
+        assert "item changed" in out
+        assert executed == []
+
+    def test_owner_commitment_timing_change_becomes_a_proposal(self, board, monkeypatch):
+        _, executed = board
+        owner_commitment = dict(self.schedule, owner_commitment=True)
+        saved = {}
+        command = {"operation": "delivery_schedule_propose", "arguments": {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"due_at": 99.0},
+            "reason": "Move it after the review"}}
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(owner_commitment))
+        monkeypatch.setattr(callbrain.call_commands, "prepare",
+                            lambda **kwargs: saved.update(kwargs) or {"id": "proposal-code"})
+
+        preview = callbrain.run_tool("delivery_update", command["arguments"], CTX)
+        assert "proposal" in preview and saved["operation"] == "delivery_schedule_propose"
+        monkeypatch.setattr(callbrain.call_commands, "get_pending", lambda *a, **k: command)
+        monkeypatch.setattr(callbrain.call_commands, "consume", lambda *a, **k: {"command": command})
+
+        assert callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "proposal-code"},
+                                  dict(CTX, turn_text="confirm proposal-code")) == \
+            "The delivery proposal was recorded for the owner to review."
+        assert executed[0][0]["action"] == "delivery_schedule_propose"
+
+    def test_action_failure_is_not_reported_as_success(self, board, monkeypatch):
+        command = {"operation": "delivery_schedule_update", "arguments": {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"priority": "high"}, "reason": ""}}
+        monkeypatch.setattr(callbrain.call_commands, "get_pending", lambda *a, **k: command)
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(self.schedule))
+        monkeypatch.setattr(callbrain.call_commands, "consume", lambda *a, **k: {"command": command})
+        monkeypatch.setattr(callbrain.actions, "execute", lambda *a, **k: ({"error": "denied"}, 403))
+
+        assert "Could not apply" in callbrain.run_tool(
+            "confirm_delivery_update", {"confirmation_id": "opaque"},
+            dict(CTX, turn_text="confirm opaque"))
+
+    def test_replayed_confirmation_never_executes_a_second_action(self, board, monkeypatch):
+        _, executed = board
+        command = {"operation": "delivery_schedule_update", "arguments": {
+            "schedule_id": 8, "expected_revision": 3, "changes": {"priority": "high"}, "reason": ""}}
+        monkeypatch.setattr(callbrain.call_commands, "get_pending", lambda *a, **k: command)
+        monkeypatch.setattr(callbrain.delivery_repository, "schedule_get", lambda ident: dict(self.schedule))
+        responses = iter(({"command": command}, {"error": "confirmation was already used or replaced"}))
+        monkeypatch.setattr(callbrain.call_commands, "consume", lambda *a, **k: next(responses))
+
+        confirm_ctx = dict(CTX, turn_text="confirm opaque")
+        assert callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "opaque"}, confirm_ctx) == \
+            "The delivery schedule was updated."
+        assert "already used" in callbrain.run_tool(
+            "confirm_delivery_update", {"confirmation_id": "opaque"}, confirm_ctx)
+        assert len(executed) == 1
+
+    def test_confirmation_tool_without_fresh_spoken_code_never_reads_or_executes(self, board, monkeypatch):
+        _, executed = board
+        monkeypatch.setattr(callbrain.call_commands, "get_pending",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not read")))
+
+        out = callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "opaque"}, CTX)
+
+        assert "explicitly say confirm" in out
+        assert executed == []
 
 
 def test_snapshot_composes_live_data(board, monkeypatch):

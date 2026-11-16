@@ -49,7 +49,8 @@ import time
 import urllib.request
 from datetime import datetime, timedelta
 
-from orchestrator import actions, db, executive_briefing, orglogic, providers
+from orchestrator import (actions, call_commands, db, delivery_policy,
+                          delivery_repository, executive_briefing, orglogic, providers)
 from orchestrator.config import (CALL_ENGINE, CHAT_JOBS, CHAT_LOCK, FISH_API_KEY, FISH_TTS_MODEL, LFM3_SERVICE_URL,
                                  SPEAKRAIL_ASR_URL, SPEAKRAIL_TOKEN,
                                  read_back, split_lines, transcript_path)
@@ -104,10 +105,14 @@ PERSONA = (
     "board_status, then speak it like a manager on the phone: the count per column, "
     "the cards waiting on the owner by number and title, and an offer to go through "
     "the rest; never read out more than three cards in one reply. Never invent card "
-    "numbers or work that is not in the snapshot or a tool result. Never say you are "
-    "checking, looking, pulling something up or will be right back unless you call the "
-    "tool in that same turn: call it first, then speak the result. If you do not know "
-    "something, say so plainly instead of guessing. Never write a tool name or call out loud."
+    "numbers or work that is not in the snapshot or a tool result. A delivery preview is "
+    "not confirmation: after delivery_update, speak the code and wait for a later owner "
+    "utterance that unambiguously confirms that exact code before calling "
+    "confirm_delivery_update. Never preview and confirm in the same spoken turn, even if "
+    "you generated both tool calls. Never say you are checking, looking, pulling something "
+    "up or will be right back unless you call the tool in that same turn: call it first, "
+    "then speak the result. If you do not know something, say so plainly instead of guessing. "
+    "Never write a tool name or call out loud."
 )
 
 TOOLS = [
@@ -146,6 +151,20 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "day": {"type": "string",
                     "description": "today, yesterday, or a date as YYYY-MM-DD. Default today."}}}}},
+    {"type": "function", "function": {
+        "name": "delivery_update",
+        "description": "Preview a change to an internal delivery schedule. The owner must explicitly confirm the returned confirmation code before anything changes.",
+        "parameters": {"type": "object", "required": ["schedule_id", "expected_revision", "changes"],
+                       "properties": {
+                           "schedule_id": {"type": "integer"},
+                           "expected_revision": {"type": "integer"},
+                           "changes": {"type": "object"},
+                           "reason": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "confirm_delivery_update",
+        "description": "Execute exactly the previously previewed delivery change after the owner explicitly says to confirm it. Requires its confirmation code.",
+        "parameters": {"type": "object", "required": ["confirmation_id"],
+                       "properties": {"confirmation_id": {"type": "string"}}}}},
 ]
 
 
@@ -471,6 +490,108 @@ def _board_status(ctx):
     return render_board(db.board_columns_list(project), db.card_list(project_id=project), time.time())
 
 
+_DELIVERY_STATE_FIELDS = ("id", "card_id", "project_id", "revision", "status", "owner_commitment")
+
+
+def _delivery_state(schedule):
+    """The smallest state fingerprint that makes a spoken update safe to consume."""
+    return {key: schedule.get(key) for key in _DELIVERY_STATE_FIELDS}
+
+
+def _delivery_args(schedule_id, expected_revision, changes, reason):
+    if isinstance(schedule_id, bool) or not isinstance(schedule_id, int) or schedule_id < 1:
+        return None, "Which delivery schedule should change?"
+    if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 1:
+        return None, "That delivery change needs the current schedule revision."
+    if not isinstance(changes, dict) or not changes:
+        return None, "Say what should change on the delivery schedule."
+    if not isinstance(reason, str):
+        return None, "The reason must be plain text."
+    return {"schedule_id": schedule_id, "expected_revision": expected_revision,
+            "changes": changes, "reason": reason.strip()}, ""
+
+
+def _execute_delivery(ctx, action, args):
+    """Run voice delivery work as an agent-like integration, never as an owner UI click.
+
+    This deliberately preserves the human caller's ceiling while making delivery
+    policy see an agent origin.  In particular, owner-commitment timing changes
+    become proposals even when the owner is the person speaking on the phone.
+    """
+    p = ctx["principal"]
+    return actions.execute(actions.intent(action, args, p["actor"]), p.get("human_role", ""), "ic",
+                           acting_session=p.get("session", ""))
+
+
+def _delivery_preview(ctx, schedule_id, expected_revision, changes, reason):
+    """Store one bounded delivery command, without changing schedule truth."""
+    args, error = _delivery_args(schedule_id, expected_revision, changes, reason)
+    if error:
+        return error
+    schedule = delivery_repository.schedule_get(args["schedule_id"])
+    if not schedule:
+        return "There is no delivery schedule %s." % args["schedule_id"]
+    if schedule.get("revision") != args["expected_revision"]:
+        return "That schedule changed. Please ask again from its current details."
+    authority = delivery_policy.mutation_authority(schedule, args["changes"], actor_kind="agent")
+    action = "delivery_schedule_propose" if authority == "propose" else "delivery_schedule_update"
+    if action == "delivery_schedule_propose" and not args["reason"]:
+        return "An owner commitment needs a reason for the proposed change."
+    try:
+        command = call_commands.prepare(
+            caller=ctx["principal"].get("actor", ""), call_session_id=ctx["sid"], operation=action,
+            arguments=args, source_state=_delivery_state(schedule),
+            correlation_id="call-delivery-%s" % schedule["id"],
+        )
+    except ValueError as exc:
+        return "Could not prepare that delivery change: %s" % exc
+    noun = "proposal" if action == "delivery_schedule_propose" else "change"
+    return ("I have prepared the delivery %s for schedule %s. Say confirm delivery update "
+            "and code %s to continue." % (noun, schedule["id"], command["id"]))
+
+
+def _delivery_confirmation_is_spoken(ctx, confirmation_id):
+    """Require a fresh, explicit owner utterance before consuming a command.
+
+    Tool arguments are model output, not proof that the owner confirmed anything.
+    The authenticated route places the current transcribed utterance in ``ctx``;
+    requiring both a confirmation word and the opaque code prevents an unrelated
+    later turn from silently consuming a pending command.
+    """
+    text = " ".join(str(ctx.get("turn_text") or "").lower().split())
+    code = str(confirmation_id or "").strip().lower()
+    return bool(code and code in text and re.search(r"\bconfirm(?:ed|ation)?\b", text))
+
+
+def _delivery_confirm(ctx, confirmation_id):
+    """Reread, consume once, then use the normal action gate for delivery work."""
+    if not _delivery_confirmation_is_spoken(ctx, confirmation_id):
+        return "Please explicitly say confirm and the delivery confirmation code."
+    caller = ctx["principal"].get("actor", "")
+    command = call_commands.get_pending(confirmation_id, caller=caller, call_session_id=ctx["sid"])
+    if not command:
+        return "That delivery confirmation is unavailable."
+    if command.get("operation") not in {"delivery_schedule_update", "delivery_schedule_propose"}:
+        return "That confirmation is not a delivery change."
+    args = command.get("arguments") or {}
+    schedule = delivery_repository.schedule_get(args.get("schedule_id"))
+    current = _delivery_state(schedule) if schedule else {"schedule_id": args.get("schedule_id"), "missing": True}
+    consumed = call_commands.consume(confirmation_id, caller=caller, call_session_id=ctx["sid"],
+                                     current_source_state=current)
+    if consumed.get("error"):
+        return "Could not confirm the delivery change: " + consumed["error"]
+    command = consumed["command"]
+    args = command["arguments"]
+    payload, status = _execute_delivery(ctx, command["operation"], args)
+    if payload.get("conflict"):
+        return "The delivery schedule changed before the update. Please review it and ask again."
+    if payload.get("error") or status != 200:
+        return "Could not apply the delivery change: " + str(payload.get("error") or payload.get("reason") or status)
+    if command["operation"] == "delivery_schedule_propose":
+        return "The delivery proposal was recorded for the owner to review."
+    return "The delivery schedule was updated."
+
+
 CALL_LOG_LINES = 40
 RECENT_CALL_WINDOW_S = 6 * 3600
 RECENT_CALL_TURNS = 8
@@ -528,6 +649,11 @@ def run_tool(name, args, ctx):
         return _board_status(ctx)
     if name == "call_log":
         return _call_log(str(args.get("day", "")))
+    if name == "delivery_update":
+        return _delivery_preview(ctx, args.get("schedule_id"), args.get("expected_revision"),
+                                 args.get("changes"), args.get("reason", ""))
+    if name == "confirm_delivery_update":
+        return _delivery_confirm(ctx, str(args.get("confirmation_id", "")))
     card_id = _int(args.get("card_id"))
     if name in ("card_detail", "comment", "decide") and card_id is None:
         return "Which card number?"
@@ -555,13 +681,14 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
     preset = preset or brain_preset()
     if not preset:
         raise RuntimeError("No call brain configured: set the call_brain setting to a provider preset")
-    ctx = {"sid": sid, "principal": principal}
+    ctx = {"sid": sid, "principal": principal, "turn_text": text}
     snap = snapshot_text if snapshot_text is not None else snapshot(sid, principal)
     messages = [{"role": "system", "content": system_prompt(snap)}]
     messages += [m for m in (history or []) if isinstance(m, dict) and m.get("role") in _ROLES]
     messages.append({"role": "user", "content": text})
     used = []
     reply = ""
+    delivery_previewed_this_turn = False
     nudged = None   # index of the stall nudge pair, so it never reaches the replayed history
     for _ in range(MAX_TOOL_ROUNDS + 1):
         message = chat_completion_message(
@@ -582,9 +709,17 @@ def call_turn(sid, principal, text, history, preset=None, tool_runner=run_tool, 
         messages.append({"role": "assistant", "content": message.get("content") or None,
                          "tool_calls": message.get("tool_calls")})
         for name, args, call_id in calls:
+            # A confirmation is a second, owner-spoken turn.  Do not let a
+            # model collapse preview + confirm into one tool batch or a later
+            # tool round merely by echoing a code it received this turn.
+            if name == "confirm_delivery_update" and delivery_previewed_this_turn:
+                result = "Wait for the owner to confirm that delivery change in a later spoken turn."
+            else:
+                result = tool_runner(name, args, ctx)
             used.append(name)
             messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
-                             "content": tool_runner(name, args, ctx)})
+                             "content": result})
+            delivery_previewed_this_turn = delivery_previewed_this_turn or name == "delivery_update"
     else:
         reply = reply or LOST
     if not reply:
@@ -637,9 +772,18 @@ def _run_calls(messages, said, calls, used, ctx, tool_runner):
     messages.append({"role": "assistant", "content": said or None, "tool_calls": canon})
     for call in canon:
         name, args = call["function"]["name"], json.loads(call["function"]["arguments"])
+        # LFM3 may split one original utterance across several spoken segments.
+        # Preserve the same two-turn confirmation boundary across that chain.
+        if name == "confirm_delivery_update" and ctx.get("delivery_previewed_this_turn"):
+            result = "Wait for the owner to confirm that delivery change in a later spoken turn."
+        else:
+            result = tool_runner(name, args, ctx)
         used.append(name)
         messages.append({"role": "tool", "tool_call_id": call["id"], "name": name,
-                         "content": tool_runner(name, args, ctx)})
+                         "content": result})
+        ctx["delivery_previewed_this_turn"] = (
+            ctx.get("delivery_previewed_this_turn", False) or name == "delivery_update"
+        )
 
 
 def _lfm3_rounds(messages, used, ctx, rounds, tool_runner, http):
@@ -673,7 +817,7 @@ def lfm3_turn(sid, principal, text, history, tool_runner=run_tool, snapshot_text
     """call_turn on LFM3-Audio. The first reply is either {audio, next} (stream it,
     then lfm3_next) or {reply} (text to speak). If LFM3 fails before any tool ran,
     the Qwen brain answers instead, when one is configured."""
-    ctx = {"sid": sid, "principal": principal}
+    ctx = {"sid": sid, "principal": principal, "turn_text": text}
     snap = snapshot_text if snapshot_text is not None else snapshot(sid, principal)
     messages = [{"role": "system", "content": system_prompt(snap)}]
     messages += [m for m in (history or []) if isinstance(m, dict) and m.get("role") in _ROLES]

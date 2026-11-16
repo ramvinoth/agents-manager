@@ -466,10 +466,11 @@ _TOOL_LIST = [
      "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "changes", "reason"], "properties": {
          "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
          "changes": {"type": "object"}, "reason": {"type": "string"}}}},
-    {"name": "delivery_schedule_propose", "description": "Record an agent's requested timing or status change for an owner commitment without changing delivery truth. The owner reviews the proposal in schedule history, then applies a normal compare-and-swap update if they agree.",
-     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "changes", "reason"], "properties": {
-         "schedule_id": {"type": "integer"}, "changes": {"type": "object"},
-         "reason": {"type": "string"}, "correlation_id": {"type": "string"}}}},
+    {"name": "delivery_schedule_propose", "description": "Record an agent's requested timing or status change for an owner commitment without changing delivery truth. expected_revision prevents a stale proposal from entering the schedule history. The owner reviews the proposal, then applies a normal compare-and-swap update if they agree.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "changes", "reason"], "properties": {
+         "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
+         "changes": {"type": "object"}, "reason": {"type": "string"},
+         "correlation_id": {"type": "string"}}}},
     {"name": "card_comment", "description": "Post a message on a card's thread — how you talk to the owner about that work (status, questions, your read of their decision). The owner gets a push when an agent comments. Your own column moves do not notify you back. On a card in Review/Needs-info your comment is the ask the owner sees; one card carries one ask — a second, separate question belongs on its own card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "body"], "properties": {
          "card_id": {"type": "integer"}, "body": {"type": "string"},

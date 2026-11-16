@@ -84,10 +84,10 @@ class FakeDB:
                                       actor_kind, reason, event_type, correlation_id))
         return {"id": schedule_id, "revision": expected_revision + 1, **changes}
 
-    def schedule_propose(self, schedule_id, changes, *, actor, reason, correlation_id):
-        self.delivery_proposals.append((schedule_id, changes, actor, reason, correlation_id))
-        return {"schedule": {"id": schedule_id, "revision": 4}, "proposed_changes": changes,
-                "revision": 4}
+    def schedule_propose(self, schedule_id, changes, *, actor, reason, correlation_id, expected_revision):
+        self.delivery_proposals.append((schedule_id, changes, actor, reason, correlation_id, expected_revision))
+        return {"schedule": {"id": schedule_id, "revision": expected_revision}, "proposed_changes": changes,
+                "revision": expected_revision}
 
     def schedule_cancel(self, schedule_id, expected_revision, *, actor, actor_kind, reason):
         self.delivery_lifecycle.append(("cancel", schedule_id, expected_revision, actor, actor_kind, reason))
@@ -377,6 +377,7 @@ def test_agent_records_commitment_change_as_proposal_not_update(fdb):
     resp, status = actions.execute(
         actions.intent("delivery_schedule_propose", {
             "schedule_id": 88,
+            "expected_revision": 4,
             "changes": {"due_at": 300.0},
             "reason": "dependency will not clear before the current deadline",
             "correlation_id": "risk-88",
@@ -387,14 +388,15 @@ def test_agent_records_commitment_change_as_proposal_not_update(fdb):
     assert fdb.delivery_updates == []
     assert fdb.delivery_proposals == [
         (88, {"due_at": 300.0}, "session:planner",
-         "dependency will not clear before the current deadline", "risk-88")
+         "dependency will not clear before the current deadline", "risk-88", 4)
     ]
 
 
 def test_owner_cannot_use_the_agent_proposal_path(fdb):
     resp, status = actions.execute(
         actions.intent("delivery_schedule_propose", {
-            "schedule_id": 88, "changes": {"due_at": 300.0}, "reason": "move it",
+            "schedule_id": 88, "expected_revision": 4,
+            "changes": {"due_at": 300.0}, "reason": "move it",
         }, "user:owner"),
         "owner", "",
     )

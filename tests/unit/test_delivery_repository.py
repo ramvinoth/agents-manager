@@ -113,6 +113,19 @@ def test_owner_commitment_proposal_appends_history_without_updating_schedule(mon
     assert event_params[9] == "risk-8"
 
 
+def test_stale_proposal_revision_returns_current_schedule_without_history(monkeypatch):
+    cur = _Cursor(dict(SCHEDULE, owner_commitment=True))
+    monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))
+
+    result = repository.schedule_propose(
+        8, {"due_at": 240.0}, actor="session:planner", reason="blocked by dependency",
+        expected_revision=2,
+    )
+
+    assert result == {"conflict": True, "schedule": dict(SCHEDULE, owner_commitment=True)}
+    assert not any(sql.startswith("INSERT INTO delivery_schedule_events") for sql, _ in cur.calls)
+
+
 def test_proposal_rejects_unknown_fields_without_writing_history(monkeypatch):
     cur = _Cursor(dict(SCHEDULE, owner_commitment=True))
     monkeypatch.setattr(postgres, "cursor", lambda: _Connection(cur))

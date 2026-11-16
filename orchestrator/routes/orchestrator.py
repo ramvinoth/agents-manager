@@ -193,6 +193,7 @@ class OrchestratorMixin:
         body = self.read_body() or {}
         self._org_send(req, "delivery_schedule_propose", {
             "schedule_id": body.get("schedule_id"),
+            "expected_revision": body.get("expected_revision"),
             "changes": body.get("changes"),
             "reason": body.get("reason", ""),
             "correlation_id": body.get("correlation_id", ""),
