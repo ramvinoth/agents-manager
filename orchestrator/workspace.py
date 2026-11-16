@@ -36,6 +36,7 @@ import email.utils
 import html
 import json
 import re
+import time
 import urllib.parse
 
 from orchestrator.drives import DriveError, OAuthAccount
@@ -117,13 +118,17 @@ def build_raw(to, subject, body, cc="", in_reply_to="", references=""):
 class Gmail(_GoogleAPI):
     def search(self, q="", limit=20, timeout=60):
         limit = max(1, min(int(limit or 20), 50))
+        started = time.monotonic()
         j = self._json("GET", _GMAIL + "/messages?" + urllib.parse.urlencode(
             {"q": q or "in:inbox", "maxResults": limit}), timeout=timeout)
         out = []
         for m in j.get("messages") or []:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                raise DriveError("Gmail search timed out", 502)
             meta = self._json("GET", _GMAIL + "/messages/%s?format=metadata&%s" % (
                 urllib.parse.quote(m["id"]),
-                "&".join("metadataHeaders=" + h for h in _HEADERS)), timeout=timeout)
+                "&".join("metadataHeaders=" + h for h in _HEADERS)), timeout=remaining)
             hs = (meta.get("payload") or {}).get("headers")
             out.append({"id": m["id"], "thread": m.get("threadId", ""),
                         "from": _header(hs, "From"), "subject": _header(hs, "Subject"),
