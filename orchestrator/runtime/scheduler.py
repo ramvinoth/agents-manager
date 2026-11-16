@@ -30,6 +30,11 @@ _last_stuck_check = 0.0
 _STUCK_INTERVAL = 300
 _stuck_alerted = set()  # incident keys already pushed, so one stuck loop alerts once
 
+# Delivery dispatch shares this scheduler's 5s cadence, but work is bounded so a
+# backlog cannot monopolize loop firing or maintenance.
+_DELIVERY_BATCH = 20
+_DELIVERY_LEASE_SECONDS = 60
+
 
 def fire_due_loops(launch, now):
     """One pass of the loop-firing section of loop_scheduler, extracted so its
@@ -167,6 +172,108 @@ def loop_scheduler(launch):
             traceback.print_exc()
 
 
+def _delivery_autonomous():
+    """Freshly read agent-wake gate; fail closed when settings are unavailable."""
+    try:
+        from orchestrator.orchestrator import automation_enabled, loop_mode
+        return automation_enabled() and loop_mode() in ("harman", "both")
+    except Exception:
+        return False
+
+
+def _dispatch_delivery_reminder(reminder, *, now, autonomous):
+    """Dispatch one claimed reminder and finalize it durably.
+
+    Side effects remain advisory. ``reminder_finish`` rereads schedule truth
+    under lock after this function returns, so a reschedule/completion race is
+    cancelled rather than reported as a current delivery.
+    """
+    from orchestrator import delivery_policy, delivery_repository
+
+    schedule = delivery_repository.schedule_get(int(reminder["schedule_id"]))
+    if not schedule:
+        return delivery_repository.reminder_finish(
+            reminder["id"], outcome="suppressed", error="schedule_missing", now=now)
+
+    recipient = str(reminder.get("recipient_kind") or "")
+    session_viable = True
+    session_running = False
+    if recipient == delivery_policy.RECIPIENT_AGENT_WAKE:
+        from orchestrator.config import CHAT_JOBS, CHAT_LOCK, transcript_path
+        session_id = str(reminder.get("recipient_id") or schedule.get("owner_session_id") or "")
+        session_viable = bool(session_id and transcript_path(session_id))
+        with CHAT_LOCK:
+            job = CHAT_JOBS.get(session_id)
+            session_running = bool(job and job.get("running"))
+
+    outcome, reason = delivery_policy.classify_delivery(
+        schedule, reminder, now=now, autonomous=autonomous,
+        session_viable=session_viable, session_running=session_running)
+    if outcome != "delivered":
+        return delivery_repository.reminder_finish(reminder["id"], outcome=outcome, error=reason, now=now)
+
+    try:
+        if recipient == delivery_policy.RECIPIENT_OWNER_PUSH:
+            from orchestrator import push
+            # No card title/body: notification privacy is preserved; the deep link
+            # resolves current schedule/card truth in the authenticated app.
+            push.notify_all(
+                "Delivery reminder", "A planned delivery deadline needs attention.",
+                data={"delivery_schedule": int(schedule["id"]), "card": int(schedule["card_id"])},
+                time_sensitive=schedule.get("priority") == "critical",
+            )
+        elif recipient == delivery_policy.RECIPIENT_AGENT_WAKE:
+            from orchestrator import delivery_wake
+            queued, reason = delivery_wake.schedule_delivery_wake(schedule, reminder)
+            if not queued:
+                return delivery_repository.reminder_finish(
+                    reminder["id"], outcome="suppressed", error=reason, now=now)
+        else:
+            return delivery_repository.reminder_finish(
+                reminder["id"], outcome="suppressed", error="unknown_recipient", now=now)
+    except Exception as exc:
+        # Do not place exception text (which may contain infrastructure details)
+        # into the durable ledger. The stable category is sufficient for retry/audit.
+        return delivery_repository.reminder_finish(
+            reminder["id"], outcome="failed", error=f"{recipient or 'unknown'}_dispatch_failed", now=now)
+    return delivery_repository.reminder_finish(reminder["id"], outcome="delivered", error=reason, now=now)
+
+
+def delivery_pass(now):
+    """Bounded runtime bridge from committed reminder rows to advisories.
+
+    Recovery precedes materialization/claiming. Agent work observed while paused
+    is claimed then suppressed for this revision, so enabling automation later
+    cannot replay a pause-window backlog. Owner attention remains independent of
+    the agent automation gate.
+    """
+    from orchestrator import delivery_repository
+    try:
+        delivery_repository.reminder_recover_expired_claims(now=now)
+    except Exception:
+        traceback.print_exc()
+        return
+    try:
+        delivery_repository.reminders_materialize_due(now=now, limit=_DELIVERY_BATCH)
+        reminders = delivery_repository.reminders_claim_due(
+            now=now, lease_seconds=_DELIVERY_LEASE_SECONDS, limit=_DELIVERY_BATCH)
+    except Exception:
+        traceback.print_exc()
+        return
+    autonomous = _delivery_autonomous()
+    for reminder in reminders:
+        try:
+            _dispatch_delivery_reminder(reminder, now=now, autonomous=autonomous)
+        except Exception:
+            # A bad row or transient downstream failure must not end the pass or
+            # starve later claims. Try to make the failure terminal and auditable.
+            try:
+                delivery_repository.reminder_finish(
+                    reminder["id"], outcome="failed", error="delivery_dispatch_failed", now=now)
+            except Exception:
+                pass
+
+
 def check_stuck_loops(now):
     """Scheduler self-check: push the owner once per incident for an enabled loop
     that is overdue or whose last run failed. Uses the same origin gating as
@@ -235,6 +342,12 @@ def _scheduler_pass(launch, now):
         except Exception:
             pass
     fire_due_loops(launch, now)
+    # Delivery rows are authoritative before this pass begins; the pass only
+    # dispatches bounded advisories and is isolated from ordinary loop firing.
+    try:
+        delivery_pass(now)
+    except Exception:
+        traceback.print_exc()
     if now - _last_stuck_check >= _STUCK_INTERVAL:
         _last_stuck_check = now
         try:

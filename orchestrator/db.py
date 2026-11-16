@@ -80,6 +80,8 @@ from orchestrator.delivery_repository import (  # noqa: F401
     schedule_propose,
     schedule_recover,
     schedule_update,
+    schedules_due_for_reminders,
+    reminders_materialize_due,
     reminder_create,
     reminders_claim_due,
     reminder_recover_expired_claims,

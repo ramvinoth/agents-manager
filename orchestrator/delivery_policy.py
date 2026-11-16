@@ -30,6 +30,15 @@ _TRANSITIONS = {
 
 _TIME_FIELDS = frozenset({"starts_at", "due_at", "timezone", "all_day"})
 
+# Runtime reminder policy is intentionally small for the first dispatch slice:
+# one owner attention item and, when a schedule names a session, one agent wake
+# at the due boundary.  Lead-time and escalation cadences are product policy,
+# not scheduler heuristics, and must be added here with their own durable key.
+REMINDER_DUE = "due"
+RECIPIENT_OWNER_PUSH = "owner_push"
+RECIPIENT_AGENT_WAKE = "agent_wake"
+RUNTIME_RECIPIENT_KINDS = frozenset({RECIPIENT_OWNER_PUSH, RECIPIENT_AGENT_WAKE})
+
 
 def is_terminal(status: str | None) -> bool:
     return status in TERMINAL_STATUSES
@@ -38,6 +47,65 @@ def is_terminal(status: str | None) -> bool:
 def priority_rank(priority: str) -> int:
     """Lower is more urgent, suitable for a stable agenda/timeline sort."""
     return {"critical": 0, "high": 1, "normal": 2, "low": 3}.get(priority, 99)
+
+
+def reminder_specs(schedule: Mapping[str, Any], *, now: float) -> tuple[dict[str, Any], ...]:
+    """Return deterministic due-boundary reminders for current schedule facts.
+
+    This is deliberately pure: it never decides whether a recipient can actually
+    run, and it does not infer a deadline. The repository binds each returned
+    specification to the current revision when it creates the durable row.
+    """
+    if is_terminal(schedule.get("status")):
+        return ()
+    due_at = schedule.get("due_at")
+    if isinstance(due_at, bool) or not isinstance(due_at, (int, float)) or not math.isfinite(due_at):
+        return ()
+    if due_at > now:
+        return ()
+    specs = [{
+        "reminder_kind": REMINDER_DUE,
+        "recipient_kind": RECIPIENT_OWNER_PUSH,
+        "recipient_id": "",
+        "due_at": float(due_at),
+    }]
+    session_id = str(schedule.get("owner_session_id") or "").strip()
+    if session_id:
+        specs.append({
+            "reminder_kind": REMINDER_DUE,
+            "recipient_kind": RECIPIENT_AGENT_WAKE,
+            "recipient_id": session_id,
+            "due_at": float(due_at),
+        })
+    return tuple(specs)
+
+
+def classify_delivery(schedule: Mapping[str, Any], reminder: Mapping[str, Any], *,
+                      now: float, autonomous: bool, session_viable: bool,
+                      session_running: bool) -> tuple[str, str]:
+    """Classify one claimed delivery without changing schedule truth.
+
+    Returns ``(outcome, reason_code)`` where outcome is accepted by
+    ``reminder_finish``.  A paused agent reminder is suppressed rather than
+    deferred, which prevents a resume-time catch-up burst.
+    """
+    if is_terminal(schedule.get("status")):
+        return "suppressed", "terminal_schedule"
+    due_at = schedule.get("due_at")
+    if not isinstance(due_at, (int, float)) or isinstance(due_at, bool):
+        return "suppressed", "no_due_boundary"
+    kind = str(reminder.get("recipient_kind") or "")
+    if kind == RECIPIENT_OWNER_PUSH:
+        return "delivered", "owner_attention"
+    if kind != RECIPIENT_AGENT_WAKE:
+        return "suppressed", "unknown_recipient"
+    if not autonomous:
+        return "suppressed", "automation_paused"
+    if not session_viable:
+        return "suppressed", "stranded_missing_session"
+    if session_running:
+        return "suppressed", "agent_already_running"
+    return "delivered", "agent_wake_queued"
 
 
 def validate_timezone(value: Any) -> str | None:

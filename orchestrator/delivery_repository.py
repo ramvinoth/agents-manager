@@ -58,6 +58,26 @@ def schedule_list(project_id: int | None = None, *, include_terminal: bool = Fal
         return [dict(row) for row in cur.fetchall()]
 
 
+def schedules_due_for_reminders(*, now: float, limit: int = 20):
+    """Return bounded, current schedule facts eligible for pure reminder policy.
+
+    This is intentionally a scheduler read model, not an alternate delivery
+    authority. Reminder creation locks and rereads the schedule before it commits
+    the revision-keyed row.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    with postgres.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM delivery_schedules "
+            "WHERE status NOT IN ('completed', 'cancelled', 'archived') "
+            "AND due_at IS NOT NULL AND due_at <= %s "
+            "ORDER BY due_at, id LIMIT %s",
+            (now, limit),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
 def _append_event(cur, schedule: Mapping[str, Any], event_type: str, actor: str, *,
                   reason: str = "", before: Mapping[str, Any] | None = None,
                   after: Mapping[str, Any] | None = None, correlation_id: str = "",
@@ -314,6 +334,24 @@ def _reminder_key(schedule_id: int, revision: int, reminder_kind: str,
     or wake merely because its calculated due time was recomputed.
     """
     return f"delivery:{schedule_id}:{revision}:{reminder_kind}:{recipient_kind}:{recipient_id or '-'}"
+
+
+def reminders_materialize_due(*, now: float | None = None, limit: int = 20,
+                               actor: str = "scheduler"):
+    """Idempotently materialize policy-defined reminders for currently due work.
+
+    A schedule can be returned on every five-second pass; ``reminder_create``'s
+    revision-keyed unique id makes the resulting logical delivery stable across
+    those passes and across restarts.
+    """
+    stamp = postgres.now() if now is None else now
+    created = []
+    for schedule in schedules_due_for_reminders(now=stamp, limit=limit):
+        for spec in policy.reminder_specs(schedule, now=stamp):
+            reminder = reminder_create(schedule["id"], actor=actor, **spec)
+            if reminder and not reminder.get("error"):
+                created.append(reminder)
+    return created
 
 
 def reminder_create(schedule_id: int, *, reminder_kind: str, recipient_kind: str,
