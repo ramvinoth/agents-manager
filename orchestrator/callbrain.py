@@ -393,7 +393,9 @@ def snapshot(sid, principal, now=None):
     # The executive composition is independently failure-tolerant: a Google
     # outage must not remove the authoritative board snapshot from the call.
     try:
-        briefing = executive_briefing.current(project_id=project)
+        # An unbound call has no project-scoped board authority. Its delivery
+        # agenda must therefore stay empty rather than disclose every project.
+        briefing = executive_briefing.current(project_id=project, include_delivery=project is not None)
         return board_snapshot + "\n" + executive_briefing.render_call_facts(briefing)
     except Exception:
         return board_snapshot + "\nExecutive briefing is unavailable."

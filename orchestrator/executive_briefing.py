@@ -7,8 +7,11 @@ remains unavailable; it never becomes a misleading zero.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any, Callable, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from orchestrator import db, delivery_policy, delivery_repository, inbox, queue
 from orchestrator.integrations import service_access
@@ -55,9 +58,30 @@ def _delivery_item(schedule: Mapping[str, Any]) -> dict[str, Any]:
         "priority": schedule.get("priority") or "normal",
         "due_at": schedule.get("due_at"),
         "starts_at": schedule.get("starts_at"),
+        "timezone": schedule.get("timezone") or "UTC",
+        "all_day": bool(schedule.get("all_day")),
         "owner_commitment": bool(schedule.get("owner_commitment")),
         "revision": int(schedule.get("revision") or 0),
     }
+
+
+def _delivery_boundary(item: Mapping[str, Any]) -> str:
+    """Render a due boundary in the schedule's own timezone for Call mode.
+
+    The stored epoch is canonical, but saying it raw makes an all-day schedule
+    ambiguous and can move the apparent date across a UTC boundary.
+    """
+    due_at = item.get("due_at")
+    if due_at is None:
+        return "no due time"
+    try:
+        zone = ZoneInfo(str(item.get("timezone") or "UTC"))
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo("UTC")
+    when = datetime.fromtimestamp(float(due_at), zone)
+    if item.get("all_day"):
+        return "all day %s" % when.date().isoformat()
+    return when.strftime("%Y-%m-%d %-I:%M %p %Z")
 
 
 def _delivery_agenda(project_id: int | None) -> list[dict[str, Any]]:
@@ -111,27 +135,22 @@ def _calendar_summary(client, start: str = "", end: str = "") -> list[dict[str, 
             for row in (reply.get("events") or [])[:MAX_CALENDAR_ITEMS]]
 
 
-def _internal_sources() -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], int]:
-    """Read internal briefing sources without materializing decision delivery."""
-    return db.inbox_list(limit=MAX_INBOX_ITEMS), queue.open_items(materialize_missing_red=False), queue.cap()
-
-
-def current(*, project_id: int | None, gmail_connection: str | None = None,
-            calendar_connection: str | None = None, calendar_start: str = "",
-            calendar_end: str = "") -> dict[str, Any]:
+def current(*, project_id: int | None, include_delivery: bool = True,
+            gmail_connection: str | None = None, calendar_connection: str | None = None,
+            calendar_start: str = "", calendar_end: str = "") -> dict[str, Any]:
     """Compose a live briefing with source availability preserved independently."""
-    internal_state, internal = _source(_internal_sources)
-    if internal is None:
-        inbox_rows, decisions, decision_cap = [], [], 0
-    else:
-        inbox_rows, decisions, decision_cap = internal
-    result = build(project_id=project_id, inbox_rows=inbox_rows, decisions=decisions,
-                   decision_cap=decision_cap, gmail_connection=gmail_connection,
-                   calendar_connection=calendar_connection, calendar_start=calendar_start,
-                   calendar_end=calendar_end)
-    if internal_state.state != "available":
-        result["inbox"] = {"source": internal_state.as_dict(), "items": []}
-        result["decisions"] = {"source": internal_state.as_dict(), "visible": [],
+    inbox_state, inbox_rows = _source(lambda: db.inbox_list(limit=MAX_INBOX_ITEMS))
+    decision_state, decision_data = _source(
+        lambda: (queue.open_items(materialize_missing_red=False), queue.cap()))
+    decisions, decision_cap = decision_data if decision_data is not None else ([], 0)
+    result = build(project_id=project_id, include_delivery=include_delivery,
+                   inbox_rows=inbox_rows or [], decisions=decisions, decision_cap=decision_cap,
+                   gmail_connection=gmail_connection, calendar_connection=calendar_connection,
+                   calendar_start=calendar_start, calendar_end=calendar_end)
+    if inbox_state.state != "available":
+        result["inbox"] = {"source": inbox_state.as_dict(), "items": []}
+    if decision_state.state != "available":
+        result["decisions"] = {"source": decision_state.as_dict(), "visible": [],
                                "shown": 0, "held": 0, "cap": 0}
     return result
 
@@ -149,7 +168,7 @@ def render_call_facts(briefing: Mapping[str, Any]) -> str:
         items = delivery["items"]
         if items:
             named = "; ".join(
-                f"card {item['card_id']} due {item['due_at']} ({item['priority']})"
+                f"card {item['card_id']} due {_delivery_boundary(item)} ({item['priority']})"
                 for item in items[:MAX_DELIVERY_ITEMS]
             )
             lines.append("Delivery agenda: " + named + ".")
@@ -175,8 +194,21 @@ def render_call_facts(briefing: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _vendor_sources(gmail_connection: str | None, calendar_connection: str | None,
+                    calendar_start: str, calendar_end: str) -> tuple[tuple[SourceState, Any],
+                                                                        tuple[SourceState, Any]]:
+    """Read optional vendors concurrently so one cannot delay the other."""
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="executive-briefing") as pool:
+        gmail = pool.submit(_source, lambda: _gmail_summary(
+            service_access.open_client("google.gmail", "read", connection_id=gmail_connection)[0]))
+        calendar = pool.submit(_source, lambda: _calendar_summary(
+            service_access.open_client("google.calendar", "read", connection_id=calendar_connection)[0],
+            calendar_start, calendar_end))
+        return gmail.result(), calendar.result()
+
+
 def build(*, project_id: int | None, inbox_rows: list[Mapping[str, Any]],
-          decisions: list[Mapping[str, Any]], decision_cap: int,
+          decisions: list[Mapping[str, Any]], decision_cap: int, include_delivery: bool | None = None,
           gmail_connection: str | None = None, calendar_connection: str | None = None,
           calendar_start: str = "", calendar_end: str = "") -> dict[str, Any]:
     """Build the read-only executive briefing from current authoritative readers.
@@ -186,12 +218,11 @@ def build(*, project_id: int | None, inbox_rows: list[Mapping[str, Any]],
     ``queue.open_items()``, which may materialize missing Red approval inbox
     rows. Integration clients always use the agent-like grant boundary.
     """
-    delivery_state, delivery = _source(lambda: _delivery_agenda(project_id))
-    gmail_state, gmail = _source(lambda: _gmail_summary(
-        service_access.open_client("google.gmail", "read", connection_id=gmail_connection)[0]))
-    calendar_state, calendar = _source(lambda: _calendar_summary(
-        service_access.open_client("google.calendar", "read", connection_id=calendar_connection)[0],
-        calendar_start, calendar_end))
+    include_delivery = project_id is not None if include_delivery is None else include_delivery
+    delivery_state, delivery = (_source(lambda: _delivery_agenda(project_id))
+                                if include_delivery else (SourceState("available"), []))
+    (gmail_state, gmail), (calendar_state, calendar) = _vendor_sources(
+        gmail_connection, calendar_connection, calendar_start, calendar_end)
     return {
         "delivery": {"source": delivery_state.as_dict(), "items": delivery or []},
         "inbox": {"source": SourceState("available").as_dict(), "items": _inbox_summary(inbox_rows)},

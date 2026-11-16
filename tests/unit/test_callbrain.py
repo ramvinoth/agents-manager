@@ -396,6 +396,27 @@ def test_snapshot_composes_live_data(board, monkeypatch):
     assert "Gmail: 0 unread messages" in s
 
 
+def test_snapshot_never_queries_global_delivery_for_an_unbound_session(monkeypatch):
+    monkeypatch.setattr(callbrain, "_project_of", lambda sid: None)
+    monkeypatch.setattr(callbrain, "_run_sentence", lambda sid: "The work session is idle.")
+    monkeypatch.setattr(callbrain.db, "approval_list_open", lambda: [])
+    seen = {}
+
+    def briefing_(**kwargs):
+        seen.update(kwargs)
+        return {
+            "delivery": {"source": {"state": "available"}, "items": []},
+            "inbox": {"source": {"state": "available"}, "items": []},
+            "decisions": {"source": {"state": "available"}, "shown": 0, "held": 0},
+            "gmail": {"source": {"state": "available"}, "items": []},
+            "calendar": {"source": {"state": "available"}, "items": []},
+        }
+
+    monkeypatch.setattr(callbrain.executive_briefing, "current", briefing_)
+    callbrain.snapshot("unbound", PRINCIPAL, now=NOW)
+    assert seen == {"project_id": None, "include_delivery": False}
+
+
 def test_snapshot_keeps_board_when_briefing_composition_crashes(board, monkeypatch):
     monkeypatch.setattr(callbrain, "_run_sentence", lambda sid: "The work session is idle.")
     monkeypatch.setattr(callbrain.executive_briefing, "current", lambda **kwargs: (_ for _ in ()).throw(RuntimeError()))

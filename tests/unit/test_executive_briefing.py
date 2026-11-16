@@ -6,7 +6,8 @@ def _schedule(ident, **extra):
     return {
         "id": ident, "card_id": ident + 100, "status": "planned",
         "priority": "normal", "starts_at": None, "due_at": float(ident),
-        "owner_commitment": False, "revision": 1, **extra,
+        "timezone": "UTC", "all_day": False, "owner_commitment": False,
+        "revision": 1, **extra,
     }
 
 
@@ -55,7 +56,8 @@ def test_build_bounds_and_redacts_vendor_and_free_message_fields(monkeypatch):
 def test_call_facts_exclude_source_titles_and_message_identifiers():
     facts = briefing.render_call_facts({
         "delivery": {"source": {"state": "available"}, "items": [
-            {"card_id": 9, "due_at": 10, "priority": "high"}]},
+            {"card_id": 9, "due_at": 10, "timezone": "UTC", "all_day": False,
+             "priority": "high"}]},
         "inbox": {"source": {"state": "available"}, "items": [{"id": 88}]},
         "decisions": {"source": {"state": "available"}, "shown": 1, "held": 2},
         "gmail": {"source": {"state": "available"}, "items": [
@@ -66,6 +68,20 @@ def test_call_facts_exclude_source_titles_and_message_identifiers():
     assert "card 9" in facts and "Gmail: 1 unread" in facts
     assert "private@example.test" not in facts
     assert "Secret" not in facts and "Private meeting" not in facts and "m1" not in facts
+    assert "1970-01-01" in facts and "due 10" not in facts
+
+
+def test_call_facts_render_all_day_schedule_in_its_local_zone():
+    facts = briefing.render_call_facts({
+        "delivery": {"source": {"state": "available"}, "items": [
+            {"card_id": 9, "due_at": 1767254400, "timezone": "America/Los_Angeles",
+             "all_day": True, "priority": "high"}]},
+        "inbox": {"source": {"state": "available"}, "items": []},
+        "decisions": {"source": {"state": "available"}, "shown": 0, "held": 0},
+        "gmail": {"source": {"state": "available"}, "items": []},
+        "calendar": {"source": {"state": "available"}, "items": []},
+    })
+    assert "all day 2026-01-01" in facts
 
 
 def test_vendor_or_delivery_failures_remain_explicit_not_empty_success(monkeypatch):
@@ -74,7 +90,7 @@ def test_vendor_or_delivery_failures_remain_explicit_not_empty_success(monkeypat
 
     monkeypatch.setattr(briefing.delivery_repository, "schedule_list", fail)
     monkeypatch.setattr(briefing.service_access, "open_client", fail)
-    answer = briefing.build(project_id=None, inbox_rows=[], decisions=[], decision_cap=3)
+    answer = briefing.build(project_id=1, inbox_rows=[], decisions=[], decision_cap=3)
 
     for source in ("delivery", "gmail", "calendar"):
         assert answer[source]["source"] == {"state": "unavailable", "error": "RuntimeError"}
@@ -96,6 +112,33 @@ def test_current_uses_strict_decision_reader_without_inbox_materialization(monke
     monkeypatch.setattr(briefing.service_access, "open_client", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     briefing.current(project_id=1)
     assert seen == {"inbox": [], "materialize_missing_red": False}
+
+
+def test_current_keeps_inbox_when_decision_reader_fails(monkeypatch):
+    monkeypatch.setattr(briefing.db, "inbox_list", lambda **kwargs: [{"id": 9, "kind": "message"}])
+    monkeypatch.setattr(briefing.queue, "open_items", lambda **kwargs: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(briefing.delivery_repository, "schedule_list", lambda project: [])
+    monkeypatch.setattr(briefing.service_access, "open_client",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+
+    answer = briefing.current(project_id=1)
+    assert answer["inbox"]["source"]["state"] == "available"
+    assert answer["inbox"]["items"][0]["id"] == 9
+    assert answer["decisions"]["source"] == {"state": "unavailable", "error": "RuntimeError"}
+
+
+def test_current_without_project_never_lists_cross_project_delivery(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unbound call must not read all schedules")
+
+    monkeypatch.setattr(briefing.delivery_repository, "schedule_list", forbidden)
+    monkeypatch.setattr(briefing.db, "inbox_list", lambda **kwargs: [])
+    monkeypatch.setattr(briefing.queue, "open_items", lambda **kwargs: [])
+    monkeypatch.setattr(briefing.queue, "cap", lambda: 3)
+    monkeypatch.setattr(briefing.service_access, "open_client",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+
+    assert briefing.current(project_id=None)["delivery"]["items"] == []
 
 
 def test_decision_cap_reports_held_without_queue_materialization(monkeypatch):
