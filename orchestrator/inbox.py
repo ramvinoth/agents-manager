@@ -28,7 +28,6 @@ import time
 from orchestrator import db
 
 SNOOZE_DEFAULT_S = 3600          # a tap of "later" without a chosen window
-SNOOZE_NEXT_TICK_S = 1800        # 30 minutes — the sweep's own cadence
 
 # The ref a decision message carries, by kind. One durable source per kind:
 # question/plan rows key on (session, tool_use_id), the approval registry on

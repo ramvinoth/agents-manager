@@ -178,14 +178,10 @@ DEFAULT_SESSION = os.environ.get("VIEWER_DEFAULT_SESSION", "")
 MAX_POLL_BYTES = 8 * 1024 * 1024  # cap a single ?from= read
 CHAT_TIMEOUT = 3600               # seconds for one claude -p run (one-shot paths:
                                   # a hard wall-clock cap on communicate())
-# Streaming chat is capped on SILENCE, not total wall-clock: a genuinely-working
-# agent (emitting assistant text / tool calls / results as stream-json lines)
-# may run for hours, but a hung claude -p that goes quiet mid-turn is killed
-# after this many seconds of NO output. Must exceed the longest legitimate
-# silent gap — a long-running tool call (build/test suite) emits nothing on the
-# stream until it returns — so keep this generous. Env-overridable for tuning.
-# Time spent waiting on the owner (a question, plan or permission hook) does not
-# count: those waits are bounded by QUESTION_TIMEOUT / PERM_TIMEOUT below.
+# Streaming chat is capped on silence, not wall-clock: a hung claude -p is killed
+# after this many seconds with no stream output. It must outlast the longest quiet
+# tool call (a build or test suite). Waits on the owner do not count; those are
+# bounded by QUESTION_TIMEOUT / PERM_TIMEOUT.
 CHAT_IDLE_TIMEOUT = int(os.environ.get("VIEWER_CHAT_IDLE_TIMEOUT", "1800"))
 PERM_TIMEOUT = 120                # seconds to wait for a tool-permission decision
 QUESTION_TIMEOUT = 3600           # seconds to wait for an AskUserQuestion answer (a

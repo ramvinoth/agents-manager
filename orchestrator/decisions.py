@@ -103,13 +103,10 @@ def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_ro
             "tool_use_id": r.get("tool_use_id") or "",
         })
     for r in card_rows or []:
-        # A board card left in Review / Needs-info: the owner's call is the
-        # blocker. The summary names the card by number and title so the
-        # reader knows what it is without opening it (the "which card is 53?"
-        # failure), and `card` lets a tap open that card, not a thread.
-        # A card carries ONE ask — its newest session comment (`ask`) — and an
-        # ask whose deadline passed is no longer the owner's to answer: it
-        # leaves the queue (orchestrator.asks; the scheduler tick tells the asker).
+        # A card in Review / Needs-info waits on the owner. The summary names it
+        # by number and title, and `card` lets a tap open it. Its one ask is the
+        # newest session comment; once that ask's deadline passes it leaves the
+        # queue (orchestrator.asks).
         if asks.is_expired(r.get("ask_expires_at"), now):
             continue
         sid = r.get("session_id") or ""

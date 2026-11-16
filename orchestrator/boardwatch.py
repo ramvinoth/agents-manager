@@ -71,14 +71,9 @@ def schedule_once(lid, sid, prompt, origin):
     now = time.time()
     if db.loop_get(lid):
         # A wake is already pending for this target: replace its payload and
-        # re-arm. Never stack — the session reads current state on pickup.
-        # `origin` is patched too: the mode filter acts on the LATEST cause, so
-        # a coalesced event must never keep a stale one (a human's comment
-        # merged into an agent-caused wake would otherwise never fire in
-        # 'user' mode — and vice versa in 'harman' mode). `session` is patched
-        # for the same reason: a card handed to another chat (card_update
-        # session_id) must wake its NEW owner, not the chat that queued the
-        # first event (card 170, 2026-10-11).
+        # re-arm, never stack. `origin` and `session` follow the latest event:
+        # the mode filter judges the newest cause, and a card handed to another
+        # chat must wake its new owner.
         db.loop_update(lid, {"session": sid, "prompt": prompt, "nextRun": now + _WAKE_DELAY,
                              "kind": "once", "enabled": True, "origin": origin})
     else:
