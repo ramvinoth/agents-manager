@@ -114,6 +114,12 @@ class AskBoard:
         self.card.update(column_id=column_id, position=position)
         return dict(self.card)
 
+    def card_complete(self, card_id, done_column_id, position=1.0, *, actor, reason):
+        """Keep the Done move and ask cleanup in one fake transaction."""
+        self.card.update(column_id=done_column_id, position=position,
+                         queued_since=0, ask_since=0, ask_expires_at=0)
+        return dict(self.card), None
+
     def card_update(self, card_id, **fields):
         self.card.update(fields)
         return dict(self.card)

@@ -92,6 +92,14 @@ def project_delete(project_id, move_to=None):
                 {"to": move_to, "from": project_id})
             cur.execute("UPDATE notes SET project_id = %s WHERE project_id = %s",
                         (move_to, project_id))
+            # The card is the canonical project ownership record. Schedules are
+            # a card projection, so they follow a project move rather than being
+            # orphaned by projects.id's ON DELETE SET NULL fallback.
+            cur.execute(
+                "UPDATE delivery_schedules s SET project_id = %s, updated_at = %s "
+                "FROM cards c WHERE s.card_id = c.id AND c.project_id = %s",
+                (move_to, postgres.now(), move_to),
+            )
             cur.execute("UPDATE session_meta SET data = data || jsonb_build_object("
                         "'kanbanProject', %s::text) WHERE data->>'kanbanProject' = %s",
                         (str(move_to), str(project_id)))
@@ -303,6 +311,34 @@ def card_move(card_id, column_id, position):
     return card_update(card_id, column_id=column_id, position=position)
 
 
+def card_complete(card_id, done_column_id, position, *, actor: str, reason: str = ""):
+    """Atomically mark a card Done and reconcile its delivery schedule.
+
+    The board owns the completed-work fact.  A linked schedule is only a
+    projection, so its completion event and reminder cancellation must commit
+    with that fact, not in a second transaction that could leave an active
+    deadline on finished work after a crash.  Terminal plans stay untouched.
+    """
+    now = postgres.now()
+    with postgres.cursor() as cur:
+        cur.execute(
+            "UPDATE cards SET column_id = %s, position = %s, updated_at = %s, "
+            "queued_since = 0, ask_since = 0, ask_expires_at = 0 "
+            "WHERE id = %s AND EXISTS (SELECT 1 FROM board_columns "
+            "WHERE id = %s AND lower(name) = 'done') RETURNING *",
+            (done_column_id, position, now, card_id, done_column_id),
+        )
+        card = cur.fetchone()
+        if not card:
+            return None, None
+        # Local import keeps the delivery repository independent from board CRUD
+        # while allowing both stores to share this transaction boundary.
+        from orchestrator.delivery_repository import schedule_complete_for_card_locked
+        schedule = schedule_complete_for_card_locked(
+            cur, card_id, actor=actor, reason=reason)
+        return dict(card), schedule
+
+
 def card_last_move(card_id, seconds):
     """The column this card's most recent column-moving write landed in, if
     that write happened within the last `seconds` — else None.
@@ -330,11 +366,27 @@ def card_last_move(card_id, seconds):
 
 
 def card_delete(card_id):
-    """Hard-delete a card (a pure work item — no provenance to preserve).
-    Returns True if a row was removed."""
+    """Hard-delete a card only after any delivery schedule is terminal.
+
+    A delivery schedule is durable planning history, so a nonterminal schedule
+    cannot disappear with a board card. The guard belongs at this repository
+    boundary: HTTP, MCP and deferred approval replay all delete through here.
+    Once a schedule is completed, cancelled or archived, the confirmed card
+    deletion intentionally cascades its now-terminal schedule and history.
+
+    Returns a structured outcome so callers never confuse a blocked delete with
+    an unknown card.
+    """
     with postgres.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM delivery_schedules WHERE card_id = %s FOR UPDATE",
+            (card_id,),
+        )
+        schedule = cur.fetchone()
+        if schedule and schedule["status"] not in ("completed", "cancelled", "archived"):
+            return {"deleted": False, "blocked": "nonterminal_delivery_schedule"}
         cur.execute("DELETE FROM cards WHERE id = %s", (card_id,))
-        return cur.rowcount > 0
+        return {"deleted": cur.rowcount > 0, "blocked": ""}
 
 
 # Card comments (the discussion thread on a card) ----------------------------
@@ -367,13 +419,28 @@ def card_comment_counts():
 # Card dependencies (A cannot move forward until B is done) ------------------
 
 def card_dep_add(card_id, depends_on, created_by=""):
-    """Record the edge `card_id` -> `depends_on`. A card may not depend on
-    itself (that blocks itself forever); an existing edge is a no-op (the
-    UNIQUE constraint, not a duplicate row). Returns the stored row, or
-    {"exists": True} when the edge was already there."""
+    """Record the edge ``card_id`` -> ``depends_on`` without creating a cycle.
+
+    A dependency graph is shared planning state. A row lock cannot protect a
+    cycle made from two absent edges, so a transaction-scoped advisory lock
+    serializes graph writes while the recursive reachability check and insert
+    run. The graph is small and user-driven; correctness beats parallel edge
+    writes here.
+    """
     if card_id == depends_on:
         return {"error": "a card cannot depend on itself"}
     with postgres.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('board_card_deps_graph'))")
+        cur.execute(
+            "WITH RECURSIVE reachable(id) AS ("
+            "  SELECT %s::integer "
+            "  UNION "
+            "  SELECT d.depends_on FROM card_deps d JOIN reachable r ON d.card_id = r.id"
+            ") SELECT EXISTS(SELECT 1 FROM reachable WHERE id = %s) AS cycle",
+            (depends_on, card_id),
+        )
+        if cur.fetchone()["cycle"]:
+            return {"error": "dependency would create a cycle"}
         cur.execute(
             "INSERT INTO card_deps(card_id, depends_on, created_by, created_at) "
             "VALUES(%s,%s,%s,%s) ON CONFLICT (card_id, depends_on) DO NOTHING "

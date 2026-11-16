@@ -213,6 +213,14 @@ class FakeBoard:
             self.card = dict(self.card, column_id=column_id, position=position)
         return {"id": card_id, "column_id": column_id, "position": position}
 
+    def card_complete(self, card_id, done_column_id, position=1.0, *, actor, reason):
+        """Mirror the repository's atomic Done boundary for action tests."""
+        moved = self.card_move(card_id, done_column_id, position)
+        if self.card and self.card.get("id") == card_id:
+            self.card = dict(self.card, queued_since=0, ask_since=0, ask_expires_at=0)
+            moved = dict(self.card)
+        return moved, None
+
     def card_last_move(self, card_id, seconds):
         return None  # this fake keeps no audit history — the recency guard is a no-op
 

@@ -166,16 +166,108 @@ def _card_move(a, *, by_agent=False):
     return _with_queue_warning(out, card["id"]) if into_decision and by_agent else out
 
 
+def _delivery_schedule_create(a, *, by_agent=False):
+    """Create delivery planning for a card through the single action gate.
+
+    Schedule data never travels through ``card_update``: it has independent
+    revision, authority and append-only history. Agents may plan their own work,
+    but cannot create an owner commitment; that fact belongs to the owner.
+    """
+    card = db.card_get(a.get("card_id"))
+    if not card:
+        return {"error": "card not found"}
+    fields = a.get("schedule")
+    if not isinstance(fields, dict):
+        return {"error": "schedule must be an object"}
+    if by_agent and fields.get("owner_commitment"):
+        return {"error": "only an owner may create an owner commitment"}
+    return db.schedule_create(card["id"], fields, actor=a.get("_actor") or "",
+                              actor_kind="agent" if by_agent else "owner",
+                              reason=a.get("reason") or "")
+
+
+def _delivery_schedule_update(a, *, by_agent=False):
+    changes = a.get("changes")
+    if not isinstance(changes, dict):
+        return {"error": "delivery changes must be an object"}
+    expected = a.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+        return {"error": "expected_revision must be a positive integer"}
+    return db.schedule_update(a.get("schedule_id"), expected, changes,
+                              actor=a.get("_actor") or "",
+                              actor_kind="agent" if by_agent else "owner",
+                              reason=a.get("reason") or "",
+                              event_type=a.get("event_type") or "updated",
+                              correlation_id=a.get("correlation_id") or "")
+
+
+def _delivery_schedule_cancel(a, *, by_agent=False):
+    expected = a.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+        return {"error": "expected_revision must be a positive integer"}
+    return db.schedule_cancel(a.get("schedule_id"), expected, actor=a.get("_actor") or "",
+                              actor_kind="agent" if by_agent else "owner",
+                              reason=a.get("reason") or "")
+
+
+def _delivery_schedule_archive(a, *, by_agent=False):
+    expected = a.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+        return {"error": "expected_revision must be a positive integer"}
+    return db.schedule_archive(a.get("schedule_id"), expected, actor=a.get("_actor") or "",
+                               actor_kind="agent" if by_agent else "owner",
+                               reason=a.get("reason") or "")
+
+
+def _delivery_schedule_recover(a, *, by_agent=False):
+    expected = a.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+        return {"error": "expected_revision must be a positive integer"}
+    changes = a.get("changes")
+    if not isinstance(changes, dict):
+        return {"error": "delivery changes must be an object"}
+    return db.schedule_recover(a.get("schedule_id"), expected, changes,
+                               actor=a.get("_actor") or "",
+                               actor_kind="agent" if by_agent else "owner",
+                               reason=a.get("reason") or "")
+
+
+def _delivery_schedule_propose(a, *, by_agent=False):
+    """Record an agent's requested change to an owner commitment.
+
+    This is deliberately separate from update: proposals do not alter schedule
+    truth, advance its revision, cancel reminders, or create a back door around
+    owner approval.  A human applies an accepted proposal through the normal
+    compare-and-swap update after reviewing current delivery history.
+    """
+    if not by_agent:
+        return {"error": "delivery proposals are for agent requests; owners can update directly"}
+    changes = a.get("changes")
+    if not isinstance(changes, dict):
+        return {"error": "delivery changes must be an object"}
+    return db.schedule_propose(a.get("schedule_id"), changes,
+                               actor=a.get("_actor") or "",
+                               reason=a.get("reason") or "",
+                               correlation_id=a.get("correlation_id") or "")
+
+
 def _card_delete(a):
-    deleted = bool(db.card_delete(a.get("card_id")))
-    if deleted:
+    outcome = db.card_delete(a.get("card_id"))
+    # Repositories now return a typed outcome. Keep this compatibility branch
+    # while old deployments and narrow test fakes still return bools.
+    if not isinstance(outcome, dict):
+        outcome = {"deleted": bool(outcome), "blocked": ""}
+    if outcome.get("blocked") == "nonterminal_delivery_schedule":
+        return {"error": "this card has active delivery work — cancel or archive its delivery "
+                         "schedule before deleting the card"}
+    if outcome.get("deleted"):
         # The card's pending board-watch wake (bw<id>) is a generic loop row
         # with no FK to the card, so the DELETE above can't cascade to it.
         # Left behind, it fires later and burns an agent turn on a card that
         # is gone. boardwatch owns the id scheme, so it owns the cleanup.
         from orchestrator import boardwatch
         boardwatch.cancel_wake(a.get("card_id"))
-    return {"deleted": deleted}
+    return {"deleted": bool(outcome.get("deleted"))}
 
 
 # Notes: the knowledge ledger next to the work ledger (cards). Every write runs
@@ -305,11 +397,14 @@ def _task_done(a, *, by_agent=False):
                 return {"error": (f"the card moved to '{last_name}' {int(time.time() - _ts)}s ago — "
                                   "a different writer just acted. I won't overwrite a fresh "
                                   "move; comment on the card and let the owner decide.")}
-    moved = db.card_move(a.get("card_id"), done_id, a.get("position", 1.0))
+    moved, schedule = db.card_complete(
+        a.get("card_id"), done_id, a.get("position", 1.0),
+        actor=a.get("_actor") or "", reason="card moved to Done")
     if not moved:
         return {"error": "not found"}
-    db.card_ask_set(moved["id"], 0, 0)   # a finished card asks nothing (orchestrator.asks)
-    return moved
+    # card_complete also clears the ask state in this transaction, so an
+    # interruption cannot leave a finished card parked in the owner queue.
+    return dict(moved, schedule=schedule) if schedule else moved
 
 
 def _inbox_send(a):
@@ -812,6 +907,12 @@ ACTIONS = {
     "integration_api_call": _integration_api_call,
     "card_create": _card_create,
     "card_update": _card_update,
+    "delivery_schedule_create": _delivery_schedule_create,
+    "delivery_schedule_update": _delivery_schedule_update,
+    "delivery_schedule_cancel": _delivery_schedule_cancel,
+    "delivery_schedule_archive": _delivery_schedule_archive,
+    "delivery_schedule_recover": _delivery_schedule_recover,
+    "delivery_schedule_propose": _delivery_schedule_propose,
     "card_move": _card_move,
     "card_delete": _card_delete,
     "note_create": _note_create,
@@ -1160,10 +1261,18 @@ def execute(it, human_role, session_level, acting_session=""):
         # human re-runs with no session level and takes the human path, as
         # intended.) card_create needs it for the same ask/judgement rules as
         # card_move: a card born in Review is an agent's ask.
-        payload = handler(args, by_agent=bool(session_level))
+        payload = handler(
+            dict(args, _actor=actor) if action == "task_done" else args,
+            by_agent=bool(session_level),
+        )
     elif action in ("loop_update", "loop_pause_self"):
         # The handler audits enable/disable itself and needs the actor for it.
         payload = handler(dict(args, _actor=actor))
+    elif action in ("delivery_schedule_create", "delivery_schedule_update", "delivery_schedule_cancel",
+                    "delivery_schedule_archive", "delivery_schedule_recover", "delivery_schedule_propose"):
+        # The authority-sensitive schedule policy needs the principal type and
+        # actor only; delivery handlers receive no untrusted actor field.
+        payload = handler(dict(args, _actor=actor), by_agent=bool(session_level))
     else:
         payload = handler(args)
     db.audit_append(actor, action, it, "done")

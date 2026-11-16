@@ -45,6 +45,7 @@ from orchestrator.board.repository import (  # noqa: F401
     card_comment_add,
     card_comment_counts,
     card_comment_list,
+    card_complete,
     card_create,
     card_delete,
     card_dep_add,
@@ -67,6 +68,22 @@ from orchestrator.board.repository import (  # noqa: F401
     project_get,
     project_get_by_cwd,
     project_list,
+)
+from orchestrator.delivery_repository import (  # noqa: F401
+    schedule_archive,
+    schedule_cancel,
+    schedule_create,
+    schedule_events,
+    schedule_for_card,
+    schedule_get,
+    schedule_list,
+    schedule_propose,
+    schedule_recover,
+    schedule_update,
+    reminder_create,
+    reminders_claim_due,
+    reminder_recover_expired_claims,
+    reminder_finish,
 )
 from orchestrator.canvas.repository import (  # noqa: F401
     canvas_board_for,

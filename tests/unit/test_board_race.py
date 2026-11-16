@@ -67,6 +67,12 @@ class FakeRaceBoard:
         self.card["column_id"] = column_id
         return dict(self.card)
 
+    def card_complete(self, card_id, done_column_id, position=1.0, *, actor, reason):
+        """Match the atomic production boundary while preserving move observability."""
+        moved = self.card_move(card_id, done_column_id, position)
+        self.card.update(queued_since=0, ask_since=0, ask_expires_at=0)
+        return dict(moved, queued_since=0, ask_since=0, ask_expires_at=0), None
+
     def card_ask_set(self, card_id, ask_since, ask_expires_at):
         pass  # the ask ledger — covered in test_asks
 

@@ -24,6 +24,12 @@ class FakeDB:
         self.asks = []           # card_ask_set writes (orchestrator.asks)
         self.loops = {}          # id -> loop row (agent-loop handler surface)
         self.settings = {}       # key -> value (singleton KV handler surface)
+        self.delivery_creates = []
+        self.delivery_updates = []
+        self.delivery_proposals = []
+        self.delivery_lifecycle = []
+        self.delivery_completions = []
+        self.completion_schedule = None
 
     def audit_append(self, actor, action, target=None, outcome=""):
         self.audit.append((actor, action, target, outcome))
@@ -48,6 +54,11 @@ class FakeDB:
         self.cards_moved.append(("move", card_id, column_id, position))
         return {"id": card_id, "column_id": column_id, "position": position}
 
+    def card_complete(self, card_id, done_column_id, position=1.0, *, actor, reason):
+        self.cards_moved.append(("complete", card_id, done_column_id, position))
+        self.delivery_completions.append((card_id, actor, reason))
+        return {"id": card_id, "column_id": done_column_id, "position": position}, self.completion_schedule
+
     def card_get(self, card_id):
         return {"id": card_id, "project_id": 7}
 
@@ -62,6 +73,35 @@ class FakeDB:
 
     def card_last_move(self, card_id, seconds):
         return None  # no recent write by another writer
+
+    def schedule_create(self, card_id, fields, *, actor, actor_kind, reason):
+        self.delivery_creates.append((card_id, fields, actor, actor_kind, reason))
+        return {"id": 88, "card_id": card_id, "revision": 1, **fields}
+
+    def schedule_update(self, schedule_id, expected_revision, changes, *, actor,
+                        actor_kind, reason, event_type, correlation_id):
+        self.delivery_updates.append((schedule_id, expected_revision, changes, actor,
+                                      actor_kind, reason, event_type, correlation_id))
+        return {"id": schedule_id, "revision": expected_revision + 1, **changes}
+
+    def schedule_propose(self, schedule_id, changes, *, actor, reason, correlation_id):
+        self.delivery_proposals.append((schedule_id, changes, actor, reason, correlation_id))
+        return {"schedule": {"id": schedule_id, "revision": 4}, "proposed_changes": changes,
+                "revision": 4}
+
+    def schedule_cancel(self, schedule_id, expected_revision, *, actor, actor_kind, reason):
+        self.delivery_lifecycle.append(("cancel", schedule_id, expected_revision, actor, actor_kind, reason))
+        return {"id": schedule_id, "status": "cancelled", "revision": expected_revision + 1}
+
+    def schedule_archive(self, schedule_id, expected_revision, *, actor, actor_kind, reason):
+        self.delivery_lifecycle.append(("archive", schedule_id, expected_revision, actor, actor_kind, reason))
+        return {"id": schedule_id, "status": "archived", "revision": expected_revision + 1}
+
+    def schedule_recover(self, schedule_id, expected_revision, changes, *, actor, actor_kind, reason):
+        self.delivery_lifecycle.append(("recover", schedule_id, expected_revision, changes,
+                                        actor, actor_kind, reason))
+        return {"id": schedule_id, "status": changes.get("status", "planned"),
+                "revision": expected_revision + 1, **changes}
 
     def card_ask_set(self, card_id, ask_since, ask_expires_at):
         self.asks.append((card_id, ask_since, ask_expires_at))
@@ -234,6 +274,135 @@ def test_green_action_runs_immediately(fdb):
     assert fdb.approvals == [] and fdb.outcomes == ["done"]
 
 
+def test_owner_can_create_delivery_schedule_through_the_action_gate(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_create", {
+            "card_id": 3,
+            "schedule": {"timezone": "America/Los_Angeles", "due_at": 200.0},
+        }, "user:owner"),
+        "owner", "",
+    )
+    assert status == 200 and resp["card_id"] == 3
+    assert fdb.delivery_creates == [
+        (3, {"timezone": "America/Los_Angeles", "due_at": 200.0}, "user:owner", "owner", "")
+    ]
+
+
+def test_agent_can_create_non_commitment_delivery_schedule(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_create", {
+            "card_id": 3,
+            "schedule": {"timezone": "America/Los_Angeles", "due_at": 200.0},
+        }, "session:planner"),
+        "owner", "ic",
+    )
+    assert status == 200 and resp["card_id"] == 3
+    assert fdb.delivery_creates[0][3] == "agent"
+
+
+def test_agent_cannot_create_an_owner_commitment_through_action_gate(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_create", {
+            "card_id": 3,
+            "schedule": {
+                "timezone": "America/Los_Angeles", "due_at": 200.0,
+                "owner_commitment": True,
+            },
+        }, "session:planner"),
+        "owner", "ic",
+    )
+    assert status == 200
+    assert resp == {"error": "only an owner may create an owner commitment"}
+    assert fdb.delivery_creates == []
+
+
+def test_delivery_update_requires_a_positive_expected_revision(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_update", {"schedule_id": 88, "changes": {}}, "user:owner"),
+        "owner", "",
+    )
+    assert status == 200
+    assert resp == {"error": "expected_revision must be a positive integer"}
+    assert fdb.delivery_updates == []
+
+
+def test_delivery_update_stamps_agent_identity_and_revision(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_update", {
+            "schedule_id": 88,
+            "expected_revision": 3,
+            "changes": {"priority": "high"},
+            "reason": "make the approaching deadline visible",
+        }, "session:planner"),
+        "owner", "ic",
+    )
+    assert status == 200 and resp["revision"] == 4
+    assert fdb.delivery_updates == [
+        (88, 3, {"priority": "high"}, "session:planner", "agent",
+         "make the approaching deadline visible", "updated", "")
+    ]
+
+
+def test_delivery_lifecycle_actions_stamp_identity_and_require_current_revision(fdb):
+    cases = (
+        ("delivery_schedule_cancel", {"schedule_id": 88, "expected_revision": 3,
+                                      "reason": "Superseded by another plan"}, "cancel"),
+        ("delivery_schedule_archive", {"schedule_id": 88, "expected_revision": 4,
+                                       "reason": "Keep the terminal history"}, "archive"),
+        ("delivery_schedule_recover", {"schedule_id": 88, "expected_revision": 5,
+                                       "changes": {"status": "planned", "due_at": 300.0},
+                                       "reason": "Owner created a new delivery window"}, "recover"),
+    )
+    for action, args, kind in cases:
+        resp, status = actions.execute(actions.intent(action, args, "session:planner"), "owner", "ic")
+        assert status == 200 and resp["revision"] == args["expected_revision"] + 1
+        assert fdb.delivery_lifecycle[-1][0] == kind
+        assert "session:planner" in fdb.delivery_lifecycle[-1]
+        assert "agent" in fdb.delivery_lifecycle[-1]
+
+
+def test_delivery_lifecycle_actions_reject_missing_revision(fdb):
+    for action, args in (
+        ("delivery_schedule_cancel", {"schedule_id": 88, "reason": "No longer needed"}),
+        ("delivery_schedule_archive", {"schedule_id": 88, "reason": "Keep history"}),
+        ("delivery_schedule_recover", {"schedule_id": 88, "changes": {}, "reason": "New work"}),
+    ):
+        resp, status = actions.execute(actions.intent(action, args, "user:owner"), "owner", "")
+        assert status == 200
+        assert resp == {"error": "expected_revision must be a positive integer"}
+    assert fdb.delivery_lifecycle == []
+
+
+def test_agent_records_commitment_change_as_proposal_not_update(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_propose", {
+            "schedule_id": 88,
+            "changes": {"due_at": 300.0},
+            "reason": "dependency will not clear before the current deadline",
+            "correlation_id": "risk-88",
+        }, "session:planner"),
+        "owner", "ic",
+    )
+    assert status == 200 and resp["revision"] == 4
+    assert fdb.delivery_updates == []
+    assert fdb.delivery_proposals == [
+        (88, {"due_at": 300.0}, "session:planner",
+         "dependency will not clear before the current deadline", "risk-88")
+    ]
+
+
+def test_owner_cannot_use_the_agent_proposal_path(fdb):
+    resp, status = actions.execute(
+        actions.intent("delivery_schedule_propose", {
+            "schedule_id": 88, "changes": {"due_at": 300.0}, "reason": "move it",
+        }, "user:owner"),
+        "owner", "",
+    )
+    assert status == 200
+    assert resp == {"error": "delivery proposals are for agent requests; owners can update directly"}
+    assert fdb.delivery_proposals == []
+
+
 # ── the property the closure design could not have ───────────────────────────
 
 def test_queued_intent_round_trips_and_actually_executes_on_approval(fdb):
@@ -256,7 +425,31 @@ def test_task_done_resolves_the_done_column_at_execution_time(fdb):
     resp, status = actions.execute(
         actions.intent("task_done", {"card_id": 5}, "session:bob"), "owner", "ic")
     assert status == 200
-    assert fdb.cards_moved == [("move", 5, 77, 1.0)]
+    assert fdb.cards_moved == [("complete", 5, 77, 1.0)]
+    assert fdb.delivery_completions == [(5, "session:bob", "card moved to Done")]
+    assert fdb.asks == [], "card_complete clears the ask in its own transaction"
+
+
+def test_task_done_returns_the_completed_delivery_schedule(fdb):
+    fdb.completion_schedule = {"id": 88, "status": "completed", "revision": 4}
+
+    resp, status = actions.execute(
+        actions.intent("task_done", {"card_id": 5}, "user:owner"), "owner", "")
+
+    assert status == 200
+    assert resp["schedule"] == fdb.completion_schedule
+    assert fdb.delivery_completions == [(5, "user:owner", "card moved to Done")]
+
+
+def test_task_done_does_not_complete_a_missing_card(fdb):
+    fdb.card_complete = lambda *args, **kwargs: (None, None)
+
+    resp, status = actions.execute(
+        actions.intent("task_done", {"card_id": 404}, "session:bob"), "owner", "ic")
+
+    assert status == 200
+    assert resp == {"error": "not found"}
+    assert fdb.delivery_completions == []
 
 
 # ── a card is born in a lane, not just on a board ────────────────────────────

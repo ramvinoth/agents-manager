@@ -228,6 +228,14 @@ _MIN_LEVEL = {
     "card_create": "ic",
     "card_move": "ic",
     "card_update": "ic",
+    # Delivery schedules are card-local planning facts. Their owner-commitment
+    # policy is enforced again in delivery_policy at the mutation boundary.
+    "delivery_schedule_create": "ic",
+    "delivery_schedule_update": "ic",
+    "delivery_schedule_cancel": "ic",
+    "delivery_schedule_archive": "ic",
+    "delivery_schedule_recover": "ic",
+    "delivery_schedule_propose": "ic",
     "card_comment": "ic",          # discussion on one's own board — green, never red
     "card_dep_add": "ic",          # dependency edges are work-shaping on one's own
     "card_dep_remove": "ic",       # cards (add+remove are both reversible) — green

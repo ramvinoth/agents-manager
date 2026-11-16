@@ -126,15 +126,102 @@ class OrchestratorMixin:
                              project_id=int(project) if project else None)
         counts = db.card_comment_counts()
         deps = db.card_deps_batch([c["id"] for c in cards])
+        schedules = {s["card_id"]: s for s in db.schedule_list(
+            int(project) if project else None, include_terminal=True
+        )}
         for c in cards:  # the badge + its dependency state (dual control: the
             c["comment_count"] = counts.get(c["id"], 0)    # same rows the agents
             c["dependencies"] = deps.get(c["id"], [])      # read via MCP)
+            # Keep list payloads compact: card detail reads the schedule history.
+            if schedule := schedules.get(c["id"]):
+                c["schedule"] = {
+                    key: schedule.get(key) for key in (
+                        "id", "status", "priority", "starts_at", "due_at", "timezone",
+                        "all_day", "estimated_duration_sec", "owner_commitment", "revision",
+                    )
+                }
         cards = orglogic.order_column(cards)
         if (req.query.get("view") or [""])[0] == "ledger":
             names = db.board_column_names({c["column_id"] for c in cards})
             done = (req.query.get("include_done") or [""])[0] in ("1", "true", "True")
             self.send_json(orglogic.ledger_view(cards, names, include_done=done)); return
         self.send_json({"cards": cards})
+
+    def _g_delivery_schedule(self, req):
+        schedule_id = (req.query.get("id") or [None])[0]
+        card_id = (req.query.get("card_id") or [None])[0]
+        if bool(schedule_id) == bool(card_id):
+            self.send_json({"error": "provide exactly one of id or card_id"}, status=400); return
+        try:
+            schedule = (db.schedule_get(int(schedule_id)) if schedule_id else
+                        db.schedule_for_card(int(card_id)))
+        except (TypeError, ValueError):
+            self.send_json({"error": "id or card_id must be an integer"}, status=400); return
+        if not schedule:
+            self.send_json({"error": "not found"}, status=404); return
+        self.send_json({"schedule": schedule, "events": db.schedule_events(schedule["id"])})
+
+    def _g_delivery_schedules(self, req):
+        project = (req.query.get("project") or [None])[0]
+        include_terminal = (req.query.get("include_terminal") or [""])[0] in ("1", "true", "True")
+        try:
+            project_id = int(project) if project else None
+        except (TypeError, ValueError):
+            self.send_json({"error": "project must be an integer"}, status=400); return
+        self.send_json({"schedules": db.schedule_list(project_id, include_terminal=include_terminal)})
+
+    def _p_delivery_schedules(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_create", {
+            "card_id": body.get("card_id"),
+            "schedule": body.get("schedule"),
+            "reason": body.get("reason", ""),
+        })
+
+    def _p_delivery_schedule_update(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_update", {
+            "schedule_id": body.get("schedule_id"),
+            "expected_revision": body.get("expected_revision"),
+            "changes": body.get("changes"),
+            "reason": body.get("reason", ""),
+            "event_type": body.get("event_type", ""),
+            "correlation_id": body.get("correlation_id", ""),
+        })
+
+    def _p_delivery_schedule_propose(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_propose", {
+            "schedule_id": body.get("schedule_id"),
+            "changes": body.get("changes"),
+            "reason": body.get("reason", ""),
+            "correlation_id": body.get("correlation_id", ""),
+        })
+
+    def _p_delivery_schedule_cancel(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_cancel", {
+            "schedule_id": body.get("schedule_id"),
+            "expected_revision": body.get("expected_revision"),
+            "reason": body.get("reason", ""),
+        })
+
+    def _p_delivery_schedule_archive(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_archive", {
+            "schedule_id": body.get("schedule_id"),
+            "expected_revision": body.get("expected_revision"),
+            "reason": body.get("reason", ""),
+        })
+
+    def _p_delivery_schedule_recover(self, req):
+        body = self.read_body() or {}
+        self._org_send(req, "delivery_schedule_recover", {
+            "schedule_id": body.get("schedule_id"),
+            "expected_revision": body.get("expected_revision"),
+            "changes": body.get("changes"),
+            "reason": body.get("reason", ""),
+        })
 
     def _p_org_cards(self, req):
         body = self.read_body() or {}
@@ -171,8 +258,11 @@ class OrchestratorMixin:
         if not card:
             self.send_json({"error": "not found"}, status=404); return
         project = self._board_project(card.get("project_id"), card.get("session_id"))
+        schedule = db.schedule_for_card(card["id"])
         self.send_json({"card": card, "comments": db.card_comment_list(card["id"]),
                         "dependencies": db.card_deps_batch([card["id"]]).get(card["id"], []),
+                        "schedule": schedule,
+                        "schedule_events": db.schedule_events(schedule["id"]) if schedule else [],
                         "columns": db.board_columns_list(int(project)) if project else []})
 
     # ── notes (the knowledge ledger; scoped like cards) ───────────────────────

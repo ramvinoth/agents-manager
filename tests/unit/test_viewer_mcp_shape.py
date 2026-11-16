@@ -1,7 +1,7 @@
 """Progressive disclosure in the agent's MCP adapter (orchestrator/viewer_mcp.py)."""
 import json
 
-from orchestrator.viewer_mcp import _RESULT_CAP, shape_result
+from orchestrator.viewer_mcp import _RESULT_CAP, _TOOLS, _TOOL_LIST, shape_result
 
 
 def test_full_returns_untouched():
@@ -56,6 +56,50 @@ def test_global_cap_and_errors_pass_through():
 def test_short_results_unchanged():
     small = {"cards": [{"id": 1, "body": "hi"}]}
     assert shape_result("card_list", small)["cards"] == small["cards"]
+
+
+def test_delivery_tools_have_matching_transport_and_strict_schemas():
+    """The MCP must expose every delivery API with no permissive side channel."""
+    tools = {tool["name"]: tool for tool in _TOOL_LIST}
+    expected = {
+        "delivery_schedule": ("GET", "/api/delivery/schedule", {"id", "card_id"}),
+        "delivery_schedules": ("GET", "/api/delivery/schedules", {"project", "include_terminal"}),
+        "delivery_schedule_create": ("POST", "/api/delivery/schedules", {"card_id", "schedule", "reason"}),
+        "delivery_schedule_update": ("POST", "/api/delivery/schedule/update", {
+            "schedule_id", "expected_revision", "changes", "reason", "event_type", "correlation_id",
+        }),
+        "delivery_schedule_cancel": ("POST", "/api/delivery/schedule/cancel", {
+            "schedule_id", "expected_revision", "reason",
+        }),
+        "delivery_schedule_archive": ("POST", "/api/delivery/schedule/archive", {
+            "schedule_id", "expected_revision", "reason",
+        }),
+        "delivery_schedule_recover": ("POST", "/api/delivery/schedule/recover", {
+            "schedule_id", "expected_revision", "changes", "reason",
+        }),
+        "delivery_schedule_propose": ("POST", "/api/delivery/schedule/propose", {
+            "schedule_id", "changes", "reason", "correlation_id",
+        }),
+    }
+    for name, (method, path, properties) in expected.items():
+        assert _TOOLS[name] == (method, path)
+        schema = tools[name]["inputSchema"]
+        assert schema["additionalProperties"] is False
+        assert set(schema["properties"]) == properties
+    assert set(tools["delivery_schedule_create"]["inputSchema"]["required"]) == {"card_id", "schedule"}
+    assert set(tools["delivery_schedule_update"]["inputSchema"]["required"]) == {
+        "schedule_id", "expected_revision", "changes",
+    }
+    for name in ("delivery_schedule_cancel", "delivery_schedule_archive"):
+        assert set(tools[name]["inputSchema"]["required"]) == {
+            "schedule_id", "expected_revision", "reason",
+        }
+    assert set(tools["delivery_schedule_recover"]["inputSchema"]["required"]) == {
+        "schedule_id", "expected_revision", "changes", "reason",
+    }
+    assert set(tools["delivery_schedule_propose"]["inputSchema"]["required"]) == {
+        "schedule_id", "changes", "reason",
+    }
 
 
 def test_rows_drop_empty_fields_and_twinned_epochs():

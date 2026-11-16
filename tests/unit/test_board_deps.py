@@ -37,6 +37,34 @@ def test_a_card_cannot_depend_on_itself():
     assert db.card_dep_add(5, 5) == {"error": "a card cannot depend on itself"}
 
 
+def test_dependency_cycle_is_refused_before_the_insert(monkeypatch):
+    class Cur:
+        def __init__(self):
+            self.calls = []
+            self.reply = None
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, params))
+            if "SELECT EXISTS" in sql:
+                self.reply = {"cycle": True}
+
+        def fetchone(self):
+            return self.reply
+
+    cur = Cur()
+
+    class Conn:
+        def __enter__(self):
+            return cur
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(postgres, "cursor", lambda: Conn())
+    assert db.card_dep_add(5, 6) == {"error": "dependency would create a cycle"}
+    assert not any("INSERT INTO card_deps" in sql for sql, _ in cur.calls)
+
+
 def test_deps_batch_done_follows_the_name_contract(monkeypatch):
     rows = [
         {"card_id": 1, "id": 2, "title": "B", "column_name": "Done"},

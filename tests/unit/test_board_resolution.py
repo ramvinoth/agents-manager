@@ -59,6 +59,15 @@ class _FakeDB:
     def card_deps_batch(self, ids):
         return {}
 
+    def schedule_for_card(self, card_id):
+        return None
+
+    def schedule_events(self, schedule_id):
+        return []
+
+    def schedule_list(self, project_id=None, *, include_terminal=False):
+        return []
+
 
 @pytest.fixture()
 def db(monkeypatch):

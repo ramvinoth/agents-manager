@@ -261,6 +261,88 @@ def init_db():
               created_at DOUBLE PRECISION NOT NULL,
               UNIQUE (card_id, depends_on)
             );
+            -- Internal delivery planning is authoritative for card timing. Google
+            -- Calendar may later link an individual schedule, but it never owns
+            -- these facts or silently moves them. One v1 schedule per card keeps
+            -- unscheduled cards fully backward compatible.
+            CREATE TABLE IF NOT EXISTS delivery_schedules (
+              id                     SERIAL PRIMARY KEY,
+              -- A confirmed card deletion may remove its archived delivery record
+              -- and dependent history together. Nonterminal schedules are guarded in
+              -- board.repository before this cascade can be reached.
+              card_id                INTEGER NOT NULL UNIQUE REFERENCES cards(id) ON DELETE CASCADE,
+              project_id             INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+              owner_session_id       TEXT,
+              status                 TEXT NOT NULL DEFAULT 'planned'
+                                     CHECK (status IN ('planned','active','blocked','at_risk','completed','cancelled','archived')),
+              priority               TEXT NOT NULL DEFAULT 'normal'
+                                     CHECK (priority IN ('critical','high','normal','low')),
+              starts_at              DOUBLE PRECISION,
+              due_at                 DOUBLE PRECISION,
+              timezone               TEXT NOT NULL DEFAULT 'UTC',
+              all_day                BOOLEAN NOT NULL DEFAULT FALSE,
+              estimated_duration_sec INTEGER,
+              owner_commitment       BOOLEAN NOT NULL DEFAULT FALSE,
+              revision               INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+              external_link          JSONB NOT NULL DEFAULT '{}'::jsonb,
+              created_by             TEXT NOT NULL DEFAULT '',
+              created_at             DOUBLE PRECISION NOT NULL,
+              updated_at             DOUBLE PRECISION NOT NULL,
+              completed_at           DOUBLE PRECISION,
+              cancelled_at           DOUBLE PRECISION,
+              archived_reason        TEXT NOT NULL DEFAULT '',
+              CHECK (starts_at IS NULL OR due_at IS NULL OR starts_at <= due_at),
+              CHECK (estimated_duration_sec IS NULL OR estimated_duration_sec > 0)
+            );
+            CREATE INDEX IF NOT EXISTS delivery_schedules_project_due_idx
+              ON delivery_schedules(project_id, due_at, id);
+            CREATE INDEX IF NOT EXISTS delivery_schedules_owner_status_idx
+              ON delivery_schedules(owner_session_id, status, due_at);
+
+            -- The append-only schedule ledger explains every timing or state
+            -- change without treating best-effort pushes or loops as truth.
+            CREATE TABLE IF NOT EXISTS delivery_schedule_events (
+              id             BIGSERIAL PRIMARY KEY,
+              schedule_id    INTEGER NOT NULL REFERENCES delivery_schedules(id) ON DELETE CASCADE,
+              card_id        INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+              event_type     TEXT NOT NULL,
+              actor          TEXT NOT NULL DEFAULT '',
+              occurred_at    DOUBLE PRECISION NOT NULL,
+              revision       INTEGER NOT NULL,
+              reason         TEXT NOT NULL DEFAULT '',
+              before_state   JSONB NOT NULL DEFAULT '{}'::jsonb,
+              after_state    JSONB NOT NULL DEFAULT '{}'::jsonb,
+              correlation_id TEXT NOT NULL DEFAULT '',
+              metadata       JSONB NOT NULL DEFAULT '{}'::jsonb
+            );
+            CREATE INDEX IF NOT EXISTS delivery_schedule_events_schedule_idx
+              ON delivery_schedule_events(schedule_id, id);
+
+            -- A durable logical-delivery record is created before APNs or an
+            -- agent wake. The unique key is the at-most-once contract across
+            -- scheduler ticks, crashes, retries, and stale schedule revisions.
+            CREATE TABLE IF NOT EXISTS delivery_reminder_deliveries (
+              id              BIGSERIAL PRIMARY KEY,
+              schedule_id     INTEGER NOT NULL REFERENCES delivery_schedules(id) ON DELETE CASCADE,
+              schedule_revision INTEGER NOT NULL,
+              reminder_kind   TEXT NOT NULL,
+              recipient_kind  TEXT NOT NULL,
+              recipient_id    TEXT NOT NULL DEFAULT '',
+              due_at          DOUBLE PRECISION NOT NULL,
+              status          TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','claimed','delivered','suppressed','cancelled','failed')),
+              idempotency_key TEXT NOT NULL UNIQUE,
+              lease_until     DOUBLE PRECISION NOT NULL DEFAULT 0,
+              attempts        INTEGER NOT NULL DEFAULT 0,
+              last_error      TEXT NOT NULL DEFAULT '',
+              created_at      DOUBLE PRECISION NOT NULL,
+              updated_at      DOUBLE PRECISION NOT NULL,
+              delivered_at    DOUBLE PRECISION
+            );
+            CREATE INDEX IF NOT EXISTS delivery_reminder_due_idx
+              ON delivery_reminder_deliveries(status, due_at, id);
+            CREATE INDEX IF NOT EXISTS delivery_reminder_schedule_idx
+              ON delivery_reminder_deliveries(schedule_id, schedule_revision, status);
             -- Notes: the org's knowledge ledger, next to cards (its work ledger).
             -- A note is markdown owned by whoever wrote it (`created_by` is the
             -- same principal string audit_log carries), scoped like a card: to a

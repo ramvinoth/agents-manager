@@ -105,6 +105,14 @@ _TOOLS = {
     "card_create":   ("POST", "/api/org/cards"),
     "card_move":     ("POST", "/api/org/cards/move"),
     "card_update":   ("POST", "/api/org/cards/update"),
+    "delivery_schedule": ("GET", "/api/delivery/schedule"),
+    "delivery_schedules": ("GET", "/api/delivery/schedules"),
+    "delivery_schedule_create": ("POST", "/api/delivery/schedules"),
+    "delivery_schedule_update": ("POST", "/api/delivery/schedule/update"),
+    "delivery_schedule_cancel": ("POST", "/api/delivery/schedule/cancel"),
+    "delivery_schedule_archive": ("POST", "/api/delivery/schedule/archive"),
+    "delivery_schedule_recover": ("POST", "/api/delivery/schedule/recover"),
+    "delivery_schedule_propose": ("POST", "/api/delivery/schedule/propose"),
     "card_comment":  ("POST", "/api/org/card_comment"),
     "card_dep_add":  ("POST", "/api/org/card_dep_add"),
     "card_dep_remove": ("POST", "/api/org/card_dep_remove"),
@@ -429,6 +437,39 @@ _TOOL_LIST = [
     {"name": "card_update", "description": "Update a card's fields.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id"], "properties": {
          "card_id": {"type": "integer"}}}},
+    {"name": "delivery_schedule", "description": "Read one card's internal delivery schedule and its append-only history. Give exactly one of id or card_id. Delivery timing is separate from Kanban state and Google Calendar.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "id": {"type": "integer", "description": "Schedule id."},
+         "card_id": {"type": "integer", "description": "Card id."}}}},
+    {"name": "delivery_schedules", "description": "List internal delivery schedules for a project, ordered by deadline. This is the delivery ledger, not the external Google Calendar.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+         "project": {"type": "integer"},
+         "include_terminal": {"type": "boolean", "description": "Include completed, cancelled, and archived schedules."}}}},
+    {"name": "delivery_schedule_create", "description": "Create the one internal delivery schedule for a card. Time fields are canonical UTC timestamps; timezone is the IANA display zone. An agent may not create an owner commitment.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["card_id", "schedule"], "properties": {
+         "card_id": {"type": "integer"}, "schedule": {"type": "object"},
+         "reason": {"type": "string"}}}},
+    {"name": "delivery_schedule_update", "description": "Compare-and-swap an internal delivery schedule. expected_revision prevents an old calendar edit from overwriting newer planning. Agents must propose, not apply, timing or status changes to an owner commitment.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "changes"], "properties": {
+         "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
+         "changes": {"type": "object"}, "reason": {"type": "string"},
+         "event_type": {"type": "string"}, "correlation_id": {"type": "string"}}}},
+    {"name": "delivery_schedule_cancel", "description": "Cancel an internal delivery plan without deleting its history. A reason and current revision are required, so work never silently disappears.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "reason"], "properties": {
+         "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
+         "reason": {"type": "string"}}}},
+    {"name": "delivery_schedule_archive", "description": "Archive completed or cancelled delivery history without deleting it. A reason and current revision are required.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "reason"], "properties": {
+         "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
+         "reason": {"type": "string"}}}},
+    {"name": "delivery_schedule_recover", "description": "Create an explicit new plan from completed or cancelled delivery work. Reopening a card never revives its old deadline; provide a new due_at, status and reason.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "expected_revision", "changes", "reason"], "properties": {
+         "schedule_id": {"type": "integer"}, "expected_revision": {"type": "integer"},
+         "changes": {"type": "object"}, "reason": {"type": "string"}}}},
+    {"name": "delivery_schedule_propose", "description": "Record an agent's requested timing or status change for an owner commitment without changing delivery truth. The owner reviews the proposal in schedule history, then applies a normal compare-and-swap update if they agree.",
+     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["schedule_id", "changes", "reason"], "properties": {
+         "schedule_id": {"type": "integer"}, "changes": {"type": "object"},
+         "reason": {"type": "string"}, "correlation_id": {"type": "string"}}}},
     {"name": "card_comment", "description": "Post a message on a card's thread — how you talk to the owner about that work (status, questions, your read of their decision). The owner gets a push when an agent comments. Your own column moves do not notify you back. On a card in Review/Needs-info your comment is the ask the owner sees; one card carries one ask — a second, separate question belongs on its own card.",
      "inputSchema": {"type": "object", "additionalProperties": True, "required": ["card_id", "body"], "properties": {
          "card_id": {"type": "integer"}, "body": {"type": "string"},
