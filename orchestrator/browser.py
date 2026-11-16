@@ -228,12 +228,10 @@ def cdp_http(hid, path, method="GET"):
             pass
 
 
-# Which tab should the live view show? /json/list order is ACTIVATION order,
-# and the Playwright MCP navigates its page without ever activating it — so
-# "front tab" goes stale (user watched Reddit while the agent was truthfully
-# on Google). Instead, follow navigation activity: whichever page's
-# scheme+host+path changed since the last look is where the action is.
-# (Query strings are ignored: challenge pages mutate their query in a loop.)
+# The live view follows navigation, not /json/list order: that list is in
+# activation order, and the Playwright MCP navigates without activating its page.
+# The page whose scheme+host+path changed since the last look is the agent's.
+# Query strings are ignored because challenge pages rewrite theirs in a loop.
 TAB_FOLLOW = {}   # hid -> {"sig": {page_id: (scheme, host, path)}, "follow": page_id}
 TAB_FOLLOW_LOCK = threading.Lock()  # guards the pure-local RMW of a host's follow state
 
@@ -719,12 +717,9 @@ def ensure_mcp_browser(hid):
         pass
 
 
-# Cached CDP connections keyed by (hid, page_id) — one per TAB, not per host.
-# A WS handshake per frame/keystroke would be far too slow, but a single
-# per-host conn was worse: frame-polling and input share it, and the view
-# switching tabs would close the socket mid-operation (back/forward silently
-# died). Per-tab conns are stable — following a new tab just uses that tab's
-# own conn. Each carries a lock (interleaved call()s would steal replies).
+# Cached CDP connections, one per tab: a handshake per frame or keystroke is too
+# slow, and one shared per-host socket would be closed mid-call whenever the view
+# follows another tab. Each carries a lock so interleaved call()s keep their replies.
 BROWSER_INPUT = {}   # (hid, page_id) -> {"ws","cdp","lock"}
 BROWSER_INPUT_LOCK = threading.Lock()
 
@@ -921,11 +916,9 @@ def dispatch_input_fast(cdp, events):
 
 
 # ===== Browser live view over a WebSocket (push frames + low-latency input) =====
-#
-# Replaces the frame-polling GET/POST pair. Headed browsers push ~24fps via CDP
-# Page.startScreencast; headless ones (screencast delivers ~1 frame) fall back
-# to captureScreenshot polling. Input (click/move/drag/wheel/key) rides the same
-# socket. Tab-follow is re-checked ~1/s so the view tracks the agent's tab.
+# Headed browsers push frames via CDP Page.startScreencast; headless ones fall back
+# to captureScreenshot polling. Input rides the same socket, and tab-follow is
+# re-checked about once a second.
 
 def serve_browser_ws(handler, hid):
     ws = WSServer.upgrade(handler)

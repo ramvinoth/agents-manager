@@ -24,15 +24,11 @@ from orchestrator import asks, db, notelinks, orglogic
 
 
 def _card_create(a, *, by_agent=False):
-    # A card is born in a LANE, not just on a board: with no column named, the
-    # board's first column (Todo in the seeded pipeline). The route already
-    # refuses a card with no board; a null column here would make the card
-    # exist in no lane and render on no board view (the other end of fc89546's
-    # rule). Every create path (HTTP, MCP, orchestrator intent, approval) runs
-    # through this one handler, so the default lives here, not in N clients.
-    # Born in a column is the same act as moved into it: an agent cannot create
-    # into a judgement column, and creating into Review/Needs-info opens the ask
-    # exactly as _card_move would (else the owner is never asked).
+    # With no column named, a card lands in the board's first column: a null
+    # column would render on no board view. Every create path runs through this
+    # handler, so the default lives here. Creating into a column is the same act
+    # as moving into it: no agent creates into a judgement column, and creating
+    # into Review/Needs-info opens the ask as _card_move does.
     column_id = a.get("column_id")
     cols = []
     if a.get("project_id"):
@@ -615,19 +611,10 @@ def _approval_resolve(a):
 
 
 # ── Agent-scheduled loops (origin='harman') ──────────────────────────────────
-# The human UI writes loops through routes.sessions (origin='user', ungated — a
-# person editing their own schedules). These three are the AGENT path: an agent
-# session asks Harman's org gate to schedule recurring work, so they run through
-# execute() like every other org action and carry origin='harman'.
-#
-# Origin is stamped HERE, server-side, never taken from args: an intent is
-# persisted and replayed, so a caller-supplied origin could forge a 'user' loop to
-# dodge the loop_control dropdown. WHICH path built the loop is the fact that
-# decides its origin, exactly like the automation pause/resume direction.
-#
-# The session a loop drives must exist (its transcript is what --resume replays);
-# validation of the session + the self-mutation rail live at the route, which has
-# the acting principal. Here we assume a resolved, non-self session.
+# The agent path through the org gate; the human UI writes origin='user' loops
+# through routes.sessions. Origin is stamped here, never taken from args: an
+# intent is replayed later, so a caller-supplied origin could forge a 'user' loop
+# past loop_control. The route validates the target session and the self rail.
 def _loop_create(a):
     from orchestrator.loops import build_schedule
     import uuid as _uuid
@@ -960,14 +947,10 @@ ACTIONS = {
 }
 
 
-# Request fields that are CREDENTIALS, never action arguments. An MCP subprocess
-# posts its per-run session+token in the body (viewer_mcp.py), and an intent is
-# persisted to approvals.detail and audit_log.target — so without this strip, every
-# queued Red action would park a live token in the database, readable by anyone who
-# can list approvals. The principal is already resolved from headers at the gate
-# before any body is read; by the time an intent is built these are dead weight.
-#
-# Stripped in intent() rather than at each call site so a new route cannot forget.
+# Credentials an MCP subprocess posts in the body (viewer_mcp.py). An intent is
+# persisted to approvals.detail and audit_log.target, so intent() strips these to
+# keep live tokens out of the database; the principal is already resolved from
+# headers by then.
 _CREDENTIAL_FIELDS = ("token", "password", "secret", "api_key")
 
 
