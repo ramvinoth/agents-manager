@@ -507,6 +507,34 @@ class TestConfirmedDeliveryTool:
         assert "explicitly say confirm" in out
         assert executed == []
 
+    @pytest.mark.parametrize("turn_text", [
+        "do not confirm opaque",
+        "don't confirm opaque",
+        "is this the confirmation code opaque?",
+        "confirmation opaque",
+        "please confirm opaque later",
+        "confirm another code then opaque",
+    ])
+    def test_confirmation_requires_a_complete_affirmative_utterance(self, board, monkeypatch, turn_text):
+        _, executed = board
+        monkeypatch.setattr(callbrain.call_commands, "get_pending",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not read")))
+
+        out = callbrain.run_tool("confirm_delivery_update", {"confirmation_id": "opaque"},
+                                 dict(CTX, turn_text=turn_text))
+
+        assert "explicitly say confirm" in out
+        assert executed == []
+
+    @pytest.mark.parametrize("turn_text", [
+        "confirm opaque",
+        "yes confirm opaque",
+        "please confirm delivery update with code opaque.",
+    ])
+    def test_confirmation_accepts_complete_affirmative_utterance(self, turn_text):
+        assert callbrain._delivery_confirmation_is_spoken(
+            dict(CTX, turn_text=turn_text), "opaque")
+
 
 def test_snapshot_composes_live_data(board, monkeypatch):
     monkeypatch.setattr(callbrain, "_run_sentence", lambda sid: "The work session is idle.")

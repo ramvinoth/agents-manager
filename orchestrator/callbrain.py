@@ -560,7 +560,19 @@ def _delivery_confirmation_is_spoken(ctx, confirmation_id):
     """
     text = " ".join(str(ctx.get("turn_text") or "").lower().split())
     code = str(confirmation_id or "").strip().lower()
-    return bool(code and code in text and re.search(r"\bconfirm(?:ed|ation)?\b", text))
+    if not code:
+        return False
+    # Deliberately accept only a complete affirmative utterance, not a keyword
+    # anywhere in conversation. That rejects “do not confirm …”, questions such
+    # as “is this the confirmation code …”, and a code quoted in another request.
+    # The opaque code is the final spoken token so we cannot mistake a mention of
+    # it for authorization.
+    affirmative = (
+        r"(?:(?:yes|yeah|yep|please)\s+)?(?:i\s+)?confirm"
+        r"(?:\s+(?:the\s+)?)?(?:delivery\s+update)?"
+        r"(?:\s+(?:with\s+)?code)?\s+"
+    )
+    return bool(re.fullmatch(affirmative + re.escape(code) + r"[.!]?", text))
 
 
 def _delivery_confirm(ctx, confirmation_id):
