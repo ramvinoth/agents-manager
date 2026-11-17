@@ -153,9 +153,9 @@ def loop_scheduler(launch):
     audit table, and holding stale credentials open would be the opposite of safe.
     """
     # One failed pass must never end the thread: it is the only thing that fires
-    # loops AND opens the maintenance window, so its death is silent and total
-    # (2026-11-04: a Postgres restart made loops_due raise, the thread died, and
-    # nothing fired for ~26h while the server looked healthy). Log and go on.
+    # loops AND opens the maintenance window, so its death is silent and total:
+    # a Postgres restart that makes loops_due raise would stop every loop while
+    # the server looks healthy. Log and go on.
     while True:
         time.sleep(5)
         try:
@@ -208,7 +208,7 @@ def _scheduler_pass(launch, now):
     fire_due_loops(launch, now)
     # The hourly maintenance window (orchestrator.maintenance): applies queued
     # restart requests at :50. Not gated by the master switch — agents only
-    # QUEUE restarts; applying them is the owner's standing policy (Card 133).
+    # QUEUE restarts; applying them is the owner's standing policy.
     try:
         from orchestrator import maintenance
         maintenance.tick(now)

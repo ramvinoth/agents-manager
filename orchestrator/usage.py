@@ -128,8 +128,8 @@ def report(rows, feedback, days, limit=25, now=None):
 _DEAD_MIN_SEEN = 20
 
 # Not on screen this long, a control is left out of dead and cold. A gap
-# relative to its screen was tried first (2026-11-11) and misread the side
-# menu's items as removed after one night unopened; only the clock is honest.
+# relative to its screen would misread a side menu's items as removed after one
+# night unopened; only the clock is honest.
 # Three days lets a removed button fall out of dead soon after a build ships
 # while a menu used every few days still counts.
 _STALE_AFTER = 3 * 86400

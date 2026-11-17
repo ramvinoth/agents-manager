@@ -1005,7 +1005,7 @@ def migrate_legacy_files():
         # since install). setting_get returns the seeded default on a fresh DB.
         cur_cfg = settings.setting_get("orchestrator", {}) or {}
         # Only the master switch survives; the file's other keys fed the retired
-        # manager tick (card 146).
+        # manager tick.
         if not cur_cfg.get("automation_enabled") and isinstance(data, dict):
             settings.setting_set("orchestrator", {"automation_enabled": bool(data.get("automation_enabled"))})
         _retire(p)

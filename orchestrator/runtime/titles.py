@@ -56,8 +56,7 @@ _TITLE_CACHE = {}
 
 # Claude Code writes its own bookkeeping into the transcript as "user" records:
 # the local-command caveat (isMeta), slash-command echoes and their stdout. None
-# is the person's words, so none may name the session (card 436: a session was
-# called "<local-command-caveat>The command below was run…").
+# is the person's words, so none may name the session.
 _CLI_WRAPPERS = ("<local-command-", "<command-", "<system-reminder>")
 
 

@@ -658,8 +658,8 @@ class OrchestratorMixin:
         if own is None:
             return
         if own:
-            # A proven own pause is the ic action every agent may take (card 330: as
-            # lead-only loop_update it queued for the owner and demanded a reason).
+            # A proven own pause is an ic action every agent may take; routed as
+            # lead-only loop_update it would queue for the owner and need a reason.
             self._org_send(req, "loop_pause_self",
                            {"id": body["id"], "enabled": False, "own_pause": True})
             return
