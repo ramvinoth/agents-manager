@@ -164,7 +164,7 @@ _DRIVE_ARG = {"type": "string",
 _REASON_ARG = {"type": "string",
                "description": "One plain line the owner reads on the decision card: why you need this now."}
 
-# A time-bound ask (card 235): once it passes, the ask leaves the owner's queue
+# A time-bound ask: once it passes, the ask leaves the owner's queue
 # and the asking session is told to decide itself or re-ask with new facts.
 _EXPIRES_ARG = {"type": "string",
                 "description": ("Only for an ask in Review/Needs-info that stops meaning "

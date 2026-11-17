@@ -229,7 +229,7 @@ def start_claude_run(session_id, session_args, message, mode, cwd, model="", hos
                 env.pop(_k, None)
             # Give MCP servers time to connect on a big resume: claude parses the
             # whole transcript on the same event loop that times out MCP connects,
-            # so a multi-GB session (measured 2026-11-10: 2.8 GB, ~45 s) marked
+            # so a multi-GB session (a measured 2.8 GB took ~45 s) marked
             # viewerperm "failed" and every tool call died with "approve not found".
             # An owner-set MCP_TIMEOUT still wins.
             env.setdefault("MCP_TIMEOUT", MCP_CONNECT_TIMEOUT_MS)

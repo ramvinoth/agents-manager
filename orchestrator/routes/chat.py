@@ -198,7 +198,7 @@ class ChatMixin:
         pending_q = questions.get_open(sid) if sid else None
         pending_plan = questions.get_open_plan(sid) if sid else None
         # An org (Red) approval this session raised outlives its run too; the
-        # chat shows it inline with Approve/Deny (card 223).
+        # chat shows it inline with Approve/Deny.
         from orchestrator.queue import session_red_items
         pending_red = session_red_items(sid)
         job = CHAT_JOBS.get(sid)
