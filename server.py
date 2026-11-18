@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Launcher — the implementation lives in the `viewer` package.
+"""Entry point for `python3 server.py [PORT]`.
 
-Kept as the entry point so `python3 server.py [PORT]` and the systemd/`make
-serve` invocation are unchanged. `orchestrator.server` reads PORT from sys.argv at
-import time, exactly as before.
+The implementation lives in `orchestrator.server`; `orchestrator.config` reads
+PORT from sys.argv (or the PORT env var, default 8091) at import time.
 """
 from orchestrator.server import main
 
