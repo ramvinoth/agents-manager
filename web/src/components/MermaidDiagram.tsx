@@ -11,9 +11,7 @@ import { ZoomViewer } from "@/components/ZoomViewer"
  * MermaidDiagram — renders a ```mermaid fence as a React-owned diagram.
  *
  * The SVG lives in component state, so React owns the DOM: streaming re-renders,
- * polls, and scroll re-mounts never wipe it (unlike the old approach that
- * imperatively injected SVG into dangerouslySetInnerHTML and had to fight React
- * to keep it there). The diagram is rendered once per (source, theme) and cached
+ * polls, and scroll re-mounts never wipe it. The diagram is rendered once per (source, theme) and cached
  * in lib/mermaid, so re-mounts reuse the string with no flicker.
  */
 export function MermaidDiagram({ source, dark }: { source: string; dark: boolean }) {

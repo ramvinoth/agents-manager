@@ -13,9 +13,8 @@ export type NoteLinkHandlers = NoteSyntax & { onLink: (target: string) => void; 
 
 export function Markdown({ text, notes }: { text: string; notes?: NoteLinkHandlers }) {
   // Split into segments so ```mermaid fences render as React-owned <MermaidDiagram>
-  // components (SVG in state) instead of imperatively-injected SVG inside
-  // dangerouslySetInnerHTML — the latter was wiped by every streaming re-render /
-  // poll / scroll, causing the diagram to flicker and reset to code.
+  // components; SVG injected through dangerouslySetInnerHTML would be wiped by
+  // every streaming re-render.
   const dark = document.documentElement.classList.contains("dark")
   const [mathReady, setMathReady] = useState(katexLoaded)
   const wantsMath = !mathReady && MAYBE_MATH.test(text)

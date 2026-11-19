@@ -12,7 +12,7 @@ import { DecisionRowContent } from "./DecisionRow"
 import { userError } from "@/lib/errors"
 
 /**
- * DecisionsBand — the cross-session decision queue on the board (card #60):
+ * DecisionsBand — the cross-session decision queue on the board:
  * every open durable question, plan, live tool approval, Red org approval and
  * board card parked in Review/Needs-info, oldest first, with a total count.
  * A LIST, not a decision surface: a row (or "Decide all") opens the

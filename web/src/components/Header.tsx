@@ -167,7 +167,7 @@ export function Header() {
       </div>
 
       {/* Workspace tools live in one menu: on screen every visit, each was
-          tapped 0 times in 30 days as its own header button (card 151). */}
+          tapped 0 times in 30 days as its own header button. */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
