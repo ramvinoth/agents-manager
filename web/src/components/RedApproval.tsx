@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 
 /**
  * An org (Red) approval — the ONE rendering, shared by the decision cockpit
- * and the asking session's chat (card 223), so the two surfaces cannot drift.
+ * and the asking session's chat, so the two surfaces cannot drift.
  * Both decide through lib/redApproval's resolveRed.
  */
 
@@ -32,7 +32,7 @@ export function DecisionActions({ busy, deny, allow, allowLabel, destructive }: 
 }
 
 /** The open org approvals THIS chat's session raised, inline above the
- *  composer: decided here instead of a trip to the Inbox (card 223). */
+ *  composer: decided here instead of a trip to the Inbox. */
 export function ChatRedApprovals() {
   const pending = useStore((s) => s.pendingRed)
   const decide = useStore((s) => s.decideRed)
