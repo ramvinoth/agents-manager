@@ -409,7 +409,7 @@ export interface Card {
  *  READ of the existing sources — deciding an item uses the per-session
  *  routes, never this shape. */
 /** An org (Red) approval as a decision surface shows it — the queue's "red"
- *  item, or one of a chat's own (chatStatus `pending_red`, card 223). */
+ *  item, or one of a chat's own (chatStatus `pending_red`). */
 export type RedAsk = Pick<OpenDecision, "id" | "summary" | "reason" | "risk">
 
 export interface OpenDecision {

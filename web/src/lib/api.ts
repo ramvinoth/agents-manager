@@ -164,7 +164,7 @@ class ApiClient {
   projects() {
     return this.getJSON("/api/projects" + this.qs("?"))
   }
-  /** The cross-session decision queue (card #60): every open durable
+  /** The cross-session decision queue: every open durable
    *  question/plan + live tool approval, oldest first, with a total count.
    *  Read-only — deciding an item goes through /api/chat/question/answer,
    *  /api/chat/plan/decide or /api/chat/permission/decide. */
