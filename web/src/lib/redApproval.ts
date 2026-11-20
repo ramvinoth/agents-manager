@@ -1,7 +1,7 @@
 import { api } from "./api"
 
 /** Decide an org (Red) approval — the ONE resolve call the decision cockpit
- *  and the asking chat share (card 223). /api/org/approvals/resolve keeps the
+ *  and the asking chat share. /api/org/approvals/resolve keeps the
  *  separation of duties server-side (an agent cannot resolve its own ask) and
  *  the Inbox row's open state is derived from it, so deciding here clears it.
  *  Resolves when decided — 404 (decided elsewhere, or gone) counts as decided;

@@ -34,7 +34,7 @@ export function queueFrom<T extends { session: string; inbox_id: number }>(
   return { ordered, at: inboxId ? ordered.findIndex((d) => d.inbox_id === inboxId) : -1 }
 }
 
-/** A card ask's deadline (card 235) as the owner reads it: "" when the ask has
+/** A card ask's deadline as the owner reads it: "" when the ask has
  *  none, "answer within 2h 5m" while it runs, "deadline passed" once it lapsed
  *  (the server stops listing it then; this covers a stale snapshot).
  *  `expiresAt` is epoch SECONDS (the queue's `expires_at`), `nowMs` is

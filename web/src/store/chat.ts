@@ -17,7 +17,7 @@ export interface ChatSlice {
   chatStatus: ChatStatus | null
   queue: string[]
   pendingApprovals: PermApproval[]
-  /** Open org (Red) approvals this session raised — shown inline in its chat (card 223). */
+  /** Open org (Red) approvals this session raised — shown inline in its chat. */
   pendingRed: RedAsk[]
   stash: string[]
   permMode: string
