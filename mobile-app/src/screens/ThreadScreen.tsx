@@ -80,7 +80,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   const [pending, setPending] = useState<PermApproval[]>([])
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null)
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null)
-  // Org (Red) approvals this session raised — decided inline (card 223).
+  // Org (Red) approvals this session raised, decided inline.
   // Stamped with the session they were read for: a reused Thread route must
   // never show the previous chat's asks as this one's.
   const [redFor, setRedFor] = useState<{ sid: string; asks: RedAsk[] }>({ sid: "", asks: [] })
@@ -315,7 +315,7 @@ export default function ThreadScreen({ route, navigation }: Props) {
   // WhatsApp-style header: the session name (tap it to open the session's
   // profile/settings page) with a live "typing…" subtitle while the agent
   // works. Header actions: search and this session's board (three-dot menu) —
-  // mode/model/system-prompt/goal/loops/stats all moved to the SessionProfile
+  // mode/model/system-prompt/goal/loops/stats live on the SessionProfile
   // screen behind the name.
   useLayoutEffect(() => {
     navigation.setOptions({
