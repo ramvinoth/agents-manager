@@ -1,5 +1,5 @@
 /**
- * Instant action + Undo (card 153). A reversible action happens on screen at
+ * Instant action + Undo. A reversible action happens on screen at
  * once and a toast offers Undo for UNDO_MS. Two shapes:
  *
  * - Deferred commit: the screen updates optimistically and `commit` (the server

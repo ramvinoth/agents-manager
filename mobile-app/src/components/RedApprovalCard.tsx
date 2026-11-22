@@ -8,7 +8,7 @@ import { useTheme } from "../lib/useTheme"
 
 /**
  * An org (Red) approval — the ONE rendering, shared by the decision cockpit
- * and the asking session's chat (card 223), so the two cannot drift. Both
+ * and the asking session's chat, so the two cannot drift. Both
  * decide through lib/redApproval's resolveRed. `headline` names the ask where
  * the surrounding screen does not (the chat); `error` is the last failure.
  * Without `onDecide` the card only explains — the decision deck decides

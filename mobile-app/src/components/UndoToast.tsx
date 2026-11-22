@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { undoQueue, type UndoAction } from "../lib/undo"
 import { useStyles } from "../lib/styles"
 
-/** The single app-wide Undo bar (card 153); mounted once in App.tsx, fed by offerUndo(). */
+/** The single app-wide Undo bar; mounted once in App.tsx, fed by offerUndo(). */
 export default function UndoToast() {
   const styles = useStyles()
   const insets = useSafeAreaInsets()

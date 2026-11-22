@@ -550,7 +550,7 @@ export function buildScreenStyles(t: Theme) {
       gap: 8,
     },
     workingText: { fontSize: 14, color: t.textMuted, fontStyle: "italic", flexShrink: 1 },
-    // DecisionCockpit (dc) — the in-place cross-session decision queue (card #60).
+    // DecisionCockpit (dc) — the in-place cross-session decision queue.
     dcCaughtUp: { flex: 1, backgroundColor: t.bg, alignItems: "center", justifyContent: "center", gap: 12 },
     dcCaughtUpText: { color: t.text, fontWeight: "700" },
     dcHeader: { flexDirection: "row", alignItems: "center", padding: 12, gap: 10, borderBottomWidth: 1, borderBottomColor: t.border },

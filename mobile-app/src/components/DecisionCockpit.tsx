@@ -46,8 +46,8 @@ const alreadyDecided = (e: Status) => (e as { status?: number })?.status === 409
  * DecisionCockpit — the decision deck. Every open decision across sessions is
  * a card the owner swipes: right approves, left denies, a pull past the top or
  * bottom of a card pages to the previous or next one, and round Deny / Comment
- * / Approve buttons do the same by tap (card #60 began it as a queue; the deck
- * makes it one-thumb). The rules live in lib/decisionDeck; this wires them up.
+ * / Approve buttons do the same by tap; the deck
+ * makes it one-thumb. The rules live in lib/decisionDeck; this wires them up.
  *
  * The band hands it a FROZEN snapshot of the queue + the tapped index: the
  * board poll keeps running underneath but must not reshuffle the card under

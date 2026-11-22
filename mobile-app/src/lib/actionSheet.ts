@@ -1,6 +1,6 @@
 // One way to show a short list of actions: an in-app bottom sheet, titled with
 // what it acts on, rendered by the single ActionSheetHost mounted in App.tsx.
-// Not ActionSheetIOS: on some screens (Edit agent, card 173) the native sheet
+// Not ActionSheetIOS: on some screens (e.g. Edit agent) the native sheet
 // silently never presented — the same class of failure as a native Alert
 // raised under an RN Modal (see ProviderPicker) — and a menu that sometimes
 // does nothing is worse than any look. One JS sheet on both platforms also
