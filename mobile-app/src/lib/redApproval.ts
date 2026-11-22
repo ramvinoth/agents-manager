@@ -1,6 +1,6 @@
 /**
  * Deciding an org (Red) approval — the ONE rule the decision cockpit and the
- * asking chat share (card 223). The resolve route (/api/org/approvals/resolve)
+ * asking chat share. The resolve route (/api/org/approvals/resolve)
  * keeps separation of duties server-side (an agent cannot resolve its own
  * ask), and the Inbox row's open state is derived from it, so deciding here
  * clears the Inbox too. Pure: the API call is injected.
