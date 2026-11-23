@@ -132,7 +132,7 @@ cmd_install() {
   hm_setup_code || true
 }
 
-# Private update feed (Card 121). Config lives OUTSIDE releases so it survives
+# Private update feed. Config lives OUTSIDE releases so it survives
 # every swap: $HM_PREFIX/update.env with HARMAN_FEED_TOKEN (per-customer, from
 # deploy/release-feed.sh token-add on the release Mac) and optionally
 # HARMAN_FEED_URL. No token → auto-update is off and this is a silent no-op.

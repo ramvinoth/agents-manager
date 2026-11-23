@@ -1,7 +1,7 @@
-"""Signed release manifests for the private update feed (Card 121).
+"""Signed release manifests for the private update feed.
 
 The Mac signs; every customer box verifies before it downloads or installs
-anything. The feed (release-feed/ Worker + R2) is untrusted transport: a
+anything. The feed (release-feed/ Worker + Workers KV) is untrusted transport: a
 compromised bucket can withhold updates but cannot make a box install code the
 release key did not sign.
 

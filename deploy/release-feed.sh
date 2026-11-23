@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy/release-feed.sh — the Mac side of the private update feed (Card 121).
+# deploy/release-feed.sh — the Mac side of the private update feed.
 #
 # Customer boxes poll https://releases.suhai.ai (release-feed/ Worker + Workers KV) and
 # install what this script publishes. Code stays private: every download needs a

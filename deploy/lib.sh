@@ -379,7 +379,7 @@ hm_health_probe() {
 }
 
 # Hold a restart until no agent turn is running (/healthz `busy` == 0), for at
-# most <cap> seconds. After the cap it proceeds anyway: a restart no longer
+# most <cap> seconds. After the cap it proceeds anyway: a restart does not
 # loses work (interrupted Claude turns resume on boot), so waiting forever for a
 # never-idle box would just mean never updating. Unreadable health → proceed.
 # Args: <cap-secs> (0 = don't wait)
