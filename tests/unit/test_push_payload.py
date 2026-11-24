@@ -3,15 +3,12 @@ code path (titles.push_label / permissions._perm_push_body -> push.build_payload
 for a session with and without a title, for a Bash prompt. No real push is
 sent — build_payload is pure.
 
-Reproduces the reported defects (cards #31/#42, 2026-09-19): a push titled
-'Chat s2'/'Chat s4' — a raw-id label the owner cannot map to a session — and
-a body 'Approve Bash?' with no command. Two code causes:
-  1. push_label's last fallback was a bare 'Chat <id>' with no project
-     fallback, and
-  2. _perm_push_body assumed a dict input (a JSON-string input crashed it and
-     silently killed the push) and, for non-Bash tools, dumped the WHOLE input
-     JSON (a lock-screen notification showing the tool's payload — possible
-     secrets — instead of an identity).
+Guards two defects: a push titled with a raw-id label ('Chat s2') the owner
+cannot map to a session, or a body ('Approve Bash?') with no command. So:
+  1. push_label falls back to the project before a bare 'Chat <id>', and
+  2. _perm_push_body accepts a JSON-string input, and for non-Bash tools
+     shows only the tool's identity fields, never its whole input (possible
+     secrets) on the lock screen.
 """
 import json
 from pathlib import Path
