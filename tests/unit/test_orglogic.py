@@ -303,7 +303,7 @@ def test_a_session_may_pause_its_own_loop_but_never_resume_or_retune_it():
     assert orglogic.self_loop_change_allowed(
         "update", {"id": "L", "enabled": False, "prompt": None, "cron": None})
     assert not orglogic.self_loop_change_allowed("update", {"id": "L", "enabled": True})
-    # A pause that also says why is still only a pause (card 330).
+    # A pause that also says why is still only a pause.
     assert orglogic.self_loop_change_allowed(
         "update", {"id": "L", "enabled": False, "reason": "card done"})
     assert not orglogic.self_loop_change_allowed(

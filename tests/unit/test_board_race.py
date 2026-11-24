@@ -148,7 +148,7 @@ def test_human_move_is_never_blocked_by_the_recency_guard(fdb):
     assert "error" not in resp and fdb.moved == [(25, 98)]
 
 
-# ── task_done: the exact path that clobbered card 25 ─────────────────────────
+# ── task_done: a stale Done must not clobber the owner's recent move ────────
 
 def test_task_done_refused_after_a_recent_other_move(fdb):
     fdb.last_move = (98, NOW - 15)  # the owner approved 15s ago

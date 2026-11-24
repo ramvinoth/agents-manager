@@ -288,7 +288,7 @@ def test_red_approvals_sort_with_the_rest_by_wait():
     assert [d["kind"] for d in q["decisions"]] == ["red", "question"]
 
 
-# ---- a session's own Red approvals, inline in its chat (card 223) -------------
+# ---- a session's own Red approvals, inline in its chat -------------
 
 def test_session_red_keeps_only_that_sessions_asks_shaped_like_the_queue():
     rows = [_red(1, NOW - 100, session="s-ask"), _red(2, NOW - 10, session="other"),

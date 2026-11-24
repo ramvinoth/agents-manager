@@ -102,10 +102,8 @@ def fdb(monkeypatch):
     f = FakeDB()
     monkeypatch.setattr(orchestrator, "db", f)
     monkeypatch.setattr(scheduler, "db", f)
-    # The scheduler pass also runs board_wake.sweep() under 'harman'/'both'. Until
-    # 2026-09-20 that module kept the REAL db here, so every run of this file
-    # stamped the production sweep clock and queued real card wakes (11 sweeps'
-    # worth of audit rows for cards 12/14/19 came from pytest, not the server).
+    # The scheduler pass also runs board_wake.sweep() under 'harman'/'both'; without
+    # this patch it would stamp the production sweep clock and queue real card wakes.
     monkeypatch.setattr(board_wake, "db", f)
     return f
 
