@@ -1,8 +1,8 @@
 """orchestrator.events — the live push channel for session updates.
 
-Clients used to poll: the phone's chat list every 4s and an open thread's
-/api/chat/status every 1.5s. This module tells them WHEN something changed so
-they fetch only that resource; their polls stay as a slow fallback.
+This module tells clients (the phone's chat list, an open thread's
+/api/chat/status) WHEN something changed so they fetch only that resource;
+their polls stay as a slow fallback.
 
 Transport: a WebSocket at /api/events/ws, the same way terminal/voice stream.
 Not SSE, deliberately: the server already runs every long-lived WebSocket on

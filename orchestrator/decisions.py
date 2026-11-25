@@ -28,7 +28,7 @@ def red_session(approval):
 
 def session_red(red_rows, session_id, now):
     """The open org approvals ONE session raised, shaped exactly as the queue
-    shapes them — what that session's chat shows inline (card 223). Pure."""
+    shapes them — what that session's chat shows inline. Pure."""
     if not session_id:
         return []
     mine = [r for r in red_rows or [] if red_session(r) == session_id]
@@ -37,8 +37,7 @@ def session_red(red_rows, session_id, now):
 
 def open_decisions(question_rows, plan_rows, approval_rows, labels, now, card_rows=None,
                    red_rows=None):
-    """Shape the decision sources into ONE queue — the kanban decision
-    list (card #60).
+    """Shape the decision sources into ONE queue — the kanban decision list.
 
     Pure: no db, no clock, no network. The route gathers the raw rows (the
     durable question/plan tables + the live approval registry) and passes them

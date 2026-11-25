@@ -318,8 +318,7 @@ def claude_bin():
     if not best:
         best = shutil.which("claude") or "claude"
     # A probe that failed (binary mid-auto-update, first-exec scan) means this
-    # pick may be the stale fallback, not the newest — the 2026-10-05 RSI
-    # incident cached 2.1.84 for an hour exactly this way. Hold a degraded
+    # pick may be the stale fallback, not the newest. Hold a degraded
     # answer for one minute only (not zero: a candidate that always hangs would
     # otherwise cost every run a 30s probe).
     _CLAUDE_BIN_CACHE.update({"at": now, "bin": best, "ttl": 60 if degraded else 3600})
@@ -330,8 +329,7 @@ def invalidate_claude_bin_cache():
     """Force the next claude_bin() to re-resolve from disk instead of serving
     the hourly cache. Called when a run is rejected for a too-old CLI: if the
     user has since installed/updated a newer claude (`claude update`), the very
-    next run must pick it up — waiting up to an hour, or for a server restart,
-    is the stale-cache half of the 2.1.84 incident (card 18)."""
+    next run must pick it up, not wait up to an hour or for a server restart."""
     _CLAUDE_BIN_CACHE.update({"at": 0.0, "bin": "", "ttl": 3600})
 
 
