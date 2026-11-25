@@ -2,7 +2,7 @@
 working on our request? Liveness instead of blind timeouts.
 
 A driven claude talking to a custom Anthropic-compatible endpoint (our vLLM
-behind llama-swap) used to be governed only by timeouts: the CLI's first-byte
+behind llama-swap) is otherwise governed only by timeouts: the CLI's first-byte
 window (300s), its 10 retries, and whatever proxy sits in front. A long-context
 prefill legitimately takes minutes on a GPU, so a fixed window either cuts off
 real work or waits ~17 minutes on a dead host (10 retries x a 75s TCP connect
