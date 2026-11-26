@@ -1,9 +1,8 @@
-"""orchestrator.maintenance — the hourly maintenance window (Card 133).
+"""orchestrator.maintenance — the hourly maintenance window.
 
-Many agents change server code in parallel; each used to restart the server
-whenever its own change was ready, cutting the others' turns off at random
-times with no record. Now an agent files a restart REQUEST (who, commit, why)
-and the window applies every queued request with ONE restart at :50 each hour:
+Many agents change server code in parallel, and a restart cuts off every
+running turn. So an agent files a restart REQUEST (who, commit, why) and the
+window applies every queued request with ONE restart at :50 each hour:
 
 1. nothing queued → nothing happens;
 2. wait until no agent turn is running, for at most QUIET_CAP seconds (then go
@@ -246,7 +245,7 @@ def _abort(ids, reqs, record, outcome, why):
 def start_boot_finish(**kw):
     """Run finish_after_boot on its own thread, holding the window lock from
     the caller's thread on, so no window can open before the boot is closed.
-    Call it BEFORE the scheduler starts: a boot inside :50-:59 used to let the
+    Call it BEFORE the scheduler starts, or a boot inside :50-:59 lets the
     first tick restart again for requests this boot already made live."""
     _running.acquire()
 

@@ -325,7 +325,7 @@ def pending_approvals_public(session_id):
 
 def pending_approvals_all_public():
     """Live Allow/Deny tool approvals across ALL sessions — the raw rows for the
-    cross-session decision queue (card #60). Same exclusion as the per-session
+    cross-session decision queue. Same exclusion as the per-session
     view: AskUserQuestion and ExitPlanMode entries are NOT plain approvals, they
     are their own durable question/plan rows. Each row carries a secret-safe
     preview (the same one the permission push uses), never the raw input."""
@@ -381,8 +381,8 @@ def _redact_secrets(text):
 def _perm_preview(tool_name, tinput):
     """A bounded, secret-safe one-liner for what a gated tool call would do.
     The CLI sends the tool input as a dict or a JSON string (both shapes
-    seen in the wild), so parse leniently; a string-shaped input used to
-    crash this function and silently kill the whole push.
+    seen in the wild), so parse leniently: a crash here would silently kill
+    the whole push.
 
     Only identity-shaped fields are previewed (command / file path / url /
     name / pattern / query / question) — never the tool's payload fields
