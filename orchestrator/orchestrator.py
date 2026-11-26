@@ -7,9 +7,8 @@
   - loop control: WHICH loop origins may fire (user / harman / both / none).
 
 Both live in the Postgres `settings` table (rows `harman` and `loop_control`).
-There is no autonomous manager here any more: work reaches a session through a
-card on its board (board_wake) or a loop someone scheduled, never through a
-roster-matching planner (removed with the Employees roster, card 146).
+Work reaches a session only through a card on its board (board_wake) or a
+loop someone scheduled.
 """
 from orchestrator import db
 from orchestrator import loops as _loops  # pure LOOP_MODES / allowed_origins mapping
