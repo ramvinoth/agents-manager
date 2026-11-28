@@ -1,6 +1,7 @@
 /** Pure helpers and constants shared by the slices. */
 import { api } from "../lib/api"
 import type { HostInfo, SessionListItem, Turn } from "../lib/types"
+import type { GetState, SetState } from "./types"
 
 export const TAIL_LINES = 400
 export const CHUNK_LINES = 400
@@ -27,3 +28,7 @@ export async function reloadForHost(): Promise<{ hosts: HostInfo[]; sessions: Se
   return { hosts, sessions }
 }
 
+/** A "done" status line fades after a few seconds unless a new run has started since. */
+export function clearDoneStatusLater(set: SetState, get: GetState): void {
+  setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+}
