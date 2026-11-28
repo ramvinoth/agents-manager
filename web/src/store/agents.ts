@@ -2,7 +2,7 @@
 import { api } from "../lib/api"
 import type { AgentInfo, HostInfo, SessionListItem } from "../lib/types"
 import type { Slice } from "./types"
-import { pickOpen, reloadForHost } from "./helpers"
+import { clearDoneStatusLater, pickOpen, reloadForHost } from "./helpers"
 
 let agentLoginTimer: ReturnType<typeof setInterval> | null = null
 
@@ -87,7 +87,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
           get().startAgentLogin(id)
         } else {
           set({ chatStatus: { kind: "done", text: `Installed ${a?.label || id}.` } })
-          setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+          clearDoneStatusLater(set, get)
         }
       } catch (e: any) {
         set({ installing: null, chatStatus: { kind: "error", text: "Install failed: " + (e?.message || e) } })
@@ -118,7 +118,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
             if (agentLoginTimer) { clearInterval(agentLoginTimer); agentLoginTimer = null }
             await get().loadAgents()
             set({ agentLogin: null, chatStatus: { kind: "done", text: `Signed in to ${label}.` } })
-            setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+            clearDoneStatusLater(set, get)
           } else if (cur.stage !== "submitting") {
             set({ agentLogin: { ...cur, stage: d.stage, url: d.url || cur.url, note: d.note, code: d.code ?? cur.code } })
           }
@@ -140,7 +140,7 @@ export const createAgentsSlice: Slice<AgentsSlice> = (set, get, rt) => {
         if (agentLoginTimer) { clearInterval(agentLoginTimer); agentLoginTimer = null }
         await get().loadAgents()
         set({ agentLogin: null, chatStatus: { kind: "done", text: `Signed in to ${label}.` } })
-        setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+        clearDoneStatusLater(set, get)
       } catch (e: any) {
         set({ agentLogin: { ...get().agentLogin!, stage: "url", error: e?.message || String(e) } })
       }

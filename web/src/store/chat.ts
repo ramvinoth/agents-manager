@@ -3,7 +3,7 @@ import { api } from "../lib/api"
 import type { Slice, ChatStatus, PermApproval, RestoreMode } from "./types"
 import type { RedAsk } from "../lib/types"
 import { resolveRed } from "../lib/redApproval"
-import { sessionIdOf } from "./helpers"
+import { clearDoneStatusLater, sessionIdOf } from "./helpers"
 
 /** The composer's permission mode until the owner picks another (Claude's id). */
 export const DEFAULT_PERM_MODE = "bypassPermissions"
@@ -162,7 +162,7 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
         api.sessions().then((s: any) => { if (Array.isArray(s)) set({ sessions: s }) }).catch(() => {})
         await get().loadSession(d.path)
         set({ pendingDraft: d.message || "", chatStatus: { kind: "done", text: "Forked — edit the message and send." } })
-        setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+        clearDoneStatusLater(set, get)
       } catch (e: any) {
         set({ chatStatus: { kind: "error", text: "Fork failed: " + (e?.message || e) } })
       }
@@ -188,7 +188,7 @@ export const createChatSlice: Slice<ChatSlice> = (set, get, rt) => {
           pendingDraft: truncated ? d.message || "" : get().pendingDraft,
           chatStatus: { kind: "done", text: `Restored${d.backup ? " · backup kept" : ""}${codeNote}${tail}` },
         })
-        setTimeout(() => { if (!get().chatRunning) set({ chatStatus: null }) }, 6000)
+        clearDoneStatusLater(set, get)
       } catch (e: any) {
         set({ chatStatus: { kind: "error", text: "Restore failed: " + (e?.message || e) } })
       }
